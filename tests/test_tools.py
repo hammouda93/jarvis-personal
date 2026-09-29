@@ -83,6 +83,13 @@ class ToolRouterTests(unittest.TestCase):
         intent = route("Je veux ouvrir un dossier spécifique")
         self.assertEqual(intent.name, "folder.open_prompt")
 
+
+    def test_nested_named_folder(self):
+        intent = route("Ouvre le dossier media dans baristas")
+        self.assertEqual(intent.name, "folder.open_named")
+        self.assertEqual(intent.args["query"], "media")
+        self.assertEqual(intent.args["within"], "baristas")
+
     def test_unknown_is_safe(self):
         intent = route("supprime tous mes fichiers")
         self.assertEqual(intent.name, "unknown")
