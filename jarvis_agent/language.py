@@ -99,3 +99,39 @@ def no_speech_prompt(language: str | None) -> str:
         "en": "I didn't hear you.",
         "ar": "لم أسمعك.",
     }[lang]
+
+
+def cancellation_prompt(language: str | None) -> str:
+    lang = normalize_language(language)
+    return {
+        "fr": "D'accord, je n'exécute pas cette action.",
+        "en": "All right, I won't do that.",
+        "ar": "حسنًا، لن أنفذ هذا الإجراء.",
+    }[lang]
+
+
+def ai_unavailable_prompt(language: str | None) -> str:
+    lang = normalize_language(language)
+    return {
+        "fr": "Mon cerveau local n'est pas disponible pour le moment, mais mes outils directs restent disponibles.",
+        "en": "My local AI brain isn't available right now, but my direct tools still work.",
+        "ar": "المحرك المحلي للذكاء الاصطناعي غير متاح الآن، لكن الأدوات المباشرة ما زالت تعمل.",
+    }[lang]
+
+
+def capability_unavailable_prompt(language: str | None) -> str:
+    lang = normalize_language(language)
+    return {
+        "fr": "J'ai compris ce que vous voulez faire, mais je ne dispose pas encore de cette capacité.",
+        "en": "I understand what you want to do, but I don't have that capability yet.",
+        "ar": "فهمت ما تريد القيام به، لكن هذه القدرة غير متاحة لدي بعد.",
+    }[lang]
+
+
+def action_mismatch_prompt(language: str | None) -> str:
+    lang = normalize_language(language)
+    return {
+        "fr": "Je pense avoir compris votre intention, mais l'action proposée ne correspond pas assez précisément. Pouvez-vous préciser ce que vous voulez que je fasse ?",
+        "en": "I think I understand your intent, but the proposed action doesn't match it closely enough. Could you clarify what you want me to do?",
+        "ar": "أعتقد أنني فهمت قصدك، لكن الإجراء المقترح لا يطابق طلبك بدقة كافية. هل يمكنك توضيح ما تريدني أن أفعله؟",
+    }[lang]
