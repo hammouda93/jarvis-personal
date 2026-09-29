@@ -174,6 +174,18 @@ def route(text: str) -> ToolIntent:
                 "un precis",
             }
             if target and target not in vague and len(target) >= 3:
+                relation = re.match(
+                    r"^(.+?)\s+(?:qui\s+est\s+)?dans\s+(.+)$",
+                    target,
+                )
+                if relation:
+                    child = relation.group(1).strip()
+                    parent = relation.group(2).strip()
+                    if child and parent:
+                        return ToolIntent(
+                            "folder.open_named",
+                            {"query": child, "within": parent},
+                        )
                 return ToolIntent("folder.open_named", {"query": target})
 
         return ToolIntent("folder.open_prompt")
