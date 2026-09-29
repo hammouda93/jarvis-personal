@@ -103,8 +103,17 @@ class Settings:
         os.getenv("JARVIS_AGENT_PROVIDER") or "ollama"
     ).strip()
     ollama_agent_model: str = (
-        os.getenv("JARVIS_OLLAMA_AGENT_MODEL") or "qwen3:4b"
+        os.getenv("JARVIS_OLLAMA_AGENT_MODEL") or "qwen3:4b-instruct"
     ).strip()
+    ollama_agent_timeout_s: float = _float(
+        "JARVIS_OLLAMA_AGENT_TIMEOUT_S", 180.0
+    )
+    ollama_agent_num_ctx: int = _int(
+        "JARVIS_OLLAMA_AGENT_NUM_CTX", 8192
+    )
+    ollama_agent_num_predict: int = _int(
+        "JARVIS_OLLAMA_AGENT_NUM_PREDICT", 256
+    )
     agent_max_tool_rounds: int = _int("JARVIS_AGENT_MAX_TOOL_ROUNDS", 8)
     agent_history_items: int = _int("JARVIS_AGENT_HISTORY_ITEMS", 30)
     openai_api_key: str = (os.getenv("OPENAI_API_KEY") or "").strip()
