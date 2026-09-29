@@ -63,6 +63,7 @@ class AgentCore:
         *,
         deterministic_intent: ToolIntent | None = None,
         log=None,
+        phase=None,
     ) -> CoreResult:
         if (
             deterministic_intent is not None
@@ -82,8 +83,11 @@ class AgentCore:
                 mission,
                 user_text=user_text,
                 log=log,
+                phase=phase,
             )
 
+        if phase:
+            phase("planning")
         try:
             decision = self.planner.plan(
                 user_text,
@@ -143,6 +147,7 @@ class AgentCore:
                 mission,
                 user_text=user_text,
                 log=log,
+                phase=phase,
             )
 
         return CoreResult(
@@ -156,7 +161,10 @@ class AgentCore:
         *,
         user_text: str,
         log=None,
+        phase=None,
     ) -> CoreResult:
+        if phase:
+            phase("acting")
         outcome = self.engine.execute(mission, log=log)
         result = outcome.final_result
 
