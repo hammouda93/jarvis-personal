@@ -87,6 +87,16 @@ class Settings:
         "rechercher quelque chose sur Internet."
     ).strip()
 
+    ai_provider: str = (os.getenv("JARVIS_AI_PROVIDER") or "ollama").strip()
+    ollama_base_url: str = (
+        os.getenv("JARVIS_OLLAMA_BASE_URL") or "http://127.0.0.1:11434"
+    ).strip()
+    ollama_model: str = (
+        os.getenv("JARVIS_OLLAMA_MODEL") or "qwen3:4b-instruct"
+    ).strip()
+    ai_request_timeout_s: float = _float("JARVIS_AI_REQUEST_TIMEOUT_S", 60.0)
+    ai_history_messages: int = _int("JARVIS_AI_HISTORY_MESSAGES", 8)
+
     elevenlabs_api_key: str = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
     elevenlabs_voice_id: str = (os.getenv("ELEVENLABS_VOICE_ID") or "").strip()
     elevenlabs_model_id: str = (
