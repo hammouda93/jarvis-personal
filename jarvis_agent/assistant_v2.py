@@ -19,7 +19,16 @@ from .capabilities import (
     is_negative,
 )
 from .config import settings
-from .language import no_speech_prompt, normalize_language, repeat_prompt, tool_message
+from .language import (
+    action_mismatch_prompt,
+    ai_unavailable_prompt,
+    cancellation_prompt,
+    capability_unavailable_prompt,
+    no_speech_prompt,
+    normalize_language,
+    repeat_prompt,
+    tool_message,
+)
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
 from .stt import LocalWhisperSTT
@@ -83,10 +92,7 @@ class AssistantWorker(QObject):
             decision = self._brain.decide(user_text)
         except AIProviderUnavailable as exc:
             self.log_line.emit(f"[AI] unavailable: {exc}")
-            return None, (
-                "Mon cerveau local n'est pas encore connecté. "
-                "Les commandes Windows restent disponibles."
-            )
+            return None, ai_unavailable_prompt(language)
 
         self.log_line.emit(
             f"[AI] kind={decision.kind} tool={decision.tool} "
@@ -117,19 +123,12 @@ class AssistantWorker(QObject):
         missing = detect_missing_capability(user_text)
         if missing is not None:
             self.log_line.emit(f"[CAPABILITY] missing={missing.key}")
-            return None, missing.message
+            return None, missing.message(language)
 
         if validation.reason == "unsupported_tool":
-            return None, (
-                "J'ai compris ce que vous voulez faire, mais je ne dispose "
-                "pas encore de cette capacité."
-            )
+            return None, capability_unavailable_prompt(language)
 
-        return None, (
-            "Je pense avoir compris votre intention, mais l'action proposée "
-            "ne correspond pas assez précisément à votre demande. "
-            "Pouvez-vous préciser ce que vous voulez que je fasse ?"
-        )
+        return None, action_mismatch_prompt(language)
 
     def _listen_turn(
         self,
@@ -182,7 +181,7 @@ class AssistantWorker(QObject):
 
         if not transcript.text:
             self._state(AssistantState.ERROR, "Phrase non comprise")
-            self._speak("Je n'ai pas compris.")
+            self._speak(repeat_prompt(self._conversation_language))
             return True, None
 
         user_text = transcript.text
@@ -202,7 +201,7 @@ class AssistantWorker(QObject):
             elif is_negative(user_text):
                 self.log_line.emit("[CONFIRM] rejected")
                 self._pending_confirmation_intent = None
-                self._speak("D'accord, je n'exécute pas cette action.")
+                self._speak(cancellation_prompt(self._conversation_language))
                 return True, None
             else:
                 self.log_line.emit(
