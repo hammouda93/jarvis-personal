@@ -81,7 +81,13 @@ def route(text: str) -> ToolIntent:
 
     if any(
         phrase in cmd
-        for phrase in ("arrete jarvis", "eteins jarvis", "quitte jarvis")
+        for phrase in (
+            "arrete jarvis",
+            "eteins jarvis",
+            "quitte jarvis",
+            "ferme jarvis",
+            "fermez jarvis",
+        )
     ):
         return ToolIntent("assistant.stop")
 
