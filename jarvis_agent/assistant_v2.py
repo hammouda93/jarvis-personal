@@ -19,6 +19,7 @@ from .capabilities import (
     is_negative,
 )
 from .config import settings
+from .language import no_speech_prompt, normalize_language, repeat_prompt, tool_message
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
 from .stt import LocalWhisperSTT
@@ -42,6 +43,7 @@ class AssistantWorker(QObject):
         self._tts = ElevenLabsTTS()
         self._brain = build_ai_provider()
         self._pending_confirmation_intent: ToolIntent | None = None
+        self._conversation_language: str = "fr"
 
     def _state(self, state: AssistantState, status: str | None = None) -> None:
         self.state_changed.emit(state.value)
@@ -66,6 +68,7 @@ class AssistantWorker(QObject):
         self,
         user_text: str,
         intent: ToolIntent,
+        language: str | None,
     ) -> tuple[ToolIntent | None, str | None]:
         if intent.name != "unknown":
             return intent, None
@@ -73,7 +76,7 @@ class AssistantWorker(QObject):
         missing = detect_missing_capability(user_text)
         if missing is not None:
             self.log_line.emit(f"[CAPABILITY] missing={missing.key}")
-            return None, missing.message
+            return None, missing.message(language)
 
         self._state(AssistantState.THINKING, "Réflexion locale…")
         try:
@@ -109,7 +112,7 @@ class AssistantWorker(QObject):
             and validation.intent is not None
         ):
             self._pending_confirmation_intent = validation.intent
-            return None, confirmation_prompt(validation.intent)
+            return None, confirmation_prompt(validation.intent, language)
 
         missing = detect_missing_capability(user_text)
         if missing is not None:
@@ -146,7 +149,7 @@ class AssistantWorker(QObject):
         if audio is None:
             if first_turn and not self._stop.is_set():
                 self._state(AssistantState.ERROR, "Je ne vous ai pas entendu")
-                self._speak("Je ne vous ai pas entendu.")
+                self._speak(no_speech_prompt(self._conversation_language))
             else:
                 self.log_line.emit(
                     "[SESSION] délai dépassé, retour au mode réveil"
@@ -159,7 +162,7 @@ class AssistantWorker(QObject):
         )
 
         if pending_follow_up == "search_query":
-            transcript = self._stt.transcribe(audio)
+            transcript = self._stt.transcribe(audio, language="auto")
             intent = ToolIntent(
                 "browser.search",
                 {"query": transcript.text.strip()},
@@ -174,6 +177,7 @@ class AssistantWorker(QObject):
                 self._stt,
                 audio,
                 log=self.log_line.emit,
+                preferred_language=self._conversation_language,
             )
 
         if not transcript.text:
@@ -182,8 +186,11 @@ class AssistantWorker(QObject):
             return True, None
 
         user_text = transcript.text
+        self._conversation_language = normalize_language(transcript.language)
         self.transcript_changed.emit(user_text)
-        self.log_line.emit(f"[YOU] {user_text}")
+        self.log_line.emit(
+            f"[YOU] {user_text} [lang={self._conversation_language}]"
+        )
 
         if self._pending_confirmation_intent is not None:
             if is_affirmative(user_text):
@@ -230,10 +237,14 @@ class AssistantWorker(QObject):
             self.log_line.emit(
                 "[STT] weak open-ended transcript rejected before AI"
             )
-            self._speak("Je n'ai pas bien compris. Pouvez-vous répéter ?")
+            self._speak(repeat_prompt(self._conversation_language))
             return True, None
 
-        intent, direct_answer = self._use_ai_if_needed(user_text, intent)
+        intent, direct_answer = self._use_ai_if_needed(
+            user_text,
+            intent,
+            self._conversation_language,
+        )
 
         if direct_answer is not None:
             self._speak(direct_answer)
@@ -259,12 +270,17 @@ class AssistantWorker(QObject):
             self._brain.remember_tool_result(
                 user_text,
                 intent,
-                tool_result.message,
+                spoken_result,
             )
         except Exception as exc:
             self.log_line.emit(f"[AI] memory note skipped: {exc}")
 
-        self._speak(tool_result.message)
+        spoken_result = tool_message(
+            intent,
+            tool_result,
+            self._conversation_language,
+        )
+        self._speak(spoken_result)
 
         if tool_result.should_exit:
             self._stop.set()
