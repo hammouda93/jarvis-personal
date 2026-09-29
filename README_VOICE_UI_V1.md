@@ -186,3 +186,66 @@ JARVIS_PLANNER_PROVIDER=ollama
 The Planner protocol is intentionally provider-independent so a stronger cloud
 planner can be added later without rewriting voice capture, tools or the Mission
 Engine.
+
+
+## V2 pivot: model-native agent loop
+
+The previous Planner/Mission prototype proved typed tools and sequential execution,
+but it still behaved too much like a command router around a JSON planner. V2
+switches the active voice path to a model-native tool loop.
+
+Active path:
+
+```text
+voice
+  -> Whisper small (French-first)
+  -> one conversational AI runtime
+       -> model chooses zero, one, or multiple tools
+       -> Jarvis executes typed generic tools
+       -> tool results are returned to the model
+       -> model observes them and continues/replans
+       -> final natural-language answer
+  -> ElevenLabs
+```
+
+Normal app/folder/web requests are no longer decided by the legacy phrase router.
+That router is kept only for explicit Jarvis lifecycle commands such as sleep/stop.
+
+The local runtime uses a tool-calling model:
+
+```env
+JARVIS_AGENT_PROVIDER=ollama
+JARVIS_OLLAMA_AGENT_MODEL=qwen3:4b
+```
+
+Qwen3 is used here because its Ollama model supports native tool calls. The
+previous Gemma 3 model can still be kept for other experiments, but is no longer
+the recommended agent brain for this branch.
+
+The same runtime also has an optional OpenAI Responses provider:
+
+```env
+JARVIS_AGENT_PROVIDER=openai
+OPENAI_API_KEY=...
+JARVIS_OPENAI_AGENT_MODEL=gpt-6-astra
+```
+
+The OpenAI provider uses native function calls and can expose hosted web search.
+The Windows tools themselves do not change when the model provider changes.
+
+Important behavioral change: conversation context survives the microphone
+follow-up timeout and the next wake. A short period of silence no longer erases
+what the user and Jarvis were doing. Say "nouvelle conversation" to explicitly
+reset the agent context.
+
+Generic model tools currently exposed:
+
+- `open_application(name)`
+- `open_folder(name, within?)`
+- `open_url(url)`
+- `search_web(query)`
+- `get_current_time()`
+- `return_to_standby()`
+
+The objective is to add a small number of broad capabilities, not one code path
+per spoken phrase or per application.
