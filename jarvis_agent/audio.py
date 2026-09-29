@@ -223,6 +223,7 @@ def record_utterance(
         silent_blocks = 0
         onset_hits = 0
         speech_blocks = 0
+        voiced_blocks = 0
         seen_blocks = 0
         effective_start_timeout = (
             settings.speech_start_timeout_s
@@ -285,6 +286,7 @@ def record_utterance(
                     pre_roll.clear()
                     silent_blocks = 0
                     speech_blocks = 0
+                    voiced_blocks = onset_hits
                     if on_status:
                         on_status("Voix détectée")
                 elif time.monotonic() >= deadline:
@@ -299,6 +301,7 @@ def record_utterance(
                 silent_blocks += 1
             else:
                 silent_blocks = 0
+                voiced_blocks += 1
 
             if silent_blocks >= silence_blocks_needed:
                 break
@@ -307,6 +310,12 @@ def record_utterance(
                 break
 
     if not captured:
+        return None
+
+    voiced_seconds = voiced_blocks * blocksize / settings.sample_rate
+    if voiced_seconds < settings.speech_min_voiced_s:
+        if on_status:
+            on_status("Bruit ignoré")
         return None
 
     audio = np.concatenate(captured).astype(np.float32, copy=False)
