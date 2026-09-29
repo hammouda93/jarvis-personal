@@ -36,6 +36,19 @@ def normalize(text: str) -> str:
     value = re.sub(r"[^\w\s'-]", " ", value, flags=re.UNICODE)
     value = re.sub(r"\s+", " ", value).strip()
 
+    # Conservative corrections for recurring French STT joins/substitutions.
+    # These only normalize phrases that already sound like our supported
+    # commands; they do not create new capabilities.
+    corrections = (
+        (r"\bquelleur\b", "quelle heure"),
+        (r"\bquelheur\b", "quelle heure"),
+        (r"\boufre\b", "ouvre"),
+        (r"\bouvres\b", "ouvre"),
+        (r"\btelechargement\b", "telechargements"),
+    )
+    for pattern, replacement in corrections:
+        value = re.sub(pattern, replacement, value)
+
     for prefix in ("hey jarvis ", "jarvis ", "jervis "):
         if value.startswith(prefix):
             value = value[len(prefix):].strip()
@@ -79,6 +92,10 @@ def route(text: str) -> ToolIntent:
         "tu peux dormir",
         "dors",
         "retourne en veille",
+        "a plus",
+        "a plus jarvis",
+        "au revoir",
+        "bonne nuit",
     }:
         return ToolIntent("assistant.sleep")
 
@@ -123,7 +140,15 @@ def route(text: str) -> ToolIntent:
             return ToolIntent("app.open", {"app": "cursor"})
         if any(x in cmd for x in ("visual studio code", "vs code", "vscode")):
             return ToolIntent("app.open", {"app": "vscode"})
-        if any(x in cmd for x in ("telechargements", "downloads")):
+        if any(
+            x in cmd
+            for x in (
+                "telechargements",
+                "downloads",
+                "les chargements",
+                "chargements",
+            )
+        ):
             return ToolIntent("folder.open", {"folder": "downloads"})
 
     if re.match(r"^(?:recherche|cherche)\b", cmd):
