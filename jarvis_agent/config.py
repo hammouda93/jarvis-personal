@@ -84,11 +84,8 @@ class Settings:
     )
     stt_initial_prompt: str = (
         os.getenv("JARVIS_STT_INITIAL_PROMPT")
-        or "Assistant Jarvis, principalement en français. "
-        "Vocabulaire: YouTube, Google, Chrome, Spotify, Cursor, VS Code, "
-        "Téléchargements, capture écran. "
-        "Commandes possibles: ouvrir une application, demander l'heure, "
-        "rechercher quelque chose sur Internet."
+        or "Conversation naturelle en français entre un utilisateur et "
+        "son assistant personnel Jarvis."
     ).strip()
 
     ai_provider: str = (os.getenv("JARVIS_AI_PROVIDER") or "ollama").strip()
