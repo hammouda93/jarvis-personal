@@ -1,6 +1,10 @@
 import unittest
 
-from jarvis_agent.agent_runtime import OllamaToolAgent, OpenAIResponsesAgent
+from jarvis_agent.agent_runtime import (
+    OllamaToolAgent,
+    OpenAIResponsesAgent,
+    _visible_text,
+)
 from jarvis_agent.native_tools import AgentActionResult
 
 
@@ -87,6 +91,23 @@ class FakeOpenAIAgent(OpenAIResponsesAgent):
 
 
 class AgentRuntimeTests(unittest.TestCase):
+
+    def test_hidden_thinking_is_never_spoken(self):
+        value = (
+            "internal reasoning that must stay hidden</think>\n"
+            "Bonjour, que puis-je faire pour vous ?"
+        )
+        self.assertEqual(
+            _visible_text(value),
+            "Bonjour, que puis-je faire pour vous ?",
+        )
+
+    def test_regular_answer_is_preserved(self):
+        self.assertEqual(
+            _visible_text("Bonjour !"),
+            "Bonjour !",
+        )
+
     def test_ollama_native_loop_executes_multiple_tools_then_answers(self):
         tools = FakeTools()
         agent = FakeOllamaAgent(
