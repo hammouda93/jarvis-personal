@@ -387,7 +387,24 @@ def _candidate_intent(decision: AgentDecision) -> ToolIntent | None:
 
     if decision.tool == "app.open_named":
         query = str(args.get("query", "")).strip()
-        return ToolIntent("app.open_named", {"query": query}) if query else None
+        normalized_query = normalize(query)
+        blocked = {
+            "app",
+            "application",
+            "programme",
+            "program",
+            "browser",
+            "navigateur",
+            "com",
+            "exe",
+        }
+        if (
+            not normalized_query
+            or len(normalized_query.replace(" ", "")) < 4
+            or normalized_query in blocked
+        ):
+            return None
+        return ToolIntent("app.open_named", {"query": query})
 
     if decision.tool == "app.open":
         app = str(args.get("app", "")).strip().lower()
