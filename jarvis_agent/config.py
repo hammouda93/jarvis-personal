@@ -92,7 +92,7 @@ class Settings:
         os.getenv("JARVIS_OLLAMA_BASE_URL") or "http://127.0.0.1:11434"
     ).strip()
     ollama_model: str = (
-        os.getenv("JARVIS_OLLAMA_MODEL") or "qwen3:4b-instruct"
+        os.getenv("JARVIS_OLLAMA_MODEL") or "gemma3:latest"
     ).strip()
     ai_request_timeout_s: float = _float("JARVIS_AI_REQUEST_TIMEOUT_S", 60.0)
     ai_history_messages: int = _int("JARVIS_AI_HISTORY_MESSAGES", 8)
