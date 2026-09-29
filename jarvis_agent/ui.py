@@ -8,7 +8,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
-from .assistant import AssistantWorker
+from .assistant_v2 import AssistantWorker
 from .config import settings
 from .states import AssistantState, STATE_LABELS
 
