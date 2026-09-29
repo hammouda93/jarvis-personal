@@ -145,6 +145,20 @@ class BrainSafetyTests(unittest.TestCase):
         )
         self.assertEqual(validation.reason, "ok")
 
+
+    def test_vague_named_app_target_is_rejected(self):
+        decision = AgentDecision(
+            kind="tool",
+            tool="app.open_named",
+            args={"query": "com"},
+        )
+        validation = validate_tool_decision(
+            decision,
+            user_text="Ouvre com",
+        )
+        self.assertEqual(validation.reason, "unsupported_tool")
+        self.assertIsNone(validation.intent)
+
     def test_ai_cannot_use_non_http_url(self):
         decision = AgentDecision(
             kind="tool",
