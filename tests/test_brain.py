@@ -1,6 +1,10 @@
 import unittest
 
-from jarvis_agent.brain import AgentDecision, decision_to_intent
+from jarvis_agent.brain import (
+    AgentDecision,
+    decision_to_intent,
+    validate_tool_decision,
+)
 from jarvis_agent.tools import route
 
 
@@ -88,6 +92,33 @@ class BrainSafetyTests(unittest.TestCase):
         )
         self.assertIsNotNone(intent)
         self.assertEqual(intent.name, "system.time")
+
+
+    def test_youtube_name_without_open_requires_confirmation(self):
+        decision = AgentDecision(
+            kind="tool",
+            tool="browser.open_url",
+            args={"url": "https://www.youtube.com"},
+        )
+        validation = validate_tool_decision(
+            decision,
+            user_text="YouTube",
+        )
+        self.assertEqual(validation.reason, "confirmation_required")
+        self.assertIsNotNone(validation.intent)
+
+    def test_wrong_app_for_request_is_ungrounded(self):
+        decision = AgentDecision(
+            kind="tool",
+            tool="app.open",
+            args={"app": "cursor"},
+        )
+        validation = validate_tool_decision(
+            decision,
+            user_text="Ouvre VLC Media Player",
+        )
+        self.assertEqual(validation.reason, "ungrounded_arguments")
+        self.assertIsNone(validation.intent)
 
     def test_ai_cannot_use_non_http_url(self):
         decision = AgentDecision(
