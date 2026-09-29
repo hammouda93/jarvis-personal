@@ -79,6 +79,7 @@ def wait_for_double_clap(
     *,
     on_level: LevelCallback | None = None,
     on_status: StatusCallback | None = None,
+    on_armed: Callable[[], None] | None = None,
 ) -> bool:
     """Wait for a double clap. Returns False when shutdown is requested."""
     blocksize = block_samples()
@@ -117,7 +118,9 @@ def wait_for_double_clap(
         first_clap_time: float | None = None
         armed = True
 
-        if on_status:
+        if on_armed:
+            on_armed()
+        elif on_status:
             on_status("Prêt — double clap pour réveiller Jarvis")
 
         while not stop_event.is_set():
