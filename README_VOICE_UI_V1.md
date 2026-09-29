@@ -85,3 +85,31 @@ JARVIS_STT_LANGUAGE=fr
 ```
 
 Leave it blank for multilingual auto detection.
+
+
+## Local AI brain
+
+Open-ended requests now go to an AI provider instead of being treated as
+unsupported commands. V1 uses Ollama locally and keeps the provider behind a
+separate interface so a cloud provider can be added later without rewriting the
+voice, UI or tool layers.
+
+Default local model:
+
+```text
+qwen3:4b-instruct
+```
+
+Examples:
+
+- "Qui es-tu ?" -> conversational AI answer
+- "Explique-moi les agents IA" -> conversational AI answer
+- "Cherche des informations sur les agents IA" -> AI may select browser.search
+- "Ouvre l'outil Capture d'écran" -> typed Windows tool
+
+A low-confidence STT transcript is re-decoded before any PC action. This prevents
+a sentence such as "Qui es-tu ?" from accidentally becoming "Ouvre Chrome".
+
+After one double clap, Jarvis stays in an active conversational session. It
+returns to wake mode after the follow-up timeout or when the user says
+"c'est tout" / "retourne en veille".
