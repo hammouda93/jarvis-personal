@@ -38,6 +38,10 @@ class ToolRegistry:
                 "Lancer une recherche web avec une requête précise.",
                 ("query",),
             ),
+            "browser.search_prompt": CapabilitySpec(
+                "browser.search_prompt",
+                "Demander le sujet d'une recherche web quand il manque.",
+            ),
             "app.open": CapabilitySpec(
                 "app.open",
                 "Ouvrir une application rapide connue: chrome, spotify, cursor, vscode, snippingtool.",
@@ -54,6 +58,10 @@ class ToolRegistry:
                 "Ouvrir un dossier système connu. Actuellement: downloads.",
                 ("folder",),
             ),
+            "folder.open_prompt": CapabilitySpec(
+                "folder.open_prompt",
+                "Demander le nom du dossier à ouvrir quand il manque.",
+            ),
             "folder.open_named": CapabilitySpec(
                 "folder.open_named",
                 "Trouver puis ouvrir un dossier par son nom. Peut limiter la recherche avec 'within'.",
@@ -68,6 +76,10 @@ class ToolRegistry:
             "assistant.sleep": CapabilitySpec(
                 "assistant.sleep",
                 "Terminer la conversation active et retourner en veille.",
+            ),
+            "assistant.stop": CapabilitySpec(
+                "assistant.stop",
+                "Arrêter complètement Jarvis.",
             ),
         }
 
@@ -142,7 +154,9 @@ class ToolRegistry:
         if tool == "folder.open":
             folder = normalize(str(values["folder"]))
             if folder in {"downloads", "telechargements"}:
-                return PreparedTool("folder.open" and ToolIntent("folder.open", {"folder": "downloads"}))
+                return PreparedTool(
+                    ToolIntent("folder.open", {"folder": "downloads"})
+                )
             if self._safe_named_target(folder):
                 return PreparedTool(
                     ToolIntent("folder.open_named", {"query": str(values["folder"]).strip()})
@@ -159,7 +173,13 @@ class ToolRegistry:
                 prepared["within"] = within
             return PreparedTool(ToolIntent(tool, prepared))
 
-        if tool in {"system.time", "assistant.sleep"}:
+        if tool in {
+            "system.time",
+            "assistant.sleep",
+            "assistant.stop",
+            "browser.search_prompt",
+            "folder.open_prompt",
+        }:
             return PreparedTool(ToolIntent(tool))
 
         return PreparedTool(None, f"capability_unhandled:{tool}")
