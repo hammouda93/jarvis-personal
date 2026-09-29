@@ -64,14 +64,18 @@ class Settings:
     )
     speech_startup_grace_s: float = _float("JARVIS_SPEECH_STARTUP_GRACE_S", 0.12)
     speech_pre_roll_s: float = _float("JARVIS_SPEECH_PRE_ROLL_S", 0.60)
-    speech_onset_blocks: int = _int("JARVIS_SPEECH_ONSET_BLOCKS", 2)
+    speech_onset_blocks: int = _int("JARVIS_SPEECH_ONSET_BLOCKS", 3)
+    speech_min_voiced_s: float = _float("JARVIS_SPEECH_MIN_VOICED_S", 0.28)
+    tts_settle_s: float = _float("JARVIS_TTS_SETTLE_S", 0.30)
 
     whisper_model: str = (os.getenv("JARVIS_WHISPER_MODEL") or "base").strip()
     whisper_device: str = (os.getenv("JARVIS_WHISPER_DEVICE") or "cpu").strip()
     whisper_compute_type: str = (
         os.getenv("JARVIS_WHISPER_COMPUTE_TYPE") or "int8"
     ).strip()
-    stt_language: str | None = (os.getenv("JARVIS_STT_LANGUAGE") or "").strip() or None
+    stt_language: str | None = (
+        os.getenv("JARVIS_STT_LANGUAGE") or "fr"
+    ).strip() or None
     stt_command_retry_language: str | None = (
         os.getenv("JARVIS_STT_COMMAND_RETRY_LANGUAGE") or "fr"
     ).strip() or None
