@@ -64,6 +64,10 @@ class AssistantWorker(QObject):
                     self._stop,
                     on_level=self._level,
                     on_status=self.status_changed.emit,
+                    on_armed=lambda: self._state(
+                        AssistantState.ARMED,
+                        "Prêt — double clap pour réveiller Jarvis",
+                    ),
                 )
                 if not detected or self._stop.is_set():
                     break
