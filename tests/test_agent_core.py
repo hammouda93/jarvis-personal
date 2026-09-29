@@ -85,5 +85,21 @@ class AgentCoreTests(unittest.TestCase):
         self.assertIn("Je veux ouvrir un dossier spécifique", second_context)
 
 
+
+    def test_reset_session_clears_short_term_context(self):
+        planner = FakePlanner([
+            PlanDecision(kind="clarify", question="Quel dossier ?"),
+        ])
+        core = AgentCore(registry=ToolRegistry(), planner=planner)
+
+        core.handle(
+            "Je veux ouvrir un dossier spécifique",
+            deterministic_intent=ToolIntent("unknown"),
+        )
+        self.assertIn("OBJECTIF EN ATTENTE", core.context_text())
+
+        core.reset_session()
+        self.assertEqual(core.context_text(), "")
+
 if __name__ == "__main__":
     unittest.main()
