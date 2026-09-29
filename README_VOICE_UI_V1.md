@@ -113,3 +113,19 @@ a sentence such as "Qui es-tu ?" from accidentally becoming "Ouvre Chrome".
 After one double clap, Jarvis stays in an active conversational session. It
 returns to wake mode after the follow-up timeout or when the user says
 "c'est tout" / "retourne en veille".
+
+
+## Recognition hardening
+
+V1 now runs French-first STT for short commands because automatic language
+detection was misclassifying very short French phrases as Hebrew, English or
+Polish. The generic Whisper prompt no longer contains application names, which
+reduces hallucinated commands such as "YouTube" or "Chrome".
+
+The recorder rejects very brief noise bursts, Whisper rejects probable silence
+and strong token repetition, and low-confidence PC actions are blocked. Open
+conversation is also confidence-gated before it reaches the AI brain.
+
+A local AI decision is not allowed to operate the PC unless the transcribed user
+request contains an explicit action request. This is an additional safety layer
+on top of typed tools.
