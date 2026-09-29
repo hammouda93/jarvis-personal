@@ -100,23 +100,54 @@ class AssistantWorker(QObject):
                 self.log_line.emit(
                     f"[STT] model={settings.whisper_model} device={settings.whisper_device}"
                 )
-                text, language = self._stt.transcribe(audio)
-                if not text:
+                result = self._stt.transcribe(audio)
+                if not result.text:
                     self._state(AssistantState.ERROR, "Phrase non comprise")
                     self._speak("Je n'ai pas compris.")
                     time.sleep(0.5)
                     continue
 
-                self.transcript_changed.emit(text)
-                self.log_line.emit(f"[YOU] {text}")
-                if language:
-                    self.detail_changed.emit(f"Langue détectée · {language}")
+                text = result.text
+                language = result.language
+                self.log_line.emit(
+                    f"[STT] first_pass language={language} "
+                    f"prob={result.language_probability} logprob={result.avg_logprob}"
+                )
 
                 self._state(
                     AssistantState.UNDERSTANDING,
                     "Compréhension de la demande…",
                 )
                 intent = route(text)
+
+                # Short multilingual utterances are where automatic Whisper
+                # language detection is least stable. If the first pass does
+                # not map to any safe V1 command, retry once with the preferred
+                # command language (French by default) and keep the retry only
+                # when it produces a known intent.
+                retry_language = settings.stt_command_retry_language
+                if (
+                    intent.name == "unknown"
+                    and settings.stt_language is None
+                    and retry_language
+                ):
+                    retry = self._stt.transcribe(audio, language=retry_language)
+                    retry_intent = route(retry.text) if retry.text else None
+                    self.log_line.emit(
+                        f"[STT] retry language={retry_language} "
+                        f"text={retry.text!r} logprob={retry.avg_logprob}"
+                    )
+                    if retry_intent is not None and retry_intent.name != "unknown":
+                        result = retry
+                        text = retry.text
+                        language = retry.language
+                        intent = retry_intent
+
+                self.transcript_changed.emit(text)
+                self.log_line.emit(f"[YOU] {text}")
+                if language:
+                    self.detail_changed.emit(f"Langue détectée · {language}")
+
                 self.detail_changed.emit(f"Intent · {intent.name}")
                 self.log_line.emit(f"[INTENT] {intent.name} {intent.args}")
 
