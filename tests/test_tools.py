@@ -45,6 +45,25 @@ class ToolRouterTests(unittest.TestCase):
         intent = route("c'est tout")
         self.assertEqual(intent.name, "assistant.sleep")
 
+
+    def test_time_joined_stt_variant(self):
+        intent = route("Quelleur est-il ?")
+        self.assertEqual(intent.name, "system.time")
+
+    def test_downloads_misheard_as_chargements(self):
+        intent = route("Ouvre les chargements")
+        self.assertEqual(intent.name, "folder.open")
+        self.assertEqual(intent.args["folder"], "downloads")
+
+    def test_downloads_misheard_oufre(self):
+        intent = route("Oufre téléchargement")
+        self.assertEqual(intent.name, "folder.open")
+        self.assertEqual(intent.args["folder"], "downloads")
+
+    def test_a_plus_sleeps_session(self):
+        intent = route("Jarvis a plus")
+        self.assertEqual(intent.name, "assistant.sleep")
+
     def test_unknown_is_safe(self):
         intent = route("supprime tous mes fichiers")
         self.assertEqual(intent.name, "unknown")
