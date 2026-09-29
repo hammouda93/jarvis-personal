@@ -64,6 +64,11 @@ class ToolRouterTests(unittest.TestCase):
         intent = route("Jarvis a plus")
         self.assertEqual(intent.name, "assistant.sleep")
 
+
+    def test_close_jarvis(self):
+        intent = route("Fermez Jarvis")
+        self.assertEqual(intent.name, "assistant.stop")
+
     def test_unknown_is_safe(self):
         intent = route("supprime tous mes fichiers")
         self.assertEqual(intent.name, "unknown")
