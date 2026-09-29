@@ -25,11 +25,14 @@ class ToolResult:
     message: str
     detail: str = ""
     should_exit: bool = False
+    end_session: bool = False
+    follow_up: str | None = None
 
 
 def normalize(text: str) -> str:
     value = unicodedata.normalize("NFKD", (text or "").lower().strip())
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = value.replace("’", "'")
     value = re.sub(r"[^\w\s'-]", " ", value, flags=re.UNICODE)
     value = re.sub(r"\s+", " ", value).strip()
 
@@ -40,6 +43,26 @@ def normalize(text: str) -> str:
     return value
 
 
+def _search_query_from_command(cmd: str) -> str:
+    body = re.sub(r"^(?:recherche|cherche)\b", "", cmd).strip()
+    body = re.sub(
+        r"^(?:sur\s+)?(?:internet|google|le\s+web|web)\b",
+        "",
+        body,
+    ).strip()
+    body = re.sub(
+        r"^(?:a\s+propos\s+(?:de|des|du|d')|au\s+sujet\s+(?:de|des|du|d'))\s*",
+        "",
+        body,
+    ).strip()
+    body = re.sub(
+        r"\s+(?:sur\s+)?(?:internet|google|le\s+web|web)$",
+        "",
+        body,
+    ).strip()
+    return body
+
+
 def route(text: str) -> ToolIntent:
     cmd = normalize(text)
 
@@ -48,6 +71,44 @@ def route(text: str) -> ToolIntent:
         for phrase in ("arrete jarvis", "eteins jarvis", "quitte jarvis")
     ):
         return ToolIntent("assistant.stop")
+
+    if cmd in {
+        "merci",
+        "c est tout",
+        "c'est tout",
+        "tu peux dormir",
+        "dors",
+        "retourne en veille",
+    }:
+        return ToolIntent("assistant.sleep")
+
+    # Time is checked before application commands so a noisy transcription
+    # containing an extra verb does not accidentally launch a browser.
+    if "heure" in cmd and any(
+        token in cmd
+        for token in (
+            "quelle",
+            "quel",
+            "est il",
+            "est-il",
+            "donne moi",
+            "donnes moi",
+            "dis moi",
+            "dit moi",
+        )
+    ):
+        return ToolIntent("system.time")
+
+    screenshot_terms = (
+        "capture ecran",
+        "capture d ecran",
+        "capture d'ecran",
+        "outil capture",
+        "snipping tool",
+    )
+    if any(term in cmd for term in screenshot_terms):
+        if any(word in cmd for word in ("ouvre", "ouvrir", "lance", "affiche", "outil")):
+            return ToolIntent("app.open", {"app": "snippingtool"})
 
     if any(word in cmd for word in ("ouvre", "ouvrir", "lance", "affiche")):
         if "youtube" in cmd:
@@ -65,23 +126,11 @@ def route(text: str) -> ToolIntent:
         if any(x in cmd for x in ("telechargements", "downloads")):
             return ToolIntent("folder.open", {"folder": "downloads"})
 
-    if any(
-        phrase in cmd
-        for phrase in (
-            "quelle heure est il",
-            "quelle heure",
-            "il est quelle heure",
-            "donne moi l heure",
-        )
-    ):
-        return ToolIntent("system.time")
-
-    match = re.search(
-        r"(?:recherche|cherche)\s+(.+?)(?:\s+sur\s+(?:internet|google|le web))?$",
-        cmd,
-    )
-    if match and match.group(1).strip():
-        return ToolIntent("browser.search", {"query": match.group(1).strip()})
+    if re.match(r"^(?:recherche|cherche)\b", cmd):
+        query = _search_query_from_command(cmd)
+        if not query:
+            return ToolIntent("browser.search_prompt")
+        return ToolIntent("browser.search", {"query": query})
 
     return ToolIntent("unknown", {"text": text})
 
@@ -108,6 +157,7 @@ def _spawn(candidates: list[str]) -> bool:
 
 def _open_application(app: str) -> ToolResult:
     local = os.getenv("LOCALAPPDATA", "")
+    windir = os.getenv("WINDIR", r"C:\Windows")
     program_files = os.getenv("ProgramFiles", r"C:\Program Files")
     program_files_x86 = os.getenv("ProgramFiles(x86)", r"C:\Program Files (x86)")
 
@@ -118,6 +168,23 @@ def _open_application(app: str) -> ToolResult:
         except OSError:
             webbrowser.open("https://open.spotify.com")
             return ToolResult(True, "J'ai ouvert Spotify dans le navigateur.")
+
+    if app == "snippingtool":
+        candidates = [
+            os.path.join(windir, "System32", "SnippingTool.exe"),
+            "SnippingTool.exe",
+        ]
+        if _spawn(candidates):
+            return ToolResult(True, "C'est fait.", "Outil Capture d'écran ouvert")
+        try:
+            os.startfile("ms-screenclip:")
+            return ToolResult(True, "C'est fait.", "Capture d'écran Windows ouverte")
+        except OSError:
+            return ToolResult(
+                False,
+                "Je n'ai pas trouvé l'outil Capture d'écran.",
+                "SnippingTool introuvable",
+            )
 
     candidates: dict[str, list[str]] = {
         "chrome": [
@@ -147,13 +214,35 @@ def execute(intent: ToolIntent) -> ToolResult:
     if intent.name == "assistant.stop":
         return ToolResult(True, "À bientôt monsieur.", should_exit=True)
 
+    if intent.name == "assistant.sleep":
+        return ToolResult(True, "Très bien.", end_session=True)
+
     if intent.name == "browser.open_url":
         url = str(intent.args["url"])
         ok = webbrowser.open(url)
-        return ToolResult(bool(ok), "C'est fait." if ok else "Je n'ai pas pu ouvrir le navigateur.", url)
+        return ToolResult(
+            bool(ok),
+            "C'est fait." if ok else "Je n'ai pas pu ouvrir le navigateur.",
+            url,
+        )
+
+    if intent.name == "browser.search_prompt":
+        return ToolResult(
+            True,
+            "Que voulez-vous rechercher ?",
+            "En attente du sujet de recherche",
+            follow_up="search_query",
+        )
 
     if intent.name == "browser.search":
-        query = str(intent.args["query"])
+        query = str(intent.args["query"]).strip()
+        if not query:
+            return ToolResult(
+                True,
+                "Que voulez-vous rechercher ?",
+                "En attente du sujet de recherche",
+                follow_up="search_query",
+            )
         url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
         ok = webbrowser.open(url)
         return ToolResult(bool(ok), f"Je recherche {query}.", url)
@@ -171,7 +260,11 @@ def execute(intent: ToolIntent) -> ToolResult:
 
     if intent.name == "system.time":
         now = dt.datetime.now()
-        return ToolResult(True, f"Il est {now:%H} heures {now:%M}.", now.isoformat())
+        return ToolResult(
+            True,
+            f"Il est {now:%H} heures {now:%M}.",
+            now.isoformat(),
+        )
 
     return ToolResult(
         False,
