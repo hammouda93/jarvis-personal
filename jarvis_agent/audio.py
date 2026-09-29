@@ -175,18 +175,31 @@ def record_utterance(
     on_level: LevelCallback | None = None,
     on_status: StatusCallback | None = None,
 ) -> np.ndarray | None:
-    """Record one phrase, starting on voice activity and ending after silence."""
+    """Record one phrase with adaptive VAD and a preserved pre-roll.
+
+    Important: the first few microphone blocks are *not* discarded. They are
+    kept in the pre-roll, so a user who starts speaking immediately after
+    Jarvis finishes talking will not lose the beginning of the sentence.
+    """
     blocksize = block_samples()
     device = input_device_index()
 
-    calibration_blocks = max(1, int(0.45 * settings.sample_rate / blocksize))
-    pre_roll_blocks = max(1, int(0.30 * settings.sample_rate / blocksize))
+    grace_blocks = max(
+        1, int(settings.speech_startup_grace_s * settings.sample_rate / blocksize)
+    )
+    pre_roll_blocks = max(
+        1, int(settings.speech_pre_roll_s * settings.sample_rate / blocksize)
+    )
     silence_blocks_needed = max(
         1, int(settings.speech_silence_s * settings.sample_rate / blocksize)
     )
-    max_blocks = max(
+    max_speech_blocks = max(
         1, int(settings.speech_max_duration_s * settings.sample_rate / blocksize)
     )
+    onset_blocks_needed = max(1, settings.speech_onset_blocks)
+
+    if on_status:
+        on_status("Je vous écoute…")
 
     with sd.InputStream(
         device=device,
@@ -195,64 +208,88 @@ def record_utterance(
         dtype="float32",
         blocksize=blocksize,
     ) as stream:
-        calibration: list[float] = []
-        for _ in range(calibration_blocks):
-            if stop_event.is_set():
-                return None
-            data, _ = stream.read(blocksize)
-            level = rms_mono(data)
-            calibration.append(level)
-            if on_level:
-                on_level(normalized_level(level))
-
-        noise = float(np.median(calibration)) if calibration else 0.001
-        threshold = max(
-            settings.speech_min_rms,
-            noise * settings.speech_threshold_multiplier,
-        )
-
-        if on_status:
-            on_status("Je vous écoute…")
-
+        # Keep all startup audio in the ring buffer. Windows audio devices may
+        # emit a transient when opening, but throwing the first 450 ms away was
+        # also throwing away the beginning of fast-spoken commands.
         pre_roll: collections.deque[np.ndarray] = collections.deque(
             maxlen=pre_roll_blocks
         )
+        startup_levels: list[float] = []
+        noise_floor = 0.001
+
         captured: list[np.ndarray] = []
         started = False
         silent_blocks = 0
-        total_blocks = 0
+        onset_hits = 0
+        speech_blocks = 0
+        seen_blocks = 0
         deadline = time.monotonic() + settings.speech_start_timeout_s
 
-        while total_blocks < max_blocks and not stop_event.is_set():
+        while not stop_event.is_set():
             data, overflowed = stream.read(blocksize)
-            total_blocks += 1
             if overflowed:
                 continue
 
             mono = data[:, 0].astype(np.float32, copy=True)
             level = rms_mono(mono)
-            if on_level:
-                on_level(
-                    normalized_level(level, reference=max(threshold * 5.0, 0.05))
-                )
+            seen_blocks += 1
 
             if not started:
                 pre_roll.append(mono)
+
+            # Short startup grace: learn the local noise floor but preserve the
+            # samples in pre-roll so early speech is still available.
+            if seen_blocks <= grace_blocks:
+                startup_levels.append(level)
+                if on_level:
+                    on_level(normalized_level(level))
+                continue
+
+            if startup_levels:
+                noise_floor = max(float(np.median(startup_levels)), 1e-5)
+                startup_levels.clear()
+
+            threshold = max(
+                settings.speech_min_rms,
+                noise_floor * settings.speech_threshold_multiplier,
+            )
+
+            if on_level:
+                on_level(
+                    normalized_level(level, reference=max(threshold * 5.0, 0.035))
+                )
+
+            if not started:
+                # Update the floor only with quiet-ish blocks. This prevents a
+                # voice onset from teaching the detector that speech is noise.
+                if level < threshold * 0.85:
+                    noise_floor = 0.985 * noise_floor + 0.015 * level
+                    noise_floor = max(noise_floor, 1e-6)
+
                 if level >= threshold:
+                    onset_hits += 1
+                else:
+                    onset_hits = 0
+
+                # Require a very short sustained onset (~80 ms at the default
+                # block size) to reject clicks while still catching soft speech.
+                if onset_hits >= onset_blocks_needed:
                     started = True
                     captured.extend(list(pre_roll))
                     pre_roll.clear()
-                    captured.append(mono)
                     silent_blocks = 0
+                    speech_blocks = 0
                     if on_status:
                         on_status("Voix détectée")
                 elif time.monotonic() >= deadline:
                     return None
+
                 continue
 
             captured.append(mono)
+            speech_blocks += 1
 
-            if level < threshold * 0.75:
+            if level < threshold * 0.68:
                 silent_blocks += 1
             else:
                 silent_blocks = 0
@@ -260,14 +297,16 @@ def record_utterance(
             if silent_blocks >= silence_blocks_needed:
                 break
 
+            if speech_blocks >= max_speech_blocks:
+                break
+
     if not captured:
         return None
 
     audio = np.concatenate(captured).astype(np.float32, copy=False)
-    if audio.size < int(settings.sample_rate * 0.20):
+    if audio.size < int(settings.sample_rate * 0.18):
         return None
     return audio
-
 
 def save_temp_wav(audio: np.ndarray) -> Path:
     pcm = np.clip(audio, -1.0, 1.0)
