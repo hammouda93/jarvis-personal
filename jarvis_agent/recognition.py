@@ -4,7 +4,6 @@ from typing import Callable
 
 import numpy as np
 
-from .config import settings
 from .stt import LocalWhisperSTT, TranscriptResult
 from .tools import ToolIntent, route
 
@@ -12,15 +11,13 @@ from .tools import ToolIntent, route
 LogFn = Callable[[str], None]
 
 
-def _is_action_intent(intent: ToolIntent) -> bool:
+def _is_pc_action(intent: ToolIntent) -> bool:
     return intent.name in {
         "browser.open_url",
         "browser.search",
         "app.open",
         "folder.open",
-        "system.time",
         "assistant.stop",
-        "assistant.sleep",
     }
 
 
@@ -30,72 +27,38 @@ def recognize_command(
     *,
     log: LogFn | None = None,
 ) -> tuple[TranscriptResult, ToolIntent]:
-    first = stt.transcribe(audio)
-    intent = route(first.text) if first.text else ToolIntent("unknown")
+    # Current V1 is French-first on purpose. Very short auto-language
+    # detection was the source of Hebrew/English/Polish hallucinations.
+    transcript = stt.transcribe(audio)
+    intent = route(transcript.text) if transcript.text else ToolIntent("unknown")
 
     if log:
         log(
-            f"[STT] first_pass language={first.language} "
-            f"prob={first.language_probability} logprob={first.avg_logprob}"
+            f"[STT] language={transcript.language} "
+            f"prob={transcript.language_probability} "
+            f"logprob={transcript.avg_logprob} "
+            f"no_speech={transcript.no_speech_probability} "
+            f"rejected={transcript.rejected_reason}"
         )
 
-    retry_language = settings.stt_command_retry_language
-    probability = first.language_probability
-    low_language_confidence = (
-        probability is None
-        or probability < settings.stt_retry_language_probability
-    )
-    low_text_confidence = (
-        first.avg_logprob is not None
-        and first.avg_logprob < -0.70
-    )
-    different_language = (
-        retry_language is not None
-        and first.language is not None
-        and first.language != retry_language
-    )
+    if not transcript.text:
+        return transcript, ToolIntent("unknown")
 
-    # A short hallucinated transcript must never become a PC action merely
-    # because it happens to contain "ouvre Chrome". For actionable intents,
-    # weak language/text confidence triggers a second decode in the preferred
-    # command language. If the two decodes disagree, prefer the safer retry.
-    should_retry = (
-        settings.stt_language is None
-        and retry_language is not None
-        and (
-            intent.name == "unknown"
-            or (
-                _is_action_intent(intent)
-                and (
-                    different_language
-                    or low_language_confidence
-                    or low_text_confidence
-                )
-            )
-        )
+    # Safety rule: never let a weak transcript trigger a PC action.
+    # A bad transcription can still be sent to the conversational AI as text,
+    # but it must not open apps, websites or files by itself.
+    weak_text = (
+        transcript.avg_logprob is not None
+        and transcript.avg_logprob < -0.90
+    )
+    probable_silence = (
+        transcript.no_speech_probability is not None
+        and transcript.no_speech_probability >= 0.55
     )
 
-    if not should_retry:
-        return first, intent
+    if _is_pc_action(intent) and (weak_text or probable_silence):
+        if log:
+            log("[STT] action blocked because transcript confidence is too low")
+        return transcript, ToolIntent("unknown", {"text": transcript.text})
 
-    retry = stt.transcribe(audio, language=retry_language)
-    retry_intent = route(retry.text) if retry.text else ToolIntent("unknown")
-
-    if log:
-        log(
-            f"[STT] retry language={retry_language} "
-            f"text={retry.text!r} logprob={retry.avg_logprob}"
-        )
-
-    if intent.name == "unknown":
-        if retry.text:
-            return retry, retry_intent
-        return first, intent
-
-    # First pass looked actionable but was low-confidence. Do not execute it
-    # unless the preferred-language pass supports the same action. If the retry
-    # says something else (including a normal question), use the retry instead.
-    if retry.text:
-        return retry, retry_intent
-
-    return first, ToolIntent("unknown", {"text": first.text})
+    return transcript, intent
