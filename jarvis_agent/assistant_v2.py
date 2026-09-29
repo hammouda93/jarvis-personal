@@ -85,8 +85,9 @@ class AssistantWorker(QObject):
         if ai_intent is None:
             self.log_line.emit("[AI] rejected invalid or unsafe tool decision")
             return None, (
-                decision.message
-                or "Je comprends la demande, mais cet outil n'est pas encore autorisé."
+                "Je pense avoir compris l'action, mais je préfère éviter "
+                "d'exécuter quelque chose de différent de ce que vous avez demandé. "
+                "Pouvez-vous reformuler ?"
             )
 
         return ai_intent, None
@@ -161,7 +162,7 @@ class AssistantWorker(QObject):
 
         weak_for_conversation = (
             transcript.avg_logprob is not None
-            and transcript.avg_logprob < -0.80
+            and transcript.avg_logprob < -1.05
         )
         probable_silence = (
             transcript.no_speech_probability is not None
