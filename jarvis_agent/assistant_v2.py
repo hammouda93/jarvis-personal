@@ -160,14 +160,21 @@ class AssistantWorker(QObject):
             f"[STT] model={settings.whisper_model} device={settings.whisper_device}"
         )
 
-        if pending_follow_up == "search_query":
+        if pending_follow_up in {"search_query", "folder_name"}:
             transcript = self._stt.transcribe(audio, language="auto")
-            intent = ToolIntent(
-                "browser.search",
-                {"query": transcript.text.strip()},
-            )
+            if pending_follow_up == "search_query":
+                intent = ToolIntent(
+                    "browser.search",
+                    {"query": transcript.text.strip()},
+                )
+            else:
+                intent = ToolIntent(
+                    "folder.open_named",
+                    {"query": transcript.text.strip()},
+                )
             self.log_line.emit(
-                f"[STT] follow_up language={transcript.language} "
+                f"[STT] follow_up={pending_follow_up} "
+                f"language={transcript.language} "
                 f"prob={transcript.language_probability} "
                 f"logprob={transcript.avg_logprob}"
             )
