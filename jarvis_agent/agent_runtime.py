@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -15,6 +17,9 @@ PhaseFn = Callable[[str], None]
 
 
 _SYSTEM_INSTRUCTIONS = """Tu es Jarvis, l'assistant personnel de l'utilisateur sur Windows.
+
+/no_think
+
 
 Le français est la langue principale actuelle. Réponds naturellement, brièvement
 et comme un vrai assistant, pas comme une documentation technique.
@@ -45,6 +50,9 @@ Exemples:
 - "Tu te rappelles quel sport j'aime ?" => utiliser recall_information.
 
 Tu peux converser normalement sans outil lorsqu'aucune action réelle n'est demandée.
+Ne révèle jamais de raisonnement interne, de chaîne de pensée, de balises <think>
+ou de notes techniques destinées au modèle. Seule la réponse finale utile doit
+être visible ou prononcée.
 """
 
 
@@ -72,6 +80,36 @@ class AgentRuntime(Protocol):
 
 class AgentRuntimeUnavailable(RuntimeError):
     pass
+
+
+_THINK_BLOCK_RE = re.compile(
+    r"<think>.*?</think>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _visible_text(value: str) -> str:
+    """Keep only user-facing model output, never internal reasoning text."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    # Some Qwen templates may return reasoning in content instead of the
+    # dedicated thinking field. If a closing tag exists, the useful answer is
+    # normally what follows it.
+    if "</think>" in text.lower():
+        lower = text.lower()
+        index = lower.rfind("</think>")
+        text = text[index + len("</think>"):]
+
+    text = _THINK_BLOCK_RE.sub("", text)
+
+    # Defensive handling for an unterminated block.
+    lower = text.lower()
+    if "<think>" in lower:
+        text = text[: lower.find("<think>")]
+
+    return text.strip()
 
 
 class OllamaToolAgent:
@@ -108,7 +146,7 @@ class OllamaToolAgent:
         try:
             with urllib.request.urlopen(
                 req,
-                timeout=settings.ai_request_timeout_s,
+                timeout=settings.ollama_agent_timeout_s,
             ) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
@@ -123,7 +161,7 @@ class OllamaToolAgent:
             raise AgentRuntimeUnavailable(
                 "Ollama n'est pas joignable sur ce PC."
             ) from exc
-        except TimeoutError as exc:
+        except (TimeoutError, socket.timeout) as exc:
             raise AgentRuntimeUnavailable(
                 "Le modèle local a mis trop de temps à répondre."
             ) from exc
@@ -135,7 +173,12 @@ class OllamaToolAgent:
         log: LogFn | None = None,
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
-        self._messages.append({"role": "user", "content": user_text})
+        self._messages.append(
+            {
+                "role": "user",
+                "content": f"{user_text}\n/no_think",
+            }
+        )
         actions: list[AgentActionResult] = []
         end_session = False
         should_exit = False
@@ -156,12 +199,16 @@ class OllamaToolAgent:
                     "tools": self.tools.ollama_tools(),
                     "stream": False,
                     "think": False,
-                    "options": {"temperature": 0.15},
+                    "options": {
+                        "temperature": 0.10,
+                        "num_ctx": settings.ollama_agent_num_ctx,
+                        "num_predict": settings.ollama_agent_num_predict,
+                    },
                     "keep_alive": "10m",
                 }
             )
             message = data.get("message") or {}
-            content = str(message.get("content") or "").strip()
+            content = _visible_text(message.get("content") or "")
             tool_calls = message.get("tool_calls") or []
 
             assistant_item: dict[str, Any] = {
