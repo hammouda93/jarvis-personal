@@ -266,6 +266,12 @@ class AssistantWorker(QObject):
         if tool_result.detail:
             self.detail_changed.emit(tool_result.detail)
 
+        spoken_result = tool_message(
+            intent,
+            tool_result,
+            self._conversation_language,
+        )
+
         try:
             self._brain.remember_tool_result(
                 user_text,
@@ -275,11 +281,6 @@ class AssistantWorker(QObject):
         except Exception as exc:
             self.log_line.emit(f"[AI] memory note skipped: {exc}")
 
-        spoken_result = tool_message(
-            intent,
-            tool_result,
-            self._conversation_language,
-        )
         self._speak(spoken_result)
 
         if tool_result.should_exit:
