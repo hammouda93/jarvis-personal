@@ -48,6 +48,8 @@ class AssistantWorker(QObject):
         self._state(AssistantState.SPEAKING, text)
         self.log_line.emit(f"[TTS] {text}")
         self._tts.speak(text, on_level=self._level)
+        if settings.tts_settle_s > 0:
+            time.sleep(settings.tts_settle_s)
 
     @Slot()
     def stop(self) -> None:
@@ -79,7 +81,7 @@ class AssistantWorker(QObject):
         if decision.kind == "answer":
             return None, decision.message
 
-        ai_intent = decision_to_intent(decision)
+        ai_intent = decision_to_intent(decision, user_text=user_text)
         if ai_intent is None:
             self.log_line.emit("[AI] rejected invalid or unsafe tool decision")
             return None, (
@@ -156,6 +158,25 @@ class AssistantWorker(QObject):
         )
         self.detail_changed.emit(f"Intent · {intent.name}")
         self.log_line.emit(f"[INTENT] {intent.name} {intent.args}")
+
+        weak_for_conversation = (
+            transcript.avg_logprob is not None
+            and transcript.avg_logprob < -0.80
+        )
+        probable_silence = (
+            transcript.no_speech_probability is not None
+            and transcript.no_speech_probability >= 0.50
+        )
+
+        if (
+            intent.name == "unknown"
+            and (weak_for_conversation or probable_silence)
+        ):
+            self.log_line.emit(
+                "[STT] weak open-ended transcript rejected before AI"
+            )
+            self._speak("Je n'ai pas bien compris. Pouvez-vous répéter ?")
+            return True, None
 
         intent, direct_answer = self._use_ai_if_needed(user_text, intent)
 
