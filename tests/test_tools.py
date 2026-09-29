@@ -69,6 +69,20 @@ class ToolRouterTests(unittest.TestCase):
         intent = route("Fermez Jarvis")
         self.assertEqual(intent.name, "assistant.stop")
 
+
+    def test_misheard_auvre_youtube(self):
+        intent = route("Auvre YouTube")
+        self.assertEqual(intent.name, "browser.open_url")
+
+    def test_named_folder_directly(self):
+        intent = route("Ouvre le dossier baristas")
+        self.assertEqual(intent.name, "folder.open_named")
+        self.assertEqual(intent.args["query"], "baristas")
+
+    def test_vague_folder_request_asks_followup(self):
+        intent = route("Je veux ouvrir un dossier spécifique")
+        self.assertEqual(intent.name, "folder.open_prompt")
+
     def test_unknown_is_safe(self):
         intent = route("supprime tous mes fichiers")
         self.assertEqual(intent.name, "unknown")
