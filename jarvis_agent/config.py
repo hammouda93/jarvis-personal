@@ -96,6 +96,9 @@ class Settings:
     ).strip()
 
     ai_provider: str = (os.getenv("JARVIS_AI_PROVIDER") or "ollama").strip()
+    planner_provider: str = (
+        os.getenv("JARVIS_PLANNER_PROVIDER") or "ollama"
+    ).strip()
     ollama_base_url: str = (
         os.getenv("JARVIS_OLLAMA_BASE_URL") or "http://127.0.0.1:11434"
     ).strip()
