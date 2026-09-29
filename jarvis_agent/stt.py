@@ -137,6 +137,11 @@ class LocalWhisperSTT:
         path = save_temp_wav(audio)
         try:
             requested = language if language is not None else settings.stt_language
+            if (
+                requested == "auto"
+                and settings.stt_language not in {None, "", "auto"}
+            ):
+                requested = settings.stt_language
             effective_language = None if requested in {None, "", "auto"} else requested
             return self._decode(path, language=effective_language)
         finally:
