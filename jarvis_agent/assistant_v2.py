@@ -10,7 +10,13 @@ from .audio import record_utterance, wait_for_double_clap
 from .brain import (
     AIProviderUnavailable,
     build_ai_provider,
-    decision_to_intent,
+    validate_tool_decision,
+)
+from .capabilities import (
+    confirmation_prompt,
+    detect_missing_capability,
+    is_affirmative,
+    is_negative,
 )
 from .config import settings
 from .recognition import recognize_command
@@ -35,6 +41,7 @@ class AssistantWorker(QObject):
         self._stt = LocalWhisperSTT()
         self._tts = ElevenLabsTTS()
         self._brain = build_ai_provider()
+        self._pending_confirmation_intent: ToolIntent | None = None
 
     def _state(self, state: AssistantState, status: str | None = None) -> None:
         self.state_changed.emit(state.value)
@@ -63,6 +70,11 @@ class AssistantWorker(QObject):
         if intent.name != "unknown":
             return intent, None
 
+        missing = detect_missing_capability(user_text)
+        if missing is not None:
+            self.log_line.emit(f"[CAPABILITY] missing={missing.key}")
+            return None, missing.message
+
         self._state(AssistantState.THINKING, "Réflexion locale…")
         try:
             decision = self._brain.decide(user_text)
@@ -81,16 +93,40 @@ class AssistantWorker(QObject):
         if decision.kind == "answer":
             return None, decision.message
 
-        ai_intent = decision_to_intent(decision, user_text=user_text)
-        if ai_intent is None:
-            self.log_line.emit("[AI] rejected invalid or unsafe tool decision")
+        validation = validate_tool_decision(
+            decision,
+            user_text=user_text,
+        )
+        self.log_line.emit(
+            f"[AI] tool_validation={validation.reason}"
+        )
+
+        if validation.reason == "ok" and validation.intent is not None:
+            return validation.intent, None
+
+        if (
+            validation.reason == "confirmation_required"
+            and validation.intent is not None
+        ):
+            self._pending_confirmation_intent = validation.intent
+            return None, confirmation_prompt(validation.intent)
+
+        missing = detect_missing_capability(user_text)
+        if missing is not None:
+            self.log_line.emit(f"[CAPABILITY] missing={missing.key}")
+            return None, missing.message
+
+        if validation.reason == "unsupported_tool":
             return None, (
-                "Je pense avoir compris l'action, mais je préfère éviter "
-                "d'exécuter quelque chose de différent de ce que vous avez demandé. "
-                "Pouvez-vous reformuler ?"
+                "J'ai compris ce que vous voulez faire, mais je ne dispose "
+                "pas encore de cette capacité."
             )
 
-        return ai_intent, None
+        return None, (
+            "Je pense avoir compris votre intention, mais l'action proposée "
+            "ne correspond pas assez précisément à votre demande. "
+            "Pouvez-vous préciser ce que vous voulez que je fasse ?"
+        )
 
     def _listen_turn(
         self,
@@ -148,6 +184,24 @@ class AssistantWorker(QObject):
         user_text = transcript.text
         self.transcript_changed.emit(user_text)
         self.log_line.emit(f"[YOU] {user_text}")
+
+        if self._pending_confirmation_intent is not None:
+            if is_affirmative(user_text):
+                intent = self._pending_confirmation_intent
+                self._pending_confirmation_intent = None
+                self.log_line.emit(
+                    f"[CONFIRM] accepted intent={intent.name} {intent.args}"
+                )
+            elif is_negative(user_text):
+                self.log_line.emit("[CONFIRM] rejected")
+                self._pending_confirmation_intent = None
+                self._speak("D'accord, je n'exécute pas cette action.")
+                return True, None
+            else:
+                self.log_line.emit(
+                    "[CONFIRM] no clear yes/no — treating as a new request"
+                )
+                self._pending_confirmation_intent = None
         if transcript.language:
             self.detail_changed.emit(
                 f"Langue détectée · {transcript.language}"
