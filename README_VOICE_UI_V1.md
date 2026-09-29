@@ -129,3 +129,60 @@ conversation is also confidence-gated before it reaches the AI brain.
 A local AI decision is not allowed to operate the PC unless the transcribed user
 request contains an explicit action request. This is an additional safety layer
 on top of typed tools.
+
+
+## Agent Core / Planner / Mission Engine
+
+The voice layer no longer has to decide every action itself.
+
+Current orchestration:
+
+```text
+voice
+  -> local STT
+  -> deterministic fast-path when confidence is high
+  -> Agent Core
+       -> Planner
+       -> Capability Registry
+       -> Mission
+            -> typed step 1
+            -> typed step 2
+            -> ...
+       -> Mission Engine
+       -> result/context
+  -> TTS
+```
+
+Key files:
+
+- `jarvis_agent/agent_core.py`: orchestration and recent mission context.
+- `jarvis_agent/planner.py`: objective-to-plan reasoning. Ollama is the current
+  provider, behind a Planner interface.
+- `jarvis_agent/registry.py`: dynamic list of tools the planner is allowed to
+  use and argument canonicalization.
+- `jarvis_agent/mission.py`: typed sequential execution with per-step status,
+  stop-on-failure and mission logs.
+
+A request such as:
+
+```text
+Ouvre Chrome et recherche les agents IA
+```
+
+can now be planned as two steps rather than being reduced to the first command.
+
+Generic application and folder discovery are capabilities rather than one
+hard-coded phrase per target. A planner mistake such as `app.open("VLC")` is
+canonicalized to generic application discovery. Named folders can carry a
+parent scope, e.g. `query="media", within="baristas"`.
+
+The current development mode remains French-first:
+
+```env
+JARVIS_STT_LANGUAGE=fr
+JARVIS_PLANNER_PROVIDER=ollama
+```
+
+The Planner protocol is intentionally provider-independent so a stronger cloud
+planner can be added later without rewriting voice capture, tools or the Mission
+Engine.
