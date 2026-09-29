@@ -345,6 +345,7 @@ class AssistantWorker(QObject):
                     break
 
                 self.log_line.emit("[SESSION] conversation active")
+                self._pending_confirmation_intent = None
                 first_turn = True
                 pending_follow_up: str | None = None
 
