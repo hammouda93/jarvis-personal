@@ -269,6 +269,84 @@ def _normalize_path_name(value: str) -> str:
     return normalize(value)
 
 
+def _app_search_roots() -> list[Path]:
+    appdata = os.getenv("APPDATA", "")
+    programdata = os.getenv("PROGRAMDATA", r"C:\ProgramData")
+    program_files = os.getenv("ProgramFiles", r"C:\Program Files")
+    program_files_x86 = os.getenv("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    roots = [
+        Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+        if appdata else None,
+        Path(programdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs",
+        Path(program_files),
+        Path(program_files_x86),
+        Path.home() / "Desktop",
+    ]
+    return [
+        root for root in roots
+        if root is not None and root.exists() and root.is_dir()
+    ]
+
+
+def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
+    wanted = _normalize_path_name(query)
+    if not wanted:
+        return None, []
+
+    scored: list[tuple[float, Path]] = []
+    seen: set[str] = set()
+
+    def consider(path: Path) -> None:
+        key = str(path).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        name = _normalize_path_name(path.stem)
+        if not name:
+            return
+        if wanted == name:
+            score = 1.0
+        elif wanted in name or name in wanted:
+            score = 0.94
+        else:
+            score = difflib.SequenceMatcher(None, wanted, name).ratio()
+        if score >= 0.72:
+            scored.append((score, path))
+
+    for root in _app_search_roots():
+        base_depth = len(root.parts)
+        visited = 0
+        try:
+            for current, dirs, files in os.walk(root):
+                current_path = Path(current)
+                depth = len(current_path.parts) - base_depth
+                if depth >= 3:
+                    dirs[:] = []
+                    continue
+                for filename in files:
+                    suffix = Path(filename).suffix.lower()
+                    if suffix not in {".lnk", ".exe"}:
+                        continue
+                    consider(current_path / filename)
+                    visited += 1
+                    if visited >= 1200:
+                        dirs[:] = []
+                        break
+                if visited >= 1200:
+                    break
+        except OSError:
+            continue
+
+    scored.sort(key=lambda item: (-item[0], len(str(item[1]))))
+    matches = [path for _score, path in scored[:5]]
+    if not matches:
+        return None, []
+
+    if scored[0][0] >= 0.84:
+        return scored[0][1], matches
+    return None, matches
+
+
 def _folder_search_roots() -> list[Path]:
     roots: list[Path] = []
     configured = os.getenv("JARVIS_FOLDER_ROOTS", "").strip()
@@ -389,6 +467,37 @@ def execute(intent: ToolIntent) -> ToolResult:
 
     if intent.name == "app.open":
         return _open_application(str(intent.args["app"]))
+
+    if intent.name == "app.open_named":
+        query = str(intent.args.get("query", "")).strip()
+        path, matches = _find_named_app(query)
+        if path is not None:
+            try:
+                os.startfile(str(path))
+                return ToolResult(
+                    True,
+                    f"J'ai ouvert {path.stem}.",
+                    str(path),
+                )
+            except OSError as exc:
+                return ToolResult(
+                    False,
+                    f"Je n'ai pas pu ouvrir {path.stem}.",
+                    str(exc),
+                )
+        if matches:
+            choices = ", ".join(item.stem for item in matches[:3])
+            return ToolResult(
+                False,
+                f"J'ai trouvé plusieurs applications proches : {choices}. Pouvez-vous préciser ?",
+                " | ".join(str(item) for item in matches[:3]),
+            )
+        return ToolResult(
+            False,
+            f"Je n'ai pas trouvé d'application correspondant à {query}.",
+            query,
+        )
+
 
     if intent.name == "folder.open_prompt":
         return ToolResult(
