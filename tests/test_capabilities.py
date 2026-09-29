@@ -20,10 +20,9 @@ class CapabilityTests(unittest.TestCase):
             "Voulez-vous que j'ouvre YouTube ?",
         )
 
-    def test_detect_vlc_missing_capability(self):
+    def test_vlc_is_left_to_generic_app_discovery(self):
         result = detect_missing_capability("Ouvre VLC Media Player")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.key, "app.vlc")
+        self.assertIsNone(result)
 
     def test_detect_whatsapp_missing_capability(self):
         result = detect_missing_capability(
