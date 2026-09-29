@@ -97,7 +97,7 @@ voice, UI or tool layers.
 Default local model:
 
 ```text
-qwen3:4b-instruct
+gemma3:latest
 ```
 
 Examples:
