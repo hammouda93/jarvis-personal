@@ -94,7 +94,10 @@ Outils autorisés:
 Pour une question générale, une discussion, une explication, "qui es-tu ?",
 "pourquoi...", "comment...", etc., retourne kind=answer.
 Pour l'heure actuelle, n'invente jamais l'heure: utilise toujours system.time.
-Réponds dans la langue de l'utilisateur quand c'est clair.
+Réponds toujours dans la langue de la dernière phrase de l'utilisateur:
+français, anglais ou arabe. Si l'utilisateur parle en arabe tunisien, réponds
+naturellement en arabe tunisien quand tu le comprends. Il peut changer de langue
+d'une phrase à l'autre; suis ce changement sans lui demander de choisir une langue.
 Ne choisis jamais un outil uniquement parce qu'un mot ressemble au nom d'une
 application. Une action sur le PC doit être clairement demandée par l'utilisateur.
 """
@@ -224,6 +227,14 @@ def _explicit_action_requested(user_text: str, tool: str) -> bool:
                 "sur internet",
                 "sur google",
                 "sur le web",
+                "search",
+                "find",
+                "look up",
+                "on the web",
+                "online",
+                "ابحث",
+                "دور",
+                "فتش",
             ),
         )
 
@@ -239,6 +250,13 @@ def _explicit_action_requested(user_text: str, tool: str) -> bool:
                 "va sur",
                 "accede",
                 "accède",
+                "open",
+                "launch",
+                "show",
+                "go to",
+                "افتح",
+                "شغل",
+                "حل",
             ),
         )
 
@@ -252,13 +270,18 @@ def _explicit_action_requested(user_text: str, tool: str) -> bool:
                 "c'est tout",
                 "a plus",
                 "au revoir",
+                "sleep",
+                "standby",
+                "go to sleep",
+                "نم",
+                "استنى",
             ),
         )
 
     if tool == "system.time":
         return _contains_any(
             text,
-            ("heure", "quelleur", "quelheur", "horaire"),
+            ("heure", "quelleur", "quelheur", "horaire", "time", "الوقت", "الساعة"),
         )
 
     return False
@@ -274,7 +297,7 @@ def _tool_arguments_are_grounded(
     if decision.tool == "app.open":
         app = str(args.get("app", "")).strip().lower()
         aliases: dict[str, tuple[str, ...]] = {
-            "chrome": ("chrome", "google chrome", "creme", "crhome"),
+            "chrome": ("chrome", "google chrome", "creme", "crhome", "كروم"),
             "spotify": ("spotify",),
             "cursor": ("cursor",),
             "vscode": ("vs code", "vscode", "visual studio code"),
@@ -297,8 +320,13 @@ def _tool_arguments_are_grounded(
                 "telechargement",
                 "telechargements",
                 "downloads",
+                "download",
                 "chargement",
                 "chargements",
+                "التنزيلات",
+                "تنزيلات",
+                "التحميلات",
+                "تحميلات",
             ),
         )
 
@@ -314,7 +342,10 @@ def _tool_arguments_are_grounded(
         return any(normalize(label) in text for label in labels if label)
 
     if decision.tool == "system.time":
-        return _contains_any(text, ("heure", "quelleur", "quelheur", "horaire"))
+        return _contains_any(
+            text,
+            ("heure", "quelleur", "quelheur", "horaire", "time", "الوقت", "الساعة"),
+        )
 
     return True
 
