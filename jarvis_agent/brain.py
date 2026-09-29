@@ -6,6 +6,7 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from .config import settings
 from .tools import ToolIntent, normalize
@@ -86,6 +87,7 @@ Outils autorisés:
 
 Pour une question générale, une discussion, une explication, "qui es-tu ?",
 "pourquoi...", "comment...", etc., retourne kind=answer.
+Pour l'heure actuelle, n'invente jamais l'heure: utilise toujours system.time.
 Réponds dans la langue de l'utilisateur quand c'est clair.
 Ne choisis jamais un outil uniquement parce qu'un mot ressemble au nom d'une
 application. Une action sur le PC doit être clairement demandée par l'utilisateur.
@@ -199,26 +201,30 @@ class OllamaProvider:
         )
 
 
+def _contains_any(text: str, values: tuple[str, ...]) -> bool:
+    return any(value in text for value in values)
+
+
 def _explicit_action_requested(user_text: str, tool: str) -> bool:
     text = normalize(user_text)
 
     if tool == "browser.search":
-        return any(
-            token in text
-            for token in (
+        return _contains_any(
+            text,
+            (
                 "cherche",
                 "recherche",
                 "trouve",
                 "sur internet",
                 "sur google",
                 "sur le web",
-            )
+            ),
         )
 
     if tool in {"browser.open_url", "app.open", "folder.open"}:
-        return any(
-            token in text
-            for token in (
+        return _contains_any(
+            text,
+            (
                 "ouvre",
                 "ouvrir",
                 "lance",
@@ -227,19 +233,84 @@ def _explicit_action_requested(user_text: str, tool: str) -> bool:
                 "va sur",
                 "accede",
                 "accède",
-            )
+            ),
         )
 
     if tool == "assistant.sleep":
-        return any(
-            token in text
-            for token in ("dors", "veille", "c est tout", "c'est tout")
+        return _contains_any(
+            text,
+            (
+                "dors",
+                "veille",
+                "c est tout",
+                "c'est tout",
+                "a plus",
+                "au revoir",
+            ),
         )
 
     if tool == "system.time":
-        return "heure" in text
+        return _contains_any(
+            text,
+            ("heure", "quelleur", "quelheur", "horaire"),
+        )
 
     return False
+
+
+def _tool_arguments_are_grounded(
+    decision: AgentDecision,
+    user_text: str,
+) -> bool:
+    text = normalize(user_text)
+    args = dict(decision.args or {})
+
+    if decision.tool == "app.open":
+        app = str(args.get("app", "")).strip().lower()
+        aliases: dict[str, tuple[str, ...]] = {
+            "chrome": ("chrome", "google chrome", "creme", "crhome"),
+            "spotify": ("spotify",),
+            "cursor": ("cursor",),
+            "vscode": ("vs code", "vscode", "visual studio code"),
+            "snippingtool": (
+                "capture ecran",
+                "capture d ecran",
+                "capture d'ecran",
+                "snipping",
+            ),
+        }
+        return app in aliases and _contains_any(text, aliases[app])
+
+    if decision.tool == "folder.open":
+        folder = str(args.get("folder", "")).strip().lower()
+        if folder != "downloads":
+            return False
+        return _contains_any(
+            text,
+            (
+                "telechargement",
+                "telechargements",
+                "downloads",
+                "chargement",
+                "chargements",
+            ),
+        )
+
+    if decision.tool == "browser.open_url":
+        url = str(args.get("url", "")).strip()
+        try:
+            host = (urlparse(url).hostname or "").lower()
+        except ValueError:
+            return False
+        if not host:
+            return False
+        labels = [part for part in host.split(".") if part not in {"www", "com", "net", "org"}]
+        return any(normalize(label) in text for label in labels if label)
+
+    if decision.tool == "system.time":
+        return _contains_any(text, ("heure", "quelleur", "quelheur", "horaire"))
+
+    return True
 
 
 def decision_to_intent(
@@ -251,6 +322,9 @@ def decision_to_intent(
         return None
 
     if not _explicit_action_requested(user_text, decision.tool):
+        return None
+
+    if not _tool_arguments_are_grounded(decision, user_text):
         return None
 
     args = dict(decision.args or {})
