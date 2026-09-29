@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import difflib
 import os
 import re
 import shutil
@@ -133,6 +134,28 @@ def route(text: str) -> ToolIntent:
         if any(word in cmd for word in ("ouvre", "ouvrir", "lance", "affiche", "outil")):
             return ToolIntent("app.open", {"app": "snippingtool"})
 
+    if (
+        "dossier" in cmd
+        and any(
+            phrase in cmd
+            for phrase in (
+                "ouvre",
+                "ouvrir",
+                "je veux ouvrir",
+                "je voudrais ouvrir",
+            )
+        )
+        and not any(
+            known in cmd
+            for known in (
+                "telechargement",
+                "telechargements",
+                "downloads",
+            )
+        )
+    ):
+        return ToolIntent("folder.open_prompt")
+
     if any(word in cmd for word in ("ouvre", "ouvrir", "lance", "affiche")):
         if "youtube" in cmd:
             return ToolIntent("browser.open_url", {"url": "https://www.youtube.com"})
@@ -241,6 +264,92 @@ def _open_application(app: str) -> ToolResult:
     return ToolResult(False, f"Je n'ai pas trouvé {app}.", f"Application introuvable: {app}")
 
 
+def _normalize_path_name(value: str) -> str:
+    value = value.replace("_", " ").replace("-", " ")
+    return normalize(value)
+
+
+def _folder_search_roots() -> list[Path]:
+    roots: list[Path] = []
+    configured = os.getenv("JARVIS_FOLDER_ROOTS", "").strip()
+    if configured:
+        for raw in configured.split(";"):
+            raw = os.path.expandvars(os.path.expanduser(raw.strip()))
+            if raw:
+                roots.append(Path(raw))
+
+    defaults = [
+        Path(r"D:\Django_Projects"),
+        Path.home() / "Desktop",
+        Path.home() / "Documents",
+        Path.home() / "Downloads",
+    ]
+    for root in defaults:
+        if root not in roots:
+            roots.append(root)
+
+    return [root for root in roots if root.exists() and root.is_dir()]
+
+
+def _find_named_folder(query: str) -> tuple[Path | None, list[Path]]:
+    wanted = _normalize_path_name(query)
+    if not wanted:
+        return None, []
+
+    scored: list[tuple[float, Path]] = []
+    seen: set[str] = set()
+
+    def consider(path: Path) -> None:
+        key = str(path).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        name = _normalize_path_name(path.name)
+        if not name:
+            return
+        if wanted == name:
+            score = 1.0
+        elif wanted in name or name in wanted:
+            score = 0.93
+        else:
+            score = difflib.SequenceMatcher(None, wanted, name).ratio()
+        if score >= 0.68:
+            scored.append((score, path))
+
+    for root in _folder_search_roots():
+        consider(root)
+        base_depth = len(root.parts)
+        visited = 0
+        try:
+            for current, dirs, _files in os.walk(root):
+                current_path = Path(current)
+                depth = len(current_path.parts) - base_depth
+                if depth >= 3:
+                    dirs[:] = []
+                    continue
+                for dirname in dirs:
+                    consider(current_path / dirname)
+                    visited += 1
+                    if visited >= 600:
+                        dirs[:] = []
+                        break
+                if visited >= 600:
+                    break
+        except OSError:
+            continue
+
+    scored.sort(key=lambda item: (-item[0], len(str(item[1]))))
+    matches = [path for _score, path in scored[:5]]
+    if not matches:
+        return None, []
+
+    best_score = scored[0][0]
+    if best_score >= 0.84:
+        return scored[0][1], matches
+
+    return None, matches
+
+
 def execute(intent: ToolIntent) -> ToolResult:
     if intent.name == "assistant.stop":
         return ToolResult(True, "À bientôt monsieur.", should_exit=True)
@@ -280,6 +389,38 @@ def execute(intent: ToolIntent) -> ToolResult:
 
     if intent.name == "app.open":
         return _open_application(str(intent.args["app"]))
+
+    if intent.name == "folder.open_prompt":
+        return ToolResult(
+            True,
+            "Quel dossier voulez-vous ouvrir ?",
+            "En attente du nom du dossier",
+            follow_up="folder_name",
+        )
+
+    if intent.name == "folder.open_named":
+        query = str(intent.args.get("query", "")).strip()
+        path, matches = _find_named_folder(query)
+        if path is not None:
+            os.startfile(str(path))
+            return ToolResult(
+                True,
+                f"J'ai ouvert le dossier {path.name}.",
+                str(path),
+            )
+        if matches:
+            choices = ", ".join(item.name for item in matches[:3])
+            return ToolResult(
+                False,
+                f"J'ai trouvé plusieurs dossiers proches : {choices}. "
+                "Pouvez-vous préciser ?",
+                " | ".join(str(item) for item in matches[:3]),
+            )
+        return ToolResult(
+            False,
+            f"Je n'ai pas trouvé de dossier correspondant à {query}.",
+            query,
+        )
 
     if intent.name == "folder.open":
         folder = str(intent.args["folder"])
