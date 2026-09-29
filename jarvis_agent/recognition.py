@@ -88,7 +88,10 @@ def recognize_command(
     forced language candidates, avoiding the latency of three Whisper passes
     for every normal sentence.
     """
-    primary = stt.transcribe(audio, language="auto")
+    configured_language = (settings.stt_language or "auto").lower()
+    first_language = "auto" if configured_language == "auto" else configured_language
+
+    primary = stt.transcribe(audio, language=first_language)
     primary_intent = route(primary.text) if primary.text else ToolIntent("unknown")
 
     candidates: list[tuple[TranscriptResult, ToolIntent]] = [
@@ -97,14 +100,14 @@ def recognize_command(
 
     if log:
         log(
-            f"[STT] auto language={primary.language} "
+            f"[STT] mode={configured_language} language={primary.language} "
             f"prob={primary.language_probability} "
             f"logprob={primary.avg_logprob} "
             f"no_speech={primary.no_speech_probability} "
             f"rejected={primary.rejected_reason}"
         )
 
-    if _needs_multilingual_retry(primary):
+    if configured_language == "auto" and _needs_multilingual_retry(primary):
         ordered_languages: list[str] = []
         preferred = _language_code(preferred_language)
         detected = _language_code(primary.language)
