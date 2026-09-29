@@ -368,7 +368,15 @@ class JarvisWindow(QWidget):
     def closeEvent(self, event) -> None:
         self._worker.stop()
         self._thread.quit()
-        self._thread.wait(2500)
+
+        if self._thread.isRunning() and not self._thread.wait(5000):
+            # Do not destroy a live QThread (for example while a local model
+            # request is finishing). Keep the window alive and retry shortly.
+            self.status_label.setText("Arrêt de Jarvis…")
+            event.ignore()
+            QTimer.singleShot(750, self.close)
+            return
+
         event.accept()
 
 
