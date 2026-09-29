@@ -63,3 +63,25 @@ The first STT request may take longer because Faster-Whisper downloads the local
 ## Architecture
 
 This V1 deliberately separates UI, voice, STT, tools and state. A future `AIProvider` can therefore be added without rewriting the Windows tools or the Presence layer.
+
+
+## Voice recognition tuning (V1.1)
+
+The recorder now keeps a 600 ms pre-roll, so speaking immediately after
+"Oui monsieur ?" no longer drops the beginning of the command. Voice onset is
+adaptive and more sensitive, while requiring a short sustained onset to reject
+clicks.
+
+Faster-Whisper's second VAD is disabled because Jarvis already segments the
+utterance itself; this avoids dropping very short commands. If automatic
+language detection produces an unknown command, Jarvis retries once in
+`JARVIS_STT_COMMAND_RETRY_LANGUAGE` (French by default) and only accepts that
+retry when it maps to a known safe tool.
+
+For a French-only testing session, you can force:
+
+```env
+JARVIS_STT_LANGUAGE=fr
+```
+
+Leave it blank for multilingual auto detection.
