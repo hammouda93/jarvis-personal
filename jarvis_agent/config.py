@@ -96,6 +96,28 @@ class Settings:
     ).strip()
 
     ai_provider: str = (os.getenv("JARVIS_AI_PROVIDER") or "ollama").strip()
+
+    # Model-native agent runtime. This is intentionally separate from the
+    # older planner so the voice layer can switch brains without rewrites.
+    agent_provider: str = (
+        os.getenv("JARVIS_AGENT_PROVIDER") or "ollama"
+    ).strip()
+    ollama_agent_model: str = (
+        os.getenv("JARVIS_OLLAMA_AGENT_MODEL") or "qwen3:4b"
+    ).strip()
+    agent_max_tool_rounds: int = _int("JARVIS_AGENT_MAX_TOOL_ROUNDS", 8)
+    agent_history_items: int = _int("JARVIS_AGENT_HISTORY_ITEMS", 30)
+    openai_api_key: str = (os.getenv("OPENAI_API_KEY") or "").strip()
+    openai_base_url: str = (
+        os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+    ).strip()
+    openai_agent_model: str = (
+        os.getenv("JARVIS_OPENAI_AGENT_MODEL") or "gpt-6-astra"
+    ).strip()
+    openai_reasoning_effort: str = (
+        os.getenv("JARVIS_OPENAI_REASONING_EFFORT") or "low"
+    ).strip()
+    openai_web_search: bool = _bool("JARVIS_OPENAI_WEB_SEARCH", True)
     planner_provider: str = (
         os.getenv("JARVIS_PLANNER_PROVIDER") or "ollama"
     ).strip()
