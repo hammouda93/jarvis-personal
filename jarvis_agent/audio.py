@@ -174,6 +174,7 @@ def record_utterance(
     *,
     on_level: LevelCallback | None = None,
     on_status: StatusCallback | None = None,
+    start_timeout_s: float | None = None,
 ) -> np.ndarray | None:
     """Record one phrase with adaptive VAD and a preserved pre-roll.
 
@@ -223,7 +224,12 @@ def record_utterance(
         onset_hits = 0
         speech_blocks = 0
         seen_blocks = 0
-        deadline = time.monotonic() + settings.speech_start_timeout_s
+        effective_start_timeout = (
+            settings.speech_start_timeout_s
+            if start_timeout_s is None
+            else max(0.5, float(start_timeout_s))
+        )
+        deadline = time.monotonic() + effective_start_timeout
 
         while not stop_event.is_set():
             data, overflowed = stream.read(blocksize)
