@@ -22,6 +22,20 @@ def tool_message(
 ) -> str:
     lang = normalize_language(language)
 
+    if intent.name == "browser.search_prompt" and result.success:
+        return {
+            "fr": "Que voulez-vous rechercher ?",
+            "en": "What would you like me to search for?",
+            "ar": "عن ماذا تريدني أن أبحث؟",
+        }[lang]
+
+    if intent.name == "folder.open_prompt" and result.success:
+        return {
+            "fr": "Quel dossier voulez-vous ouvrir ?",
+            "en": "Which folder would you like me to open?",
+            "ar": "أي مجلد تريدني أن أفتح؟",
+        }[lang]
+
     if intent.name == "system.time" and result.success:
         try:
             current = dt.datetime.fromisoformat(result.detail)
@@ -66,6 +80,22 @@ def tool_message(
             "fr": "C'est fait.",
             "en": "Done.",
             "ar": "تم.",
+        }[lang]
+
+    if not result.success and intent.name == "folder.open_named":
+        query = str(intent.args.get("query", "")).strip()
+        return {
+            "fr": f"Je n'ai pas trouvé de dossier correspondant à {query}.",
+            "en": f"I couldn't find a folder matching {query}.",
+            "ar": f"لم أجد مجلدًا يطابق {query}.",
+        }[lang]
+
+    if not result.success and intent.name == "app.open_named":
+        query = str(intent.args.get("query", "")).strip()
+        return {
+            "fr": f"Je n'ai pas trouvé d'application correspondant à {query}.",
+            "en": f"I couldn't find an application matching {query}.",
+            "ar": f"لم أجد تطبيقًا يطابق {query}.",
         }[lang]
 
     # Keep detailed capability-specific error messages when they contain
