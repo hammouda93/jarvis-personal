@@ -7,6 +7,11 @@ import traceback
 from PySide6.QtCore import QObject, Signal, Slot
 
 from .audio import record_utterance, wait_for_double_clap
+from .brain import (
+    AIProviderUnavailable,
+    build_ai_provider,
+    decision_to_intent,
+)
 from .config import settings
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
@@ -29,6 +34,7 @@ class AssistantWorker(QObject):
         self._stop = threading.Event()
         self._stt = LocalWhisperSTT()
         self._tts = ElevenLabsTTS()
+        self._brain = build_ai_provider()
 
     def _state(self, state: AssistantState, status: str | None = None) -> None:
         self.state_changed.emit(state.value)
@@ -46,6 +52,42 @@ class AssistantWorker(QObject):
     @Slot()
     def stop(self) -> None:
         self._stop.set()
+
+    def _use_ai_if_needed(
+        self,
+        user_text: str,
+        intent: ToolIntent,
+    ) -> tuple[ToolIntent | None, str | None]:
+        if intent.name != "unknown":
+            return intent, None
+
+        self._state(AssistantState.THINKING, "Réflexion locale…")
+        try:
+            decision = self._brain.decide(user_text)
+        except AIProviderUnavailable as exc:
+            self.log_line.emit(f"[AI] unavailable: {exc}")
+            return None, (
+                "Mon cerveau local n'est pas encore connecté. "
+                "Les commandes Windows restent disponibles."
+            )
+
+        self.log_line.emit(
+            f"[AI] kind={decision.kind} tool={decision.tool} "
+            f"args={decision.args}"
+        )
+
+        if decision.kind == "answer":
+            return None, decision.message
+
+        ai_intent = decision_to_intent(decision)
+        if ai_intent is None:
+            self.log_line.emit("[AI] rejected invalid or unsafe tool decision")
+            return None, (
+                decision.message
+                or "Je comprends la demande, mais cet outil n'est pas encore autorisé."
+            )
+
+        return ai_intent, None
 
     def _listen_turn(
         self,
@@ -100,8 +142,9 @@ class AssistantWorker(QObject):
             self._speak("Je n'ai pas compris.")
             return True, None
 
-        self.transcript_changed.emit(transcript.text)
-        self.log_line.emit(f"[YOU] {transcript.text}")
+        user_text = transcript.text
+        self.transcript_changed.emit(user_text)
+        self.log_line.emit(f"[YOU] {user_text}")
         if transcript.language:
             self.detail_changed.emit(
                 f"Langue détectée · {transcript.language}"
@@ -114,6 +157,19 @@ class AssistantWorker(QObject):
         self.detail_changed.emit(f"Intent · {intent.name}")
         self.log_line.emit(f"[INTENT] {intent.name} {intent.args}")
 
+        intent, direct_answer = self._use_ai_if_needed(user_text, intent)
+
+        if direct_answer is not None:
+            self._speak(direct_answer)
+            self._state(AssistantState.SUCCESS, "Réponse terminée")
+            time.sleep(0.25)
+            self._level(0.0)
+            return True, None
+
+        if intent is None:
+            self._state(AssistantState.ERROR, "Demande non disponible")
+            return True, None
+
         self._state(AssistantState.ACTING, "Exécution…")
         tool_result = execute(intent)
         self.log_line.emit(
@@ -122,6 +178,15 @@ class AssistantWorker(QObject):
         )
         if tool_result.detail:
             self.detail_changed.emit(tool_result.detail)
+
+        try:
+            self._brain.remember_tool_result(
+                user_text,
+                intent,
+                tool_result.message,
+            )
+        except Exception as exc:
+            self.log_line.emit(f"[AI] memory note skipped: {exc}")
 
         self._speak(tool_result.message)
 
@@ -145,6 +210,9 @@ class AssistantWorker(QObject):
     @Slot()
     def run(self) -> None:
         self.log_line.emit("[BOOT] Jarvis voice core started")
+        self.log_line.emit(
+            f"[AI] provider={settings.ai_provider} model={settings.ollama_model}"
+        )
         self._state(AssistantState.STARTING, "Initialisation de Jarvis…")
 
         try:
