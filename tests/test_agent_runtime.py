@@ -1,0 +1,205 @@
+import unittest
+
+from jarvis_agent.agent_runtime import OllamaToolAgent, OpenAIResponsesAgent
+from jarvis_agent.native_tools import AgentActionResult
+
+
+class FakeTools:
+    def __init__(self):
+        self.calls = []
+
+    def ollama_tools(self):
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "open_application",
+                    "description": "open app",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_web",
+                    "description": "search",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+        ]
+
+    def openai_tools(self):
+        result = []
+        for item in self.ollama_tools():
+            fn = item["function"]
+            result.append(
+                {
+                    "type": "function",
+                    "name": fn["name"],
+                    "description": fn["description"],
+                    "parameters": fn["parameters"],
+                    "strict": True,
+                }
+            )
+        return result
+
+    def execute(self, name, arguments):
+        self.calls.append((name, arguments))
+        return AgentActionResult(
+            name=name,
+            success=True,
+            message="ok",
+            detail=str(arguments),
+        )
+
+
+class FakeOllamaAgent(OllamaToolAgent):
+    def __init__(self, tools, responses):
+        super().__init__(tools)
+        self.responses = list(responses)
+        self.payloads = []
+
+    def _post(self, payload):
+        self.payloads.append(payload)
+        return self.responses.pop(0)
+
+
+class FakeOpenAIAgent(OpenAIResponsesAgent):
+    def __init__(self, tools, responses):
+        super().__init__(tools)
+        self.responses = list(responses)
+        self.payloads = []
+        self.api_key = "test"
+
+    def _post(self, payload):
+        self.payloads.append(payload)
+        return self.responses.pop(0)
+
+
+class AgentRuntimeTests(unittest.TestCase):
+    def test_ollama_native_loop_executes_multiple_tools_then_answers(self):
+        tools = FakeTools()
+        agent = FakeOllamaAgent(
+            tools,
+            [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "open_application",
+                                    "arguments": {"name": "Chrome"},
+                                }
+                            },
+                            {
+                                "function": {
+                                    "name": "search_web",
+                                    "arguments": {"query": "agents IA"},
+                                }
+                            },
+                        ],
+                    }
+                },
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Chrome est ouvert et la recherche est lancée.",
+                    }
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Ouvre Chrome et cherche les agents IA"
+        )
+
+        self.assertEqual(len(tools.calls), 2)
+        self.assertEqual(len(result.actions), 2)
+        self.assertIn("recherche", result.text)
+        self.assertEqual(len(agent.payloads), 2)
+        second_messages = agent.payloads[1]["messages"]
+        self.assertTrue(any(m.get("role") == "tool" for m in second_messages))
+
+    def test_ollama_conversation_context_survives_next_turn(self):
+        tools = FakeTools()
+        agent = FakeOllamaAgent(
+            tools,
+            [
+                {"message": {"role": "assistant", "content": "Quel dossier ?"}},
+                {"message": {"role": "assistant", "content": "Compris."}},
+            ],
+        )
+
+        agent.run("Je veux ouvrir un dossier")
+        agent.run("baristas")
+
+        second_payload = agent.payloads[1]
+        contents = [
+            str(message.get("content", ""))
+            for message in second_payload["messages"]
+        ]
+        self.assertTrue(
+            any("Je veux ouvrir un dossier" in value for value in contents)
+        )
+
+    def test_openai_loop_returns_function_result_then_continues(self):
+        tools = FakeTools()
+        agent = FakeOpenAIAgent(
+            tools,
+            [
+                {
+                    "id": "resp_1",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "open_application",
+                            "arguments": "{\"name\":\"VLC Media Player\"}",
+                        }
+                    ],
+                },
+                {
+                    "id": "resp_2",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "VLC est ouvert.",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        )
+
+        result = agent.run("Ouvre VLC Media Player")
+
+        self.assertEqual(len(tools.calls), 1)
+        self.assertEqual(result.text, "VLC est ouvert.")
+        self.assertEqual(
+            agent.payloads[1]["previous_response_id"],
+            "resp_1",
+        )
+        self.assertEqual(
+            agent.payloads[1]["input"][0]["type"],
+            "function_call_output",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
