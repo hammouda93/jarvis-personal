@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from .mission import Mission, MissionEngine, MissionOutcome, MissionStep
-from .planner import OllamaPlanner, PlanDecision, Planner, PlannerUnavailable
+from .planner import Planner, PlannerUnavailable, build_planner
 from .registry import DEFAULT_TOOL_REGISTRY, ToolRegistry
 from .tools import ToolIntent, ToolResult
 
@@ -40,7 +40,7 @@ class AgentCore:
         planner: Planner | None = None,
     ) -> None:
         self.registry = registry or DEFAULT_TOOL_REGISTRY
-        self.planner = planner or OllamaPlanner(self.registry)
+        self.planner = planner or build_planner(self.registry)
         self.engine = MissionEngine(self.registry)
         self._recent: deque[str] = deque(maxlen=10)
         self._pending_objective: str | None = None
