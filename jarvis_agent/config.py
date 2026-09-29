@@ -74,7 +74,7 @@ class Settings:
         os.getenv("JARVIS_WHISPER_COMPUTE_TYPE") or "int8"
     ).strip()
     stt_language: str | None = (
-        os.getenv("JARVIS_STT_LANGUAGE") or "auto"
+        os.getenv("JARVIS_STT_LANGUAGE") or "fr"
     ).strip() or None
     stt_supported_languages: tuple[str, ...] = tuple(
         part.strip().lower()
@@ -116,6 +116,9 @@ class Settings:
 
     conversation_followup_timeout_s: float = _float(
         "JARVIS_CONVERSATION_FOLLOWUP_TIMEOUT_S", 10.0
+    )
+    confirmation_timeout_s: float = _float(
+        "JARVIS_CONFIRMATION_TIMEOUT_S", 15.0
     )
 
     wake_phrase: str = (os.getenv("JARVIS_WAKE_RESPONSE") or "Oui monsieur ?").strip()
