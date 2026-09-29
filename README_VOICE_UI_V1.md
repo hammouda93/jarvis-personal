@@ -1,0 +1,65 @@
+# Jarvis Personal — Voice + Presence V1
+
+This branch adds the first real vertical slice of Jarvis without deleting the legacy `jarvis.py`.
+
+## Real flow
+
+1. Launch `python run_jarvis.py`.
+2. Jarvis opens its reactive Presence UI.
+3. The microphone calibrates for about 1.2 seconds.
+4. Double clap.
+5. Jarvis says **"Oui monsieur ?"** with ElevenLabs.
+6. Jarvis records one spoken request.
+7. Faster-Whisper transcribes it locally.
+8. The deterministic V1 router selects a typed tool.
+9. The tool acts on Windows / the web.
+10. Jarvis answers vocally.
+11. The UI returns to the wake state.
+
+## V1 commands
+
+- `ouvre YouTube`
+- `ouvre Google`
+- `ouvre Chrome`
+- `ouvre Spotify`
+- `ouvre Cursor`
+- `ouvre VS Code`
+- `ouvre Téléchargements`
+- `quelle heure est-il ?`
+- `recherche <texte> sur Internet`
+- `arrête Jarvis`
+
+Unknown requests are not silently executed. They are acknowledged as unsupported.
+
+## UI states
+
+The orb reacts to:
+
+`STARTING → CALIBRATING → WAKE → SPEAKING → LISTENING → TRANSCRIBING → UNDERSTANDING → ACTING → SPEAKING → SUCCESS/ERROR`
+
+The microphone and TTS audio levels also drive the visual core/waveform.
+
+## Configuration
+
+Existing ElevenLabs values stay in `.env`.
+
+Optional:
+
+```env
+JARVIS_INPUT_DEVICE=1
+JARVIS_OUTPUT_DEVICE=5
+JARVIS_WHISPER_MODEL=base
+JARVIS_WHISPER_DEVICE=cpu
+JARVIS_WHISPER_COMPUTE_TYPE=int8
+JARVIS_UI_FULLSCREEN=0
+```
+
+Leave `JARVIS_STT_LANGUAGE` empty for automatic language detection.
+
+## First run
+
+The first STT request may take longer because Faster-Whisper downloads the local model the first time. Later runs reuse the model from the local cache.
+
+## Architecture
+
+This V1 deliberately separates UI, voice, STT, tools and state. A future `AIProvider` can therefore be added without rewriting the Windows tools or the Presence layer.
