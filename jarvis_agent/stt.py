@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
@@ -14,6 +15,8 @@ class TranscriptResult:
     language: str | None
     language_probability: float | None
     avg_logprob: float | None
+    no_speech_probability: float | None
+    rejected_reason: str | None = None
 
 
 class LocalWhisperSTT:
@@ -42,11 +45,33 @@ class LocalWhisperSTT:
                 return " ".join(words[:half])
         return text
 
+    @staticmethod
+    def _repetition_reason(text: str) -> str | None:
+        words = [w.strip(".,!?;:").lower() for w in text.split() if w.strip()]
+        if len(words) < 6:
+            return None
+
+        counts = Counter(words)
+        most_common_word, count = counts.most_common(1)[0]
+        if count >= 4 and count / len(words) >= 0.45:
+            return f"repetition:{most_common_word}"
+
+        # Detect repeated short phrases such as "www.cursor.com www.cursor.com".
+        for size in (2, 3):
+            if len(words) < size * 3:
+                continue
+            chunks = [
+                tuple(words[i : i + size])
+                for i in range(0, len(words) - size + 1, size)
+            ]
+            if chunks and len(set(chunks)) == 1 and len(chunks) >= 3:
+                return "repeated_phrase"
+
+        return None
+
     def _decode(self, path, *, language: str | None) -> TranscriptResult:
         model = self._get_model()
 
-        # Our own recorder already trims the utterance. Keeping Whisper's VAD
-        # enabled here could remove short commands such as "ouvre YouTube".
         segments, info = model.transcribe(
             str(path),
             beam_size=5,
@@ -70,13 +95,37 @@ class LocalWhisperSTT:
             for segment in segment_list
             if getattr(segment, "avg_logprob", None) is not None
         ]
+        no_speech_values = [
+            float(segment.no_speech_prob)
+            for segment in segment_list
+            if getattr(segment, "no_speech_prob", None) is not None
+        ]
+
         avg_logprob = sum(logprobs) / len(logprobs) if logprobs else None
+        no_speech_probability = (
+            sum(no_speech_values) / len(no_speech_values)
+            if no_speech_values
+            else None
+        )
+
+        rejected_reason = self._repetition_reason(text)
+        if (
+            rejected_reason is None
+            and no_speech_probability is not None
+            and no_speech_probability >= 0.72
+        ):
+            rejected_reason = "probable_silence"
+
+        if rejected_reason:
+            text = ""
 
         return TranscriptResult(
             text=text,
             language=getattr(info, "language", language),
             language_probability=getattr(info, "language_probability", None),
             avg_logprob=avg_logprob,
+            no_speech_probability=no_speech_probability,
+            rejected_reason=rejected_reason,
         )
 
     def transcribe(
@@ -87,9 +136,12 @@ class LocalWhisperSTT:
     ) -> TranscriptResult:
         path = save_temp_wav(audio)
         try:
-            effective_language = (
-                language if language is not None else settings.stt_language
-            )
+            if language == "auto":
+                effective_language = None
+            elif language is not None:
+                effective_language = language
+            else:
+                effective_language = settings.stt_language
             return self._decode(path, language=effective_language)
         finally:
             path.unlink(missing_ok=True)
