@@ -11,6 +11,7 @@ from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
 
 
 LogFn = Callable[[str], None]
+PhaseFn = Callable[[str], None]
 
 
 _SYSTEM_INSTRUCTIONS = """Tu es Jarvis, l'assistant personnel de l'utilisateur sur Windows.
@@ -50,7 +51,13 @@ class AgentTurnResult:
 
 
 class AgentRuntime(Protocol):
-    def run(self, user_text: str, *, log: LogFn | None = None) -> AgentTurnResult:
+    def run(
+        self,
+        user_text: str,
+        *,
+        log: LogFn | None = None,
+        phase: PhaseFn | None = None,
+    ) -> AgentTurnResult:
         ...
 
     def reset(self) -> None:
@@ -120,6 +127,7 @@ class OllamaToolAgent:
         user_text: str,
         *,
         log: LogFn | None = None,
+        phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
         self._messages.append({"role": "user", "content": user_text})
         actions: list[AgentActionResult] = []
@@ -127,6 +135,8 @@ class OllamaToolAgent:
         should_exit = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
+            if phase:
+                phase("thinking")
             if log:
                 log(
                     f"[AGENT] provider=ollama model={self.model} "
@@ -182,6 +192,8 @@ class OllamaToolAgent:
 
                 if log:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
+                if phase:
+                    phase("acting")
 
                 result = self.tools.execute(name, arguments)
                 actions.append(result)
@@ -287,6 +299,7 @@ class OpenAIResponsesAgent:
         user_text: str,
         *,
         log: LogFn | None = None,
+        phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
         next_input: Any = user_text
         previous = self._previous_response_id
@@ -295,6 +308,8 @@ class OpenAIResponsesAgent:
         should_exit = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
+            if phase:
+                phase("thinking")
             if log:
                 log(
                     f"[AGENT] provider=openai model={self.model} "
@@ -358,6 +373,8 @@ class OpenAIResponsesAgent:
 
                 if log:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
+                if phase:
+                    phase("acting")
 
                 result = self.tools.execute(name, arguments)
                 actions.append(result)
