@@ -140,7 +140,7 @@ class Settings:
     ).strip()
 
     conversation_followup_timeout_s: float = _float(
-        "JARVIS_CONVERSATION_FOLLOWUP_TIMEOUT_S", 10.0
+        "JARVIS_CONVERSATION_FOLLOWUP_TIMEOUT_S", 20.0
     )
     confirmation_timeout_s: float = _float(
         "JARVIS_CONFIRMATION_TIMEOUT_S", 15.0
