@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .config import settings
-from .tools import ToolIntent
+from .tools import ToolIntent, normalize
 
 
 @dataclass(frozen=True)
@@ -195,8 +195,58 @@ class OllamaProvider:
         )
 
 
-def decision_to_intent(decision: AgentDecision) -> ToolIntent | None:
+def _explicit_action_requested(user_text: str, tool: str) -> bool:
+    text = normalize(user_text)
+
+    if tool == "browser.search":
+        return any(
+            token in text
+            for token in (
+                "cherche",
+                "recherche",
+                "trouve",
+                "sur internet",
+                "sur google",
+                "sur le web",
+            )
+        )
+
+    if tool in {"browser.open_url", "app.open", "folder.open"}:
+        return any(
+            token in text
+            for token in (
+                "ouvre",
+                "ouvrir",
+                "lance",
+                "lancer",
+                "affiche",
+                "va sur",
+                "accede",
+                "accède",
+            )
+        )
+
+    if tool == "assistant.sleep":
+        return any(
+            token in text
+            for token in ("dors", "veille", "c est tout", "c'est tout")
+        )
+
+    if tool == "system.time":
+        return "heure" in text
+
+    return False
+
+
+def decision_to_intent(
+    decision: AgentDecision,
+    *,
+    user_text: str = "",
+) -> ToolIntent | None:
     if decision.kind != "tool":
+        return None
+
+    if not _explicit_action_requested(user_text, decision.tool):
         return None
 
     args = dict(decision.args or {})
