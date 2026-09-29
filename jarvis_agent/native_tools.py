@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from .memory import LOCAL_MEMORY
 from .tools import ToolIntent, ToolResult, execute, normalize
 
 
@@ -92,6 +93,32 @@ class NativeToolRegistry:
                 "Lit l'heure actuelle de l'ordinateur.",
                 {},
                 [],
+            ),
+            self._ollama(
+                "remember_information",
+                "Enregistre localement une information que l'utilisateur demande explicitement à Jarvis de retenir.",
+                {
+                    "content": {
+                        "type": "string",
+                        "description": "Information exacte à mémoriser.",
+                    },
+                    "tags": {
+                        "type": "string",
+                        "description": "Quelques mots-clés optionnels.",
+                    },
+                },
+                ["content"],
+            ),
+            self._ollama(
+                "recall_information",
+                "Recherche dans la mémoire locale personnelle de Jarvis.",
+                {
+                    "query": {
+                        "type": "string",
+                        "description": "Ce que l'utilisateur veut retrouver ou rappeler.",
+                    }
+                },
+                ["query"],
             ),
             self._ollama(
                 "return_to_standby",
@@ -200,6 +227,47 @@ class NativeToolRegistry:
 
         if name == "get_current_time":
             return self._convert(name, execute(ToolIntent("system.time")))
+
+        if name == "remember_information":
+            content = str(args.get("content", "")).strip()
+            tags = str(args.get("tags", "")).strip()
+            if not content:
+                return self._error(name, "L'information à mémoriser est vide.")
+            item = LOCAL_MEMORY.remember(content, tags=tags)
+            return AgentActionResult(
+                name=name,
+                success=True,
+                message="Information mémorisée localement.",
+                detail=f"memory_id={item.id}",
+            )
+
+        if name == "recall_information":
+            query = str(args.get("query", "")).strip()
+            if not query:
+                return self._error(name, "La recherche mémoire est vide.")
+            items = LOCAL_MEMORY.search(query, limit=5)
+            if not items:
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="Aucun souvenir correspondant.",
+                    detail="[]",
+                )
+            payload = [
+                {
+                    "id": item.id,
+                    "content": item.content,
+                    "tags": item.tags,
+                    "created_at": item.created_at,
+                }
+                for item in items
+            ]
+            return AgentActionResult(
+                name=name,
+                success=True,
+                message="Souvenirs retrouvés.",
+                detail=json.dumps(payload, ensure_ascii=False),
+            )
 
         if name == "return_to_standby":
             return self._convert(name, execute(ToolIntent("assistant.sleep")))
