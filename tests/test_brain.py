@@ -120,6 +120,31 @@ class BrainSafetyTests(unittest.TestCase):
         self.assertEqual(validation.reason, "ungrounded_arguments")
         self.assertIsNone(validation.intent)
 
+
+    def test_english_open_youtube_is_explicit(self):
+        decision = AgentDecision(
+            kind="tool",
+            tool="browser.open_url",
+            args={"url": "https://www.youtube.com"},
+        )
+        validation = validate_tool_decision(
+            decision,
+            user_text="Open YouTube",
+        )
+        self.assertEqual(validation.reason, "ok")
+
+    def test_arabic_open_youtube_is_explicit(self):
+        decision = AgentDecision(
+            kind="tool",
+            tool="browser.open_url",
+            args={"url": "https://www.youtube.com"},
+        )
+        validation = validate_tool_decision(
+            decision,
+            user_text="افتح YouTube",
+        )
+        self.assertEqual(validation.reason, "ok")
+
     def test_ai_cannot_use_non_http_url(self):
         decision = AgentDecision(
             kind="tool",
