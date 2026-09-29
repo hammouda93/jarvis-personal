@@ -51,7 +51,7 @@ def _search_query_from_command(cmd: str) -> str:
         body,
     ).strip()
     body = re.sub(
-        r"^(?:a\s+propos\s+(?:de|des|du|d')|au\s+sujet\s+(?:de|des|du|d'))\s*",
+        r"^(?:a\s+propos\s+(?:des|du|de|d')|au\s+sujet\s+(?:des|du|de|d'))\s*",
         "",
         body,
     ).strip()
