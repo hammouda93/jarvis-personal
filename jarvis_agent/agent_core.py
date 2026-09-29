@@ -47,6 +47,7 @@ class AgentCore:
 
     def reset_session(self) -> None:
         self._pending_objective = None
+        self._recent.clear()
 
     def context_text(self) -> str:
         lines = list(self._recent)
