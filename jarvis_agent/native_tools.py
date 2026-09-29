@@ -111,7 +111,7 @@ class NativeToolRegistry:
                     "name": fn["name"],
                     "description": fn["description"],
                     "parameters": fn["parameters"],
-                    "strict": True,
+                    "strict": False,
                 }
             )
         return tools
