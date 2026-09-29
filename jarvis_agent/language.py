@@ -70,9 +70,10 @@ def tool_message(
                 "ar": "حسنًا، سأعود إلى وضع الانتظار.",
             }[lang]
         if intent.name == "folder.open_named":
+            if lang == "fr":
+                return result.message
             name = str(intent.args.get("query", "")).strip()
             return {
-                "fr": f"J'ai ouvert le dossier {name}.",
                 "en": f"I opened the {name} folder.",
                 "ar": f"فتحت مجلد {name}.",
             }[lang]
