@@ -18,7 +18,7 @@ from .language import (
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
 from .stt import LocalWhisperSTT
-from .tools import ToolIntent
+from .tools import ToolIntent, route
 from .tts import ElevenLabsTTS
 
 
@@ -106,10 +106,14 @@ class AssistantWorker(QObject):
                     {"query": transcript.text.strip()},
                 )
             else:
-                intent = ToolIntent(
-                    "folder.open_named",
-                    {"query": transcript.text.strip()},
+                intent = route(
+                    "ouvre le dossier " + transcript.text.strip()
                 )
+                if intent.name == "folder.open_prompt":
+                    intent = ToolIntent(
+                        "folder.open_named",
+                        {"query": transcript.text.strip()},
+                    )
             self.log_line.emit(
                 f"[STT] follow_up={pending_follow_up} "
                 f"language={transcript.language} "
