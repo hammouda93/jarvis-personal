@@ -49,6 +49,46 @@ class BrainSafetyTests(unittest.TestCase):
             )
         )
 
+
+    def test_ai_cannot_turn_downloads_request_into_cursor(self):
+        decision = AgentDecision(
+            kind="tool",
+            tool="app.open",
+            args={"app": "cursor"},
+        )
+        self.assertIsNone(
+            decision_to_intent(
+                decision,
+                user_text="Ouvre les chargements",
+            )
+        )
+
+    def test_ai_can_open_downloads_when_grounded(self):
+        decision = AgentDecision(
+            kind="tool",
+            tool="folder.open",
+            args={"folder": "downloads"},
+        )
+        intent = decision_to_intent(
+            decision,
+            user_text="Ouvre le dossier téléchargement",
+        )
+        self.assertIsNotNone(intent)
+        self.assertEqual(intent.name, "folder.open")
+
+    def test_ai_time_tool_accepts_joined_stt_variant(self):
+        decision = AgentDecision(
+            kind="tool",
+            tool="system.time",
+            args={},
+        )
+        intent = decision_to_intent(
+            decision,
+            user_text="Quelleur est-il ?",
+        )
+        self.assertIsNotNone(intent)
+        self.assertEqual(intent.name, "system.time")
+
     def test_ai_cannot_use_non_http_url(self):
         decision = AgentDecision(
             kind="tool",
