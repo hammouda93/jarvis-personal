@@ -74,18 +74,25 @@ class Settings:
         os.getenv("JARVIS_WHISPER_COMPUTE_TYPE") or "int8"
     ).strip()
     stt_language: str | None = (
-        os.getenv("JARVIS_STT_LANGUAGE") or "fr"
+        os.getenv("JARVIS_STT_LANGUAGE") or "auto"
     ).strip() or None
-    stt_command_retry_language: str | None = (
-        os.getenv("JARVIS_STT_COMMAND_RETRY_LANGUAGE") or "fr"
-    ).strip() or None
+    stt_supported_languages: tuple[str, ...] = tuple(
+        part.strip().lower()
+        for part in (
+            os.getenv("JARVIS_STT_SUPPORTED_LANGUAGES") or "fr,en,ar"
+        ).split(",")
+        if part.strip()
+    )
+    stt_language_confidence: float = _float(
+        "JARVIS_STT_LANGUAGE_CONFIDENCE", 0.72
+    )
     stt_retry_language_probability: float = _float(
         "JARVIS_STT_RETRY_LANGUAGE_PROBABILITY", 0.65
     )
     stt_initial_prompt: str = (
         os.getenv("JARVIS_STT_INITIAL_PROMPT")
-        or "Conversation naturelle en français entre un utilisateur et "
-        "son assistant personnel Jarvis."
+        or "Conversation naturelle avec Jarvis. L'utilisateur peut parler "
+        "français, anglais ou arabe, et peut changer de langue entre deux phrases."
     ).strip()
 
     ai_provider: str = (os.getenv("JARVIS_AI_PROVIDER") or "ollama").strip()
