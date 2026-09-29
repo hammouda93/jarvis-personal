@@ -63,18 +63,43 @@ def run_headless() -> int:
                 f"[STATE] transcribing — model={settings.whisper_model} "
                 f"device={settings.whisper_device}"
             )
-            text, language = stt.transcribe(audio)
-            if not text:
+            result = stt.transcribe(audio)
+            if not result.text:
                 print("[ERROR] transcription vide")
                 tts.speak("Je n'ai pas compris.", on_level=level)
                 continue
 
-            print(f"[YOU] {text}")
-            if language:
-                print(f"[STT] language={language}")
+            text = result.text
+            language = result.language
+            print(
+                f"[STT] first_pass language={language} "
+                f"prob={result.language_probability} logprob={result.avg_logprob}"
+            )
 
             print("[STATE] understanding")
             intent = route(text)
+
+            retry_language = settings.stt_command_retry_language
+            if (
+                intent.name == "unknown"
+                and settings.stt_language is None
+                and retry_language
+            ):
+                retry = stt.transcribe(audio, language=retry_language)
+                retry_intent = route(retry.text) if retry.text else None
+                print(
+                    f"[STT] retry language={retry_language} "
+                    f"text={retry.text!r} logprob={retry.avg_logprob}"
+                )
+                if retry_intent is not None and retry_intent.name != "unknown":
+                    result = retry
+                    text = retry.text
+                    language = retry.language
+                    intent = retry_intent
+
+            print(f"[YOU] {text}")
+            if language:
+                print(f"[STT] language={language}")
             print(f"[INTENT] {intent.name} {intent.args}")
 
             print("[STATE] acting")
