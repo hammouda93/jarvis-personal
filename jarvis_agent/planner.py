@@ -221,3 +221,13 @@ Utilisateur: "Explique-moi ce qu'est un agent IA"
             kind="answer",
             message=message or "Je suis là.",
         )
+
+
+
+def build_planner(registry: ToolRegistry) -> Planner:
+    provider = settings.planner_provider.lower().strip()
+    if provider == "ollama":
+        return OllamaPlanner(registry)
+    raise PlannerUnavailable(
+        f"Planner provider non pris en charge: {settings.planner_provider}"
+    )
