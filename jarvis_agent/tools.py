@@ -411,10 +411,20 @@ def _folder_search_roots() -> list[Path]:
     return [root for root in roots if root.exists() and root.is_dir()]
 
 
-def _find_named_folder(query: str) -> tuple[Path | None, list[Path]]:
+def _find_named_folder(
+    query: str,
+    *,
+    within: str | None = None,
+) -> tuple[Path | None, list[Path]]:
     wanted = _normalize_path_name(query)
     if not wanted:
         return None, []
+
+    search_roots = _folder_search_roots()
+    if within:
+        parent, _parent_matches = _find_named_folder(within)
+        if parent is not None:
+            search_roots = [parent]
 
     scored: list[tuple[float, Path]] = []
     seen: set[str] = set()
@@ -436,7 +446,7 @@ def _find_named_folder(query: str) -> tuple[Path | None, list[Path]]:
         if score >= 0.68:
             scored.append((score, path))
 
-    for root in _folder_search_roots():
+    for root in search_roots:
         consider(root)
         base_depth = len(root.parts)
         visited = 0
@@ -551,7 +561,8 @@ def execute(intent: ToolIntent) -> ToolResult:
 
     if intent.name == "folder.open_named":
         query = str(intent.args.get("query", "")).strip()
-        path, matches = _find_named_folder(query)
+        within = str(intent.args.get("within", "")).strip() or None
+        path, matches = _find_named_folder(query, within=within)
         if path is not None:
             os.startfile(str(path))
             return ToolResult(
