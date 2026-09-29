@@ -80,9 +80,11 @@ class Settings:
     )
     stt_initial_prompt: str = (
         os.getenv("JARVIS_STT_INITIAL_PROMPT")
-        or "Jarvis. Ouvre YouTube. Ouvre Google. Ouvre Chrome. Ouvre Spotify. "
-        "Ouvre Cursor. Ouvre VS Code. Ouvre Téléchargements. "
-        "Quelle heure est-il ? Recherche sur Internet."
+        or "Assistant Jarvis, principalement en français. "
+        "Vocabulaire: YouTube, Google, Chrome, Spotify, Cursor, VS Code, "
+        "Téléchargements, capture écran. "
+        "Commandes possibles: ouvrir une application, demander l'heure, "
+        "rechercher quelque chose sur Internet."
     ).strip()
 
     elevenlabs_api_key: str = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
