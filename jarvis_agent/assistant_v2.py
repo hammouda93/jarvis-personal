@@ -138,6 +138,8 @@ class AssistantWorker(QObject):
     ) -> tuple[bool, str | None]:
         self._state(AssistantState.LISTENING, "Je vous écoute…")
         timeout = None if first_turn else settings.conversation_followup_timeout_s
+        if not first_turn and self._pending_confirmation_intent is not None:
+            timeout = settings.confirmation_timeout_s
         audio = record_utterance(
             self._stop,
             on_level=self._level,
