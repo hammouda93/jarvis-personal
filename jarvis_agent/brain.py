@@ -58,7 +58,9 @@ _TOOL_SCHEMA = {
                 "browser.search",
                 "browser.open_url",
                 "app.open",
+                "app.open_named",
                 "folder.open",
+                "folder.open_named",
                 "system.time",
                 "assistant.sleep",
             ],
@@ -87,7 +89,9 @@ Outils autorisés:
 - browser.search: args {"query": "..."}
 - browser.open_url: args {"url": "https://..."}
 - app.open: args {"app": "chrome|spotify|cursor|vscode|snippingtool"}
+- app.open_named: args {"query": "nom d'une application installée"}
 - folder.open: args {"folder": "downloads"}
+- folder.open_named: args {"query": "nom d'un dossier"}
 - system.time: args {}
 - assistant.sleep: args {}
 
@@ -100,6 +104,10 @@ naturellement en arabe tunisien quand tu le comprends. Il peut changer de langue
 d'une phrase à l'autre; suis ce changement sans lui demander de choisir une langue.
 Ne choisis jamais un outil uniquement parce qu'un mot ressemble au nom d'une
 application. Une action sur le PC doit être clairement demandée par l'utilisateur.
+Si l'utilisateur demande d'ouvrir une application ou un dossier qui n'est pas
+dans les raccourcis connus, utilise app.open_named ou folder.open_named au lieu
+d'inventer une autre application. Si le nom exact manque, pose une question de
+clarification au lieu de supposer une cible.
 """
 
 
@@ -238,7 +246,13 @@ def _explicit_action_requested(user_text: str, tool: str) -> bool:
             ),
         )
 
-    if tool in {"browser.open_url", "app.open", "folder.open"}:
+    if tool in {
+        "browser.open_url",
+        "app.open",
+        "app.open_named",
+        "folder.open",
+        "folder.open_named",
+    }:
         return _contains_any(
             text,
             (
@@ -294,6 +308,10 @@ def _tool_arguments_are_grounded(
     text = normalize(user_text)
     args = dict(decision.args or {})
 
+    if decision.tool == "app.open_named":
+        query = normalize(str(args.get("query", "")).strip())
+        return bool(query) and query in text
+
     if decision.tool == "app.open":
         app = str(args.get("app", "")).strip().lower()
         aliases: dict[str, tuple[str, ...]] = {
@@ -309,6 +327,10 @@ def _tool_arguments_are_grounded(
             ),
         }
         return app in aliases and _contains_any(text, aliases[app])
+
+    if decision.tool == "folder.open_named":
+        query = normalize(str(args.get("query", "")).strip())
+        return bool(query) and query in text
 
     if decision.tool == "folder.open":
         folder = str(args.get("folder", "")).strip().lower()
@@ -363,12 +385,20 @@ def _candidate_intent(decision: AgentDecision) -> ToolIntent | None:
             return ToolIntent("browser.open_url", {"url": url})
         return None
 
+    if decision.tool == "app.open_named":
+        query = str(args.get("query", "")).strip()
+        return ToolIntent("app.open_named", {"query": query}) if query else None
+
     if decision.tool == "app.open":
         app = str(args.get("app", "")).strip().lower()
         allowed = {"chrome", "spotify", "cursor", "vscode", "snippingtool"}
         if app in allowed:
             return ToolIntent("app.open", {"app": app})
         return None
+
+    if decision.tool == "folder.open_named":
+        query = str(args.get("query", "")).strip()
+        return ToolIntent("folder.open_named", {"query": query}) if query else None
 
     if decision.tool == "folder.open":
         folder = str(args.get("folder", "")).strip().lower()
