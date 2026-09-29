@@ -75,6 +75,9 @@ class Settings:
     stt_command_retry_language: str | None = (
         os.getenv("JARVIS_STT_COMMAND_RETRY_LANGUAGE") or "fr"
     ).strip() or None
+    stt_retry_language_probability: float = _float(
+        "JARVIS_STT_RETRY_LANGUAGE_PROBABILITY", 0.65
+    )
     stt_initial_prompt: str = (
         os.getenv("JARVIS_STT_INITIAL_PROMPT")
         or "Jarvis. Ouvre YouTube. Ouvre Google. Ouvre Chrome. Ouvre Spotify. "
@@ -90,6 +93,10 @@ class Settings:
     elevenlabs_output_format: str = (
         os.getenv("ELEVENLABS_OUTPUT_FORMAT") or "pcm_24000"
     ).strip()
+
+    conversation_followup_timeout_s: float = _float(
+        "JARVIS_CONVERSATION_FOLLOWUP_TIMEOUT_S", 10.0
+    )
 
     wake_phrase: str = (os.getenv("JARVIS_WAKE_RESPONSE") or "Oui monsieur ?").strip()
     ui_fullscreen: bool = _bool("JARVIS_UI_FULLSCREEN", False)
