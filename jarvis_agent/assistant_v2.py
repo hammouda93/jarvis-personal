@@ -6,24 +6,10 @@ import traceback
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from .agent_core import AgentCore
 from .audio import record_utterance, wait_for_double_clap
-from .brain import (
-    AIProviderUnavailable,
-    build_ai_provider,
-    validate_tool_decision,
-)
-from .capabilities import (
-    confirmation_prompt,
-    detect_missing_capability,
-    is_affirmative,
-    is_negative,
-)
 from .config import settings
 from .language import (
-    action_mismatch_prompt,
-    ai_unavailable_prompt,
-    cancellation_prompt,
-    capability_unavailable_prompt,
     no_speech_prompt,
     normalize_language,
     repeat_prompt,
@@ -32,7 +18,7 @@ from .language import (
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
 from .stt import LocalWhisperSTT
-from .tools import ToolIntent, execute
+from .tools import ToolIntent
 from .tts import ElevenLabsTTS
 
 
@@ -50,9 +36,8 @@ class AssistantWorker(QObject):
         self._stop = threading.Event()
         self._stt = LocalWhisperSTT()
         self._tts = ElevenLabsTTS()
-        self._brain = build_ai_provider()
-        self._pending_confirmation_intent: ToolIntent | None = None
-        self._conversation_language: str = "fr"
+        self._core = AgentCore()
+        self._conversation_language = "fr"
 
     def _state(self, state: AssistantState, status: str | None = None) -> None:
         self.state_changed.emit(state.value)
@@ -69,66 +54,15 @@ class AssistantWorker(QObject):
         if settings.tts_settle_s > 0:
             time.sleep(settings.tts_settle_s)
 
+    def _core_phase(self, phase: str) -> None:
+        if phase == "planning":
+            self._state(AssistantState.THINKING, "Planification de la mission…")
+        elif phase == "acting":
+            self._state(AssistantState.ACTING, "Exécution de la mission…")
+
     @Slot()
     def stop(self) -> None:
         self._stop.set()
-
-    def _use_ai_if_needed(
-        self,
-        user_text: str,
-        intent: ToolIntent,
-        language: str | None,
-    ) -> tuple[ToolIntent | None, str | None]:
-        if intent.name != "unknown":
-            return intent, None
-
-        missing = detect_missing_capability(user_text)
-        if missing is not None:
-            self.log_line.emit(f"[CAPABILITY] missing={missing.key}")
-            return None, missing.message(language)
-
-        self._state(AssistantState.THINKING, "Réflexion locale…")
-        try:
-            decision = self._brain.decide(user_text)
-        except AIProviderUnavailable as exc:
-            self.log_line.emit(f"[AI] unavailable: {exc}")
-            return None, ai_unavailable_prompt(language)
-
-        self.log_line.emit(
-            f"[AI] kind={decision.kind} tool={decision.tool} "
-            f"args={decision.args}"
-        )
-
-        if decision.kind == "answer":
-            return None, decision.message
-
-        validation = validate_tool_decision(
-            decision,
-            user_text=user_text,
-        )
-        self.log_line.emit(
-            f"[AI] tool_validation={validation.reason}"
-        )
-
-        if validation.reason == "ok" and validation.intent is not None:
-            return validation.intent, None
-
-        if (
-            validation.reason == "confirmation_required"
-            and validation.intent is not None
-        ):
-            self._pending_confirmation_intent = validation.intent
-            return None, confirmation_prompt(validation.intent, language)
-
-        missing = detect_missing_capability(user_text)
-        if missing is not None:
-            self.log_line.emit(f"[CAPABILITY] missing={missing.key}")
-            return None, missing.message(language)
-
-        if validation.reason == "unsupported_tool":
-            return None, capability_unavailable_prompt(language)
-
-        return None, action_mismatch_prompt(language)
 
     def _listen_turn(
         self,
@@ -138,8 +72,7 @@ class AssistantWorker(QObject):
     ) -> tuple[bool, str | None]:
         self._state(AssistantState.LISTENING, "Je vous écoute…")
         timeout = None if first_turn else settings.conversation_followup_timeout_s
-        if not first_turn and self._pending_confirmation_intent is not None:
-            timeout = settings.confirmation_timeout_s
+
         audio = record_utterance(
             self._stop,
             on_level=self._level,
@@ -163,7 +96,10 @@ class AssistantWorker(QObject):
         )
 
         if pending_follow_up in {"search_query", "folder_name"}:
-            transcript = self._stt.transcribe(audio, language="auto")
+            transcript = self._stt.transcribe(
+                audio,
+                language=self._conversation_language,
+            )
             if pending_follow_up == "search_query":
                 intent = ToolIntent(
                     "browser.search",
@@ -200,23 +136,6 @@ class AssistantWorker(QObject):
             f"[YOU] {user_text} [lang={self._conversation_language}]"
         )
 
-        if self._pending_confirmation_intent is not None:
-            if is_affirmative(user_text):
-                intent = self._pending_confirmation_intent
-                self._pending_confirmation_intent = None
-                self.log_line.emit(
-                    f"[CONFIRM] accepted intent={intent.name} {intent.args}"
-                )
-            elif is_negative(user_text):
-                self.log_line.emit("[CONFIRM] rejected")
-                self._pending_confirmation_intent = None
-                self._speak(cancellation_prompt(self._conversation_language))
-                return True, None
-            else:
-                self.log_line.emit(
-                    "[CONFIRM] no clear yes/no — treating as a new request"
-                )
-                self._pending_confirmation_intent = None
         if transcript.language:
             self.detail_changed.emit(
                 f"Langue détectée · {transcript.language}"
@@ -224,9 +143,9 @@ class AssistantWorker(QObject):
 
         self._state(
             AssistantState.UNDERSTANDING,
-            "Compréhension de la demande…",
+            "Compréhension de l'objectif…",
         )
-        self.detail_changed.emit(f"Intent · {intent.name}")
+        self.detail_changed.emit(f"Intent initial · {intent.name}")
         self.log_line.emit(f"[INTENT] {intent.name} {intent.args}")
 
         weak_for_conversation = (
@@ -243,76 +162,74 @@ class AssistantWorker(QObject):
             and (weak_for_conversation or probable_silence)
         ):
             self.log_line.emit(
-                "[STT] weak open-ended transcript rejected before AI"
+                "[STT] weak open-ended transcript rejected before Agent Core"
             )
             self._speak(repeat_prompt(self._conversation_language))
             return True, None
 
-        intent, direct_answer = self._use_ai_if_needed(
+        core_result = self._core.handle(
             user_text,
-            intent,
-            self._conversation_language,
+            deterministic_intent=intent,
+            log=self.log_line.emit,
+            phase=self._core_phase,
         )
 
-        if direct_answer is not None:
-            self._speak(direct_answer)
-            self._state(AssistantState.SUCCESS, "Réponse terminée")
-            time.sleep(0.25)
+        if core_result.kind in {"answer", "clarify"}:
+            self._speak(core_result.message)
+            label = (
+                "Précision demandée"
+                if core_result.kind == "clarify"
+                else "Réponse terminée"
+            )
+            self._state(AssistantState.SUCCESS, label)
             self._level(0.0)
             return True, None
 
-        if intent is None:
-            self._state(AssistantState.ERROR, "Demande non disponible")
+        outcome = core_result.mission
+        final_intent = core_result.final_intent
+        final_result = core_result.final_result
+
+        if outcome is None or final_intent is None or final_result is None:
+            self._speak(
+                "Je n'ai pas pu préparer cette mission correctement. "
+                "Pouvez-vous préciser votre demande ?"
+            )
+            self._state(AssistantState.ERROR, "Mission non exécutable")
             return True, None
 
-        self._state(AssistantState.ACTING, "Exécution…")
-        tool_result = execute(intent)
-        self.log_line.emit(
-            f"[TOOL] success={tool_result.success} "
-            f"detail={tool_result.detail}"
+        self.detail_changed.emit(
+            f"Mission {outcome.mission.id} · {outcome.mission.status.value}"
         )
-        if tool_result.detail:
-            self.detail_changed.emit(tool_result.detail)
 
         spoken_result = tool_message(
-            intent,
-            tool_result,
+            final_intent,
+            final_result,
             self._conversation_language,
         )
-
-        try:
-            self._brain.remember_tool_result(
-                user_text,
-                intent,
-                spoken_result,
-            )
-        except Exception as exc:
-            self.log_line.emit(f"[AI] memory note skipped: {exc}")
-
         self._speak(spoken_result)
 
-        if tool_result.should_exit:
+        if final_result.should_exit:
             self._stop.set()
             return False, None
 
-        if tool_result.end_session:
+        if final_result.end_session:
             self.log_line.emit("[SESSION] retour en veille demandé")
             return False, None
 
-        if tool_result.success:
-            self._state(AssistantState.SUCCESS, "C'est fait")
+        if outcome.success:
+            self._state(AssistantState.SUCCESS, "Mission terminée")
         else:
-            self._state(AssistantState.ERROR, "Action non disponible")
+            self._state(AssistantState.ERROR, "Mission interrompue")
 
-        time.sleep(0.30)
+        time.sleep(0.25)
         self._level(0.0)
-        return True, tool_result.follow_up
+        return True, core_result.follow_up
 
     @Slot()
     def run(self) -> None:
-        self.log_line.emit("[BOOT] Jarvis voice core started")
+        self.log_line.emit("[BOOT] Jarvis Agent Core started")
         self.log_line.emit(
-            f"[AI] provider={settings.ai_provider} model={settings.ollama_model}"
+            f"[AI] planner=ollama model={settings.ollama_model}"
         )
         self._state(AssistantState.STARTING, "Initialisation de Jarvis…")
 
@@ -344,8 +261,14 @@ class AssistantWorker(QObject):
                 if self._stop.is_set():
                     break
 
+                self._core.reset_session()
+                self._conversation_language = (
+                    settings.stt_language
+                    if settings.stt_language in {"fr", "en", "ar"}
+                    else "fr"
+                )
+
                 self.log_line.emit("[SESSION] conversation active")
-                self._pending_confirmation_intent = None
                 first_turn = True
                 pending_follow_up: str | None = None
 
