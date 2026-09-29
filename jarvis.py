@@ -73,6 +73,9 @@ QUIET_GATE_MULT = 2.2  # update noise floor only when below floor * this
 INPUT_PROBE_S = 0.5
 INPUT_SILENT_RMS = 0.001
 
+# Ignore microphone startup transients before arming the double-clap detector.
+CLAP_WARMUP_S = 1.2
+
 # Spotify: "spotify:track:TRACK_ID" or https://open.spotify.com/track/...
 # YouTube: https://www.youtube.com/watch?v=...
 SONG_URI = ""
@@ -981,6 +984,33 @@ def main() -> int:
             dtype="float32",
             blocksize=blocksize,
         ) as stream:
+            # Windows/PortAudio may emit startup transients that look like claps.
+            # Calibrate on the real listening stream before arming detection.
+            warmup_blocks = max(1, int(CLAP_WARMUP_S * SAMPLE_RATE / blocksize))
+            warmup_levels: list[float] = []
+
+            log.info(
+                "Calibrating clap detector for %.1fs — do not clap yet...",
+                CLAP_WARMUP_S,
+            )
+            for _ in range(warmup_blocks):
+                data, overflowed = stream.read(blocksize)
+                if overflowed:
+                    continue
+                warmup_levels.append(rms_mono(data))
+
+            if warmup_levels:
+                noise_floor = max(float(np.median(warmup_levels)), 1e-4)
+
+            first_clap_time = None
+            spike_armed = True
+
+            log.info(
+                "Clap detector armed (noise_floor=%.5f, threshold=%.5f). Now clap twice.",
+                noise_floor,
+                max(noise_floor * SPIKE_RATIO, MIN_RMS),
+            )
+
             while True:
                 data, overflowed = stream.read(blocksize)
                 if overflowed:
