@@ -55,13 +55,16 @@ class Settings:
     clap_noise_floor_alpha: float = _float("JARVIS_CLAP_NOISE_FLOOR_ALPHA", 0.992)
     clap_quiet_gate_mult: float = _float("JARVIS_CLAP_QUIET_GATE_MULT", 2.2)
 
-    speech_start_timeout_s: float = _float("JARVIS_SPEECH_START_TIMEOUT_S", 7.0)
+    speech_start_timeout_s: float = _float("JARVIS_SPEECH_START_TIMEOUT_S", 8.0)
     speech_max_duration_s: float = _float("JARVIS_SPEECH_MAX_DURATION_S", 15.0)
-    speech_silence_s: float = _float("JARVIS_SPEECH_SILENCE_S", 0.95)
-    speech_min_rms: float = _float("JARVIS_SPEECH_MIN_RMS", 0.010)
+    speech_silence_s: float = _float("JARVIS_SPEECH_SILENCE_S", 0.80)
+    speech_min_rms: float = _float("JARVIS_SPEECH_MIN_RMS", 0.006)
     speech_threshold_multiplier: float = _float(
-        "JARVIS_SPEECH_THRESHOLD_MULTIPLIER", 3.0
+        "JARVIS_SPEECH_THRESHOLD_MULTIPLIER", 2.2
     )
+    speech_startup_grace_s: float = _float("JARVIS_SPEECH_STARTUP_GRACE_S", 0.12)
+    speech_pre_roll_s: float = _float("JARVIS_SPEECH_PRE_ROLL_S", 0.60)
+    speech_onset_blocks: int = _int("JARVIS_SPEECH_ONSET_BLOCKS", 2)
 
     whisper_model: str = (os.getenv("JARVIS_WHISPER_MODEL") or "base").strip()
     whisper_device: str = (os.getenv("JARVIS_WHISPER_DEVICE") or "cpu").strip()
@@ -69,6 +72,15 @@ class Settings:
         os.getenv("JARVIS_WHISPER_COMPUTE_TYPE") or "int8"
     ).strip()
     stt_language: str | None = (os.getenv("JARVIS_STT_LANGUAGE") or "").strip() or None
+    stt_command_retry_language: str | None = (
+        os.getenv("JARVIS_STT_COMMAND_RETRY_LANGUAGE") or "fr"
+    ).strip() or None
+    stt_initial_prompt: str = (
+        os.getenv("JARVIS_STT_INITIAL_PROMPT")
+        or "Jarvis. Ouvre YouTube. Ouvre Google. Ouvre Chrome. Ouvre Spotify. "
+        "Ouvre Cursor. Ouvre VS Code. Ouvre Téléchargements. "
+        "Quelle heure est-il ? Recherche sur Internet."
+    ).strip()
 
     elevenlabs_api_key: str = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
     elevenlabs_voice_id: str = (os.getenv("ELEVENLABS_VOICE_ID") or "").strip()
