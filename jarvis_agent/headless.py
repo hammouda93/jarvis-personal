@@ -6,8 +6,10 @@ import traceback
 
 from .audio import record_utterance, wait_for_double_clap
 from .config import settings
+from .language import normalize_language, tool_message
+from .recognition import recognize_command
 from .stt import LocalWhisperSTT
-from .tools import execute, route
+from .tools import execute
 from .tts import ElevenLabsTTS
 
 
@@ -16,9 +18,9 @@ def run_headless() -> int:
     stop_event = threading.Event()
     stt = LocalWhisperSTT()
     tts = ElevenLabsTTS()
+    preferred_language = "fr"
 
     def level(_value: float) -> None:
-        # Reserved for future console meter / remote presence bridge.
         return
 
     def status(message: str) -> None:
@@ -26,7 +28,7 @@ def run_headless() -> int:
 
     print("=" * 68)
     print("JARVIS VOICE CORE — HEADLESS TEST")
-    print("double clap -> TTS -> listen -> local STT -> tool -> TTS")
+    print("French / English / Arabic")
     print("=" * 68)
 
     try:
@@ -56,50 +58,24 @@ def run_headless() -> int:
             )
             if audio is None:
                 print("[ERROR] aucune phrase détectée")
-                tts.speak("Je ne vous ai pas entendu.", on_level=level)
                 continue
 
             print(
                 f"[STATE] transcribing — model={settings.whisper_model} "
                 f"device={settings.whisper_device}"
             )
-            result = stt.transcribe(audio)
-            if not result.text:
+            transcript, intent = recognize_command(
+                stt,
+                audio,
+                log=print,
+                preferred_language=preferred_language,
+            )
+            if not transcript.text:
                 print("[ERROR] transcription vide")
-                tts.speak("Je n'ai pas compris.", on_level=level)
                 continue
 
-            text = result.text
-            language = result.language
-            print(
-                f"[STT] first_pass language={language} "
-                f"prob={result.language_probability} logprob={result.avg_logprob}"
-            )
-
-            print("[STATE] understanding")
-            intent = route(text)
-
-            retry_language = settings.stt_command_retry_language
-            if (
-                intent.name == "unknown"
-                and settings.stt_language is None
-                and retry_language
-            ):
-                retry = stt.transcribe(audio, language=retry_language)
-                retry_intent = route(retry.text) if retry.text else None
-                print(
-                    f"[STT] retry language={retry_language} "
-                    f"text={retry.text!r} logprob={retry.avg_logprob}"
-                )
-                if retry_intent is not None and retry_intent.name != "unknown":
-                    result = retry
-                    text = retry.text
-                    language = retry.language
-                    intent = retry_intent
-
-            print(f"[YOU] {text}")
-            if language:
-                print(f"[STT] language={language}")
+            preferred_language = normalize_language(transcript.language)
+            print(f"[YOU] {transcript.text} [lang={preferred_language}]")
             print(f"[INTENT] {intent.name} {intent.args}")
 
             print("[STATE] acting")
@@ -109,8 +85,9 @@ def run_headless() -> int:
                 f"detail={result.detail!r}"
             )
 
-            print(f"[TTS] {result.message}")
-            tts.speak(result.message, on_level=level)
+            spoken = tool_message(intent, result, preferred_language)
+            print(f"[TTS] {spoken}")
+            tts.speak(spoken, on_level=level)
 
             if result.should_exit:
                 stop_event.set()
