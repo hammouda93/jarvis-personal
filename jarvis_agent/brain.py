@@ -20,6 +20,12 @@ class AgentDecision:
     args: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class ToolDecisionValidation:
+    intent: ToolIntent | None
+    reason: str
+
+
 class AIProvider(Protocol):
     def decide(self, user_text: str) -> AgentDecision:
         ...
@@ -313,20 +319,7 @@ def _tool_arguments_are_grounded(
     return True
 
 
-def decision_to_intent(
-    decision: AgentDecision,
-    *,
-    user_text: str = "",
-) -> ToolIntent | None:
-    if decision.kind != "tool":
-        return None
-
-    if not _explicit_action_requested(user_text, decision.tool):
-        return None
-
-    if not _tool_arguments_are_grounded(decision, user_text):
-        return None
-
+def _candidate_intent(decision: AgentDecision) -> ToolIntent | None:
     args = dict(decision.args or {})
 
     if decision.tool == "browser.search":
@@ -359,6 +352,39 @@ def decision_to_intent(
         return ToolIntent("assistant.sleep")
 
     return None
+
+
+def validate_tool_decision(
+    decision: AgentDecision,
+    *,
+    user_text: str = "",
+) -> ToolDecisionValidation:
+    if decision.kind != "tool":
+        return ToolDecisionValidation(None, "not_a_tool")
+
+    candidate = _candidate_intent(decision)
+    if candidate is None:
+        return ToolDecisionValidation(None, "unsupported_tool")
+
+    grounded = _tool_arguments_are_grounded(decision, user_text)
+    explicit = _explicit_action_requested(user_text, decision.tool)
+
+    if not grounded:
+        return ToolDecisionValidation(None, "ungrounded_arguments")
+
+    if not explicit:
+        return ToolDecisionValidation(candidate, "confirmation_required")
+
+    return ToolDecisionValidation(candidate, "ok")
+
+
+def decision_to_intent(
+    decision: AgentDecision,
+    *,
+    user_text: str = "",
+) -> ToolIntent | None:
+    validation = validate_tool_decision(decision, user_text=user_text)
+    return validation.intent if validation.reason == "ok" else None
 
 
 def build_ai_provider() -> AIProvider:
