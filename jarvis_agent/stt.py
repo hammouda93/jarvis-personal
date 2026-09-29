@@ -136,12 +136,8 @@ class LocalWhisperSTT:
     ) -> TranscriptResult:
         path = save_temp_wav(audio)
         try:
-            if language == "auto":
-                effective_language = None
-            elif language is not None:
-                effective_language = language
-            else:
-                effective_language = settings.stt_language
+            requested = language if language is not None else settings.stt_language
+            effective_language = None if requested in {None, "", "auto"} else requested
             return self._decode(path, language=effective_language)
         finally:
             path.unlink(missing_ok=True)
