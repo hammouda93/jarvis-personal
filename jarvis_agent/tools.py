@@ -43,8 +43,11 @@ def normalize(text: str) -> str:
     corrections = (
         (r"\bquelleur\b", "quelle heure"),
         (r"\bquelheur\b", "quelle heure"),
+        (r"\bauvre\b", "ouvre"),
         (r"\boufre\b", "ouvre"),
         (r"\bouvres\b", "ouvre"),
+        (r"\bouvrez\b", "ouvre"),
+        (r"\bouvriez\b", "ouvre"),
         (r"\btelechargement\b", "telechargements"),
     )
     for pattern, replacement in corrections:
@@ -154,6 +157,25 @@ def route(text: str) -> ToolIntent:
             )
         )
     ):
+        match = re.search(r"\bdossier\s+(.+)$", cmd)
+        if match:
+            target = match.group(1).strip()
+            target = re.sub(
+                r"^(?:nomme|nommee|appele|appelee|qui s appelle)\s+",
+                "",
+                target,
+            ).strip()
+            vague = {
+                "specifique",
+                "un specifique",
+                "particulier",
+                "un particulier",
+                "precis",
+                "un precis",
+            }
+            if target and target not in vague and len(target) >= 3:
+                return ToolIntent("folder.open_named", {"query": target})
+
         return ToolIntent("folder.open_prompt")
 
     if any(word in cmd for word in ("ouvre", "ouvrir", "lance", "affiche")):
@@ -272,14 +294,10 @@ def _normalize_path_name(value: str) -> str:
 def _app_search_roots() -> list[Path]:
     appdata = os.getenv("APPDATA", "")
     programdata = os.getenv("PROGRAMDATA", r"C:\ProgramData")
-    program_files = os.getenv("ProgramFiles", r"C:\Program Files")
-    program_files_x86 = os.getenv("ProgramFiles(x86)", r"C:\Program Files (x86)")
     roots = [
         Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
         if appdata else None,
         Path(programdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs",
-        Path(program_files),
-        Path(program_files_x86),
         Path.home() / "Desktop",
     ]
     return [
@@ -290,7 +308,18 @@ def _app_search_roots() -> list[Path]:
 
 def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
     wanted = _normalize_path_name(query)
-    if not wanted:
+    compact = wanted.replace(" ", "")
+    blocked = {
+        "app",
+        "application",
+        "programme",
+        "program",
+        "browser",
+        "navigateur",
+        "com",
+        "exe",
+    }
+    if not wanted or len(compact) < 4 or wanted in blocked:
         return None, []
 
     scored: list[tuple[float, Path]] = []
@@ -306,11 +335,11 @@ def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
             return
         if wanted == name:
             score = 1.0
-        elif wanted in name or name in wanted:
+        elif len(wanted) >= 5 and (wanted in name or name in wanted):
             score = 0.94
         else:
             score = difflib.SequenceMatcher(None, wanted, name).ratio()
-        if score >= 0.72:
+        if score >= 0.80:
             scored.append((score, path))
 
     for root in _app_search_roots():
@@ -325,7 +354,20 @@ def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
                     continue
                 for filename in files:
                     suffix = Path(filename).suffix.lower()
-                    if suffix not in {".lnk", ".exe"}:
+                    if suffix != ".lnk":
+                        continue
+                    lowered = filename.lower()
+                    if any(
+                        bad in lowered
+                        for bad in (
+                            "uninstall",
+                            "update",
+                            "updater",
+                            "service",
+                            "server",
+                            "helper",
+                        )
+                    ):
                         continue
                     consider(current_path / filename)
                     visited += 1
@@ -342,7 +384,7 @@ def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
     if not matches:
         return None, []
 
-    if scored[0][0] >= 0.84:
+    if scored[0][0] >= 0.90:
         return scored[0][1], matches
     return None, matches
 
