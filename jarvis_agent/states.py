@@ -12,6 +12,7 @@ class AssistantState(str, Enum):
     LISTENING = "listening"
     TRANSCRIBING = "transcribing"
     UNDERSTANDING = "understanding"
+    THINKING = "thinking"
     ACTING = "acting"
     SPEAKING = "speaking"
     SUCCESS = "success"
@@ -27,6 +28,7 @@ STATE_LABELS: dict[AssistantState, str] = {
     AssistantState.LISTENING: "JE VOUS ÉCOUTE",
     AssistantState.TRANSCRIBING: "TRANSCRIPTION",
     AssistantState.UNDERSTANDING: "COMPRÉHENSION",
+    AssistantState.THINKING: "RÉFLEXION",
     AssistantState.ACTING: "ACTION EN COURS",
     AssistantState.SPEAKING: "RÉPONSE",
     AssistantState.SUCCESS: "TERMINÉ",
