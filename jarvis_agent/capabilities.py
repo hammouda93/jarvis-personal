@@ -20,18 +20,6 @@ def detect_missing_capability(user_text: str) -> MissingCapability | None:
     """Recognize clearly requested capabilities that Jarvis does not have yet."""
     text = normalize(user_text)
 
-    if "vlc" in text and any(
-        token in text for token in ("ouvre", "ouvrir", "lance", "lancer", "open")
-    ):
-        return MissingCapability(
-            "app.vlc",
-            {
-                "fr": "J'ai compris que vous voulez ouvrir VLC Media Player. Je ne dispose pas encore de l'outil VLC.",
-                "en": "I understand that you want to open VLC Media Player. I don't have the VLC tool yet.",
-                "ar": "فهمت أنك تريد فتح VLC Media Player، لكن أداة VLC غير متاحة لدي بعد.",
-            },
-        )
-
     if "whatsapp" in text and any(
         token in text
         for token in ("message", "envoie", "envoyer", "ecris", "écris", "send")
