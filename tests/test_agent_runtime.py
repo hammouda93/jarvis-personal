@@ -3,6 +3,7 @@ import unittest
 from jarvis_agent.agent_runtime import (
     OllamaToolAgent,
     OpenAIResponsesAgent,
+    GroqResponsesAgent,
     _looks_like_action_promise,
     _looks_like_unnecessary_followup,
     _looks_mostly_english,
@@ -60,7 +61,10 @@ class FakeTools:
             )
         return result
 
-    def execute(self, name, arguments):
+    def requires_confirmation(self, name):
+        return name == "msf_commit_mutation"
+
+    def execute(self, name, arguments, *, approved=False):
         self.calls.append((name, arguments))
         return AgentActionResult(
             name=name,
@@ -82,6 +86,18 @@ class FakeOllamaAgent(OllamaToolAgent):
 
 
 class FakeOpenAIAgent(OpenAIResponsesAgent):
+    def __init__(self, tools, responses):
+        super().__init__(tools)
+        self.responses = list(responses)
+        self.payloads = []
+        self.api_key = "test"
+
+    def _post(self, payload):
+        self.payloads.append(payload)
+        return self.responses.pop(0)
+
+
+class FakeGroqAgent(GroqResponsesAgent):
     def __init__(self, tools, responses):
         super().__init__(tools)
         self.responses = list(responses)
@@ -269,6 +285,83 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertTrue(
             any(action.name == "mcp:gmail:search_mail" for action in second.actions)
+        )
+
+    def test_groq_provider_uses_gpt_oss_and_browser_search(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "id": "resp_groq_1",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Bonjour.",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        )
+        result = agent.run("Bonjour")
+
+        self.assertEqual(result.text, "Bonjour.")
+        self.assertEqual(agent.provider_name, "groq")
+        self.assertEqual(agent.model, "openai/gpt-oss-120b")
+        tool_types = {
+            item.get("type")
+            for item in agent.payloads[0]["tools"]
+        }
+        self.assertIn("browser_search", tool_types)
+
+    def test_sensitive_local_function_waits_for_user_approval(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "id": "resp_change_1",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_change_1",
+                            "name": "msf_commit_mutation",
+                            "arguments": "{\"change_id\":\"abc123\"}",
+                        }
+                    ],
+                },
+                {
+                    "id": "resp_change_2",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Modification confirmée.",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        )
+
+        first = agent.run("Applique la modification préparée")
+        self.assertIn("confirmation", first.text.lower())
+        self.assertEqual(tools.calls, [])
+
+        second = agent.run("oui")
+        self.assertEqual(second.text, "Modification confirmée.")
+        self.assertEqual(tools.calls[0][0], "msf_commit_mutation")
+        self.assertEqual(
+            agent.payloads[1]["input"][0]["type"],
+            "function_call_output",
         )
 
     def test_openai_loop_returns_function_result_then_continues(self):
