@@ -12,6 +12,7 @@ from .windows_perception import (
     inspect_active_window,
     list_windows,
     press_key,
+    write_ui_element,
 )
 
 
@@ -132,6 +133,21 @@ class NativeToolRegistry:
                     },
                 },
                 ["name"],
+            ),
+            self._ollama(
+                "write_ui_element",
+                "Écrit du texte dans un champ visible de la fenêtre active sans valider automatiquement. Inspecte d'abord l'interface.",
+                {
+                    "name": {
+                        "type": "string",
+                        "description": "Libellé ou automation_id du champ visible.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Texte à saisir dans le champ.",
+                    },
+                },
+                ["name", "text"],
             ),
             self._ollama(
                 "press_key",
@@ -313,6 +329,17 @@ class NativeToolRegistry:
             target = str(args.get("name", "")).strip()
             control_type = str(args.get("control_type", "")).strip() or None
             result = click_ui_element(target, control_type=control_type)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "write_ui_element":
+            target = str(args.get("name", "")).strip()
+            text = str(args.get("text", ""))
+            result = write_ui_element(target, text)
             return AgentActionResult(
                 name=name,
                 success=result.success,
