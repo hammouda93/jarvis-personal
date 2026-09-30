@@ -118,7 +118,7 @@ class Settings:
         os.getenv("JARVIS_OLLAMA_AGENT_KEEP_ALIVE") or "30m"
     ).strip()
     agent_max_tool_rounds: int = _int("JARVIS_AGENT_MAX_TOOL_ROUNDS", 8)
-    agent_history_items: int = _int("JARVIS_AGENT_HISTORY_ITEMS", 20)
+    agent_history_items: int = _int("JARVIS_AGENT_HISTORY_ITEMS", 12)
     openai_api_key: str = (os.getenv("OPENAI_API_KEY") or "").strip()
     openai_base_url: str = (
         os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
