@@ -63,11 +63,14 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
 - si l'utilisateur a demandé plusieurs étapes dans une seule phrase, exécute
   toutes les étapes explicitement demandées avant de répondre. Ne demande pas
   "voulez-vous que je..." pour une étape déjà demandée;
+- si la cible demandée est un site ou service web, utilise open_url directement
+  lorsque son URL est connue; ouvrir seulement Chrome n'accomplit pas la demande;
 - n'annonce jamais "je vais chercher/ouvrir/faire" sans appeler l'outil dans le
   même tour.
 
 Exemples:
 - "Ouvre Chrome et cherche les agents IA" => ouvrir Chrome puis chercher.
+- "Ouvre YouTube" => utiliser open_url vers YouTube; ne pas ouvrir Chrome seul.
 - "Ouvre VLC Media Player" => utiliser l'outil générique d'ouverture d'application.
 - "Ouvre media dans baristas" => ouvrir le dossier media avec baristas comme parent.
 - "Non, je voulais dire tickets" => comprendre qu'il s'agit d'une correction
@@ -145,17 +148,20 @@ def _looks_like_internal_reasoning(text: str) -> bool:
 
 def _looks_like_action_promise(text: str) -> bool:
     lower = (text or "").lower()
+
+    # Catch future-action language even when the model inserts adverbs such as
+    # "maintenant", "ensuite" or "tout de suite" between the auxiliary and verb.
+    patterns = (
+        r"\bje vais\b.{0,40}\b(ouvrir|chercher|rechercher|faire|cliquer|écrire|ecrire|fermer)\b",
+        r"\bi(?:'|’)ll\b.{0,40}\b(open|search|do|click|write|close)\b",
+        r"\bi will\b.{0,40}\b(open|search|do|click|write|close)\b",
+    )
+    if any(re.search(pattern, lower, flags=re.DOTALL) for pattern in patterns):
+        return True
+
     markers = (
-        "je vais chercher",
-        "je vais rechercher",
-        "je vais ouvrir",
-        "je vais le faire",
         "patientez un instant",
         "patiente un instant",
-        "i'll search",
-        "i will search",
-        "i'll open",
-        "i will open",
         "let me do that",
         "right away",
     )
