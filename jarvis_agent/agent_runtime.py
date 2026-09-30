@@ -328,7 +328,6 @@ class OllamaToolAgent:
                 "content": f"{user_text}\n/no_think",
             }
         )
-        actions: list[AgentActionResult] = []
         end_session = False
         should_exit = False
 
@@ -511,11 +510,15 @@ class OpenAIResponsesAgent:
         self._previous_response_id: str | None = None
         self._pending_mcp_approval: dict[str, Any] | None = None
         self._pending_mcp_response_id: str | None = None
+        self._pending_function_approval: dict[str, Any] | None = None
+        self._pending_function_response_id: str | None = None
 
     def reset(self) -> None:
         self._previous_response_id = None
         self._pending_mcp_approval = None
         self._pending_mcp_response_id = None
+        self._pending_function_approval = None
+        self._pending_function_response_id = None
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         return
@@ -576,8 +579,59 @@ class OpenAIResponsesAgent:
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
         previous = self._previous_response_id
+        actions: list[AgentActionResult] = []
 
-        if self._pending_mcp_approval is not None:
+        if self._pending_function_approval is not None:
+            normalized = user_text.strip().lower().strip(" .!?")
+            yes = normalized in {
+                "oui", "yes", "ok", "okay", "d'accord", "daccord",
+                "vas-y", "vas y", "autorise", "autoriser", "confirme",
+                "confirmer", "approve",
+            }
+            no = normalized in {
+                "non", "no", "annule", "annuler", "refuse", "refuser",
+                "cancel", "deny",
+            }
+            pending = self._pending_function_approval
+            if not yes and not no:
+                tool_name = str(pending.get("name") or "cette action")
+                return AgentTurnResult(
+                    text=(
+                        f"J'attends votre confirmation explicite pour "
+                        f"{tool_name}. Dites oui ou non."
+                    )
+                )
+
+            call_id = str(pending.get("call_id") or "")
+            name = str(pending.get("name") or "")
+            arguments = dict(pending.get("arguments") or {})
+            previous = self._pending_function_response_id or previous
+
+            if yes:
+                result = self.tools.execute(
+                    name,
+                    arguments,
+                    approved=True,
+                )
+            else:
+                result = AgentActionResult(
+                    name=name,
+                    success=False,
+                    message="Action refusée par l'utilisateur.",
+                    detail="user_denied",
+                )
+            actions.append(result)
+            next_input: Any = [
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": result.as_json(),
+                }
+            ]
+            self._pending_function_approval = None
+            self._pending_function_response_id = None
+
+        elif self._pending_mcp_approval is not None:
             normalized = user_text.strip().lower().strip(" .!?")
             yes = normalized in {
                 "oui", "yes", "ok", "okay", "d'accord", "daccord",
@@ -635,6 +689,7 @@ class OpenAIResponsesAgent:
                     "effort": self.reasoning_effort,
                 },
                 "store": True,
+                "parallel_tool_calls": False,
             }
             if previous:
                 payload["previous_response_id"] = previous
@@ -761,6 +816,29 @@ class OpenAIResponsesAgent:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
                 if phase:
                     phase("acting")
+
+                if self.tools.requires_confirmation(name):
+                    self._pending_function_approval = {
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                    self._pending_function_response_id = response_id
+                    if log:
+                        log(
+                            f"[APPROVAL] required tool={name} "
+                            f"arguments={arguments}"
+                        )
+                    return AgentTurnResult(
+                        text=(
+                            "Cette action va modifier les données MS Football. "
+                            "J'ai besoin de votre confirmation explicite. "
+                            "Dites oui pour exécuter ou non pour annuler."
+                        ),
+                        actions=tuple(actions),
+                        end_session=end_session,
+                        should_exit=should_exit,
+                    )
 
                 result = self.tools.execute(name, arguments)
                 actions.append(result)
