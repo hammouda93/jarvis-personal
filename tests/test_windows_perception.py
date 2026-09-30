@@ -34,6 +34,24 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertIn("write_ui_element", names)
         self.assertIn("close_window", names)
 
+    def test_ui_tools_accept_snapshot_refs_and_named_inspection(self):
+        tools = {
+            item["function"]["name"]: item["function"]["parameters"]
+            for item in NativeToolRegistry().ollama_tools()
+        }
+        self.assertIn(
+            "title",
+            tools["inspect_active_window"]["properties"],
+        )
+        self.assertIn(
+            "ref",
+            tools["click_ui_element"]["properties"],
+        )
+        self.assertIn(
+            "ref",
+            tools["write_ui_element"]["properties"],
+        )
+
     @patch("jarvis_agent.native_tools.inspect_active_window")
     def test_inspection_result_reaches_model(self, inspect_mock):
         inspect_mock.return_value.success = True
