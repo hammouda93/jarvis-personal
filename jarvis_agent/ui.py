@@ -233,6 +233,8 @@ class JarvisWindow(QWidget):
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
         self.setStyleSheet("background-color: rgb(2, 7, 13);")
         self._drag_position = None
+        self._close_requested = False
+        self._allow_close = False
 
         self.orb = ReactiveOrb(self)
 
@@ -306,6 +308,7 @@ class JarvisWindow(QWidget):
 
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._thread.quit)
+        self._thread.finished.connect(self._on_worker_thread_finished)
         self._worker.state_changed.connect(self._on_state)
         self._worker.status_changed.connect(self.status_label.setText)
         self._worker.transcript_changed.connect(self._on_transcript)
@@ -365,19 +368,24 @@ class JarvisWindow(QWidget):
         self._drag_position = None
         event.accept()
 
-    def closeEvent(self, event) -> None:
-        self._worker.stop()
-        self._thread.quit()
+    def _on_worker_thread_finished(self) -> None:
+        if self._close_requested:
+            self._allow_close = True
+            QTimer.singleShot(0, self.close)
 
-        if self._thread.isRunning() and not self._thread.wait(5000):
-            # Do not destroy a live QThread (for example while a local model
-            # request is finishing). Keep the window alive and retry shortly.
-            self.status_label.setText("Arrêt de Jarvis…")
-            event.ignore()
-            QTimer.singleShot(750, self.close)
+    def closeEvent(self, event) -> None:
+        if self._allow_close or not self._thread.isRunning():
+            event.accept()
             return
 
-        event.accept()
+        # Never destroy the QThread while a local model/TTS request is still
+        # running. Ask the worker to stop, keep the window alive, and close only
+        # after worker.finished -> thread.finished.
+        self._close_requested = True
+        self.status_label.setText("Arrêt de Jarvis…")
+        self.hint_label.setText("Veuillez patienter pendant l'arrêt en cours")
+        self._worker.stop()
+        event.ignore()
 
 
 def run_ui() -> int:
