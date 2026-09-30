@@ -534,6 +534,9 @@ class OpenAIResponsesAgent:
         self.provider_name = "openai"
         self.reasoning_effort = settings.openai_reasoning_effort
         self.web_search_tool_type = "web_search"
+        self.supports_response_continuation = True
+        self.store_responses = True
+        self._local_input_history: list[dict[str, Any]] = []
         self._previous_response_id: str | None = None
         self._pending_mcp_approval: dict[str, Any] | None = None
         self._pending_mcp_response_id: str | None = None
@@ -541,6 +544,7 @@ class OpenAIResponsesAgent:
         self._pending_function_response_id: str | None = None
 
     def reset(self) -> None:
+        self._local_input_history = []
         self._previous_response_id = None
         self._pending_mcp_approval = None
         self._pending_mcp_response_id = None
@@ -648,13 +652,16 @@ class OpenAIResponsesAgent:
                     detail="user_denied",
                 )
             actions.append(result)
-            next_input: Any = [
-                {
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": result.as_json(),
-                }
-            ]
+            approval_output = {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": result.as_json(),
+            }
+            if self.supports_response_continuation:
+                next_input: Any = [approval_output]
+            else:
+                self._local_input_history.append(approval_output)
+                next_input = list(self._local_input_history)
             self._pending_function_approval = None
             self._pending_function_response_id = None
 
@@ -683,17 +690,26 @@ class OpenAIResponsesAgent:
                 self._pending_mcp_approval.get("id") or ""
             )
             previous = self._pending_mcp_response_id or previous
-            next_input: Any = [
-                {
-                    "type": "mcp_approval_response",
-                    "approve": yes,
-                    "approval_request_id": approval_id,
-                }
-            ]
+            approval_output = {
+                "type": "mcp_approval_response",
+                "approve": yes,
+                "approval_request_id": approval_id,
+            }
+            if self.supports_response_continuation:
+                next_input: Any = [approval_output]
+            else:
+                self._local_input_history.append(approval_output)
+                next_input = list(self._local_input_history)
             self._pending_mcp_approval = None
             self._pending_mcp_response_id = None
         else:
-            next_input = user_text
+            if self.supports_response_continuation:
+                next_input = user_text
+            else:
+                self._local_input_history.append(
+                    {"role": "user", "content": user_text}
+                )
+                next_input = list(self._local_input_history)
         end_session = False
         should_exit = False
 
@@ -714,10 +730,11 @@ class OpenAIResponsesAgent:
                 "reasoning": {
                     "effort": self.reasoning_effort,
                 },
-                "store": True,
                 "parallel_tool_calls": False,
             }
-            if previous:
+            if self.store_responses:
+                payload["store"] = True
+            if self.supports_response_continuation and previous:
                 payload["previous_response_id"] = previous
 
             started = time.perf_counter()
@@ -736,6 +753,10 @@ class OpenAIResponsesAgent:
             self._previous_response_id = response_id
 
             output = data.get("output") or []
+            if not self.supports_response_continuation:
+                self._local_input_history.extend(
+                    item for item in output if isinstance(item, dict)
+                )
 
             approval_requests = [
                 item
@@ -824,7 +845,7 @@ class OpenAIResponsesAgent:
                     should_exit=should_exit,
                 )
 
-            next_input = []
+            tool_outputs: list[dict[str, Any]] = []
             for call in calls:
                 name = str(call.get("name") or "").strip()
                 call_id = str(call.get("call_id") or "").strip()
@@ -877,13 +898,19 @@ class OpenAIResponsesAgent:
                         f"success={result.success} detail={result.detail!r}"
                     )
 
-                next_input.append(
+                tool_outputs.append(
                     {
                         "type": "function_call_output",
                         "call_id": call_id,
                         "output": result.as_json(),
                     }
                 )
+
+            if self.supports_response_continuation:
+                next_input = tool_outputs
+            else:
+                self._local_input_history.extend(tool_outputs)
+                next_input = list(self._local_input_history)
 
         return AgentTurnResult(
             text=(
@@ -931,6 +958,46 @@ class GroqResponsesAgent(OpenAIResponsesAgent):
         self.provider_name = "groq"
         self.reasoning_effort = settings.groq_reasoning_effort
         self.web_search_tool_type = "browser_search"
+        self.supports_response_continuation = False
+        self.store_responses = False
+
+    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self.api_key:
+            raise AgentRuntimeUnavailable(
+                "GROQ_API_KEY n'est pas configurée."
+            )
+
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise AgentRuntimeUnavailable(
+                "Le client OpenAI compatible Groq n'est pas installé. "
+                "Exécutez pip install -r requirements.txt."
+            ) from exc
+
+        try:
+            client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=settings.ai_request_timeout_s,
+                default_headers={
+                    "User-Agent": "jarvis-personal/1.0",
+                    "Accept": "application/json",
+                },
+            )
+            response = client.responses.create(**payload)
+            return response.model_dump()
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            body = getattr(exc, "body", None)
+            detail = body if body is not None else str(exc)
+            if status:
+                raise AgentRuntimeUnavailable(
+                    f"groq API error {status}: {detail}"
+                ) from exc
+            raise AgentRuntimeUnavailable(
+                f"Groq n'est pas joignable: {detail}"
+            ) from exc
 
 
 def build_agent_runtime() -> AgentRuntime:
