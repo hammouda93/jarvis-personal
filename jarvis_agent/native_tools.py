@@ -6,6 +6,13 @@ from typing import Any
 
 from .memory import LOCAL_MEMORY
 from .tools import ToolIntent, ToolResult, execute, normalize
+from .windows_perception import (
+    activate_window,
+    click_ui_element,
+    inspect_active_window,
+    list_windows,
+    press_key,
+)
 
 
 @dataclass(frozen=True)
@@ -87,6 +94,55 @@ class NativeToolRegistry:
                     }
                 },
                 ["query"],
+            ),
+            self._ollama(
+                "list_windows",
+                "Liste les fenêtres visibles actuellement sur Windows. Outil de perception en lecture seule.",
+                {},
+                [],
+            ),
+            self._ollama(
+                "inspect_active_window",
+                "Observe la fenêtre active et retourne les éléments UI visibles (boutons, champs, menus, textes). À utiliser avant de cliquer.",
+                {},
+                [],
+            ),
+            self._ollama(
+                "activate_window",
+                "Met au premier plan une fenêtre déjà ouverte en la recherchant par son titre.",
+                {
+                    "title": {
+                        "type": "string",
+                        "description": "Titre ou partie distinctive du titre de la fenêtre.",
+                    }
+                },
+                ["title"],
+            ),
+            self._ollama(
+                "click_ui_element",
+                "Clique/active un élément visible dans la fenêtre active par son libellé. Inspecte d'abord la fenêtre si la cible n'est pas certaine.",
+                {
+                    "name": {
+                        "type": "string",
+                        "description": "Texte visible de l'élément à activer.",
+                    },
+                    "control_type": {
+                        "type": "string",
+                        "description": "Type UIA optionnel, par ex. Button, Hyperlink, MenuItem.",
+                    },
+                },
+                ["name"],
+            ),
+            self._ollama(
+                "press_key",
+                "Envoie une touche de navigation sûre à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End.",
+                {
+                    "key": {
+                        "type": "string",
+                        "description": "Nom de la touche à envoyer.",
+                    }
+                },
+                ["key"],
             ),
             self._ollama(
                 "get_current_time",
@@ -223,6 +279,55 @@ class NativeToolRegistry:
             return self._convert(
                 name,
                 execute(ToolIntent("browser.search", {"query": query})),
+            )
+
+        if name == "list_windows":
+            result = list_windows()
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "inspect_active_window":
+            result = inspect_active_window()
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "activate_window":
+            title = str(args.get("title", "")).strip()
+            result = activate_window(title)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "click_ui_element":
+            target = str(args.get("name", "")).strip()
+            control_type = str(args.get("control_type", "")).strip() or None
+            result = click_ui_element(target, control_type=control_type)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "press_key":
+            key = str(args.get("key", "")).strip()
+            result = press_key(key)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
             )
 
         if name == "get_current_time":
