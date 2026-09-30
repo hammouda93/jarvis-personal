@@ -286,6 +286,25 @@ class NativeToolRegistry:
                 [],
             ),
             self._ollama(
+                "msf_resolve_route",
+                "Résout une route Django MS Football existante vers son URL réelle. À utiliser après msf_list_routes pour ouvrir un écran ou workflow existant sans coder son URL.",
+                {
+                    "name": {
+                        "type": "string",
+                        "description": "Nom Django de la route.",
+                    },
+                    "kwargs": {
+                        "type": "object",
+                        "description": "Arguments nommés de la route, par ex. video_id.",
+                    },
+                    "query": {
+                        "type": "object",
+                        "description": "Paramètres query-string optionnels.",
+                    },
+                },
+                ["name"],
+            ),
+            self._ollama(
                 "msf_prepare_mutation",
                 "Prépare sans l'exécuter une création, modification ou suppression générique dans MS Football. Retourne un aperçu et un change_id. Ne modifie jamais la base.",
                 {
@@ -588,6 +607,15 @@ class NativeToolRegistry:
                 "limit": int(args.get("limit") or 120),
             }
             result = MS_FOOTBALL_BRIDGE.call("list_routes", payload)
+            return AgentActionResult(name, result.success, result.message, result.detail)
+
+        if name == "msf_resolve_route":
+            payload = {
+                "name": str(args.get("name", "")).strip(),
+                "kwargs": args.get("kwargs") or {},
+                "query": args.get("query") or {},
+            }
+            result = MS_FOOTBALL_BRIDGE.call("resolve_route", payload)
             return AgentActionResult(name, result.success, result.message, result.detail)
 
         if name == "msf_prepare_mutation":
