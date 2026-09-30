@@ -114,6 +114,9 @@ class Settings:
     ollama_agent_num_predict: int = _int(
         "JARVIS_OLLAMA_AGENT_NUM_PREDICT", 160
     )
+    ollama_agent_keep_alive: str = (
+        os.getenv("JARVIS_OLLAMA_AGENT_KEEP_ALIVE") or "30m"
+    ).strip()
     agent_max_tool_rounds: int = _int("JARVIS_AGENT_MAX_TOOL_ROUNDS", 8)
     agent_history_items: int = _int("JARVIS_AGENT_HISTORY_ITEMS", 20)
     openai_api_key: str = (os.getenv("OPENAI_API_KEY") or "").strip()
