@@ -240,6 +240,7 @@ def inspect_active_window(
 
     interactive: list[Any] = []
     informative: list[Any] = []
+    document_rects: list[tuple[int, int, int, int]] = []
     seen: set[tuple[str, str, str, tuple[int, int, int, int]]] = set()
 
     for wrapper in descendants:
@@ -259,6 +260,9 @@ def inspect_active_window(
             continue
         seen.add(key)
 
+        if ctype == "Document":
+            document_rects.append(rect)
+
         if ctype in _INTERACTIVE_TYPES:
             # Keep unlabeled interactive controls: their ref + type + position
             # can still let the agent operate them safely after inspection.
@@ -266,12 +270,40 @@ def inspect_active_window(
         elif ctype in _TEXT_TYPES and name:
             informative.append(wrapper)
 
-    max_items = max(8, min(int(limit), 48))
-    # Prefer controls. Keep a small amount of visible text for page context.
-    selected = interactive[:max_items]
-    text_budget = min(8, max(0, max_items - len(selected)))
-    if text_budget:
-        selected.extend(informative[:text_budget])
+    # Browser accessibility trees contain lots of Chrome toolbar/bookmark
+    # controls before the actual web page. Prefer controls physically inside
+    # the largest Document region so page search boxes/buttons are not pushed
+    # out of the compact snapshot.
+    content_rect = None
+    if document_rects:
+        content_rect = max(
+            document_rects,
+            key=lambda value: max(0, value[2] - value[0]) * max(0, value[3] - value[1]),
+        )
+
+    def inside_content(wrapper: Any) -> bool:
+        if content_rect is None:
+            return False
+        left, top, right, bottom = _rect_tuple(wrapper)
+        cx = (left + right) / 2
+        cy = (top + bottom) / 2
+        return (
+            content_rect[0] <= cx <= content_rect[2]
+            and content_rect[1] <= cy <= content_rect[3]
+        )
+
+    content_controls = [item for item in interactive if inside_content(item)]
+    chrome_controls = [item for item in interactive if not inside_content(item)]
+
+    max_items = max(8, min(int(limit), 40))
+    selected: list[Any] = []
+    selected.extend(content_controls[: max_items - 6])
+    remaining = max_items - len(selected)
+    if remaining > 0:
+        selected.extend(chrome_controls[: min(remaining, 6)])
+    remaining = max_items - len(selected)
+    if remaining > 0:
+        selected.extend(informative[: min(remaining, 4)])
 
     _SNAPSHOT_ELEMENTS = {}
     _SNAPSHOT_WINDOW_TITLE = _element_name(window)
