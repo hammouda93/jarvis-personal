@@ -177,36 +177,111 @@ def _json(value: Any) -> str:
     )
 
 
+def _native_visible_windows(*, limit: int = 20) -> list[dict[str, Any]]:
+    """Fallback window enumeration using the Win32 API.
+
+    UI Automation can intermittently raise WinError 6 when a top-level window
+    disappears during enumeration. Native EnumWindows is much more tolerant
+    for the simple task of listing visible titled windows.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    enum_proc = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HWND,
+        wintypes.LPARAM,
+    )
+
+    @enum_proc
+    def callback(hwnd, _lparam):
+        if len(items) >= max(1, min(int(limit), 30)):
+            return False
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = int(user32.GetWindowTextLengthW(hwnd) or 0)
+            if length <= 0:
+                return True
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            title = str(buffer.value or "").strip()
+            key = normalize(title)
+            if not key or key in seen:
+                return True
+            seen.add(key)
+            items.append(
+                {
+                    "title": title[:180],
+                    "type": "Window",
+                }
+            )
+        except Exception:
+            return True
+        return True
+
+    user32.EnumWindows(callback, 0)
+    return items
+
+
 def list_windows(*, limit: int = 20) -> UIActionResult:
+    uia_error = ""
+    items: list[dict[str, Any]] = []
+
     try:
         wrappers = _desktop().windows(
             visible_only=True,
             top_level_only=True,
         )
+        seen: set[str] = set()
+        for wrapper in wrappers:
+            title = _element_name(wrapper)
+            key = normalize(title)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            items.append(
+                {
+                    "title": title[:180],
+                    "type": _control_type(wrapper) or "Window",
+                }
+            )
+            if len(items) >= max(1, min(limit, 30)):
+                break
     except Exception as exc:
-        return UIActionResult(False, "Impossible de lire les fenêtres Windows.", str(exc))
+        uia_error = str(exc)
 
-    items: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for wrapper in wrappers:
-        title = _element_name(wrapper)
-        key = normalize(title)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        items.append(
+    if not items:
+        try:
+            items = _native_visible_windows(limit=limit)
+        except Exception as exc:
+            detail = str(exc)
+            if uia_error:
+                detail = f"UIA: {uia_error}; Win32: {detail}"
+            return UIActionResult(
+                False,
+                "Impossible de lire les fenêtres Windows.",
+                detail,
+            )
+
+    detail = _json(items)
+    if uia_error:
+        detail = _json(
             {
-                "title": title[:180],
-                "type": _control_type(wrapper) or "Window",
+                "windows": items,
+                "fallback": "win32",
+                "uia_error": uia_error[:180],
             }
         )
-        if len(items) >= max(1, min(limit, 30)):
-            break
 
     return UIActionResult(
         True,
         f"{len(items)} fenêtre(s) visible(s).",
-        _json(items),
+        detail,
     )
 
 
