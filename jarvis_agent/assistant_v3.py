@@ -219,6 +219,8 @@ class AssistantWorker(QObject):
         self._state(AssistantState.STARTING, "Initialisation de Jarvis…")
 
         try:
+            self.status_changed.emit("Chargement du cerveau local…")
+            self._agent.warm_up(log=self.log_line.emit)
             while not self._stop.is_set():
                 self.transcript_changed.emit("")
                 self.detail_changed.emit("")
