@@ -3,6 +3,9 @@ import unittest
 from jarvis_agent.agent_runtime import (
     OllamaToolAgent,
     OpenAIResponsesAgent,
+    _looks_like_action_promise,
+    _looks_like_unnecessary_followup,
+    _looks_mostly_english,
     _visible_text,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -91,6 +94,32 @@ class FakeOpenAIAgent(OpenAIResponsesAgent):
 
 
 class AgentRuntimeTests(unittest.TestCase):
+
+    def test_action_promise_is_detected(self):
+        self.assertTrue(
+            _looks_like_action_promise(
+                "Je vais chercher cette information pour vous."
+            )
+        )
+
+    def test_unnecessary_followup_is_detected(self):
+        self.assertTrue(
+            _looks_like_unnecessary_followup(
+                "Would you like me to perform the search now?"
+            )
+        )
+
+    def test_english_drift_is_detected(self):
+        self.assertTrue(
+            _looks_mostly_english(
+                "I have opened Chrome for you. Would you like me to search now?"
+            )
+        )
+        self.assertFalse(
+            _looks_mostly_english(
+                "J'ai ouvert Chrome. Je lance maintenant la recherche."
+            )
+        )
 
     def test_hidden_thinking_is_never_spoken(self):
         value = (
