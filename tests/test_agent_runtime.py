@@ -46,6 +46,19 @@ class FakeTools:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "msf_capabilities",
+                    "description": "discover MS Football",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                },
+            },
         ]
 
     def openai_tools(self):
@@ -139,12 +152,22 @@ class FakeGroqAgent(GroqResponsesAgent):
             ]
         )
 
-    def _chat(self, *, tool_choice="auto"):
+    def _chat(
+        self,
+        *,
+        tool_choice="auto",
+        ms_football_only=False,
+    ):
         self.payloads.append(
             {
                 "messages": copy.deepcopy(self._messages),
-                "tools": copy.deepcopy(self._tool_definitions()),
+                "tools": copy.deepcopy(
+                    self._tool_definitions(
+                        ms_football_only=ms_football_only,
+                    )
+                ),
                 "tool_choice": tool_choice,
+                "ms_football_only": ms_football_only,
             }
         )
         return self._response_from_dict(self.responses.pop(0))
@@ -360,6 +383,61 @@ class AgentRuntimeTests(unittest.TestCase):
         }
         self.assertIn("function", tool_types)
         self.assertEqual(agent.payloads[0]["tool_choice"], "auto")
+
+    def test_groq_repairs_ms_football_turn_when_first_reply_has_no_tool(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "id": "resp_msf_1",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "Je suis là."}
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "id": "resp_msf_2",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_msf_1",
+                            "name": "msf_capabilities",
+                            "arguments": "{}",
+                        }
+                    ],
+                },
+                {
+                    "id": "resp_msf_3",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "J'ai consulté MS Football.",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        )
+
+        result = agent.run("Combien de joueurs dans MS Football ?")
+
+        self.assertEqual(result.text, "J'ai consulté MS Football.")
+        self.assertEqual(tools.calls[0][0], "msf_capabilities")
+        self.assertTrue(agent.payloads[0]["ms_football_only"])
+        self.assertEqual(agent.payloads[0]["tool_choice"], "auto")
+        self.assertEqual(
+            agent.payloads[1]["tool_choice"]["function"]["name"],
+            "msf_capabilities",
+        )
 
     def test_groq_keeps_conversation_history_locally(self):
         tools = FakeTools()
