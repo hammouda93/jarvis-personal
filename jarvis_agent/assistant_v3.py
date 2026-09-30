@@ -134,9 +134,10 @@ class AssistantWorker(QObject):
             return False
 
         result = execute(intent)
+        self._pending_direct_follow_up = result.follow_up or ""
         self.log_line.emit(
             f"[DIRECT] simple={intent.name} success={result.success} "
-            f"args={intent.args}"
+            f"args={intent.args} follow_up={result.follow_up}"
         )
         spoken = tool_message(intent, result, self._conversation_language)
         self.detail_changed.emit(
