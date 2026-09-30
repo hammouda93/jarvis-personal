@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import difflib
+import json
 import os
 from functools import lru_cache
 import re
@@ -244,6 +245,113 @@ def _spawn(candidates: list[str]) -> bool:
     return False
 
 
+def _chrome_candidates() -> list[str]:
+    local = os.getenv("LOCALAPPDATA", "")
+    program_files = os.getenv("ProgramFiles", r"C:\Program Files")
+    program_files_x86 = os.getenv("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    return [
+        os.path.join(program_files, "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(program_files_x86, "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(local, "Google", "Chrome", "Application", "chrome.exe")
+        if local else "",
+        "chrome",
+    ]
+
+
+def _chrome_executable() -> str | None:
+    for candidate in _chrome_candidates():
+        if not candidate:
+            continue
+        path = Path(candidate)
+        target = str(path) if path.is_file() else shutil.which(candidate)
+        if target:
+            return target
+    return None
+
+
+def _chrome_profile_directory() -> str | None:
+    """Return Chrome's most recently used real profile directory.
+
+    This avoids launching Chrome's profile chooser when Jarvis opens a website.
+    The value is discovered dynamically from Chrome's own Local State file.
+    """
+    local = os.getenv("LOCALAPPDATA", "")
+    if not local:
+        return None
+
+    state_path = (
+        Path(local)
+        / "Google"
+        / "Chrome"
+        / "User Data"
+        / "Local State"
+    )
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+
+    profile = data.get("profile") or {}
+    last_used = str(profile.get("last_used") or "").strip()
+    if last_used:
+        return last_used
+
+    last_active = profile.get("last_active_profiles") or []
+    if isinstance(last_active, list):
+        for value in last_active:
+            value = str(value or "").strip()
+            if value:
+                return value
+
+    info_cache = profile.get("info_cache") or {}
+    if isinstance(info_cache, dict) and info_cache:
+        def activity(item):
+            _directory, meta = item
+            try:
+                return float((meta or {}).get("active_time") or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        directory, _meta = max(info_cache.items(), key=activity)
+        return str(directory or "").strip() or None
+
+    return None
+
+
+def _launch_chrome(*, url: str | None = None) -> bool:
+    executable = _chrome_executable()
+    if not executable:
+        return False
+
+    args = [executable]
+    profile_directory = _chrome_profile_directory()
+    if profile_directory:
+        args.append(f"--profile-directory={profile_directory}")
+    if url:
+        args.append(url)
+
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+        return True
+    except OSError:
+        return False
+
+
+def _open_browser_url(url: str) -> bool:
+    # Prefer the user's most recently used Chrome profile when Chrome exists.
+    # Fall back to the Windows default browser otherwise.
+    if _launch_chrome(url=url):
+        return True
+    return bool(webbrowser.open(url))
+
+
 def _open_application(app: str) -> ToolResult:
     local = os.getenv("LOCALAPPDATA", "")
     windir = os.getenv("WINDIR", r"C:\Windows")
@@ -275,13 +383,21 @@ def _open_application(app: str) -> ToolResult:
                 "SnippingTool introuvable",
             )
 
+    if app == "chrome":
+        ok = _launch_chrome()
+        if ok:
+            return ToolResult(
+                True,
+                "C'est fait.",
+                "Chrome ouvert avec le dernier profil utilisé.",
+            )
+        return ToolResult(
+            False,
+            "Je n'ai pas trouvé Chrome.",
+            "Application introuvable: chrome",
+        )
+
     candidates: dict[str, list[str]] = {
-        "chrome": [
-            os.path.join(program_files, "Google", "Chrome", "Application", "chrome.exe"),
-            os.path.join(program_files_x86, "Google", "Chrome", "Application", "chrome.exe"),
-            os.path.join(local, "Google", "Chrome", "Application", "chrome.exe") if local else "",
-            "chrome",
-        ],
         "cursor": [
             os.path.join(local, "Programs", "cursor", "Cursor.exe") if local else "",
             os.path.join(local, "Programs", "Cursor", "Cursor.exe") if local else "",
@@ -556,7 +672,7 @@ def execute(intent: ToolIntent) -> ToolResult:
 
     if intent.name == "browser.open_url":
         url = str(intent.args["url"])
-        ok = webbrowser.open(url)
+        ok = _open_browser_url(url)
         return ToolResult(
             bool(ok),
             "C'est fait." if ok else "Je n'ai pas pu ouvrir le navigateur.",
@@ -581,7 +697,7 @@ def execute(intent: ToolIntent) -> ToolResult:
                 follow_up="search_query",
             )
         url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
-        ok = webbrowser.open(url)
+        ok = _open_browser_url(url)
         return ToolResult(bool(ok), f"Je recherche {query}.", url)
 
     if intent.name == "app.open":
