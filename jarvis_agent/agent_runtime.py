@@ -992,14 +992,26 @@ class GroqResponsesAgent:
             )
         return self._client
 
-    def _tool_definitions(self) -> list[dict[str, Any]]:
+    def _tool_definitions(
+        self,
+        *,
+        ms_football_only: bool = False,
+    ) -> list[dict[str, Any]]:
         tools = self.tools.ollama_tools()
-        if settings.groq_browser_search:
+        if ms_football_only:
+            tools = [
+                item
+                for item in tools
+                if str((item.get("function") or {}).get("name") or "").startswith(
+                    "msf_"
+                )
+            ]
+        elif settings.groq_browser_search:
             tools = [*tools, {"type": "browser_search"}]
         return tools
 
     @staticmethod
-    def _requires_real_tool(user_text: str) -> bool:
+    def _is_ms_football_request(user_text: str) -> bool:
         normalized = (user_text or "").lower()
         return (
             "ms football" in normalized
@@ -1010,14 +1022,17 @@ class GroqResponsesAgent:
     def _chat(
         self,
         *,
-        tool_choice: str = "auto",
+        tool_choice: Any = "auto",
+        ms_football_only: bool = False,
     ):
         client = self._get_client()
         try:
             return client.chat.completions.create(
                 model=self.model,
                 messages=self._messages,
-                tools=self._tool_definitions(),
+                tools=self._tool_definitions(
+                    ms_football_only=ms_football_only,
+                ),
                 tool_choice=tool_choice,
                 parallel_tool_calls=False,
                 reasoning_effort=self.reasoning_effort,
@@ -1123,12 +1138,20 @@ class GroqResponsesAgent:
                 }
             )
             self._pending_function_approval = None
-            first_round_requires_tool = False
+            ms_football_turn = any(
+                self._is_ms_football_request(
+                    str(item.get("content") or "")
+                )
+                for item in self._messages
+                if item.get("role") == "user"
+            )
         else:
             self._messages.append(
                 {"role": "user", "content": user_text}
             )
-            first_round_requires_tool = self._requires_real_tool(user_text)
+            ms_football_turn = self._is_ms_football_request(user_text)
+
+        force_msf_discovery = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -1140,13 +1163,18 @@ class GroqResponsesAgent:
                 )
 
             started = time.perf_counter()
+            tool_choice: Any = "auto"
+            if force_msf_discovery:
+                tool_choice = {
+                    "type": "function",
+                    "function": {"name": "msf_capabilities"},
+                }
+
             response = self._chat(
-                tool_choice=(
-                    "required"
-                    if first_round_requires_tool and round_index == 1
-                    else "auto"
-                )
+                tool_choice=tool_choice,
+                ms_football_only=ms_football_turn,
             )
+            force_msf_discovery = False
             if log:
                 log(
                     f"[PERF] groq_round={round_index} "
@@ -1162,6 +1190,32 @@ class GroqResponsesAgent:
             calls = self._append_assistant_message(message)
 
             if not calls:
+                if (
+                    ms_football_turn
+                    and not actions
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    # Groq documents that tool_choice="required" can fail with
+                    # HTTP 400 when the model emits no tool call. Retry by
+                    # forcing one harmless discovery function instead.
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Cette demande concerne les données réelles de "
+                                "MS Football. Utilise les outils MS Football "
+                                "avant de répondre. Commence par découvrir les "
+                                "capacités si nécessaire."
+                            ),
+                        }
+                    )
+                    force_msf_discovery = True
+                    if log:
+                        log(
+                            "[AGENT] repair=force_msf_capabilities_after_no_tool"
+                        )
+                    continue
+
                 text = _visible_text(
                     str(getattr(message, "content", "") or "")
                 )
