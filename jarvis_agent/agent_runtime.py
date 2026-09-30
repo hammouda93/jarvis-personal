@@ -52,7 +52,15 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
 - utilise write_ui_element uniquement sur un champ réellement observé; cet
   outil saisit le texte mais ne le valide pas automatiquement;
 - press_key est réservé à la navigation simple, jamais à des raccourcis
-  destructifs ou à l'exécution de commandes arbitraires.
+  destructifs ou à l'exécution de commandes arbitraires;
+- après click_ui_element, press_key ou close_window, n'affirme jamais que
+  l'interface a changé comme prévu sans l'avoir vérifié avec
+  inspect_active_window ou list_windows lorsque le résultat final compte;
+- si l'utilisateur a demandé plusieurs étapes dans une seule phrase, exécute
+  toutes les étapes explicitement demandées avant de répondre. Ne demande pas
+  "voulez-vous que je..." pour une étape déjà demandée;
+- n'annonce jamais "je vais chercher/ouvrir/faire" sans appeler l'outil dans le
+  même tour.
 
 Exemples:
 - "Ouvre Chrome et cherche les agents IA" => ouvrir Chrome puis chercher.
@@ -129,6 +137,55 @@ def _looks_like_internal_reasoning(text: str) -> bool:
     )
     hits = sum(1 for marker in markers if marker in lower)
     return hits >= 2
+
+
+def _looks_like_action_promise(text: str) -> bool:
+    lower = (text or "").lower()
+    markers = (
+        "je vais chercher",
+        "je vais rechercher",
+        "je vais ouvrir",
+        "je vais le faire",
+        "patientez un instant",
+        "patiente un instant",
+        "i'll search",
+        "i will search",
+        "i'll open",
+        "i will open",
+        "let me do that",
+        "right away",
+    )
+    return any(marker in lower for marker in markers)
+
+
+def _looks_like_unnecessary_followup(text: str) -> bool:
+    lower = (text or "").lower()
+    markers = (
+        "voulez-vous que je",
+        "veux-tu que je",
+        "souhaitez-vous que je",
+        "would you like me to",
+        "do you want me to",
+        "shall i",
+    )
+    return any(marker in lower for marker in markers)
+
+
+def _looks_mostly_english(text: str) -> bool:
+    words = re.findall(r"[a-zA-ZÀ-ÿ']+", (text or "").lower())
+    if len(words) < 4:
+        return False
+    english = {
+        "i", "you", "the", "for", "to", "and", "would", "like", "search",
+        "open", "have", "now", "me", "do", "that", "details", "with",
+    }
+    french = {
+        "je", "vous", "tu", "le", "la", "les", "pour", "et", "recherche",
+        "ouvrir", "ouvert", "avec", "que", "des", "une", "un", "dans",
+    }
+    english_hits = sum(1 for word in words if word in english)
+    french_hits = sum(1 for word in words if word in french)
+    return english_hits >= 3 and english_hits > french_hits + 1
 
 
 def _visible_text(value: str) -> str:
@@ -313,6 +370,38 @@ class OllamaToolAgent:
                         "Je suis là. Reformulez votre demande si vous vouliez "
                         "que j'effectue une action."
                     )
+
+                repair_reason = ""
+                if _looks_mostly_english(content) and not _looks_mostly_english(user_text):
+                    repair_reason = (
+                        "Réponds uniquement en français. Ne change pas de langue."
+                    )
+                elif actions and _looks_like_unnecessary_followup(content):
+                    repair_reason = (
+                        "La demande initiale était déjà explicite. Ne demande pas "
+                        "une nouvelle autorisation pour une étape déjà demandée. "
+                        "S'il reste une étape demandée et qu'un outil existe, "
+                        "appelle cet outil maintenant."
+                    )
+                elif not actions and _looks_like_action_promise(content):
+                    repair_reason = (
+                        "Tu viens d'annoncer une action sans appeler d'outil. "
+                        "N'annonce jamais une action future. Appelle maintenant "
+                        "l'outil adapté, ou explique brièvement pourquoi aucun "
+                        "outil disponible ne permet de la réaliser."
+                    )
+
+                if repair_reason and round_index < settings.agent_max_tool_rounds:
+                    if log:
+                        log(f"[AGENT] repair={repair_reason}")
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": repair_reason + "\n/no_think",
+                        }
+                    )
+                    continue
+
                 final_text = content
                 self._trim_history()
                 return AgentTurnResult(
