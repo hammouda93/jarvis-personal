@@ -239,26 +239,28 @@ class OllamaToolAgent:
         ]
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
+        # Prime the same system prompt + tool schema used by real turns. This
+        # intentionally moves the expensive first prompt evaluation to boot,
+        # before the user wakes Jarvis.
         payload = {
             "model": self.model,
-            "prompt": "",
+            "messages": [
+                {"role": "system", "content": _SYSTEM_INSTRUCTIONS},
+                {"role": "user", "content": "Réponds seulement OK.\n/no_think"},
+            ],
+            "tools": self.tools.ollama_tools(),
             "stream": False,
+            "think": False,
+            "options": {
+                "temperature": 0.0,
+                "num_ctx": settings.ollama_agent_num_ctx,
+                "num_predict": 8,
+            },
             "keep_alive": settings.ollama_agent_keep_alive,
         }
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(
-            self.base_url + "/api/generate",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         started = time.perf_counter()
         try:
-            with urllib.request.urlopen(
-                req,
-                timeout=settings.ollama_agent_timeout_s,
-            ) as response:
-                response.read()
+            self._post(payload)
             if log:
                 log(
                     f"[PERF] ollama_warmup seconds="
@@ -383,12 +385,13 @@ class OllamaToolAgent:
                         "S'il reste une étape demandée et qu'un outil existe, "
                         "appelle cet outil maintenant."
                     )
-                elif not actions and _looks_like_action_promise(content):
+                elif _looks_like_action_promise(content):
                     repair_reason = (
-                        "Tu viens d'annoncer une action sans appeler d'outil. "
-                        "N'annonce jamais une action future. Appelle maintenant "
-                        "l'outil adapté, ou explique brièvement pourquoi aucun "
-                        "outil disponible ne permet de la réaliser."
+                        "Tu annonces encore une action à faire. N'annonce jamais "
+                        "une étape future: si cette étape fait partie de la demande "
+                        "initiale et qu'un outil existe, appelle-le maintenant. "
+                        "Sinon explique brièvement pourquoi elle ne peut pas être "
+                        "réalisée avec les outils disponibles."
                     )
 
                 if repair_reason and round_index < settings.agent_max_tool_rounds:
@@ -442,9 +445,12 @@ class OllamaToolAgent:
                 should_exit = should_exit or result.should_exit
 
                 if log:
+                    detail_for_log = result.detail
+                    if len(detail_for_log) > 900:
+                        detail_for_log = detail_for_log[:900] + "…"
                     log(
                         f"[AGENT_TOOL] result={name} "
-                        f"success={result.success} detail={result.detail!r}"
+                        f"success={result.success} detail={detail_for_log!r}"
                     )
 
                 self._messages.append(
