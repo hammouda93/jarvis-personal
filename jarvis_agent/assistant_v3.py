@@ -41,6 +41,7 @@ class AssistantWorker(QObject):
         self._tts = ElevenLabsTTS()
         self._agent = build_agent_runtime()
         self._conversation_language = "fr"
+        self._pending_direct_follow_up = ""
 
     def _state(self, state: AssistantState, status: str | None = None) -> None:
         self.state_changed.emit(state.value)
