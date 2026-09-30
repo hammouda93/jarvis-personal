@@ -229,7 +229,10 @@ def _rank_wrappers(
         current_type = _control_type(wrapper)
         if wanted_type and normalize(current_type) != wanted_type:
             continue
-        score = _score_name(query, _element_name(wrapper))
+        score = max(
+            _score_name(query, _element_name(wrapper)),
+            _score_name(query, _automation_id(wrapper)),
+        )
         if score >= 0.70:
             ranked.append((score, wrapper))
     ranked.sort(key=lambda item: -item[0])
@@ -346,6 +349,55 @@ def activate_window(title: str) -> UIActionResult:
         return UIActionResult(False, f"Impossible d'activer la fenêtre {label}.", str(exc))
 
     return UIActionResult(True, f"Fenêtre activée: {label}.", label)
+
+
+def write_ui_element(
+    name: str,
+    text: str,
+) -> UIActionResult:
+    target = (name or "").strip()
+    value = str(text or "")
+    if len(normalize(target)) < 2:
+        return UIActionResult(False, "Le nom du champ est trop vague.")
+    if len(value) > 4000:
+        return UIActionResult(False, "Le texte est trop long pour une saisie UI directe.")
+
+    try:
+        wrapper, alternatives = _find_active_element(
+            target,
+            control_type="Edit",
+        )
+        if wrapper is None:
+            # Some UIA applications expose editable controls under a custom
+            # control type. Retry without forcing Edit, but still require the
+            # wrapper to support set_edit_text.
+            wrapper, alternatives = _find_active_element(target)
+    except Exception as exc:
+        return UIActionResult(False, "Impossible de rechercher ce champ.", str(exc))
+
+    if wrapper is None:
+        if alternatives:
+            return UIActionResult(
+                False,
+                "Champ ambigu. Précisez la cible.",
+                json.dumps(alternatives, ensure_ascii=False),
+            )
+        return UIActionResult(False, f"Champ introuvable: {target}.")
+
+    label = _element_name(wrapper) or _automation_id(wrapper) or target
+    try:
+        wrapper.set_focus()
+        if not hasattr(wrapper, "set_edit_text"):
+            return UIActionResult(
+                False,
+                f"L'élément {label} n'accepte pas la saisie directe.",
+                _control_type(wrapper),
+            )
+        wrapper.set_edit_text(value)
+    except Exception as exc:
+        return UIActionResult(False, f"Impossible d'écrire dans {label}.", str(exc))
+
+    return UIActionResult(True, f"Texte saisi dans {label}.", label)
 
 
 _ALLOWED_KEYS = {
