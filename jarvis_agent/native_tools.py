@@ -639,7 +639,11 @@ class NativeToolRegistry:
             payload = {
                 "change_id": str(args.get("change_id", "")).strip(),
             }
-            result = MS_FOOTBALL_BRIDGE.call("commit_mutation", payload)
+            result = MS_FOOTBALL_BRIDGE.call(
+                "commit_mutation",
+                payload,
+                approved=True,
+            )
             return AgentActionResult(name, result.success, result.message, result.detail)
 
         if name == "get_current_time":
