@@ -95,6 +95,9 @@ class AgentRuntime(Protocol):
     def reset(self) -> None:
         ...
 
+    def warm_up(self, *, log: LogFn | None = None) -> None:
+        ...
+
 
 class AgentRuntimeUnavailable(RuntimeError):
     pass
@@ -175,6 +178,39 @@ class OllamaToolAgent:
             {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
         ]
 
+    def warm_up(self, *, log: LogFn | None = None) -> None:
+        payload = {
+            "model": self.model,
+            "prompt": "",
+            "stream": False,
+            "keep_alive": settings.ollama_agent_keep_alive,
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            self.base_url + "/api/generate",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        started = time.perf_counter()
+        try:
+            with urllib.request.urlopen(
+                req,
+                timeout=settings.ollama_agent_timeout_s,
+            ) as response:
+                response.read()
+            if log:
+                log(
+                    f"[PERF] ollama_warmup seconds="
+                    f"{time.perf_counter() - started:.2f}"
+                )
+        except Exception as exc:
+            if log:
+                log(
+                    f"[AGENT] warmup skipped: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
@@ -245,7 +281,7 @@ class OllamaToolAgent:
                         "num_ctx": settings.ollama_agent_num_ctx,
                         "num_predict": settings.ollama_agent_num_predict,
                     },
-                    "keep_alive": "10m",
+                    "keep_alive": settings.ollama_agent_keep_alive,
                 }
             )
             elapsed = time.perf_counter() - started
@@ -364,6 +400,9 @@ class OpenAIResponsesAgent:
 
     def reset(self) -> None:
         self._previous_response_id = None
+
+    def warm_up(self, *, log: LogFn | None = None) -> None:
+        return
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
