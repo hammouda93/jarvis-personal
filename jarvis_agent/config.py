@@ -119,6 +119,18 @@ class Settings:
     ).strip()
     agent_max_tool_rounds: int = _int("JARVIS_AGENT_MAX_TOOL_ROUNDS", 8)
     agent_history_items: int = _int("JARVIS_AGENT_HISTORY_ITEMS", 8)
+    groq_api_key: str = (os.getenv("GROQ_API_KEY") or "").strip()
+    groq_base_url: str = (
+        os.getenv("GROQ_BASE_URL") or "https://api.groq.com/openai/v1"
+    ).strip()
+    groq_agent_model: str = (
+        os.getenv("JARVIS_GROQ_AGENT_MODEL") or "openai/gpt-oss-120b"
+    ).strip()
+    groq_reasoning_effort: str = (
+        os.getenv("JARVIS_GROQ_REASONING_EFFORT") or "low"
+    ).strip()
+    groq_browser_search: bool = _bool("JARVIS_GROQ_BROWSER_SEARCH", True)
+
     openai_api_key: str = (os.getenv("OPENAI_API_KEY") or "").strip()
     openai_base_url: str = (
         os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
