@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from .config import settings
+from .connectors import CONNECTORS
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
 
 
@@ -505,9 +506,13 @@ class OpenAIResponsesAgent:
         self.model = settings.openai_agent_model
         self.api_key = settings.openai_api_key
         self._previous_response_id: str | None = None
+        self._pending_mcp_approval: dict[str, Any] | None = None
+        self._pending_mcp_response_id: str | None = None
 
     def reset(self) -> None:
         self._previous_response_id = None
+        self._pending_mcp_approval = None
+        self._pending_mcp_response_id = None
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         return
@@ -552,6 +557,7 @@ class OpenAIResponsesAgent:
         tools = self.tools.openai_tools()
         if settings.openai_web_search:
             tools.append({"type": "web_search"})
+        tools.extend(CONNECTORS.openai_tools())
         return tools
 
     def run(
@@ -561,8 +567,44 @@ class OpenAIResponsesAgent:
         log: LogFn | None = None,
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
-        next_input: Any = user_text
         previous = self._previous_response_id
+
+        if self._pending_mcp_approval is not None:
+            normalized = user_text.strip().lower().strip(" .!?")
+            yes = normalized in {
+                "oui", "yes", "ok", "okay", "d'accord", "daccord",
+                "vas-y", "vas y", "autorise", "autoriser", "approve",
+            }
+            no = normalized in {
+                "non", "no", "annule", "annuler", "refuse", "refuser",
+                "cancel", "deny",
+            }
+            if not yes and not no:
+                pending = self._pending_mcp_approval
+                tool_name = str(pending.get("name") or "cet outil")
+                server = str(pending.get("server_label") or "ce connecteur")
+                return AgentTurnResult(
+                    text=(
+                        f"J'attends votre autorisation pour utiliser "
+                        f"{tool_name} via {server}. Dites oui ou non."
+                    )
+                )
+
+            approval_id = str(
+                self._pending_mcp_approval.get("id") or ""
+            )
+            previous = self._pending_mcp_response_id or previous
+            next_input: Any = [
+                {
+                    "type": "mcp_approval_response",
+                    "approve": yes,
+                    "approval_request_id": approval_id,
+                }
+            ]
+            self._pending_mcp_approval = None
+            self._pending_mcp_response_id = None
+        else:
+            next_input = user_text
         actions: list[AgentActionResult] = []
         end_session = False
         should_exit = False
@@ -605,6 +647,65 @@ class OpenAIResponsesAgent:
             self._previous_response_id = response_id
 
             output = data.get("output") or []
+
+            approval_requests = [
+                item
+                for item in output
+                if isinstance(item, dict)
+                and item.get("type") == "mcp_approval_request"
+            ]
+            if approval_requests:
+                pending = approval_requests[0]
+                self._pending_mcp_approval = pending
+                self._pending_mcp_response_id = response_id
+                tool_name = str(pending.get("name") or "un outil")
+                server = str(pending.get("server_label") or "un connecteur")
+                if log:
+                    log(
+                        f"[MCP] approval_required server={server} "
+                        f"tool={tool_name}"
+                    )
+                return AgentTurnResult(
+                    text=(
+                        f"J'ai besoin de votre autorisation pour utiliser "
+                        f"{tool_name} via {server}. Dites oui pour autoriser "
+                        f"ou non pour refuser."
+                    ),
+                    actions=tuple(actions),
+                    end_session=end_session,
+                    should_exit=should_exit,
+                )
+
+            mcp_calls = [
+                item
+                for item in output
+                if isinstance(item, dict)
+                and item.get("type") == "mcp_call"
+            ]
+            for mcp_call in mcp_calls:
+                server = str(mcp_call.get("server_label") or "mcp")
+                name = str(mcp_call.get("name") or "tool")
+                error = mcp_call.get("error")
+                output_value = str(mcp_call.get("output") or "")
+                success = not bool(error)
+                actions.append(
+                    AgentActionResult(
+                        name=f"mcp:{server}:{name}",
+                        success=success,
+                        message=(
+                            "Action connectée exécutée."
+                            if success
+                            else "Le connecteur a signalé une erreur."
+                        ),
+                        detail=(output_value[:1200] if success else str(error)),
+                    )
+                )
+                if log:
+                    log(
+                        f"[MCP] call server={server} tool={name} "
+                        f"success={success}"
+                    )
+
             calls = [
                 item
                 for item in output
@@ -615,7 +716,18 @@ class OpenAIResponsesAgent:
             if not calls:
                 text = self._response_text(output)
                 if not text:
-                    text = "Je suis là."
+                    if mcp_calls:
+                        failed = any(
+                            bool(item.get("error"))
+                            for item in mcp_calls
+                        )
+                        text = (
+                            "Le connecteur a rencontré une erreur."
+                            if failed
+                            else "C'est fait."
+                        )
+                    else:
+                        text = "Je suis là."
                 return AgentTurnResult(
                     text=text,
                     actions=tuple(actions),
