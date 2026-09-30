@@ -480,4 +480,11 @@ def press_key(key: str) -> UIActionResult:
         _send_keys(sequence)
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'envoyer la touche {key}.", str(exc))
-    return UIActionResult(True, f"Touche envoyée: {key}.", key)
+    return UIActionResult(
+        True,
+        f"Touche envoyée: {key}.",
+        (
+            f"Touche envoyée: {key}. Effet final non vérifié; "
+            "réinspecter l'interface avant d'affirmer un changement."
+        ),
+    )
