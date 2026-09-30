@@ -68,6 +68,7 @@ class Settings:
     speech_min_voiced_s: float = _float("JARVIS_SPEECH_MIN_VOICED_S", 0.28)
     tts_settle_s: float = _float("JARVIS_TTS_SETTLE_S", 0.30)
 
+    stt_provider: str = (os.getenv("JARVIS_STT_PROVIDER") or "local").strip().lower()
     whisper_model: str = (os.getenv("JARVIS_WHISPER_MODEL") or "small").strip()
     whisper_device: str = (os.getenv("JARVIS_WHISPER_DEVICE") or "cpu").strip()
     whisper_compute_type: str = (
