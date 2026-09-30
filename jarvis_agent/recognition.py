@@ -107,30 +107,48 @@ def recognize_command(
             f"rejected={primary.rejected_reason}"
         )
 
-    if configured_language == "auto" and _needs_multilingual_retry(primary):
-        ordered_languages: list[str] = []
-        preferred = _language_code(preferred_language)
-        detected = _language_code(primary.language)
+    if _needs_multilingual_retry(primary):
+        if configured_language == "auto":
+            ordered_languages: list[str] = []
+            preferred = _language_code(preferred_language)
+            detected = _language_code(primary.language)
 
-        for language in (
-            preferred,
-            detected,
-            *settings.stt_supported_languages,
-        ):
-            if (
-                language
-                and language in settings.stt_supported_languages
-                and language not in ordered_languages
+            for language in (
+                preferred,
+                detected,
+                *settings.stt_supported_languages,
             ):
-                ordered_languages.append(language)
+                if (
+                    language
+                    and language in settings.stt_supported_languages
+                    and language not in ordered_languages
+                ):
+                    ordered_languages.append(language)
 
-        for language in ordered_languages:
-            retry = stt.transcribe(audio, language=language)
+            for language in ordered_languages:
+                retry = stt.transcribe(audio, language=language)
+                retry_intent = route(retry.text) if retry.text else ToolIntent("unknown")
+                candidates.append((retry, retry_intent))
+                if log:
+                    log(
+                        f"[STT] candidate language={language} "
+                        f"text={retry.text!r} "
+                        f"logprob={retry.avg_logprob} "
+                        f"no_speech={retry.no_speech_probability} "
+                        f"rejected={retry.rejected_reason}"
+                    )
+        else:
+            # A fixed French pass can still mishear short commands/proper
+            # nouns such as "Ouvre YouTube" or "Ouvre Chrome". On weak audio,
+            # do one automatic-language retry and let the scoring prefer a
+            # grounded typed intent when it is clearer. This is generic and
+            # avoids hard-coding phonetic substitutions.
+            retry = stt.transcribe(audio, language="auto")
             retry_intent = route(retry.text) if retry.text else ToolIntent("unknown")
             candidates.append((retry, retry_intent))
             if log:
                 log(
-                    f"[STT] candidate language={language} "
+                    f"[STT] candidate language=auto "
                     f"text={retry.text!r} "
                     f"logprob={retry.avg_logprob} "
                     f"no_speech={retry.no_speech_probability} "
