@@ -188,6 +188,34 @@ class GroqWhisperSTT:
 
     def __init__(self) -> None:
         self._local_fallback = LocalWhisperSTT()
+        self._client = None
+
+    @staticmethod
+    def _normalize_language(value: str | None) -> str | None:
+        if not value:
+            return None
+        normalized = str(value).strip().lower()
+        mapping = {
+            "french": "fr",
+            "français": "fr",
+            "francais": "fr",
+            "english": "en",
+            "arabic": "ar",
+            "العربية": "ar",
+            "russian": "ru",
+        }
+        return mapping.get(normalized, normalized.split("-")[0])
+
+    def _get_client(self):
+        if self._client is None:
+            from openai import OpenAI
+
+            self._client = OpenAI(
+                api_key=settings.groq_api_key,
+                base_url=settings.groq_base_url,
+                timeout=settings.ai_request_timeout_s,
+            )
+        return self._client
 
     @staticmethod
     def _metric_from_segments(segments, name: str) -> float | None:
@@ -218,13 +246,7 @@ class GroqWhisperSTT:
         path = save_temp_wav(audio)
         try:
             try:
-                from openai import OpenAI
-
-                client = OpenAI(
-                    api_key=settings.groq_api_key,
-                    base_url=settings.groq_base_url,
-                    timeout=settings.ai_request_timeout_s,
-                )
+                client = self._get_client()
                 with path.open("rb") as audio_file:
                     response = client.audio.transcriptions.create(
                         model=settings.groq_stt_model,
@@ -247,8 +269,10 @@ class GroqWhisperSTT:
                 return TranscriptResult(
                     text=text,
                     language=(
-                        getattr(response, "language", None)
-                        or effective_language
+                        effective_language
+                        or self._normalize_language(
+                            getattr(response, "language", None)
+                        )
                     ),
                     language_probability=1.0 if effective_language else None,
                     avg_logprob=self._metric_from_segments(
