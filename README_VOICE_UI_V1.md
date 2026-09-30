@@ -249,3 +249,27 @@ Generic model tools currently exposed:
 
 The objective is to add a small number of broad capabilities, not one code path
 per spoken phrase or per application.
+
+
+## Connected capabilities / MCP (V2)
+
+Jarvis separates the **brain** from the **accesses** it is allowed to use.
+
+- The model does not automatically inherit ChatGPT account plugins.
+- Local Windows/browser tools remain first-party Jarvis capabilities.
+- When `JARVIS_AGENT_PROVIDER=openai`, trusted remote MCP servers or private
+  MCP servers exposed through OpenAI Secure MCP Tunnel can be declared in
+  `connectors.local.json`.
+- Copy `connectors.example.json` to `connectors.local.json`. The local file
+  is gitignored.
+- Never place OAuth/access tokens inside the JSON file. Use
+  `authorization_env` and keep the real token in `.env`.
+- Connectors default to approval-required behavior. When the Responses API
+  returns an MCP approval request, Jarvis asks the user for a verbal yes/no and
+  resumes the same response after approval.
+- A connector may restrict `allowed_tools` so Jarvis imports only the actions
+  it actually needs.
+
+This layer is intended for services such as source control, mail, calendars,
+business systems, and future domain packs. The same permission model will later
+be shared with the local-agent provider.
