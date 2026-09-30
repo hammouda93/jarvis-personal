@@ -434,10 +434,44 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(tools.calls[0][0], "msf_capabilities")
         self.assertTrue(agent.payloads[0]["ms_football_only"])
         self.assertEqual(agent.payloads[0]["tool_choice"], "auto")
-        self.assertEqual(
-            agent.payloads[1]["tool_choice"]["function"]["name"],
-            "msf_capabilities",
+        self.assertEqual(agent.payloads[1]["tool_choice"], "auto")
+        repair_messages = [
+            item.get("content", "")
+            for item in agent.payloads[1]["messages"]
+            if isinstance(item, dict) and item.get("role") == "user"
+        ]
+        self.assertTrue(
+            any("outils msf_" in value for value in repair_messages)
         )
+
+    def test_groq_hides_msf_tools_from_regular_turns(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "id": "resp_regular_1",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "Bonjour."}
+                            ],
+                        }
+                    ],
+                }
+            ],
+        )
+
+        agent.run("Bonjour")
+
+        names = {
+            item["function"]["name"]
+            for item in agent.payloads[0]["tools"]
+            if item.get("type") == "function"
+        }
+        self.assertNotIn("msf_capabilities", names)
+        self.assertIn("open_application", names)
 
     def test_groq_keeps_conversation_history_locally(self):
         tools = FakeTools()
