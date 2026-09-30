@@ -318,6 +318,67 @@ class AgentRuntimeTests(unittest.TestCase):
             for item in agent.payloads[0]["tools"]
         }
         self.assertIn("browser_search", tool_types)
+        self.assertNotIn("store", agent.payloads[0])
+        self.assertNotIn("previous_response_id", agent.payloads[0])
+
+    def test_groq_keeps_conversation_history_locally(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "id": "resp_groq_history_1",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Quel joueur ?",
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "id": "resp_groq_history_2",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Compris.",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        )
+
+        agent.run("Je cherche un joueur")
+        agent.run("Mohamed")
+
+        second_input = agent.payloads[1]["input"]
+        self.assertTrue(
+            any(
+                item.get("role") == "user"
+                and item.get("content") == "Je cherche un joueur"
+                for item in second_input
+                if isinstance(item, dict)
+            )
+        )
+        self.assertTrue(
+            any(
+                item.get("role") == "user"
+                and item.get("content") == "Mohamed"
+                for item in second_input
+                if isinstance(item, dict)
+            )
+        )
 
     def test_sensitive_local_function_waits_for_user_approval(self):
         tools = FakeTools()
@@ -359,10 +420,15 @@ class AgentRuntimeTests(unittest.TestCase):
         second = agent.run("oui")
         self.assertEqual(second.text, "Modification confirmée.")
         self.assertEqual(tools.calls[0][0], "msf_commit_mutation")
-        self.assertEqual(
-            agent.payloads[1]["input"][0]["type"],
-            "function_call_output",
+        self.assertTrue(
+            any(
+                item.get("type") == "function_call_output"
+                for item in agent.payloads[1]["input"]
+                if isinstance(item, dict)
+            )
         )
+        self.assertNotIn("store", agent.payloads[1])
+        self.assertNotIn("previous_response_id", agent.payloads[1])
 
     def test_openai_loop_returns_function_result_then_continues(self):
         tools = FakeTools()
