@@ -939,50 +939,90 @@ class OpenAIResponsesAgent:
         return "\n".join(parts).strip()
 
 
-class GroqResponsesAgent(OpenAIResponsesAgent):
-    """Groq Responses API agent using openai/gpt-oss-120b by default.
+class GroqResponsesAgent:
+    """Groq Chat Completions agent for reliable local function calling.
 
-    Groq exposes an OpenAI-compatible Responses API, so Jarvis can reuse the
-    same function-calling and MCP orchestration while switching base URL,
-    credentials, model and built-in browser-search tool identifier.
+    Groq's local-tool documentation uses the Chat Completions tool_calls loop.
+    Jarvis keeps the conversation locally, executes typed tools itself, and
+    only sends tool results back to GPT-OSS.
     """
 
     def __init__(
         self,
         tools: NativeToolRegistry | None = None,
     ) -> None:
-        super().__init__(tools)
+        self.tools = tools or NATIVE_TOOLS
         self.base_url = settings.groq_base_url.rstrip("/")
         self.model = settings.groq_agent_model
         self.api_key = settings.groq_api_key
         self.provider_name = "groq"
         self.reasoning_effort = settings.groq_reasoning_effort
-        self.web_search_tool_type = "browser_search"
-        self.supports_response_continuation = False
-        self.store_responses = False
+        self._client = None
+        self._messages: list[dict[str, Any]] = [
+            {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
+        ]
+        self._pending_function_approval: dict[str, Any] | None = None
 
-    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def reset(self) -> None:
+        self._messages = [
+            {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
+        ]
+        self._pending_function_approval = None
+
+    def warm_up(self, *, log: LogFn | None = None) -> None:
+        return
+
+    def _get_client(self):
         if not self.api_key:
             raise AgentRuntimeUnavailable(
                 "GROQ_API_KEY n'est pas configurée."
             )
-
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise AgentRuntimeUnavailable(
-                "Le client OpenAI compatible Groq n'est pas installé. "
-                "Exécutez pip install -r requirements.txt."
-            ) from exc
-
-        try:
-            client = OpenAI(
+        if self._client is None:
+            try:
+                from openai import OpenAI
+            except ImportError as exc:
+                raise AgentRuntimeUnavailable(
+                    "Le client OpenAI compatible Groq n'est pas installé. "
+                    "Exécutez pip install -r requirements.txt."
+                ) from exc
+            self._client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=settings.ai_request_timeout_s,
             )
-            response = client.responses.create(**payload)
-            return response.model_dump()
+        return self._client
+
+    def _tool_definitions(self) -> list[dict[str, Any]]:
+        tools = self.tools.ollama_tools()
+        if settings.groq_browser_search:
+            tools = [*tools, {"type": "browser_search"}]
+        return tools
+
+    @staticmethod
+    def _requires_real_tool(user_text: str) -> bool:
+        normalized = (user_text or "").lower()
+        return (
+            "ms football" in normalized
+            or "msfootball" in normalized
+            or "ms_football" in normalized
+        )
+
+    def _chat(
+        self,
+        *,
+        tool_choice: str = "auto",
+    ):
+        client = self._get_client()
+        try:
+            return client.chat.completions.create(
+                model=self.model,
+                messages=self._messages,
+                tools=self._tool_definitions(),
+                tool_choice=tool_choice,
+                parallel_tool_calls=False,
+                reasoning_effort=self.reasoning_effort,
+                temperature=0.1,
+            )
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             body = getattr(exc, "body", None)
@@ -994,6 +1034,214 @@ class GroqResponsesAgent(OpenAIResponsesAgent):
             raise AgentRuntimeUnavailable(
                 f"Groq n'est pas joignable: {detail}"
             ) from exc
+
+    def _append_assistant_message(self, message) -> list[Any]:
+        tool_calls = list(getattr(message, "tool_calls", None) or [])
+        item: dict[str, Any] = {
+            "role": "assistant",
+            "content": str(getattr(message, "content", "") or ""),
+        }
+        if tool_calls:
+            item["tool_calls"] = [
+                {
+                    "id": str(call.id),
+                    "type": "function",
+                    "function": {
+                        "name": str(call.function.name),
+                        "arguments": str(call.function.arguments or "{}"),
+                    },
+                }
+                for call in tool_calls
+            ]
+        self._messages.append(item)
+        return tool_calls
+
+    def _trim_history(self) -> None:
+        maximum = max(12, settings.agent_history_items * 2)
+        if len(self._messages) <= maximum + 1:
+            return
+        recent = self._messages[-maximum:]
+        while recent and recent[0].get("role") == "tool":
+            recent = recent[1:]
+        self._messages = [
+            {"role": "system", "content": _SYSTEM_INSTRUCTIONS},
+            *recent,
+        ]
+
+    def run(
+        self,
+        user_text: str,
+        *,
+        log: LogFn | None = None,
+        phase: PhaseFn | None = None,
+    ) -> AgentTurnResult:
+        actions: list[AgentActionResult] = []
+        end_session = False
+        should_exit = False
+
+        if self._pending_function_approval is not None:
+            normalized = user_text.strip().lower().strip(" .!?")
+            yes = normalized in {
+                "oui", "yes", "ok", "okay", "d'accord", "daccord",
+                "vas-y", "vas y", "autorise", "autoriser", "confirme",
+                "confirmer", "approve",
+            }
+            no = normalized in {
+                "non", "no", "annule", "annuler", "refuse", "refuser",
+                "cancel", "deny",
+            }
+            if not yes and not no:
+                return AgentTurnResult(
+                    text="J'attends votre confirmation explicite. Dites oui ou non."
+                )
+
+            pending = self._pending_function_approval
+            name = str(pending["name"])
+            arguments = dict(pending["arguments"])
+            call_id = str(pending["call_id"])
+
+            if yes:
+                result = self.tools.execute(
+                    name,
+                    arguments,
+                    approved=True,
+                )
+            else:
+                result = AgentActionResult(
+                    name=name,
+                    success=False,
+                    message="Action refusée par l'utilisateur.",
+                    detail="user_denied",
+                )
+            actions.append(result)
+            self._messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": name,
+                    "content": result.as_json(),
+                }
+            )
+            self._pending_function_approval = None
+            first_round_requires_tool = False
+        else:
+            self._messages.append(
+                {"role": "user", "content": user_text}
+            )
+            first_round_requires_tool = self._requires_real_tool(user_text)
+
+        for round_index in range(1, settings.agent_max_tool_rounds + 1):
+            if phase:
+                phase("thinking")
+            if log:
+                log(
+                    f"[AGENT] provider=groq model={self.model} "
+                    f"round={round_index}"
+                )
+
+            started = time.perf_counter()
+            response = self._chat(
+                tool_choice=(
+                    "required"
+                    if first_round_requires_tool and round_index == 1
+                    else "auto"
+                )
+            )
+            if log:
+                log(
+                    f"[PERF] groq_round={round_index} "
+                    f"seconds={time.perf_counter() - started:.2f}"
+                )
+
+            if not response.choices:
+                raise AgentRuntimeUnavailable(
+                    "Groq n'a retourné aucun choix."
+                )
+
+            message = response.choices[0].message
+            calls = self._append_assistant_message(message)
+
+            if not calls:
+                text = _visible_text(
+                    str(getattr(message, "content", "") or "")
+                )
+                if not text:
+                    text = "Je suis là."
+                self._trim_history()
+                return AgentTurnResult(
+                    text=text,
+                    actions=tuple(actions),
+                    end_session=end_session,
+                    should_exit=should_exit,
+                )
+
+            for call in calls:
+                name = str(call.function.name or "").strip()
+                raw_arguments = str(call.function.arguments or "{}")
+                try:
+                    arguments = json.loads(raw_arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+
+                if log:
+                    log(f"[AGENT_TOOL] call={name} args={arguments}")
+                if phase:
+                    phase("acting")
+
+                if self.tools.requires_confirmation(name):
+                    self._pending_function_approval = {
+                        "call_id": str(call.id),
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                    return AgentTurnResult(
+                        text=(
+                            "Cette action va modifier les données MS Football. "
+                            "Dites oui pour confirmer ou non pour annuler."
+                        ),
+                        actions=tuple(actions),
+                        end_session=end_session,
+                        should_exit=should_exit,
+                    )
+
+                tool_started = time.perf_counter()
+                result = self.tools.execute(name, arguments)
+                actions.append(result)
+                end_session = end_session or result.end_session
+                should_exit = should_exit or result.should_exit
+
+                if log:
+                    detail_for_log = result.detail
+                    if len(detail_for_log) > 900:
+                        detail_for_log = detail_for_log[:900] + "…"
+                    log(
+                        f"[PERF] tool={name} "
+                        f"seconds={time.perf_counter() - tool_started:.3f}"
+                    )
+                    log(
+                        f"[AGENT_TOOL] result={name} "
+                        f"success={result.success} detail={detail_for_log!r}"
+                    )
+
+                self._messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": str(call.id),
+                        "name": name,
+                        "content": result.as_json(),
+                    }
+                )
+
+        self._trim_history()
+        return AgentTurnResult(
+            text=(
+                "Je n'ai pas terminé correctement cette demande. "
+                "Je préfère m'arrêter plutôt que d'exécuter une action incertaine."
+            ),
+            actions=tuple(actions),
+            end_session=end_session,
+            should_exit=should_exit,
+        )
 
 
 def build_agent_runtime() -> AgentRuntime:
