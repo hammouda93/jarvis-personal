@@ -7,6 +7,7 @@ import numpy as np
 
 from .audio import save_temp_wav
 from .config import settings
+from .tools import application_speech_hints
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,21 @@ class LocalWhisperSTT:
     def _decode(self, path, *, language: str | None) -> TranscriptResult:
         model = self._get_model()
 
+        app_hints = application_speech_hints()
+        prompt_parts = [settings.stt_initial_prompt.strip()]
+        if app_hints:
+            prompt_parts.append(
+                "Noms d'applications installées susceptibles d'être prononcés : "
+                + ", ".join(app_hints)
+                + "."
+            )
+        prompt_parts.append(
+            "Contexte : assistant Windows. L'utilisateur peut demander d'ouvrir "
+            "une application, une fenêtre ou un dossier, cliquer, écrire, fermer "
+            "une fenêtre ou rechercher sur Internet."
+        )
+        initial_prompt = " ".join(part for part in prompt_parts if part)
+
         segments, info = model.transcribe(
             str(path),
             beam_size=5,
@@ -79,7 +95,7 @@ class LocalWhisperSTT:
             vad_filter=False,
             condition_on_previous_text=False,
             temperature=0.0,
-            initial_prompt=settings.stt_initial_prompt or None,
+            initial_prompt=initial_prompt or None,
         )
 
         segment_list = list(segments)
