@@ -107,7 +107,7 @@ class LocalWhisperSTT:
 
         segments, info = model.transcribe(
             str(path),
-            beam_size=5,
+            beam_size=max(1, settings.whisper_beam_size),
             language=language,
             vad_filter=False,
             condition_on_previous_text=False,
@@ -181,3 +181,99 @@ class LocalWhisperSTT:
             return self._decode(path, language=effective_language)
         finally:
             path.unlink(missing_ok=True)
+
+
+class GroqWhisperSTT:
+    """Fast cloud STT via Groq, with optional local faster-whisper fallback."""
+
+    def __init__(self) -> None:
+        self._local_fallback = LocalWhisperSTT()
+
+    @staticmethod
+    def _metric_from_segments(segments, name: str) -> float | None:
+        values = []
+        for segment in segments or []:
+            if isinstance(segment, dict):
+                value = segment.get(name)
+            else:
+                value = getattr(segment, name, None)
+            if value is not None:
+                try:
+                    values.append(float(value))
+                except (TypeError, ValueError):
+                    pass
+        return (sum(values) / len(values)) if values else None
+
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        *,
+        language: str | None = None,
+    ) -> TranscriptResult:
+        requested = language if language is not None else settings.stt_language
+        effective_language = (
+            None if requested in {None, "", "auto"} else requested
+        )
+
+        path = save_temp_wav(audio)
+        try:
+            try:
+                from openai import OpenAI
+
+                client = OpenAI(
+                    api_key=settings.groq_api_key,
+                    base_url=settings.groq_base_url,
+                    timeout=settings.ai_request_timeout_s,
+                )
+                with path.open("rb") as audio_file:
+                    response = client.audio.transcriptions.create(
+                        model=settings.groq_stt_model,
+                        file=(path.name, audio_file),
+                        language=effective_language,
+                        prompt=settings.stt_initial_prompt or None,
+                        response_format="verbose_json",
+                        temperature=0,
+                    )
+
+                text = str(getattr(response, "text", "") or "").strip()
+                text = LocalWhisperSTT._dedupe_exact_repeat(text)
+                rejected_reason = LocalWhisperSTT._hallucination_reason(text)
+                if rejected_reason is None:
+                    rejected_reason = LocalWhisperSTT._repetition_reason(text)
+                if rejected_reason:
+                    text = ""
+
+                segments = getattr(response, "segments", None) or []
+                return TranscriptResult(
+                    text=text,
+                    language=(
+                        getattr(response, "language", None)
+                        or effective_language
+                    ),
+                    language_probability=1.0 if effective_language else None,
+                    avg_logprob=self._metric_from_segments(
+                        segments,
+                        "avg_logprob",
+                    ),
+                    no_speech_probability=self._metric_from_segments(
+                        segments,
+                        "no_speech_prob",
+                    ),
+                    rejected_reason=rejected_reason,
+                )
+            except Exception:
+                if not settings.groq_stt_fallback_local:
+                    raise
+                return self._local_fallback.transcribe(
+                    audio,
+                    language=language,
+                )
+        finally:
+            path.unlink(missing_ok=True)
+
+
+def build_stt():
+    provider = settings.stt_provider.strip().lower()
+    if provider == "groq":
+        return GroqWhisperSTT()
+    return LocalWhisperSTT()
