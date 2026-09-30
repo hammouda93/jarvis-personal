@@ -30,6 +30,8 @@ class MSFootballBridge:
         self,
         tool: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        approved: bool = False,
     ) -> MSFootballBridgeResult:
         if not self.available():
             return MSFootballBridgeResult(
@@ -47,13 +49,17 @@ class MSFootballBridge:
             },
             ensure_ascii=False,
         ).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
+        if approved:
+            headers["X-Jarvis-Approved"] = "yes"
+
         req = urllib.request.Request(
-            self.base_url + "/tool",
+            self.base_url + "/tool/",
             data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.token}",
-            },
+            headers=headers,
             method="POST",
         )
 
