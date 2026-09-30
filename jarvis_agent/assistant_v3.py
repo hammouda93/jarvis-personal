@@ -275,6 +275,7 @@ class AssistantWorker(QObject):
         self.log_line.emit(
             f"[AI] provider={settings.agent_provider} "
             f"local_model={settings.ollama_agent_model} "
+            f"groq_model={settings.groq_agent_model} "
             f"openai_model={settings.openai_agent_model}"
         )
         self._state(AssistantState.STARTING, "Initialisation de Jarvis…")
