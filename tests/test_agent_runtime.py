@@ -328,7 +328,7 @@ class AgentRuntimeTests(unittest.TestCase):
             any(action.name == "mcp:gmail:search_mail" for action in second.actions)
         )
 
-    def test_groq_provider_uses_gpt_oss_and_browser_search(self):
+    def test_groq_provider_uses_gpt_oss_chat_tools(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
             tools,
@@ -358,7 +358,7 @@ class AgentRuntimeTests(unittest.TestCase):
             item.get("type")
             for item in agent.payloads[0]["tools"]
         }
-        self.assertIn("browser_search", tool_types)
+        self.assertIn("function", tool_types)
         self.assertEqual(agent.payloads[0]["tool_choice"], "auto")
 
     def test_groq_keeps_conversation_history_locally(self):
