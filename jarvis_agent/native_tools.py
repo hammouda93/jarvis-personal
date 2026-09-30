@@ -105,8 +105,13 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "inspect_active_window",
-                "Observe la fenêtre active et retourne les éléments UI visibles (boutons, champs, menus, textes). À utiliser avant de cliquer.",
-                {},
+                "Observe la fenêtre de travail active ou une fenêtre nommée et retourne une vue compacte de ses contrôles. Les contrôles ont des refs e1, e2... réutilisables immédiatement pour cliquer ou écrire, même sans libellé.",
+                {
+                    "title": {
+                        "type": "string",
+                        "description": "Titre optionnel de la fenêtre à inspecter. Sans titre, inspecte la fenêtre de travail active en ignorant l'interface Jarvis.",
+                    }
+                },
                 [],
             ),
             self._ollama(
@@ -122,18 +127,22 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "click_ui_element",
-                "Clique/active un élément visible dans la fenêtre active par son libellé. Inspecte d'abord la fenêtre si la cible n'est pas certaine.",
+                "Clique/active un contrôle observé. Utilise ref après inspect_active_window si le contrôle est sans nom ou si la cible est ambiguë.",
                 {
                     "name": {
                         "type": "string",
-                        "description": "Texte visible de l'élément à activer.",
+                        "description": "Texte visible ou automation_id du contrôle.",
+                    },
+                    "ref": {
+                        "type": "string",
+                        "description": "Référence e1, e2... fournie par la dernière inspection.",
                     },
                     "control_type": {
                         "type": "string",
                         "description": "Type UIA optionnel, par ex. Button, Hyperlink, MenuItem.",
                     },
                 },
-                ["name"],
+                [],
             ),
             self._ollama(
                 "close_window",
@@ -148,18 +157,22 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "write_ui_element",
-                "Écrit du texte dans un champ visible de la fenêtre active sans valider automatiquement. Inspecte d'abord l'interface.",
+                "Écrit du texte dans un champ observé sans valider automatiquement. Utilise ref après inspection pour les champs sans libellé, comme certaines barres de recherche web.",
                 {
                     "name": {
                         "type": "string",
-                        "description": "Libellé ou automation_id du champ visible.",
+                        "description": "Libellé ou automation_id du champ.",
+                    },
+                    "ref": {
+                        "type": "string",
+                        "description": "Référence e1, e2... fournie par la dernière inspection.",
                     },
                     "text": {
                         "type": "string",
                         "description": "Texte à saisir dans le champ.",
                     },
                 },
-                ["name", "text"],
+                ["text"],
             ),
             self._ollama(
                 "press_key",
@@ -319,7 +332,8 @@ class NativeToolRegistry:
             )
 
         if name == "inspect_active_window":
-            result = inspect_active_window()
+            title = str(args.get("title", "")).strip() or None
+            result = inspect_active_window(title=title)
             return AgentActionResult(
                 name=name,
                 success=result.success,
@@ -339,8 +353,13 @@ class NativeToolRegistry:
 
         if name == "click_ui_element":
             target = str(args.get("name", "")).strip()
+            ref = str(args.get("ref", "")).strip()
             control_type = str(args.get("control_type", "")).strip() or None
-            result = click_ui_element(target, control_type=control_type)
+            result = click_ui_element(
+                target,
+                ref=ref,
+                control_type=control_type,
+            )
             return AgentActionResult(
                 name=name,
                 success=result.success,
@@ -360,8 +379,9 @@ class NativeToolRegistry:
 
         if name == "write_ui_element":
             target = str(args.get("name", "")).strip()
+            ref = str(args.get("ref", "")).strip()
             text = str(args.get("text", ""))
-            result = write_ui_element(target, text)
+            result = write_ui_element(target, text, ref=ref)
             return AgentActionResult(
                 name=name,
                 success=result.success,
