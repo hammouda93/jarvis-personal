@@ -5,9 +5,22 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from pywinauto import Desktop, keyboard
-
 from .tools import normalize
+
+
+def _desktop():
+    # Import lazily inside Jarvis' worker thread. Importing pywinauto before
+    # QApplication is created can initialize COM with a mode that conflicts
+    # with Qt's OLE setup on Windows.
+    from pywinauto import Desktop
+
+    return _desktop()
+
+
+def _send_keys(sequence: str) -> None:
+    from pywinauto import keyboard
+
+    keyboard.send_keys(sequence, pause=0.03)
 
 
 _INTERACTIVE_TYPES = {
@@ -95,7 +108,7 @@ def _is_enabled(wrapper: Any) -> bool:
 
 
 def _active_window():
-    windows = Desktop(backend="uia").windows(
+    windows = _desktop().windows(
         active_only=True,
         visible_only=True,
         top_level_only=True,
@@ -130,7 +143,7 @@ def _element_info(wrapper: Any) -> UIElementInfo:
 
 def list_windows(*, limit: int = 25) -> UIActionResult:
     try:
-        wrappers = Desktop(backend="uia").windows(
+        wrappers = _desktop().windows(
             visible_only=True,
             top_level_only=True,
         )
@@ -321,7 +334,7 @@ def activate_window(title: str) -> UIActionResult:
         return UIActionResult(False, "Le nom de la fenêtre est trop vague.")
 
     try:
-        windows = Desktop(backend="uia").windows(
+        windows = _desktop().windows(
             visible_only=True,
             top_level_only=True,
         )
@@ -427,7 +440,7 @@ def press_key(key: str) -> UIActionResult:
             "Cette touche n'est pas autorisée par le contrôle Windows de Jarvis.",
         )
     try:
-        keyboard.send_keys(sequence, pause=0.03)
+        _send_keys(sequence)
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'envoyer la touche {key}.", str(exc))
     return UIActionResult(True, f"Touche envoyée: {key}.", key)
