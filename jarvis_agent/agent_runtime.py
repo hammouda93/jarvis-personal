@@ -980,10 +980,6 @@ class GroqResponsesAgent(OpenAIResponsesAgent):
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=settings.ai_request_timeout_s,
-                default_headers={
-                    "User-Agent": "jarvis-personal/1.0",
-                    "Accept": "application/json",
-                },
             )
             response = client.responses.create(**payload)
             return response.model_dump()
