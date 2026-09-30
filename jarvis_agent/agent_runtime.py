@@ -68,6 +68,22 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   lorsque son URL est connue; ouvrir seulement Chrome n'accomplit pas la demande;
 - n'annonce jamais "je vais chercher/ouvrir/faire" sans appeler l'outil dans le
   même tour.
+- pour toute demande concernant MS Football, ne devine jamais le schéma, les
+  modèles, les champs ou les règles métier: utilise msf_capabilities,
+  msf_describe_schema, msf_list_routes ou msf_search_code pour comprendre
+  l'application réelle;
+- pour lire les données MS Football, préfère msf_query_records. Utilise
+  msf_readonly_sql seulement lorsqu'une jointure, agrégation ou analyse
+  complexe est réellement plus simple en SQL;
+- une requête SQL MS Football doit rester strictement en lecture seule;
+- pour modifier des données MS Football sans fonction métier dédiée, utilise
+  msf_prepare_mutation pour produire un aperçu, puis msf_commit_mutation.
+  La validation finale est toujours soumise à une confirmation explicite de
+  l'utilisateur par le runtime;
+- pour une opération métier avec effets secondaires (email, automatisation,
+  statut, livraison, paiement, génération vidéo), inspecte d'abord le code et
+  les routes afin de comprendre le workflow existant. Une simple écriture DB
+  n'est pas forcément équivalente à la fonctionnalité applicative.
 
 Exemples:
 - "Ouvre Chrome et cherche les agents IA" => ouvrir Chrome puis chercher.
@@ -85,6 +101,13 @@ Exemples:
 - "Écris bonjour dans le champ message" => inspect_active_window puis
   write_ui_element sur le champ observé; n'appuie sur Entrée que si l'utilisateur
   a aussi demandé de valider/envoyer.
+- "Combien me doit encore ce joueur ?" => découvrir les modèles/champs si
+  nécessaire puis interroger MS Football, sans inventer le solde.
+- "Montre-moi les vidéos livrées ce mois-ci par ce joueur" => requête MS Football
+  dynamique à partir du schéma réel.
+- "Change ce statut" => comprendre d'abord la logique existante; si aucune
+  action métier dédiée n'est disponible, préparer une mutation puis demander
+  confirmation avant exécution.
 
 Tu peux converser normalement sans outil lorsqu'aucune action réelle n'est demandée.
 Ne révèle jamais de raisonnement interne, de chaîne de pensée, de balises <think>
@@ -698,13 +721,13 @@ class OpenAIResponsesAgent:
             data = self._post(payload)
             if log:
                 log(
-                    f"[PERF] openai_round={round_index} "
+                    f"[PERF] {self.provider_name}_round={round_index} "
                     f"seconds={time.perf_counter() - started:.2f}"
                 )
             response_id = str(data.get("id") or "")
             if not response_id:
                 raise AgentRuntimeUnavailable(
-                    "La réponse OpenAI ne contient pas d'identifiant."
+                    f"La réponse {self.provider_name} ne contient pas d'identifiant."
                 )
             previous = response_id
             self._previous_response_id = response_id
