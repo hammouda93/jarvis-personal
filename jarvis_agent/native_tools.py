@@ -9,6 +9,7 @@ from .tools import ToolIntent, ToolResult, execute, normalize
 from .windows_perception import (
     activate_window,
     click_ui_element,
+    close_window,
     inspect_active_window,
     list_windows,
     press_key,
@@ -133,6 +134,17 @@ class NativeToolRegistry:
                     },
                 },
                 ["name"],
+            ),
+            self._ollama(
+                "close_window",
+                "Ferme explicitement une fenêtre Windows visible. Sans title, ferme la fenêtre active. Utilise seulement si l'utilisateur a demandé de fermer cette fenêtre.",
+                {
+                    "title": {
+                        "type": "string",
+                        "description": "Titre optionnel de la fenêtre à fermer.",
+                    }
+                },
+                [],
             ),
             self._ollama(
                 "write_ui_element",
@@ -329,6 +341,16 @@ class NativeToolRegistry:
             target = str(args.get("name", "")).strip()
             control_type = str(args.get("control_type", "")).strip() or None
             result = click_ui_element(target, control_type=control_type)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "close_window":
+            title = str(args.get("title", "")).strip() or None
+            result = close_window(title)
             return AgentActionResult(
                 name=name,
                 success=result.success,
