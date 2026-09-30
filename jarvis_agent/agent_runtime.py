@@ -1263,6 +1263,8 @@ class GroqResponsesAgent:
                 tool_started = time.perf_counter()
                 result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if result.success and name[:4] == "msf_":
+                    self._last_msf_grounding_at = time.monotonic()
                 end_session = end_session or result.end_session
                 should_exit = should_exit or result.should_exit
 
