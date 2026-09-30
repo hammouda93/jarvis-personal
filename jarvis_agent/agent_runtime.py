@@ -328,6 +328,7 @@ class OllamaToolAgent:
                 "content": f"{user_text}\n/no_think",
             }
         )
+        actions: list[AgentActionResult] = []
         end_session = False
         should_exit = False
 
@@ -667,7 +668,6 @@ class OpenAIResponsesAgent:
             self._pending_mcp_response_id = None
         else:
             next_input = user_text
-        actions: list[AgentActionResult] = []
         end_session = False
         should_exit = False
 
