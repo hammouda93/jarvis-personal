@@ -47,6 +47,23 @@ class LocalWhisperSTT:
         return text
 
     @staticmethod
+    def _hallucination_reason(text: str) -> str | None:
+        normalized = " ".join(
+            text.lower().replace("’", "'").split()
+        )
+        common_false_transcripts = (
+            "sous-titres réalisés par la communauté d'amara.org",
+            "sous titres réalisés par la communauté d'amara.org",
+            "amara.org",
+            "merci d'avoir regardé cette vidéo",
+            "merci d'avoir regardé",
+        )
+        for phrase in common_false_transcripts:
+            if normalized == phrase or normalized.startswith(phrase + " "):
+                return "known_whisper_hallucination"
+        return None
+
+    @staticmethod
     def _repetition_reason(text: str) -> str | None:
         words = [w.strip(".,!?;:").lower() for w in text.split() if w.strip()]
         if len(words) < 6:
@@ -124,7 +141,9 @@ class LocalWhisperSTT:
             else None
         )
 
-        rejected_reason = self._repetition_reason(text)
+        rejected_reason = self._hallucination_reason(text)
+        if rejected_reason is None:
+            rejected_reason = self._repetition_reason(text)
         if (
             rejected_reason is None
             and no_speech_probability is not None
