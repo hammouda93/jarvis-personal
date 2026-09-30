@@ -119,6 +119,14 @@ class Settings:
     ).strip()
     agent_max_tool_rounds: int = _int("JARVIS_AGENT_MAX_TOOL_ROUNDS", 8)
     agent_history_items: int = _int("JARVIS_AGENT_HISTORY_ITEMS", 8)
+    ms_football_bridge_url: str = (
+        os.getenv("JARVIS_MS_FOOTBALL_BRIDGE_URL")
+        or "http://127.0.0.1:8765"
+    ).strip().rstrip("/")
+    ms_football_bridge_token: str = (
+        os.getenv("JARVIS_MS_FOOTBALL_BRIDGE_TOKEN") or ""
+    ).strip()
+
     groq_api_key: str = (os.getenv("GROQ_API_KEY") or "").strip()
     groq_base_url: str = (
         os.getenv("GROQ_BASE_URL") or "https://api.groq.com/openai/v1"
