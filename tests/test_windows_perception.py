@@ -32,6 +32,7 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertIn("click_ui_element", names)
         self.assertIn("press_key", names)
         self.assertIn("write_ui_element", names)
+        self.assertIn("close_window", names)
 
     @patch("jarvis_agent.native_tools.inspect_active_window")
     def test_inspection_result_reaches_model(self, inspect_mock):
