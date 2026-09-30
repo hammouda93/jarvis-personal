@@ -101,6 +101,11 @@ class AgentRuntimeTests(unittest.TestCase):
                 "Je vais chercher cette information pour vous."
             )
         )
+        self.assertTrue(
+            _looks_like_action_promise(
+                "J'ai ouvert Chrome. Je vais maintenant ouvrir YouTube."
+            )
+        )
 
     def test_unnecessary_followup_is_detected(self):
         self.assertTrue(
