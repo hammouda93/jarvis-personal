@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import difflib
 import os
+from functools import lru_cache
 import re
 import shutil
 import subprocess
@@ -316,6 +317,60 @@ def _app_search_roots() -> list[Path]:
         root for root in roots
         if root is not None and root.exists() and root.is_dir()
     ]
+
+
+@lru_cache(maxsize=1)
+def application_speech_hints(limit: int = 40) -> tuple[str, ...]:
+    """Return generic installed-app names to bias local speech recognition.
+
+    The list comes from Windows shortcuts rather than hard-coded voice commands.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+
+    for root in _app_search_roots():
+        base_depth = len(root.parts)
+        visited = 0
+        try:
+            for current, dirs, files in os.walk(root):
+                current_path = Path(current)
+                depth = len(current_path.parts) - base_depth
+                if depth >= 3:
+                    dirs[:] = []
+                    continue
+                for filename in files:
+                    path = Path(filename)
+                    if path.suffix.lower() != ".lnk":
+                        continue
+                    lowered = filename.lower()
+                    if any(
+                        bad in lowered
+                        for bad in (
+                            "uninstall",
+                            "update",
+                            "updater",
+                            "service",
+                            "server",
+                            "helper",
+                        )
+                    ):
+                        continue
+                    name = path.stem.strip()
+                    key = normalize(name)
+                    if name and key and key not in seen:
+                        seen.add(key)
+                        names.append(name)
+                    visited += 1
+                    if visited >= 1200:
+                        dirs[:] = []
+                        break
+                if visited >= 1200:
+                    break
+        except OSError:
+            continue
+
+    names.sort(key=lambda value: (len(value), value.lower()))
+    return tuple(names[: max(1, min(int(limit), 80))])
 
 
 def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
