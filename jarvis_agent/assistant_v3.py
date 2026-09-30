@@ -168,9 +168,15 @@ class AssistantWorker(QObject):
             return False
 
         self._state(AssistantState.TRANSCRIBING, "Transcription locale…")
-        self.log_line.emit(
-            f"[STT] model={settings.whisper_model} device={settings.whisper_device}"
-        )
+        if settings.stt_provider == "groq":
+            self.log_line.emit(
+                f"[STT] provider=groq model={settings.groq_stt_model}"
+            )
+        else:
+            self.log_line.emit(
+                f"[STT] provider=local model={settings.whisper_model} "
+                f"device={settings.whisper_device}"
+            )
 
         stt_started = time.perf_counter()
         transcript, legacy_intent = recognize_command(
