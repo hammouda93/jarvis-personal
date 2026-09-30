@@ -1098,6 +1098,7 @@ class GroqResponsesAgent:
         actions: list[AgentActionResult] = []
         end_session = False
         should_exit = False
+        failed_results: dict[str, AgentActionResult] = {}
 
         if self._pending_function_approval is not None:
             normalized = user_text.strip().lower().strip(" .!?")
@@ -1260,9 +1261,27 @@ class GroqResponsesAgent:
                         should_exit=should_exit,
                     )
 
+                signature = name + ":" + json.dumps(
+                    arguments,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if signature in failed_results:
+                    previous_failure = failed_results[signature]
+                    if log:
+                        log(f"[AGENT] stop_duplicate_failed_tool={name}")
+                    return AgentTurnResult(
+                        text=previous_failure.message,
+                        actions=tuple(actions),
+                        end_session=end_session,
+                        should_exit=should_exit,
+                    )
+
                 tool_started = time.perf_counter()
                 result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if not result.success:
+                    failed_results[signature] = result
                 if result.success and name[:4] == "msf_":
                     self._last_msf_grounding_at = time.monotonic()
                 end_session = end_session or result.end_session
@@ -1289,6 +1308,18 @@ class GroqResponsesAgent:
                         "content": result.as_json(),
                     }
                 )
+                if not result.success:
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Cet outil vient d échouer. Ne répète pas le "
+                                "même appel avec les mêmes arguments. Utilise "
+                                "une autre capacité si elle existe, sinon explique "
+                                "simplement l échec à l utilisateur."
+                            ),
+                        }
+                    )
 
         self._trim_history()
         return AgentTurnResult(
