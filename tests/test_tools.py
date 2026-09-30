@@ -1,6 +1,11 @@
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from jarvis_agent.tools import route
+from jarvis_agent.tools import _chrome_profile_directory, route
 
 
 class ToolRouterTests(unittest.TestCase):
@@ -89,6 +94,26 @@ class ToolRouterTests(unittest.TestCase):
         self.assertEqual(intent.name, "folder.open_named")
         self.assertEqual(intent.args["query"], "media")
         self.assertEqual(intent.args["within"], "baristas")
+
+    def test_chrome_last_used_profile_is_discovered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = (
+                Path(tmp)
+                / "Google"
+                / "Chrome"
+                / "User Data"
+                / "Local State"
+            )
+            state.parent.mkdir(parents=True)
+            state.write_text(
+                json.dumps({"profile": {"last_used": "Profile 3"}}),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"LOCALAPPDATA": tmp}):
+                self.assertEqual(
+                    _chrome_profile_directory(),
+                    "Profile 3",
+                )
 
     def test_unknown_is_safe(self):
         intent = route("supprime tous mes fichiers")
