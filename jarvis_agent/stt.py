@@ -51,6 +51,8 @@ class LocalWhisperSTT:
         normalized = " ".join(
             text.lower().replace("’", "'").split()
         )
+        if text.strip() and not any(ch.isalnum() for ch in text):
+            return "punctuation_only"
         common_false_transcripts = (
             "sous-titres réalisés par la communauté d'amara.org",
             "sous titres réalisés par la communauté d'amara.org",
