@@ -505,6 +505,9 @@ class OpenAIResponsesAgent:
         self.base_url = settings.openai_base_url.rstrip("/")
         self.model = settings.openai_agent_model
         self.api_key = settings.openai_api_key
+        self.provider_name = "openai"
+        self.reasoning_effort = settings.openai_reasoning_effort
+        self.web_search_tool_type = "web_search"
         self._previous_response_id: str | None = None
         self._pending_mcp_approval: dict[str, Any] | None = None
         self._pending_mcp_response_id: str | None = None
@@ -520,7 +523,7 @@ class OpenAIResponsesAgent:
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
             raise AgentRuntimeUnavailable(
-                "OPENAI_API_KEY n'est pas configurée."
+                f"Clé API manquante pour le provider {self.provider_name}."
             )
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -542,21 +545,26 @@ class OpenAIResponsesAgent:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise AgentRuntimeUnavailable(
-                f"OpenAI API error {exc.code}: {detail}"
+                f"{self.provider_name} API error {exc.code}: {detail}"
             ) from exc
         except urllib.error.URLError as exc:
             raise AgentRuntimeUnavailable(
-                "OpenAI API n'est pas joignable."
+                f"{self.provider_name} API n'est pas joignable."
             ) from exc
         except TimeoutError as exc:
             raise AgentRuntimeUnavailable(
-                "Le modèle OpenAI a mis trop de temps à répondre."
+                f"Le modèle {self.provider_name} a mis trop de temps à répondre."
             ) from exc
 
     def _tool_definitions(self) -> list[dict[str, Any]]:
         tools = self.tools.openai_tools()
-        if settings.openai_web_search:
-            tools.append({"type": "web_search"})
+        web_enabled = (
+            settings.openai_web_search
+            if self.provider_name == "openai"
+            else settings.groq_browser_search
+        )
+        if web_enabled:
+            tools.append({"type": self.web_search_tool_type})
         tools.extend(CONNECTORS.openai_tools())
         return tools
 
@@ -614,7 +622,7 @@ class OpenAIResponsesAgent:
                 phase("thinking")
             if log:
                 log(
-                    f"[AGENT] provider=openai model={self.model} "
+                    f"[AGENT] provider={self.provider_name} model={self.model} "
                     f"round={round_index}"
                 )
 
@@ -624,7 +632,7 @@ class OpenAIResponsesAgent:
                 "input": next_input,
                 "tools": self._tool_definitions(),
                 "reasoning": {
-                    "effort": settings.openai_reasoning_effort,
+                    "effort": self.reasoning_effort,
                 },
                 "store": True,
             }
@@ -800,12 +808,35 @@ class OpenAIResponsesAgent:
         return "\n".join(parts).strip()
 
 
+class GroqResponsesAgent(OpenAIResponsesAgent):
+    """Groq Responses API agent using openai/gpt-oss-120b by default.
+
+    Groq exposes an OpenAI-compatible Responses API, so Jarvis can reuse the
+    same function-calling and MCP orchestration while switching base URL,
+    credentials, model and built-in browser-search tool identifier.
+    """
+
+    def __init__(
+        self,
+        tools: NativeToolRegistry | None = None,
+    ) -> None:
+        super().__init__(tools)
+        self.base_url = settings.groq_base_url.rstrip("/")
+        self.model = settings.groq_agent_model
+        self.api_key = settings.groq_api_key
+        self.provider_name = "groq"
+        self.reasoning_effort = settings.groq_reasoning_effort
+        self.web_search_tool_type = "browser_search"
+
+
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
     if provider == "ollama":
         return OllamaToolAgent()
     if provider == "openai":
         return OpenAIResponsesAgent()
+    if provider == "groq":
+        return GroqResponsesAgent()
     raise AgentRuntimeUnavailable(
         f"Agent provider non pris en charge: {settings.agent_provider}"
     )
