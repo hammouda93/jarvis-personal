@@ -541,6 +541,7 @@ class OpenAIResponsesAgent:
         self._pending_mcp_approval: dict[str, Any] | None = None
         self._pending_mcp_response_id: str | None = None
         self._pending_function_approval: dict[str, Any] | None = None
+        self._last_msf_grounding_at = 0.0
         self._pending_function_response_id: str | None = None
 
     def reset(self) -> None:
@@ -889,6 +890,8 @@ class OpenAIResponsesAgent:
 
                 result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if result.success and name.startswith("msf_"):
+                    self._last_msf_grounding_at = time.monotonic()
                 end_session = end_session or result.end_session
                 should_exit = should_exit or result.should_exit
 
@@ -968,6 +971,7 @@ class GroqResponsesAgent:
             {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
         ]
         self._pending_function_approval = None
+        self._last_msf_grounding_at = 0.0
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         return
@@ -1151,7 +1155,7 @@ class GroqResponsesAgent:
             )
             ms_football_turn = self._is_ms_football_request(user_text)
 
-        force_msf_discovery = False
+        msf_repair_attempted = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -1163,18 +1167,10 @@ class GroqResponsesAgent:
                 )
 
             started = time.perf_counter()
-            tool_choice: Any = "auto"
-            if force_msf_discovery:
-                tool_choice = {
-                    "type": "function",
-                    "function": {"name": "msf_capabilities"},
-                }
-
             response = self._chat(
-                tool_choice=tool_choice,
+                tool_choice="auto",
                 ms_football_only=ms_football_turn,
             )
-            force_msf_discovery = False
             if log:
                 log(
                     f"[PERF] groq_round={round_index} "
@@ -1190,30 +1186,35 @@ class GroqResponsesAgent:
             calls = self._append_assistant_message(message)
 
             if not calls:
+                recent_msf_grounding = (
+                    self._last_msf_grounding_at > 0
+                    and time.monotonic() - self._last_msf_grounding_at <= 30.0
+                )
                 if (
                     ms_football_turn
                     and not actions
+                    and not recent_msf_grounding
+                    and not msf_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
-                    # Groq documents that tool_choice="required" can fail with
-                    # HTTP 400 when the model emits no tool call. Retry by
-                    # forcing one harmless discovery function instead.
+                    # Do not use Groq's forced tool_choice here. GPT-OSS may
+                    # legitimately select a different MS Football function,
+                    # which Groq rejects with HTTP 400 when a specific tool was
+                    # forced. A compact repair prompt keeps tool_choice=auto.
                     self._messages.append(
                         {
                             "role": "user",
                             "content": (
-                                "Cette demande concerne les données réelles de "
-                                "MS Football. Utilise les outils MS Football "
-                                "avant de répondre. Commence par découvrir les "
-                                "capacités si nécessaire."
+                                "Réponds à la demande précédente uniquement "
+                                "après avoir consulté les données réelles avec "
+                                "un outil MS Football approprié. Choisis toi-même "
+                                "l'outil adapté parmi les outils msf_* disponibles."
                             ),
                         }
                     )
-                    force_msf_discovery = True
+                    msf_repair_attempted = True
                     if log:
-                        log(
-                            "[AGENT] repair=force_msf_capabilities_after_no_tool"
-                        )
+                        log("[AGENT] repair=msf_tool_required_auto_choice")
                     continue
 
                 text = _visible_text(
