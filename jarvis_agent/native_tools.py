@@ -51,7 +51,7 @@ class NativeToolRegistry:
         return [
             self._ollama(
                 "open_application",
-                "Trouve et ouvre une application installée sur Windows par son nom.",
+                "Trouve et ouvre une application de bureau installée sur Windows par son nom. Ne pas utiliser pour ouvrir un site ou service web: utiliser open_url directement.",
                 {
                     "name": {
                         "type": "string",
