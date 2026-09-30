@@ -965,6 +965,7 @@ class GroqResponsesAgent:
             {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
         ]
         self._pending_function_approval: dict[str, Any] | None = None
+        self._last_msf_grounding_at = 0.0
 
     def reset(self) -> None:
         self._messages = [
