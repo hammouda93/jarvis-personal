@@ -1,4 +1,6 @@
+import copy
 import unittest
+from types import SimpleNamespace
 
 from jarvis_agent.agent_runtime import (
     OllamaToolAgent,
@@ -104,9 +106,48 @@ class FakeGroqAgent(GroqResponsesAgent):
         self.payloads = []
         self.api_key = "test"
 
-    def _post(self, payload):
-        self.payloads.append(payload)
-        return self.responses.pop(0)
+    @staticmethod
+    def _response_from_dict(data):
+        content = ""
+        tool_calls = []
+        for item in data.get("output") or []:
+            if item.get("type") == "function_call":
+                tool_calls.append(
+                    SimpleNamespace(
+                        id=item.get("call_id") or item.get("id"),
+                        function=SimpleNamespace(
+                            name=item.get("name"),
+                            arguments=item.get("arguments") or "{}",
+                        ),
+                    )
+                )
+            elif item.get("type") == "message":
+                parts = [
+                    part.get("text", "")
+                    for part in item.get("content") or []
+                    if part.get("type") == "output_text"
+                ]
+                content = "\n".join(part for part in parts if part)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=content,
+                        tool_calls=tool_calls,
+                    )
+                )
+            ]
+        )
+
+    def _chat(self, *, tool_choice="auto"):
+        self.payloads.append(
+            {
+                "messages": copy.deepcopy(self._messages),
+                "tools": copy.deepcopy(self._tool_definitions()),
+                "tool_choice": tool_choice,
+            }
+        )
+        return self._response_from_dict(self.responses.pop(0))
 
 
 class AgentRuntimeTests(unittest.TestCase):
@@ -318,8 +359,7 @@ class AgentRuntimeTests(unittest.TestCase):
             for item in agent.payloads[0]["tools"]
         }
         self.assertIn("browser_search", tool_types)
-        self.assertNotIn("store", agent.payloads[0])
-        self.assertNotIn("previous_response_id", agent.payloads[0])
+        self.assertEqual(agent.payloads[0]["tool_choice"], "auto")
 
     def test_groq_keeps_conversation_history_locally(self):
         tools = FakeTools()
@@ -362,7 +402,7 @@ class AgentRuntimeTests(unittest.TestCase):
         agent.run("Je cherche un joueur")
         agent.run("Mohamed")
 
-        second_input = agent.payloads[1]["input"]
+        second_input = agent.payloads[1]["messages"]
         self.assertTrue(
             any(
                 item.get("role") == "user"
@@ -422,13 +462,12 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(tools.calls[0][0], "msf_commit_mutation")
         self.assertTrue(
             any(
-                item.get("type") == "function_call_output"
-                for item in agent.payloads[1]["input"]
+                item.get("role") == "tool"
+                and item.get("tool_call_id") == "call_change_1"
+                for item in agent.payloads[1]["messages"]
                 if isinstance(item, dict)
             )
         )
-        self.assertNotIn("store", agent.payloads[1])
-        self.assertNotIn("previous_response_id", agent.payloads[1])
 
     def test_openai_loop_returns_function_result_then_continues(self):
         tools = FakeTools()
