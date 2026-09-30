@@ -74,6 +74,14 @@ class Settings:
     whisper_compute_type: str = (
         os.getenv("JARVIS_WHISPER_COMPUTE_TYPE") or "int8"
     ).strip()
+    whisper_beam_size: int = _int("JARVIS_WHISPER_BEAM_SIZE", 1)
+    groq_stt_model: str = (
+        os.getenv("JARVIS_GROQ_STT_MODEL") or "whisper-large-v3-turbo"
+    ).strip()
+    groq_stt_fallback_local: bool = _bool(
+        "JARVIS_GROQ_STT_FALLBACK_LOCAL",
+        True,
+    )
     stt_language: str | None = (
         os.getenv("JARVIS_STT_LANGUAGE") or "fr"
     ).strip() or None
