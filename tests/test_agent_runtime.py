@@ -209,6 +209,68 @@ class AgentRuntimeTests(unittest.TestCase):
             any("Je veux ouvrir un dossier" in value for value in contents)
         )
 
+    def test_openai_mcp_approval_can_resume_after_yes(self):
+        tools = FakeTools()
+        agent = FakeOpenAIAgent(
+            tools,
+            [
+                {
+                    "id": "resp_mcp_1",
+                    "output": [
+                        {
+                            "id": "mcpr_test_1",
+                            "type": "mcp_approval_request",
+                            "arguments": "{\"query\":\"client\"}",
+                            "name": "search_mail",
+                            "server_label": "gmail",
+                        }
+                    ],
+                },
+                {
+                    "id": "resp_mcp_2",
+                    "output": [
+                        {
+                            "id": "mcp_call_1",
+                            "type": "mcp_call",
+                            "approval_request_id": "mcpr_test_1",
+                            "arguments": "{\"query\":\"client\"}",
+                            "error": None,
+                            "name": "search_mail",
+                            "output": "{\"messages\":[]}",
+                            "server_label": "gmail",
+                        },
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Aucun message trouvé.",
+                                }
+                            ],
+                        },
+                    ],
+                },
+            ],
+        )
+
+        first = agent.run("Cherche les messages du client")
+        self.assertIn("autorisation", first.text.lower())
+
+        second = agent.run("oui")
+        self.assertEqual(second.text, "Aucun message trouvé.")
+        self.assertEqual(
+            agent.payloads[1]["input"][0]["type"],
+            "mcp_approval_response",
+        )
+        self.assertTrue(agent.payloads[1]["input"][0]["approve"])
+        self.assertEqual(
+            agent.payloads[1]["previous_response_id"],
+            "resp_mcp_1",
+        )
+        self.assertTrue(
+            any(action.name == "mcp:gmail:search_mail" for action in second.actions)
+        )
+
     def test_openai_loop_returns_function_result_then_continues(self):
         tools = FakeTools()
         agent = FakeOpenAIAgent(
