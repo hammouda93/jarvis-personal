@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import difflib
 import json
-from dataclasses import asdict, dataclass
+import time
+from dataclasses import dataclass
 from typing import Any
 
 from .tools import normalize
@@ -39,25 +40,10 @@ _INTERACTIVE_TYPES = {
     "TreeItem",
 }
 
+_TEXT_TYPES = {"Document", "Text"}
 
-@dataclass(frozen=True)
-class UIElementInfo:
-    name: str
-    control_type: str
-    automation_id: str
-    enabled: bool
-    visible: bool
-    interactive: bool
-    rectangle: tuple[int, int, int, int]
-
-
-@dataclass(frozen=True)
-class UIWindowInfo:
-    title: str
-    control_type: str
-    enabled: bool
-    visible: bool
-    rectangle: tuple[int, int, int, int]
+_SNAPSHOT_ELEMENTS: dict[str, Any] = {}
+_SNAPSHOT_WINDOW_TITLE = ""
 
 
 @dataclass(frozen=True)
@@ -107,41 +93,91 @@ def _is_enabled(wrapper: Any) -> bool:
         return True
 
 
+def _is_assistant_window(wrapper: Any) -> bool:
+    return normalize(_element_name(wrapper)) == "jarvis personal"
+
+
+def _window_by_title(title: str):
+    target = (title or "").strip()
+    if not target:
+        return None
+
+    windows = _desktop().windows(
+        visible_only=True,
+        top_level_only=True,
+    )
+    ranked = _rank_wrappers(windows, target)
+    if not ranked or ranked[0][0] < 0.82:
+        return None
+    return ranked[0][1]
+
+
 def _active_window():
+    """Return the user's active work window, not Jarvis' own overlay.
+
+    Jarvis can temporarily become the foreground Qt window while updating its
+    UI. In that case, choose the first visible non-Jarvis top-level window so
+    perception stays focused on the user's application.
+    """
     windows = _desktop().windows(
         active_only=True,
         visible_only=True,
         top_level_only=True,
     )
-    if not windows:
-        return None
-    return windows[0]
+    if windows and not _is_assistant_window(windows[0]):
+        return windows[0]
+
+    candidates = _desktop().windows(
+        visible_only=True,
+        top_level_only=True,
+    )
+    for wrapper in candidates:
+        if _is_assistant_window(wrapper):
+            continue
+        rect = _rect_tuple(wrapper)
+        if rect[2] - rect[0] < 80 or rect[3] - rect[1] < 60:
+            continue
+        title = _element_name(wrapper)
+        if normalize(title) in {"program manager", "barre des taches"}:
+            continue
+        return wrapper
+
+    return windows[0] if windows else None
 
 
-def _window_info(wrapper: Any) -> UIWindowInfo:
-    return UIWindowInfo(
-        title=_element_name(wrapper),
-        control_type=_control_type(wrapper) or "Window",
-        enabled=_is_enabled(wrapper),
-        visible=_is_visible(wrapper),
-        rectangle=_rect_tuple(wrapper),
+def _compact_window(wrapper: Any) -> dict[str, Any]:
+    return {
+        "title": _element_name(wrapper),
+        "type": _control_type(wrapper) or "Window",
+        "bounds": list(_rect_tuple(wrapper)),
+    }
+
+
+def _compact_control(ref: str, wrapper: Any) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "ref": ref,
+        "type": _control_type(wrapper),
+        "enabled": _is_enabled(wrapper),
+    }
+    name = _element_name(wrapper)
+    automation_id = _automation_id(wrapper)
+    if name:
+        item["name"] = name[:160]
+    if automation_id:
+        item["id"] = automation_id[:100]
+    item["bounds"] = list(_rect_tuple(wrapper))
+    return item
+
+
+def _json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
 
 
-def _element_info(wrapper: Any) -> UIElementInfo:
-    ctype = _control_type(wrapper)
-    return UIElementInfo(
-        name=_element_name(wrapper),
-        control_type=ctype,
-        automation_id=_automation_id(wrapper),
-        enabled=_is_enabled(wrapper),
-        visible=_is_visible(wrapper),
-        interactive=ctype in _INTERACTIVE_TYPES,
-        rectangle=_rect_tuple(wrapper),
-    )
-
-
-def list_windows(*, limit: int = 25) -> UIActionResult:
+def list_windows(*, limit: int = 20) -> UIActionResult:
     try:
         wrappers = _desktop().windows(
             visible_only=True,
@@ -153,66 +189,111 @@ def list_windows(*, limit: int = 25) -> UIActionResult:
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
     for wrapper in wrappers:
-        info = _window_info(wrapper)
-        key = normalize(info.title)
+        title = _element_name(wrapper)
+        key = normalize(title)
         if not key or key in seen:
             continue
         seen.add(key)
-        items.append(asdict(info))
-        if len(items) >= max(1, min(limit, 50)):
+        items.append(
+            {
+                "title": title[:180],
+                "type": _control_type(wrapper) or "Window",
+            }
+        )
+        if len(items) >= max(1, min(limit, 30)):
             break
 
     return UIActionResult(
         True,
         f"{len(items)} fenêtre(s) visible(s).",
-        json.dumps(items, ensure_ascii=False),
+        _json(items),
     )
 
 
-def inspect_active_window(*, limit: int = 60) -> UIActionResult:
+def inspect_active_window(
+    *,
+    title: str | None = None,
+    limit: int = 36,
+) -> UIActionResult:
+    """Return a compact, model-friendly accessibility snapshot.
+
+    Interactive controls are prioritized and receive short refs (e1, e2, ...).
+    The refs can be used immediately by click/write operations, including for
+    controls that expose no accessible label.
+    """
+    global _SNAPSHOT_ELEMENTS, _SNAPSHOT_WINDOW_TITLE
+
     try:
-        window = _active_window()
+        window = _window_by_title(title) if title else _active_window()
     except Exception as exc:
-        return UIActionResult(False, "Impossible d'inspecter la fenêtre active.", str(exc))
+        return UIActionResult(False, "Impossible d'inspecter la fenêtre.", str(exc))
 
     if window is None:
+        if title:
+            return UIActionResult(False, f"Fenêtre introuvable: {title}.")
         return UIActionResult(False, "Aucune fenêtre active détectée.")
-
-    window_info = _window_info(window)
-    items: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
 
     try:
         descendants = window.descendants()
     except Exception as exc:
         return UIActionResult(False, "Impossible de lire les éléments de la fenêtre.", str(exc))
 
+    interactive: list[Any] = []
+    informative: list[Any] = []
+    seen: set[tuple[str, str, str, tuple[int, int, int, int]]] = set()
+
     for wrapper in descendants:
-        info = _element_info(wrapper)
-        if not info.visible:
+        if not _is_visible(wrapper):
             continue
-        if not info.name and not info.automation_id:
-            continue
+        ctype = _control_type(wrapper)
+        name = _element_name(wrapper)
+        automation_id = _automation_id(wrapper)
+        rect = _rect_tuple(wrapper)
         key = (
-            normalize(info.name),
-            normalize(info.control_type),
-            normalize(info.automation_id),
+            normalize(name),
+            normalize(ctype),
+            normalize(automation_id),
+            rect,
         )
         if key in seen:
             continue
         seen.add(key)
-        items.append(asdict(info))
-        if len(items) >= max(1, min(limit, 120)):
-            break
+
+        if ctype in _INTERACTIVE_TYPES:
+            # Keep unlabeled interactive controls: their ref + type + position
+            # can still let the agent operate them safely after inspection.
+            interactive.append(wrapper)
+        elif ctype in _TEXT_TYPES and name:
+            informative.append(wrapper)
+
+    max_items = max(8, min(int(limit), 48))
+    # Prefer controls. Keep a small amount of visible text for page context.
+    selected = interactive[:max_items]
+    text_budget = min(8, max(0, max_items - len(selected)))
+    if text_budget:
+        selected.extend(informative[:text_budget])
+
+    _SNAPSHOT_ELEMENTS = {}
+    _SNAPSHOT_WINDOW_TITLE = _element_name(window)
+
+    controls: list[dict[str, Any]] = []
+    for index, wrapper in enumerate(selected, start=1):
+        ref = f"e{index}"
+        _SNAPSHOT_ELEMENTS[ref] = wrapper
+        controls.append(_compact_control(ref, wrapper))
 
     payload = {
-        "window": asdict(window_info),
-        "elements": items,
+        "window": _compact_window(window),
+        "controls": controls,
+        "note": (
+            "Utiliser ref pour un contrôle sans nom. "
+            "Les refs restent valables jusqu'à la prochaine inspection."
+        ),
     }
     return UIActionResult(
         True,
-        f"Fenêtre active inspectée: {window_info.title or 'sans titre'}.",
-        json.dumps(payload, ensure_ascii=False),
+        f"Fenêtre inspectée: {_SNAPSHOT_WINDOW_TITLE or 'sans titre'}.",
+        _json(payload),
     )
 
 
@@ -275,7 +356,10 @@ def _find_active_element(
     if not ranked:
         return None, []
 
-    names = [_element_name(wrapper) for _score, wrapper in ranked[:5]]
+    names = [
+        _element_name(wrapper) or _automation_id(wrapper) or _control_type(wrapper)
+        for _score, wrapper in ranked[:5]
+    ]
     top_score = ranked[0][0]
     if top_score < 0.82:
         return None, names
@@ -283,39 +367,56 @@ def _find_active_element(
     if len(ranked) > 1 and top_score - ranked[1][0] < 0.035:
         first = normalize(_element_name(ranked[0][1]))
         second = normalize(_element_name(ranked[1][1]))
-        if first != second:
+        if first and second and first != second:
             return None, names
 
     return ranked[0][1], names
 
 
+def _snapshot_element(ref: str):
+    key = (ref or "").strip().lower()
+    return _SNAPSHOT_ELEMENTS.get(key)
+
+
 def click_ui_element(
-    name: str,
+    name: str = "",
     *,
+    ref: str = "",
     control_type: str | None = None,
 ) -> UIActionResult:
-    target = (name or "").strip()
-    if len(normalize(target)) < 2:
-        return UIActionResult(False, "Le nom de l'élément est trop vague.")
+    wrapper = None
+    alternatives: list[str] = []
 
-    try:
-        wrapper, alternatives = _find_active_element(
-            target,
-            control_type=control_type,
-        )
-    except Exception as exc:
-        return UIActionResult(False, "Impossible de rechercher cet élément.", str(exc))
-
-    if wrapper is None:
-        if alternatives:
+    if ref:
+        wrapper = _snapshot_element(ref)
+        if wrapper is None:
             return UIActionResult(
                 False,
-                "Élément ambigu. Précisez la cible.",
-                json.dumps(alternatives, ensure_ascii=False),
+                "Référence UI inconnue ou expirée. Inspectez à nouveau la fenêtre.",
+                ref,
             )
-        return UIActionResult(False, f"Élément introuvable: {target}.")
+    else:
+        target = (name or "").strip()
+        if len(normalize(target)) < 2:
+            return UIActionResult(False, "Le nom de l'élément est trop vague.")
+        try:
+            wrapper, alternatives = _find_active_element(
+                target,
+                control_type=control_type,
+            )
+        except Exception as exc:
+            return UIActionResult(False, "Impossible de rechercher cet élément.", str(exc))
 
-    label = _element_name(wrapper) or target
+        if wrapper is None:
+            if alternatives:
+                return UIActionResult(
+                    False,
+                    "Élément ambigu. Précisez la cible.",
+                    _json(alternatives),
+                )
+            return UIActionResult(False, f"Élément introuvable: {target}.")
+
+    label = _element_name(wrapper) or _automation_id(wrapper) or ref or name
     try:
         wrapper.set_focus()
         try:
@@ -325,7 +426,11 @@ def click_ui_element(
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'activer {label}.", str(exc))
 
-    return UIActionResult(True, f"Élément activé: {label}.", label)
+    return UIActionResult(
+        True,
+        f"Élément activé: {label}.",
+        "Action envoyée. Réinspecter si le résultat visuel final est important.",
+    )
 
 
 def activate_window(title: str) -> UIActionResult:
@@ -334,23 +439,13 @@ def activate_window(title: str) -> UIActionResult:
         return UIActionResult(False, "Le nom de la fenêtre est trop vague.")
 
     try:
-        windows = _desktop().windows(
-            visible_only=True,
-            top_level_only=True,
-        )
-        ranked = _rank_wrappers(windows, target)
+        wrapper = _window_by_title(target)
     except Exception as exc:
         return UIActionResult(False, "Impossible de rechercher cette fenêtre.", str(exc))
 
-    if not ranked or ranked[0][0] < 0.82:
-        alternatives = [_element_name(item[1]) for item in ranked[:5]]
-        return UIActionResult(
-            False,
-            "Fenêtre introuvable ou ambiguë.",
-            json.dumps(alternatives, ensure_ascii=False),
-        )
+    if wrapper is None:
+        return UIActionResult(False, "Fenêtre introuvable ou ambiguë.", target)
 
-    wrapper = ranked[0][1]
     label = _element_name(wrapper) or target
     try:
         try:
@@ -365,89 +460,145 @@ def activate_window(title: str) -> UIActionResult:
 
 
 def close_window(title: str | None = None) -> UIActionResult:
-    """Close a visible top-level window explicitly requested by the user."""
+    """Close a top-level window and verify whether it actually disappeared."""
     target = (title or "").strip()
     try:
-        if target:
-            windows = _desktop().windows(
-                visible_only=True,
-                top_level_only=True,
-            )
-            ranked = _rank_wrappers(windows, target)
-            if not ranked or ranked[0][0] < 0.82:
-                alternatives = [_element_name(item[1]) for item in ranked[:5]]
-                return UIActionResult(
-                    False,
-                    "Fenêtre introuvable ou ambiguë.",
-                    json.dumps(alternatives, ensure_ascii=False),
-                )
-            wrapper = ranked[0][1]
-        else:
-            wrapper = _active_window()
-            if wrapper is None:
-                return UIActionResult(False, "Aucune fenêtre active détectée.")
-
-        label = _element_name(wrapper) or target or "fenêtre active"
-        wrapper.close()
-        return UIActionResult(
-            True,
-            f"Demande de fermeture envoyée à {label}.",
-            (
-                "La fermeture a été demandée. L'état final doit être vérifié "
-                "avant d'affirmer que la fenêtre est réellement fermée."
-            ),
-        )
+        wrapper = _window_by_title(target) if target else _active_window()
     except Exception as exc:
-        return UIActionResult(False, "Impossible de fermer cette fenêtre.", str(exc))
+        return UIActionResult(False, "Impossible de rechercher cette fenêtre.", str(exc))
+
+    if wrapper is None:
+        return UIActionResult(False, "Fenêtre introuvable.")
+
+    label = _element_name(wrapper) or target or "fenêtre active"
+    try:
+        handle = int(getattr(wrapper, "handle", 0) or 0)
+    except Exception:
+        handle = 0
+
+    try:
+        wrapper.close()
+    except Exception as exc:
+        return UIActionResult(False, f"Impossible de fermer {label}.", str(exc))
+
+    time.sleep(0.25)
+    try:
+        remaining = _desktop().windows(
+            visible_only=True,
+            top_level_only=True,
+        )
+        if handle:
+            still_open = any(
+                int(getattr(item, "handle", 0) or 0) == handle
+                for item in remaining
+            )
+        else:
+            still_open = any(
+                normalize(_element_name(item)) == normalize(label)
+                for item in remaining
+            )
+    except Exception:
+        still_open = True
+
+    if still_open:
+        return UIActionResult(
+            False,
+            f"{label} est encore ouverte.",
+            "Une boîte de dialogue ou un état non enregistré peut bloquer la fermeture.",
+        )
+
+    return UIActionResult(
+        True,
+        f"Fenêtre fermée: {label}.",
+        "Fermeture vérifiée.",
+    )
+
+
+def _editable_target(wrapper: Any):
+    if wrapper is None:
+        return None
+    if _control_type(wrapper) == "Edit" and hasattr(wrapper, "set_edit_text"):
+        return wrapper
+    try:
+        for child in wrapper.descendants():
+            if _control_type(child) == "Edit" and hasattr(child, "set_edit_text"):
+                return child
+    except Exception:
+        pass
+    if hasattr(wrapper, "set_edit_text"):
+        return wrapper
+    return None
 
 
 def write_ui_element(
     name: str,
     text: str,
+    *,
+    ref: str = "",
 ) -> UIActionResult:
     target = (name or "").strip()
     value = str(text or "")
-    if len(normalize(target)) < 2:
-        return UIActionResult(False, "Le nom du champ est trop vague.")
     if len(value) > 4000:
         return UIActionResult(False, "Le texte est trop long pour une saisie UI directe.")
 
-    try:
-        wrapper, alternatives = _find_active_element(
-            target,
-            control_type="Edit",
-        )
+    wrapper = None
+    alternatives: list[str] = []
+
+    if ref:
+        wrapper = _snapshot_element(ref)
         if wrapper is None:
-            # Some UIA applications expose editable controls under a custom
-            # control type. Retry without forcing Edit, but still require the
-            # wrapper to support set_edit_text.
-            wrapper, alternatives = _find_active_element(target)
-    except Exception as exc:
-        return UIActionResult(False, "Impossible de rechercher ce champ.", str(exc))
+            return UIActionResult(
+                False,
+                "Référence UI inconnue ou expirée. Inspectez à nouveau la fenêtre.",
+                ref,
+            )
+    else:
+        if len(normalize(target)) < 2:
+            return UIActionResult(False, "Le nom du champ est trop vague.")
+        try:
+            wrapper, alternatives = _find_active_element(
+                target,
+                control_type="Edit",
+            )
+            if wrapper is None:
+                wrapper, alternatives = _find_active_element(target)
+        except Exception as exc:
+            return UIActionResult(False, "Impossible de rechercher ce champ.", str(exc))
 
     if wrapper is None:
         if alternatives:
             return UIActionResult(
                 False,
                 "Champ ambigu. Précisez la cible.",
-                json.dumps(alternatives, ensure_ascii=False),
+                _json(alternatives),
             )
         return UIActionResult(False, f"Champ introuvable: {target}.")
 
-    label = _element_name(wrapper) or _automation_id(wrapper) or target
+    editable = _editable_target(wrapper)
+    label = (
+        _element_name(wrapper)
+        or _automation_id(wrapper)
+        or ref
+        or target
+    )
+    if editable is None:
+        return UIActionResult(
+            False,
+            f"L'élément {label} n'accepte pas la saisie directe.",
+            _control_type(wrapper),
+        )
+
     try:
-        wrapper.set_focus()
-        if not hasattr(wrapper, "set_edit_text"):
-            return UIActionResult(
-                False,
-                f"L'élément {label} n'accepte pas la saisie directe.",
-                _control_type(wrapper),
-            )
-        wrapper.set_edit_text(value)
+        editable.set_focus()
+        editable.set_edit_text(value)
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'écrire dans {label}.", str(exc))
 
-    return UIActionResult(True, f"Texte saisi dans {label}.", label)
+    return UIActionResult(
+        True,
+        f"Texte saisi dans {label}.",
+        "Texte saisi sans validation automatique.",
+    )
 
 
 _ALLOWED_KEYS = {
