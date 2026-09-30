@@ -273,3 +273,36 @@ Jarvis separates the **brain** from the **accesses** it is allowed to use.
 This layer is intended for services such as source control, mail, calendars,
 business systems, and future domain packs. The same permission model will later
 be shared with the local-agent provider.
+
+
+## Groq GPT-OSS 120B + MS Football
+
+Jarvis can now use Groq's OpenAI-compatible Responses API as its cloud agent
+brain while keeping Windows execution and MS Football access local.
+
+Configuration:
+
+```env
+JARVIS_AGENT_PROVIDER=groq
+GROQ_API_KEY=
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+JARVIS_GROQ_AGENT_MODEL=openai/gpt-oss-120b
+JARVIS_GROQ_REASONING_EFFORT=low
+JARVIS_GROQ_BROWSER_SEARCH=1
+
+JARVIS_MS_FOOTBALL_BRIDGE_URL=http://127.0.0.1:8765
+JARVIS_MS_FOOTBALL_BRIDGE_TOKEN=
+```
+
+The same `JARVIS_MS_FOOTBALL_BRIDGE_TOKEN` must be configured in the
+`ms_football_gest` process running:
+
+```powershell
+python manage.py run_jarvis_bridge
+```
+
+The model receives generic MS Football capabilities rather than one function per
+spoken phrase: live Django schema discovery, ORM queries, read-only SQL, source
+search, route discovery and controlled generic mutations. Data-changing
+mutations are prepared first and the Responses runtime requires explicit verbal
+approval before commit.
