@@ -14,7 +14,7 @@ def _desktop():
     # with Qt's OLE setup on Windows.
     from pywinauto import Desktop
 
-    return _desktop()
+    return Desktop(backend="uia")
 
 
 def _send_keys(sequence: str) -> None:
