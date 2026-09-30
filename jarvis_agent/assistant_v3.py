@@ -224,6 +224,35 @@ class AssistantWorker(QObject):
         if lifecycle_handled:
             return keep_listening
 
+        if self._pending_direct_follow_up:
+            follow_up = self._pending_direct_follow_up
+            self._pending_direct_follow_up = ""
+            if follow_up == "search_query":
+                follow_intent = ToolIntent("browser.search", {"query": user_text})
+            elif follow_up == "folder_name":
+                follow_intent = ToolIntent("folder.open_named", {"query": user_text})
+            else:
+                follow_intent = ToolIntent("unknown", {"text": user_text})
+
+            if follow_intent.name != "unknown":
+                result = execute(follow_intent)
+                self.log_line.emit(
+                    f"[DIRECT] follow_up={follow_up} "
+                    f"success={result.success} args={follow_intent.args}"
+                )
+                self._pending_direct_follow_up = result.follow_up or ""
+                spoken = tool_message(
+                    follow_intent,
+                    result,
+                    self._conversation_language,
+                )
+                self._speak(spoken)
+                self._state(
+                    AssistantState.SUCCESS if result.success else AssistantState.ERROR,
+                    "Prêt" if result.success else "Action non terminée",
+                )
+                return True
+
         if self._handle_simple_direct_action(user_text, legacy_intent):
             return True
 
