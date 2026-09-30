@@ -1007,12 +1007,25 @@ class GroqResponsesAgent:
             tools = [
                 item
                 for item in tools
-                if str((item.get("function") or {}).get("name") or "").startswith(
-                    "msf_"
+                if (
+                    str((item.get("function") or {}).get("name") or "")[:4]
+                    == "msf_"
+                    or str((item.get("function") or {}).get("name") or "")
+                    == "open_url"
                 )
             ]
-        elif settings.groq_browser_search:
-            tools = [*tools, {"type": "browser_search"}]
+        else:
+            # MS Football schemas are large and irrelevant to normal Windows
+            # conversation. Keep that domain pack out of ordinary turns to
+            # reduce prompt tokens and free-tier latency.
+            tools = [
+                item
+                for item in tools
+                if str((item.get("function") or {}).get("name") or "")[:4]
+                != "msf_"
+            ]
+            if settings.groq_browser_search:
+                tools = [*tools, {"type": "browser_search"}]
         return tools
 
     @staticmethod
