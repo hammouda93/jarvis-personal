@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -88,6 +89,25 @@ _THINK_BLOCK_RE = re.compile(
 )
 
 
+def _looks_like_internal_reasoning(text: str) -> bool:
+    lower = (text or "").lower()
+    markers = (
+        "the user said",
+        "i need to",
+        "let me",
+        "the instructions",
+        "no tool calls",
+        "the user is",
+        "i should respond",
+        "the correct response",
+        "so the answer",
+        "first, check",
+        "wait,",
+    )
+    hits = sum(1 for marker in markers if marker in lower)
+    return hits >= 2
+
+
 def _visible_text(value: str) -> str:
     """Keep only user-facing model output, never internal reasoning text."""
     text = str(value or "").strip()
@@ -109,7 +129,10 @@ def _visible_text(value: str) -> str:
     if "<think>" in lower:
         text = text[: lower.find("<think>")]
 
-    return text.strip()
+    text = text.strip()
+    if _looks_like_internal_reasoning(text):
+        return ""
+    return text
 
 
 class OllamaToolAgent:
@@ -192,6 +215,7 @@ class OllamaToolAgent:
                     f"round={round_index}"
                 )
 
+            started = time.perf_counter()
             data = self._post(
                 {
                     "model": self.model,
@@ -207,6 +231,9 @@ class OllamaToolAgent:
                     "keep_alive": "10m",
                 }
             )
+            elapsed = time.perf_counter() - started
+            if log:
+                log(f"[PERF] ollama_round={round_index} seconds={elapsed:.2f}")
             message = data.get("message") or {}
             content = _visible_text(message.get("content") or "")
             tool_calls = message.get("tool_calls") or []
@@ -220,7 +247,17 @@ class OllamaToolAgent:
             self._messages.append(assistant_item)
 
             if not tool_calls:
-                final_text = content or "Je suis là."
+                if not content:
+                    if log:
+                        log(
+                            "[AGENT] model output hidden because it looked like "
+                            "internal reasoning"
+                        )
+                    content = (
+                        "Je suis là. Reformulez votre demande si vous vouliez "
+                        "que j'effectue une action."
+                    )
+                final_text = content
                 self._trim_history()
                 return AgentTurnResult(
                     text=final_text,
@@ -248,7 +285,13 @@ class OllamaToolAgent:
                 if phase:
                     phase("acting")
 
+                tool_started = time.perf_counter()
                 result = self.tools.execute(name, arguments)
+                if log:
+                    log(
+                        f"[PERF] tool={name} "
+                        f"seconds={time.perf_counter() - tool_started:.3f}"
+                    )
                 actions.append(result)
                 end_session = end_session or result.end_session
                 should_exit = should_exit or result.should_exit
@@ -382,7 +425,13 @@ class OpenAIResponsesAgent:
             if previous:
                 payload["previous_response_id"] = previous
 
+            started = time.perf_counter()
             data = self._post(payload)
+            if log:
+                log(
+                    f"[PERF] openai_round={round_index} "
+                    f"seconds={time.perf_counter() - started:.2f}"
+                )
             response_id = str(data.get("id") or "")
             if not response_id:
                 raise AgentRuntimeUnavailable(
