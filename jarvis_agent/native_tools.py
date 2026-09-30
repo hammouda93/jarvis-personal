@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .memory import LOCAL_MEMORY
+from .ms_football_bridge import MS_FOOTBALL_BRIDGE
 from .tools import ToolIntent, ToolResult, execute, normalize
 from .windows_perception import (
     activate_window,
@@ -186,6 +187,139 @@ class NativeToolRegistry:
                 ["key"],
             ),
             self._ollama(
+                "msf_capabilities",
+                "Découvre les applications, modèles et capacités exposés par MS Football. À utiliser pour comprendre ce que l'application sait faire.",
+                {},
+                [],
+            ),
+            self._ollama(
+                "msf_describe_schema",
+                "Inspecte dynamiquement le schéma Django de MS Football: modèles, champs, relations et choix. Utilise-le avant une requête lorsque le modèle ou les champs ne sont pas certains.",
+                {
+                    "search": {
+                        "type": "string",
+                        "description": "Filtre optionnel sur un nom de modèle ou champ.",
+                    },
+                    "limit_models": {
+                        "type": "integer",
+                        "description": "Nombre maximum de modèles à retourner.",
+                    },
+                },
+                [],
+            ),
+            self._ollama(
+                "msf_query_records",
+                "Interroge les données MS Football via l'ORM Django sans écrire. Les filtres acceptent les lookups Django comme player__name__icontains, status, deadline__lt.",
+                {
+                    "model": {
+                        "type": "string",
+                        "description": "Modèle, par ex. Player, Video ou gestion_joueurs.Video.",
+                    },
+                    "filters": {
+                        "type": "object",
+                        "description": "Filtres Django ORM.",
+                    },
+                    "fields": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Champs à retourner.",
+                    },
+                    "order_by": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tri, par ex. -video_creation_date.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Nombre maximum de lignes.",
+                    },
+                },
+                ["model"],
+            ),
+            self._ollama(
+                "msf_readonly_sql",
+                "Exécute une seule requête SQL SELECT/CTE en lecture seule sur la base MS Football. À utiliser pour une analyse complexe difficile à exprimer en ORM.",
+                {
+                    "sql": {
+                        "type": "string",
+                        "description": "Requête SELECT ou WITH...SELECT uniquement.",
+                    },
+                    "params": {
+                        "type": "array",
+                        "description": "Paramètres positionnels optionnels.",
+                    },
+                    "max_rows": {
+                        "type": "integer",
+                        "description": "Nombre maximum de lignes à retourner.",
+                    },
+                },
+                ["sql"],
+            ),
+            self._ollama(
+                "msf_search_code",
+                "Recherche dans le code source local de MS Football pour comprendre une fonctionnalité existante, un modèle, une vue, une tâche ou un workflow.",
+                {
+                    "query": {
+                        "type": "string",
+                        "description": "Texte ou symbole à rechercher dans le code.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Nombre maximum de résultats.",
+                    },
+                },
+                ["query"],
+            ),
+            self._ollama(
+                "msf_list_routes",
+                "Liste les routes Django de MS Football pour découvrir les fonctionnalités et écrans existants.",
+                {
+                    "search": {
+                        "type": "string",
+                        "description": "Filtre optionnel sur route, nom ou vue.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Nombre maximum de routes.",
+                    },
+                },
+                [],
+            ),
+            self._ollama(
+                "msf_prepare_mutation",
+                "Prépare sans l'exécuter une création, modification ou suppression générique dans MS Football. Retourne un aperçu et un change_id. Ne modifie jamais la base.",
+                {
+                    "model": {
+                        "type": "string",
+                        "description": "Modèle Django cible.",
+                    },
+                    "operation": {
+                        "type": "string",
+                        "enum": ["create", "update", "delete"],
+                    },
+                    "filters": {
+                        "type": "object",
+                        "description": "Filtres pour update/delete.",
+                    },
+                    "values": {
+                        "type": "object",
+                        "description": "Valeurs pour create/update.",
+                    },
+                },
+                ["model", "operation"],
+            ),
+            self._ollama(
+                "msf_commit_mutation",
+                "Valide une mutation MS Football déjà préparée. Cette action est sensible et doit être explicitement approuvée par l'utilisateur avant exécution.",
+                {
+                    "change_id": {
+                        "type": "string",
+                        "description": "Identifiant retourné par msf_prepare_mutation.",
+                    }
+                },
+                ["change_id"],
+            ),
+            self._ollama(
                 "get_current_time",
                 "Lit l'heure actuelle de l'ordinateur.",
                 {},
@@ -261,7 +395,16 @@ class NativeToolRegistry:
             },
         }
 
-    def execute(self, name: str, arguments: dict[str, Any] | None) -> AgentActionResult:
+    def requires_confirmation(self, name: str) -> bool:
+        return name in {"msf_commit_mutation"}
+
+    def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None,
+        *,
+        approved: bool = False,
+    ) -> AgentActionResult:
         args = dict(arguments or {})
 
         if name == "open_application":
@@ -398,6 +541,78 @@ class NativeToolRegistry:
                 message=result.message,
                 detail=result.detail,
             )
+
+        if name == "msf_capabilities":
+            result = MS_FOOTBALL_BRIDGE.call("list_capabilities")
+            return AgentActionResult(name, result.success, result.message, result.detail)
+
+        if name == "msf_describe_schema":
+            payload = {
+                "search": str(args.get("search", "")).strip(),
+                "limit_models": int(args.get("limit_models") or 80),
+            }
+            result = MS_FOOTBALL_BRIDGE.call("describe_schema", payload)
+            return AgentActionResult(name, result.success, result.message, result.detail)
+
+        if name == "msf_query_records":
+            payload = {
+                "model": str(args.get("model", "")).strip(),
+                "filters": args.get("filters") or {},
+                "fields": args.get("fields") or None,
+                "order_by": args.get("order_by") or None,
+                "limit": int(args.get("limit") or 50),
+            }
+            result = MS_FOOTBALL_BRIDGE.call("query_records", payload)
+            return AgentActionResult(name, result.success, result.message, result.detail)
+
+        if name == "msf_readonly_sql":
+            payload = {
+                "sql": str(args.get("sql", "")).strip(),
+                "params": args.get("params") or [],
+                "max_rows": int(args.get("max_rows") or 100),
+            }
+            result = MS_FOOTBALL_BRIDGE.call("run_readonly_sql", payload)
+            return AgentActionResult(name, result.success, result.message, result.detail)
+
+        if name == "msf_search_code":
+            payload = {
+                "query": str(args.get("query", "")).strip(),
+                "max_results": int(args.get("max_results") or 20),
+            }
+            result = MS_FOOTBALL_BRIDGE.call("search_code", payload)
+            return AgentActionResult(name, result.success, result.message, result.detail)
+
+        if name == "msf_list_routes":
+            payload = {
+                "search": str(args.get("search", "")).strip(),
+                "limit": int(args.get("limit") or 120),
+            }
+            result = MS_FOOTBALL_BRIDGE.call("list_routes", payload)
+            return AgentActionResult(name, result.success, result.message, result.detail)
+
+        if name == "msf_prepare_mutation":
+            payload = {
+                "model": str(args.get("model", "")).strip(),
+                "operation": str(args.get("operation", "")).strip(),
+                "filters": args.get("filters") or {},
+                "values": args.get("values") or {},
+            }
+            result = MS_FOOTBALL_BRIDGE.call("prepare_mutation", payload)
+            return AgentActionResult(name, result.success, result.message, result.detail)
+
+        if name == "msf_commit_mutation":
+            if not approved:
+                return AgentActionResult(
+                    name=name,
+                    success=False,
+                    message="Cette modification MS Football exige une confirmation explicite.",
+                    detail="approval_required",
+                )
+            payload = {
+                "change_id": str(args.get("change_id", "")).strip(),
+            }
+            result = MS_FOOTBALL_BRIDGE.call("commit_mutation", payload)
+            return AgentActionResult(name, result.success, result.message, result.detail)
 
         if name == "get_current_time":
             return self._convert(name, execute(ToolIntent("system.time")))
