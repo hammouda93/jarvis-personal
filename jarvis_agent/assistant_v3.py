@@ -13,7 +13,7 @@ from .config import settings
 from .language import normalize_language, repeat_prompt, tool_message
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
-from .stt import LocalWhisperSTT
+from .stt import build_stt
 from .tools import ToolIntent, execute, route
 from .tts import ElevenLabsTTS
 
@@ -37,7 +37,7 @@ class AssistantWorker(QObject):
     def __init__(self) -> None:
         super().__init__()
         self._stop = threading.Event()
-        self._stt = LocalWhisperSTT()
+        self._stt = build_stt()
         self._tts = ElevenLabsTTS()
         self._agent = build_agent_runtime()
         self._conversation_language = "fr"
@@ -172,11 +172,16 @@ class AssistantWorker(QObject):
             f"[STT] model={settings.whisper_model} device={settings.whisper_device}"
         )
 
+        stt_started = time.perf_counter()
         transcript, legacy_intent = recognize_command(
             self._stt,
             audio,
             log=self.log_line.emit,
             preferred_language=self._conversation_language,
+        )
+        self.log_line.emit(
+            f"[PERF] stt_total_seconds="
+            f"{time.perf_counter() - stt_started:.2f}"
         )
 
         if not transcript.text:
@@ -274,6 +279,7 @@ class AssistantWorker(QObject):
         self.log_line.emit("[BOOT] Jarvis native agent runtime started")
         self.log_line.emit(
             f"[AI] provider={settings.agent_provider} "
+            f"stt_provider={settings.stt_provider} "
             f"local_model={settings.ollama_agent_model} "
             f"groq_model={settings.groq_agent_model} "
             f"openai_model={settings.openai_agent_model}"
