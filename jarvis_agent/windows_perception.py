@@ -364,6 +364,43 @@ def activate_window(title: str) -> UIActionResult:
     return UIActionResult(True, f"Fenêtre activée: {label}.", label)
 
 
+def close_window(title: str | None = None) -> UIActionResult:
+    """Close a visible top-level window explicitly requested by the user."""
+    target = (title or "").strip()
+    try:
+        if target:
+            windows = _desktop().windows(
+                visible_only=True,
+                top_level_only=True,
+            )
+            ranked = _rank_wrappers(windows, target)
+            if not ranked or ranked[0][0] < 0.82:
+                alternatives = [_element_name(item[1]) for item in ranked[:5]]
+                return UIActionResult(
+                    False,
+                    "Fenêtre introuvable ou ambiguë.",
+                    json.dumps(alternatives, ensure_ascii=False),
+                )
+            wrapper = ranked[0][1]
+        else:
+            wrapper = _active_window()
+            if wrapper is None:
+                return UIActionResult(False, "Aucune fenêtre active détectée.")
+
+        label = _element_name(wrapper) or target or "fenêtre active"
+        wrapper.close()
+        return UIActionResult(
+            True,
+            f"Demande de fermeture envoyée à {label}.",
+            (
+                "La fermeture a été demandée. L'état final doit être vérifié "
+                "avant d'affirmer que la fenêtre est réellement fermée."
+            ),
+        )
+    except Exception as exc:
+        return UIActionResult(False, "Impossible de fermer cette fenêtre.", str(exc))
+
+
 def write_ui_element(
     name: str,
     text: str,
