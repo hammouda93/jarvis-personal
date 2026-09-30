@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 import time
 import traceback
@@ -89,6 +90,63 @@ class AssistantWorker(QObject):
             return True, False
         return True, True
 
+    @staticmethod
+    def _is_simple_direct_action(user_text: str, intent: ToolIntent) -> bool:
+        """Fast path only for one explicit deterministic action.
+
+        Complex/compound language still goes to the conversational agent loop.
+        This follows the local-first rule: simple commands should not depend on
+        an LLM when the typed intent is already unambiguous.
+        """
+        if intent.name not in {
+            "browser.open_url",
+            "browser.search",
+            "browser.search_prompt",
+            "app.open",
+            "folder.open",
+            "folder.open_named",
+            "folder.open_prompt",
+            "system.time",
+        }:
+            return False
+
+        text = user_text.lower()
+        # Never let the legacy router truncate a compound mission. If the
+        # utterance contains sequencing or a second obvious action, let the
+        # native agent handle the complete objective.
+        if re.search(r"\b(et|puis|ensuite|après|apres|and|then)\b", text):
+            return False
+        if re.search(r"\b(ouvre|ouvrir|lance)\b", text) and re.search(
+            r"\b(recherche|cherche)\b",
+            text,
+        ):
+            return False
+        return True
+
+    def _handle_simple_direct_action(
+        self,
+        user_text: str,
+        intent: ToolIntent,
+    ) -> bool:
+        if not self._is_simple_direct_action(user_text, intent):
+            return False
+
+        result = execute(intent)
+        self.log_line.emit(
+            f"[DIRECT] simple={intent.name} success={result.success} "
+            f"args={intent.args}"
+        )
+        spoken = tool_message(intent, result, self._conversation_language)
+        self.detail_changed.emit(
+            f"{intent.name}:{'ok' if result.success else 'erreur'}"
+        )
+        self._speak(spoken)
+        self._state(
+            AssistantState.SUCCESS if result.success else AssistantState.ERROR,
+            "Prêt" if result.success else "Action non terminée",
+        )
+        return True
+
     def _listen_turn(self, *, first_turn: bool) -> bool:
         self._state(AssistantState.LISTENING, "Je vous écoute…")
         timeout = None if first_turn else settings.conversation_followup_timeout_s
@@ -114,7 +172,7 @@ class AssistantWorker(QObject):
             f"[STT] model={settings.whisper_model} device={settings.whisper_device}"
         )
 
-        transcript, _legacy_intent = recognize_command(
+        transcript, legacy_intent = recognize_command(
             self._stt,
             audio,
             log=self.log_line.emit,
@@ -151,6 +209,9 @@ class AssistantWorker(QObject):
         lifecycle_handled, keep_listening = self._handle_lifecycle(user_text)
         if lifecycle_handled:
             return keep_listening
+
+        if self._handle_simple_direct_action(user_text, legacy_intent):
+            return True
 
         normalized = user_text.lower().strip(" .!?")
         if normalized in {
