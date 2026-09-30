@@ -1,0 +1,24 @@
+{
+  "connectors": [
+    {
+      "id": "example_remote_mcp",
+      "server_label": "example",
+      "server_description": "Example remote MCP connector",
+      "server_url": "https://example.com/mcp",
+      "authorization_env": "EXAMPLE_MCP_TOKEN",
+      "require_approval": "always",
+      "allowed_tools": [
+        "read_data"
+      ],
+      "enabled": false
+    },
+    {
+      "id": "example_local_tunnel",
+      "server_label": "local_tools",
+      "server_description": "Example private/local MCP connector through Secure MCP Tunnel",
+      "tunnel_id": "replace-with-your-tunnel-id",
+      "require_approval": "always",
+      "enabled": false
+    }
+  ]
+}
