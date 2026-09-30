@@ -220,6 +220,17 @@ class AssistantWorker(QObject):
             self._speak(repeat_prompt(self._conversation_language))
             return True
 
+        if (
+            self._pending_direct_follow_up
+            and transcript.avg_logprob is not None
+            and transcript.avg_logprob < -0.70
+        ):
+            self.log_line.emit(
+                "[STT] direct follow-up kept pending because transcript is weak"
+            )
+            self._speak(repeat_prompt(self._conversation_language))
+            return True
+
         lifecycle_handled, keep_listening = self._handle_lifecycle(user_text)
         if lifecycle_handled:
             return keep_listening
