@@ -458,6 +458,68 @@ class AgentRuntimeTests(unittest.TestCase):
             agent.payloads[1]["msf_tool_names"],
         )
 
+    def test_groq_keeps_msf_domain_for_video_followup(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "id": "resp_1",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "msf_count_records",
+                            "arguments": "{\"model\":\"Player\"}",
+                        }
+                    ],
+                },
+                {
+                    "id": "resp_2",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "264 joueurs."}
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "id": "resp_3",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_2",
+                            "name": "msf_count_records",
+                            "arguments": "{\"model\":\"Video\"}",
+                        }
+                    ],
+                },
+                {
+                    "id": "resp_4",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "10 vidéos."}
+                            ],
+                        }
+                    ],
+                },
+            ],
+        )
+
+        agent.run("Combien de joueurs dans MS Football ?")
+        result = agent.run("Combien de vidéos sont en cours ?")
+
+        self.assertEqual(result.text, "10 vidéos.")
+        self.assertTrue(agent.payloads[2]["ms_football_only"])
+        self.assertIn(
+            "msf_count_records",
+            agent.payloads[2]["msf_tool_names"],
+        )
+
     def test_groq_hides_msf_tools_from_regular_turns(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
