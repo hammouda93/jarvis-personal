@@ -386,6 +386,12 @@ class NativeToolRegistry:
                 ["query"],
             ),
             self._ollama(
+                "reset_conversation_context",
+                "Efface le contexte temporaire de la conversation en cours quand l'utilisateur exprime naturellement l'intention de repartir de zéro, d'oublier ce qui vient d'être discuté ou de commencer une nouvelle discussion. Ne supprime jamais la mémoire persistante personnelle.",
+                {},
+                [],
+            ),
+            self._ollama(
                 "return_to_standby",
                 "Met fin à la conversation active et remet Jarvis en veille.",
                 {},
@@ -727,6 +733,14 @@ class NativeToolRegistry:
                 success=True,
                 message="Souvenirs retrouvés.",
                 detail=json.dumps(payload, ensure_ascii=False),
+            )
+
+        if name == "reset_conversation_context":
+            return AgentActionResult(
+                name=name,
+                success=True,
+                message="Le contexte temporaire de la conversation doit être réinitialisé.",
+                detail="reset_conversation_context_requested",
             )
 
         if name == "return_to_standby":
