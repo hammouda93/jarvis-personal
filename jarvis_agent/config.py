@@ -156,6 +156,18 @@ class Settings:
     cerebras_base_url: str = (
         os.getenv("CEREBRAS_BASE_URL") or "https://api.cerebras.ai/v1"
     ).strip()
+    cerebras_secondary_api_key: str = (
+        os.getenv("CEREBRAS_SECONDARY_API_KEY") or ""
+    ).strip()
+    cerebras_secondary_base_url: str = (
+        os.getenv("CEREBRAS_SECONDARY_BASE_URL")
+        or os.getenv("CEREBRAS_BASE_URL")
+        or "https://api.cerebras.ai/v1"
+    ).strip()
+    cerebras_secondary_failover: bool = _bool(
+        "JARVIS_CEREBRAS_SECONDARY_FAILOVER",
+        True,
+    )
     cerebras_agent_model: str = (
         os.getenv("JARVIS_CEREBRAS_AGENT_MODEL") or "gpt-oss-120b"
     ).strip()
@@ -168,6 +180,10 @@ class Settings:
     )
     cerebras_fallback_groq: bool = _bool(
         "JARVIS_CEREBRAS_FALLBACK_GROQ",
+        True,
+    )
+    cerebras_fallback_ollama: bool = _bool(
+        "JARVIS_CEREBRAS_FALLBACK_OLLAMA",
         True,
     )
     agent_answer_continuations: int = _int(
