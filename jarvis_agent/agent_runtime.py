@@ -7,7 +7,6 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any, Callable, Protocol
 
 from .config import settings
@@ -82,28 +81,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   est réellement plus simple en SQL. Ne devine jamais un nom de table SQL:
   utilise d'abord msf_describe_schema pour obtenir le nom de table exact;
 - une requête SQL MS Football doit rester strictement en lecture seule;
-- le résultat de msf_describe_schema décrit uniquement la structure. Il ne
-  prouve jamais qu'un enregistrement existe et ne doit jamais servir à inventer
-  un joueur, une vidéo, une date, un montant ou un statut. Toute donnée métier
-  doit venir de msf_count_records, msf_query_records ou msf_readonly_sql;
-- si une requête MS Football échoue à cause d'un champ inconnu, n'abandonne pas
-  et ne demande pas à l'utilisateur de connaître le nom technique du champ:
-  inspecte le modèle concerné avec msf_describe_schema, corrige la requête puis
-  réessaie;
-- pour une demande large comme "résume l'état de MS Football" ou "qu'est-ce qui
-  nécessite mon attention", ne conclus pas après un seul compteur. Explore
-  plusieurs sources pertinentes (par exemple vidéos/deadlines, automatisations,
-  abonnements ou finances selon la demande) et synthétise uniquement ce qui a
-  réellement été vérifié;
 - pour modifier des données MS Football sans fonction métier dédiée, utilise
-  msf_prepare_mutation pour produire un aperçu. Si la préparation réussit,
-  appelle immédiatement msf_commit_mutation avec le change_id: le runtime
-  interceptera cet appel et demandera lui-même la confirmation explicite à
-  l'utilisateur. Ne remplace jamais cette étape par une simple question en
-  texte du type "voulez-vous confirmer ?";
-- pour une relation Django lors d'une mutation, utilise l'attname *_id découvert
-  dans le schéma (par exemple player_id, video_id) avec l'identifiant réel,
-  plutôt qu'un nom humain dans le champ ForeignKey;
+  msf_prepare_mutation pour produire un aperçu, puis msf_commit_mutation.
+  La validation finale est toujours soumise à une confirmation explicite de
+  l'utilisateur par le runtime;
 - pour une opération métier avec effets secondaires (email, automatisation,
   statut, livraison, paiement, génération vidéo), inspecte d'abord le code et
   les routes afin de comprendre le workflow existant. Une simple écriture DB
@@ -984,7 +965,6 @@ class GroqResponsesAgent:
         self.api_key = settings.groq_api_key
         self.provider_name = "groq"
         self.reasoning_effort = settings.groq_reasoning_effort
-        self.max_completion_tokens = settings.groq_max_completion_tokens
         self._client = None
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
@@ -1036,81 +1016,8 @@ class GroqResponsesAgent:
             "joueur", "player", "vidéo", "video", "livr", "paiement",
             "payé", "paye", "impay", "abonn", "sportsbase", "club",
             "poste", "solde", "facture", "match", "performance",
-            "tu inventes", "réessaie", "reessaie", "précédent",
-            "precedent", "inspecte", "inspect", "msf",
         )
         return any(term in text for term in terms)
-
-    @staticmethod
-    def _looks_like_msf_business_request(user_text: str) -> bool:
-        text = (user_text or "").lower()
-        compact = re.sub(r"[^a-z0-9à-ÿ]+", " ", text)
-
-        if any(
-            term in compact
-            for term in (
-                "sportsbase",
-                "abonnement performance",
-                "automationrun",
-                "client portal",
-                "espace client",
-            )
-        ):
-            return True
-
-        video_terms = ("vidéo", "video", "vidéos", "videos")
-        video_context = (
-            "deadline", "statut", "status", "pending", "delivered",
-            "in progress", "livrée", "livre", "paiement", "impay",
-            "avance", "solde",
-        )
-        if any(term in compact for term in video_terms) and any(
-            term in compact for term in video_context
-        ):
-            return True
-
-        football_terms = (
-            "joueur", "joueurs", "player", "players",
-        )
-        player_context = (
-            "club", "poste", "position", "défenseur", "defenseur",
-            "milieu", "attaquant", "gardien", "dernier ajouté",
-            "derniers ajoutés",
-        )
-        if any(term in compact for term in football_terms) and any(
-            term in compact for term in player_context
-        ):
-            return True
-
-        return False
-
-    @staticmethod
-    def _msf_requires_data_read(user_text: str) -> bool:
-        text = (user_text or "").lower()
-        if any(
-            marker in text
-            for marker in (
-                "oublie", "autre volet", "on va parler", "on en parlera",
-                "changeons de sujet",
-            )
-        ):
-            return False
-        data_terms = (
-            "combien", "liste", "donne", "trouve", "quel", "quelle",
-            "deadline", "échéance", "echeance", "retard", "reste",
-            "impay", "payé", "paye", "solde", "dernier", "dernière",
-            "etat", "état", "attention", "aujourd", "en cours",
-            "livré", "livre", "total", "statut",
-        )
-        if any(term in text for term in data_terms):
-            return True
-
-        schema_only_terms = (
-            "schéma", "schema", "modèle", "modele", "champ", "capacité",
-            "capacite", "fonctionne", "fonctionnement", "code", "route",
-            "peut faire",
-        )
-        return not any(term in text for term in schema_only_terms)
 
     @staticmethod
     def _msf_tool_names_for_text(user_text: str) -> set[str]:
@@ -1197,12 +1104,10 @@ class GroqResponsesAgent:
     @staticmethod
     def _is_ms_football_request(user_text: str) -> bool:
         normalized = (user_text or "").lower()
-        compact = re.sub(r"[^a-z0-9]+", "", normalized)
         return (
             "ms football" in normalized
-            or "msfootball" in compact
-            or "mscootball" in compact
-            or "msf" in normalized.split()
+            or "msfootball" in normalized
+            or "ms_football" in normalized
         )
 
     def _chat(
@@ -1213,73 +1118,24 @@ class GroqResponsesAgent:
         msf_tool_names: set[str] | None = None,
     ):
         client = self._get_client()
-
-        def create_chat(
-            *,
-            domain_only: bool,
-            domain_tools: set[str] | None,
-        ):
+        try:
             return client.chat.completions.create(
                 model=self.model,
                 messages=self._messages,
                 tools=self._tool_definitions(
-                    ms_football_only=domain_only,
-                    msf_tool_names=domain_tools,
+                    ms_football_only=ms_football_only,
+                    msf_tool_names=msf_tool_names,
                 ),
                 tool_choice=tool_choice,
                 parallel_tool_calls=False,
                 reasoning_effort=self.reasoning_effort,
                 temperature=0.1,
-                max_completion_tokens=self.max_completion_tokens,
-            )
-
-        try:
-            return create_chat(
-                domain_only=ms_football_only,
-                domain_tools=msf_tool_names,
+                max_completion_tokens=256,
             )
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             body = getattr(exc, "body", None)
             detail = body if body is not None else str(exc)
-            detail_text = str(detail)
-
-            # GPT-OSS can correctly infer that an utterance concerns MS Football
-            # even when STT dropped the literal words "MS Football". Some
-            # providers reject that inferred tool call when the domain pack was
-            # omitted from request.tools. Repair the routing locally and retry
-            # the same provider instead of treating this as provider downtime.
-            missing_tool_match = re.search(
-                r"attempted to call tool ['\"](msf_[a-z0-9_]+)['\"] "
-                r"which was not in request\.tools",
-                detail_text,
-                flags=re.IGNORECASE,
-            )
-            if status == 400 and missing_tool_match:
-                attempted = missing_tool_match.group(1)
-                repair_tools = set(msf_tool_names or ())
-                repair_tools.update(
-                    {
-                        attempted,
-                        "msf_count_records",
-                        "msf_describe_schema",
-                        "msf_query_records",
-                    }
-                )
-                print(
-                    "[AGENT] Dynamic MS Football routing repair: "
-                    f"adding {attempted} and retrying {self.provider_name}."
-                )
-                try:
-                    return create_chat(
-                        domain_only=True,
-                        domain_tools=repair_tools,
-                    )
-                except Exception as retry_exc:
-                    status = getattr(retry_exc, "status_code", None)
-                    body = getattr(retry_exc, "body", None)
-                    detail = body if body is not None else str(retry_exc)
-
             if status:
                 raise AgentRuntimeUnavailable(
                     f"{self.provider_name} API error {status}: {detail}"
@@ -1395,9 +1251,7 @@ class GroqResponsesAgent:
         clean: list[dict[str, Any]] = []
         internal_prefixes = (
             "Réponds à la demande précédente uniquement",
-            "La demande précédente exige des données",
             "Cet outil vient d échouer",
-            "Continue exactement la réponse précédente",
         )
         for item in self._messages[1:]:
             role = str(item.get("role") or "")
@@ -1430,9 +1284,6 @@ class GroqResponsesAgent:
         end_session = False
         should_exit = False
         failed_results: dict[str, AgentActionResult] = {}
-        successful_msf_data_read = False
-        answer_fragments: list[str] = []
-        continuation_count = 0
 
         if self._pending_function_approval is not None:
             normalized = user_text.strip().lower().strip(" .!?")
@@ -1489,10 +1340,7 @@ class GroqResponsesAgent:
             self._messages.append(
                 {"role": "user", "content": user_text}
             )
-            explicit_msf = (
-                self._is_ms_football_request(user_text)
-                or self._looks_like_msf_business_request(user_text)
-            )
+            explicit_msf = self._is_ms_football_request(user_text)
             contextual_msf = (
                 self._active_domain == "ms_football"
                 and self._looks_like_msf_followup(user_text)
@@ -1505,9 +1353,6 @@ class GroqResponsesAgent:
             self._msf_tool_names_for_text(user_text)
             if ms_football_turn
             else None
-        )
-        msf_data_request = (
-            ms_football_turn and self._msf_requires_data_read(user_text)
         )
         msf_repair_attempted = False
 
@@ -1537,17 +1382,13 @@ class GroqResponsesAgent:
                     f"{self.provider_name} n'a retourné aucun choix."
                 )
 
-            choice = response.choices[0]
-            message = choice.message
-            finish_reason = str(
-                getattr(choice, "finish_reason", "") or ""
-            ).lower()
+            message = response.choices[0].message
             calls = self._append_assistant_message(message)
 
             if not calls:
                 if (
-                    msf_data_request
-                    and not successful_msf_data_read
+                    ms_football_turn
+                    and not actions
                     and not msf_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
@@ -1559,13 +1400,10 @@ class GroqResponsesAgent:
                         {
                             "role": "user",
                             "content": (
-                                "La demande précédente exige des données "
-                                "réelles MS Football. Ne donne aucun chiffre, "
-                                "nom, date ou enregistrement depuis le schéma ou "
-                                "ta mémoire. Utilise msf_count_records, "
-                                "msf_query_records ou msf_readonly_sql selon "
-                                "le besoin, puis réponds uniquement avec le "
-                                "résultat obtenu."
+                                "Réponds à la demande précédente uniquement "
+                                "après avoir consulté les données réelles avec "
+                                "un outil MS Football approprié. Choisis toi-même "
+                                "l'outil adapté parmi les outils msf_* disponibles."
                             ),
                         }
                     )
@@ -1577,42 +1415,11 @@ class GroqResponsesAgent:
                 text = _visible_text(
                     str(getattr(message, "content", "") or "")
                 )
-
-                if (
-                    finish_reason == "length"
-                    and text
-                    and continuation_count
-                    < max(0, settings.agent_answer_continuations)
-                    and round_index < settings.agent_max_tool_rounds
-                ):
-                    answer_fragments.append(text)
-                    continuation_count += 1
-                    self._messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Continue exactement la réponse précédente là "
-                                "où elle s'est arrêtée, sans répéter le début."
-                            ),
-                        }
-                    )
-                    if log:
-                        log(
-                            f"[AGENT] continuation={continuation_count} "
-                            "reason=length"
-                        )
-                    continue
-
-                if answer_fragments:
-                    if text:
-                        answer_fragments.append(text)
-                    text = "\n".join(answer_fragments).strip()
-
                 if not text:
-                    if msf_data_request and not successful_msf_data_read:
+                    if ms_football_turn and not actions:
                         text = (
-                            "Je n'ai pas réussi à obtenir les données réelles "
-                            "de MS Football pour cette demande."
+                            "Je n'ai pas réussi à interroger MS Football pour "
+                            "cette demande. Réessayez en reformulant brièvement."
                         )
                     else:
                         text = "Je suis là."
@@ -1676,12 +1483,6 @@ class GroqResponsesAgent:
                     failed_results[signature] = result
                 if result.success and name[:4] == "msf_":
                     self._last_msf_grounding_at = time.monotonic()
-                if result.success and name in {
-                    "msf_count_records",
-                    "msf_query_records",
-                    "msf_readonly_sql",
-                }:
-                    successful_msf_data_read = True
                 end_session = end_session or result.end_session
                 should_exit = should_exit or result.should_exit
 
@@ -1732,12 +1533,7 @@ class GroqResponsesAgent:
 
 
 class CerebrasResponsesAgent(GroqResponsesAgent):
-    """Cerebras agent with safe cloud/local failover.
-
-    The secondary Cerebras credential is reserved for availability/auth/service
-    failures, not for bypassing provider quota responses. Quota exhaustion
-    falls through to Groq, then to local Ollama.
-    """
+    """Cerebras Chat Completions agent using the same local tool loop."""
 
     def __init__(
         self,
@@ -1749,300 +1545,6 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         self.api_key = settings.cerebras_api_key
         self.provider_name = "cerebras"
         self.reasoning_effort = settings.cerebras_reasoning_effort
-        self.max_completion_tokens = settings.cerebras_max_completion_tokens
-
-    @staticmethod
-    def _is_quota_failure(detail: str) -> bool:
-        value = (detail or "").lower()
-        return (
-            "429" in value
-            or "quota" in value
-            or "too_many_requests" in value
-            or "rate limit" in value
-            or "rate_limit" in value
-        )
-
-    @staticmethod
-    def _secondary_eligible(detail: str) -> bool:
-        value = (detail or "").lower()
-        if CerebrasResponsesAgent._is_quota_failure(value):
-            return False
-        markers = (
-            "401",
-            "403",
-            "500",
-            "502",
-            "503",
-            "504",
-            "timeout",
-            "timed out",
-            "connection",
-            "connect",
-            "joignable",
-            "temporarily unavailable",
-            "service unavailable",
-        )
-        return any(marker in value for marker in markers)
-
-    def _openai_compatible_chat(
-        self,
-        *,
-        api_key: str,
-        base_url: str,
-        model: str,
-        provider_label: str,
-        reasoning_effort: str,
-        max_completion_tokens: int,
-        tool_choice: Any,
-        ms_football_only: bool,
-        msf_tool_names: set[str] | None,
-    ):
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise AgentRuntimeUnavailable(
-                "Le client OpenAI compatible n'est pas installé."
-            ) from exc
-
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url.rstrip("/"),
-            timeout=settings.ai_request_timeout_s,
-        )
-        try:
-            return client.chat.completions.create(
-                model=model,
-                messages=self._messages,
-                tools=self._tool_definitions(
-                    ms_football_only=ms_football_only,
-                    msf_tool_names=msf_tool_names,
-                ),
-                tool_choice=tool_choice,
-                parallel_tool_calls=False,
-                reasoning_effort=reasoning_effort,
-                temperature=0.1,
-                max_completion_tokens=max_completion_tokens,
-            )
-        except Exception as exc:
-            status = getattr(exc, "status_code", None)
-            body = getattr(exc, "body", None)
-            detail = body if body is not None else str(exc)
-            if status:
-                raise AgentRuntimeUnavailable(
-                    f"{provider_label} API error {status}: {detail}"
-                ) from exc
-            raise AgentRuntimeUnavailable(
-                f"{provider_label} indisponible: {detail}"
-            ) from exc
-
-    def _ollama_messages(self) -> list[dict[str, Any]]:
-        converted: list[dict[str, Any]] = []
-        for item in self._messages:
-            role = str(item.get("role") or "")
-            if role == "tool":
-                converted.append(
-                    {
-                        "role": "tool",
-                        "tool_name": str(item.get("name") or ""),
-                        "content": str(item.get("content") or ""),
-                    }
-                )
-                continue
-
-            message: dict[str, Any] = {
-                "role": role,
-                "content": str(item.get("content") or ""),
-            }
-            raw_calls = item.get("tool_calls") or []
-            if raw_calls:
-                calls = []
-                for call in raw_calls:
-                    function = call.get("function") or {}
-                    raw_arguments = function.get("arguments") or {}
-                    if isinstance(raw_arguments, str):
-                        try:
-                            arguments = json.loads(raw_arguments)
-                        except json.JSONDecodeError:
-                            arguments = {}
-                    elif isinstance(raw_arguments, dict):
-                        arguments = raw_arguments
-                    else:
-                        arguments = {}
-                    calls.append(
-                        {
-                            "function": {
-                                "name": str(function.get("name") or ""),
-                                "arguments": arguments,
-                            }
-                        }
-                    )
-                message["tool_calls"] = calls
-            converted.append(message)
-        return converted
-
-    def _ollama_fallback_chat(
-        self,
-        *,
-        tool_choice: Any,
-        ms_football_only: bool,
-        msf_tool_names: set[str] | None,
-    ):
-        payload = {
-            "model": settings.ollama_agent_model,
-            "messages": self._ollama_messages(),
-            "tools": self._tool_definitions(
-                ms_football_only=ms_football_only,
-                msf_tool_names=msf_tool_names,
-            ),
-            "stream": False,
-            "think": False,
-            "options": {
-                "temperature": 0.1,
-                "num_ctx": settings.ollama_agent_num_ctx,
-                "num_predict": settings.ollama_agent_num_predict,
-            },
-            "keep_alive": settings.ollama_agent_keep_alive,
-        }
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
-            settings.ollama_base_url.rstrip("/") + "/api/chat",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(
-                request,
-                timeout=settings.ollama_agent_timeout_s,
-            ) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:
-            raise AgentRuntimeUnavailable(
-                f"Ollama fallback indisponible: {exc}"
-            ) from exc
-
-        message = data.get("message") or {}
-        tool_calls = []
-        for index, raw_call in enumerate(message.get("tool_calls") or [], start=1):
-            function = raw_call.get("function") or {}
-            arguments = function.get("arguments") or {}
-            if not isinstance(arguments, str):
-                arguments = json.dumps(arguments, ensure_ascii=False)
-            tool_calls.append(
-                SimpleNamespace(
-                    id=f"ollama_fallback_{index}",
-                    function=SimpleNamespace(
-                        name=str(function.get("name") or ""),
-                        arguments=arguments,
-                    ),
-                )
-            )
-
-        return SimpleNamespace(
-            choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(
-                        content=str(message.get("content") or ""),
-                        tool_calls=tool_calls,
-                    ),
-                    finish_reason=(
-                        "tool_calls" if tool_calls else "stop"
-                    ),
-                )
-            ]
-        )
-
-    def _chat(
-        self,
-        *,
-        tool_choice: Any = "auto",
-        ms_football_only: bool = False,
-        msf_tool_names: set[str] | None = None,
-    ):
-        primary_error: AgentRuntimeUnavailable | None = None
-        try:
-            return super()._chat(
-                tool_choice=tool_choice,
-                ms_football_only=ms_football_only,
-                msf_tool_names=msf_tool_names,
-            )
-        except AgentRuntimeUnavailable as exc:
-            primary_error = exc
-            print(f"[AGENT] Primary Cerebras error: {exc}")
-
-        primary_detail = str(primary_error or "")
-        quota_failure = self._is_quota_failure(primary_detail)
-
-        if (
-            settings.cerebras_secondary_failover
-            and settings.cerebras_secondary_api_key
-            and self._secondary_eligible(primary_detail)
-        ):
-            print(
-                "[AGENT] Primary Cerebras unavailable; "
-                "trying secondary Cerebras organization."
-            )
-            try:
-                return self._openai_compatible_chat(
-                    api_key=settings.cerebras_secondary_api_key,
-                    base_url=settings.cerebras_secondary_base_url,
-                    model=settings.cerebras_agent_model,
-                    provider_label="cerebras-secondary",
-                    reasoning_effort=settings.cerebras_reasoning_effort,
-                    max_completion_tokens=settings.cerebras_max_completion_tokens,
-                    tool_choice=tool_choice,
-                    ms_football_only=ms_football_only,
-                    msf_tool_names=msf_tool_names,
-                )
-            except AgentRuntimeUnavailable as secondary_exc:
-                print(
-                    "[AGENT] Secondary Cerebras unavailable; "
-                    f"continuing failover: {secondary_exc}"
-                )
-
-        if settings.cerebras_fallback_groq and settings.groq_api_key:
-            if quota_failure:
-                print(
-                    "[AGENT] Cerebras quota unavailable; "
-                    "falling back to Groq GPT-OSS for this round."
-                )
-            else:
-                print(
-                    "[AGENT] Cerebras unavailable; "
-                    "falling back to Groq GPT-OSS for this round."
-                )
-            try:
-                return self._openai_compatible_chat(
-                    api_key=settings.groq_api_key,
-                    base_url=settings.groq_base_url,
-                    model=settings.groq_agent_model,
-                    provider_label="groq-fallback",
-                    reasoning_effort=settings.groq_reasoning_effort,
-                    max_completion_tokens=settings.groq_max_completion_tokens,
-                    tool_choice=tool_choice,
-                    ms_football_only=ms_football_only,
-                    msf_tool_names=msf_tool_names,
-                )
-            except AgentRuntimeUnavailable as groq_exc:
-                print(
-                    "[AGENT] Groq fallback unavailable; "
-                    f"continuing failover: {groq_exc}"
-                )
-
-        if settings.cerebras_fallback_ollama:
-            print(
-                "[AGENT] Cloud brains unavailable; "
-                "falling back to local Ollama."
-            )
-            return self._ollama_fallback_chat(
-                tool_choice=tool_choice,
-                ms_football_only=ms_football_only,
-                msf_tool_names=msf_tool_names,
-            )
-
-        raise primary_error or AgentRuntimeUnavailable(
-            "Aucun cerveau agent n'est disponible."
-        )
 
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
