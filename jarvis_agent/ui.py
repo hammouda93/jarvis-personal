@@ -6,7 +6,7 @@ from collections import deque
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPen, QRadialGradient
-from PySide6.QtWidgets import QApplication, QLabel, QTextBrowser, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from .assistant_v3 import AssistantWorker
 from .config import settings
@@ -283,22 +283,6 @@ class JarvisWindow(QWidget):
             "letter-spacing: 1px;"
         )
 
-        self.conversation_box = QTextBrowser()
-        self.conversation_box.setReadOnly(True)
-        self.conversation_box.setMinimumHeight(150)
-        self.conversation_box.setMaximumHeight(240)
-        self.conversation_box.setStyleSheet(
-            "QTextBrowser {"
-            "background-color: rgba(5,16,25,210);"
-            "color: rgba(226,244,250,235);"
-            "border: 1px solid rgba(80,160,190,90);"
-            "border-radius: 10px;"
-            "font-size: 13px;"
-            "padding: 10px;"
-            "}"
-        )
-        self._conversation_lines: list[str] = []
-
         self.hint_label = QLabel("ESC · fermer    F11 · plein écran")
         self.hint_label.setAlignment(Qt.AlignCenter)
         self.hint_label.setStyleSheet(
@@ -315,7 +299,6 @@ class JarvisWindow(QWidget):
         layout.addWidget(self.orb, 1)
         layout.addWidget(self.status_label)
         layout.addWidget(self.transcript_label)
-        layout.addWidget(self.conversation_box)
         layout.addWidget(self.detail_label)
         layout.addWidget(self.hint_label)
 
@@ -329,7 +312,6 @@ class JarvisWindow(QWidget):
         self._worker.state_changed.connect(self._on_state)
         self._worker.status_changed.connect(self.status_label.setText)
         self._worker.transcript_changed.connect(self._on_transcript)
-        self._worker.response_changed.connect(self._on_response)
         self._worker.detail_changed.connect(self.detail_label.setText)
         self._worker.audio_level_changed.connect(self.orb.set_audio_level)
         self._worker.log_line.connect(print)
@@ -355,25 +337,8 @@ class JarvisWindow(QWidget):
             "letter-spacing: 3px;"
         )
 
-    def _append_conversation(self, speaker: str, text: str) -> None:
-        value = (text or "").strip()
-        if not value:
-            return
-        self._conversation_lines.append(f"{speaker}: {value}")
-        self._conversation_lines = self._conversation_lines[-80:]
-        self.conversation_box.setPlainText(
-            "\n\n".join(self._conversation_lines)
-        )
-        bar = self.conversation_box.verticalScrollBar()
-        bar.setValue(bar.maximum())
-
     def _on_transcript(self, text: str) -> None:
         self.transcript_label.setText(f"« {text} »" if text else "")
-        if text:
-            self._append_conversation("Vous", text)
-
-    def _on_response(self, text: str) -> None:
-        self._append_conversation("Jarvis", text)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key_Escape:
