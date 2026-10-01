@@ -123,6 +123,24 @@ class AssistantWorker(QObject):
             text,
         ):
             return False
+
+        # A search targeted at a visible field/page is UI interaction, not a
+        # generic Google search. Let the agent inspect the current application
+        # and operate the real control instead of hijacking the request through
+        # the browser.search fast path.
+        if intent.name == "browser.search" and (
+            re.search(
+                r"\b(dans|inside|within)\b.{0,60}"
+                r"\b(barre|champ|zone|field|box|page|fenêtre|fenetre|application|app)\b",
+                text,
+            )
+            or re.search(
+                r"\b(barre|champ|zone|field|box)\b.{0,35}"
+                r"\b(recherche|search)\b",
+                text,
+            )
+        ):
+            return False
         return True
 
     def _handle_simple_direct_action(
