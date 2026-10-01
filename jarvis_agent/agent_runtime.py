@@ -46,6 +46,11 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   le contexte de conversation tant qu'il ne demande pas de mémoire persistante;
 - si l'utilisateur demande ce que Jarvis se rappelle d'une information passée,
   utilise recall_information au lieu d'inventer un souvenir;
+- si l'utilisateur exprime naturellement l'intention d'oublier le contexte
+  temporaire actuel, de repartir de zéro ou de commencer une nouvelle
+  conversation, appelle reset_conversation_context. Comprends l'intention
+  sémantiquement: ne dépends pas d'une formulation exacte. Cette action ne
+  supprime jamais la mémoire persistante;
 - si un nom, projet ou sujet vient d'être introduit par l'utilisateur dans la
   conversation, utilise d'abord ce contexte quand il demande des informations
   dessus. Ne lance pas une recherche web sauf s'il demande explicitement de
@@ -643,6 +648,15 @@ class OllamaToolAgent:
                 end_session = end_session or result.end_session
                 should_exit = should_exit or result.should_exit
 
+                if name == "reset_conversation_context" and result.success:
+                    if log:
+                        log("[SESSION] semantic reset — contexte réinitialisé")
+                    self.reset()
+                    return AgentTurnResult(
+                        text="Très bien. J'oublie le contexte de cette conversation et on repart de zéro.",
+                        actions=tuple(actions),
+                    )
+
                 if log:
                     detail_for_log = result.detail
                     if len(detail_for_log) > 900:
@@ -1058,6 +1072,14 @@ class OpenAIResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if name == "reset_conversation_context" and result.success:
+                    if log:
+                        log("[SESSION] semantic reset — contexte réinitialisé")
+                    self.reset()
+                    return AgentTurnResult(
+                        text="Très bien. J'oublie le contexte de cette conversation et on repart de zéro.",
+                        actions=tuple(actions),
+                    )
                 if result.success and name.startswith("msf_"):
                     self._last_msf_grounding_at = time.monotonic()
                 end_session = end_session or result.end_session
@@ -1688,6 +1710,14 @@ class GroqResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if name == "reset_conversation_context" and result.success:
+                    if log:
+                        log("[SESSION] semantic reset — contexte réinitialisé")
+                    self.reset()
+                    return AgentTurnResult(
+                        text="Très bien. J'oublie le contexte de cette conversation et on repart de zéro.",
+                        actions=tuple(actions),
+                    )
                 if not result.success:
                     failed_results[signature] = result
                 if result.success and name[:4] == "msf_":
