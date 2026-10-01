@@ -1150,16 +1150,112 @@ class GroqResponsesAgent:
         self._messages.append(item)
         return tool_calls
 
+    @staticmethod
+    def _compact_tool_content(
+        name: str,
+        result: AgentActionResult,
+    ) -> str:
+        detail: Any = result.detail
+        try:
+            parsed = json.loads(result.detail) if result.detail else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = result.detail
+
+        if isinstance(parsed, dict):
+            if name == "msf_query_records":
+                parsed = dict(parsed)
+                rows = list(parsed.get("rows") or [])
+                parsed["rows"] = rows[:10]
+                if len(rows) > 10:
+                    parsed["rows_omitted"] = len(rows) - 10
+            elif name == "msf_describe_schema":
+                parsed = dict(parsed)
+                compact_models = []
+                for model in list(parsed.get("models") or [])[:3]:
+                    item = dict(model)
+                    compact_fields = []
+                    for field in list(item.get("fields") or [])[:35]:
+                        compact = {
+                            key: value
+                            for key, value in dict(field).items()
+                            if key in {
+                                "name", "type", "attname",
+                                "related_model", "choices",
+                            }
+                        }
+                        if isinstance(compact.get("choices"), list):
+                            compact["choices"] = compact["choices"][:8]
+                        compact_fields.append(compact)
+                    item["fields"] = compact_fields
+                    compact_models.append(item)
+                parsed["models"] = compact_models
+                parsed["count"] = len(compact_models)
+            elif name == "msf_capabilities":
+                parsed = dict(parsed)
+                apps = parsed.get("apps") or {}
+                parsed["apps"] = {
+                    key: list(value)[:30]
+                    for key, value in apps.items()
+                    if key not in {"admin", "auth", "contenttypes", "sessions"}
+                }
+            elif name == "msf_search_code":
+                parsed = dict(parsed)
+                results = []
+                for item in list(parsed.get("results") or [])[:8]:
+                    compact = dict(item)
+                    if "snippet" in compact:
+                        compact["snippet"] = str(compact["snippet"])[:700]
+                    results.append(compact)
+                parsed["results"] = results
+            elif name == "msf_list_routes":
+                parsed = dict(parsed)
+                parsed["routes"] = list(parsed.get("routes") or [])[:20]
+
+            detail = json.dumps(
+                parsed,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+
+        detail_text = str(detail or "")
+        if len(detail_text) > 3500:
+            detail_text = detail_text[:3500] + "…"
+
+        return json.dumps(
+            {
+                "tool": result.name,
+                "success": result.success,
+                "message": result.message,
+                "detail": detail_text,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
     def _trim_history(self) -> None:
-        maximum = max(12, settings.agent_history_items * 2)
-        if len(self._messages) <= maximum + 1:
-            return
-        recent = self._messages[-maximum:]
-        while recent and recent[0].get("role") == "tool":
-            recent = recent[1:]
+        clean: list[dict[str, Any]] = []
+        internal_prefixes = (
+            "Réponds à la demande précédente uniquement",
+            "Cet outil vient d échouer",
+        )
+        for item in self._messages[1:]:
+            role = str(item.get("role") or "")
+            if role == "tool":
+                continue
+            if role == "assistant" and item.get("tool_calls"):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            if any(content.startswith(prefix) for prefix in internal_prefixes):
+                continue
+            if role in {"user", "assistant"}:
+                clean.append({"role": role, "content": content})
+
+        maximum = max(4, settings.agent_history_items)
         self._messages = [
             {"role": "system", "content": _SYSTEM_INSTRUCTIONS},
-            *recent,
+            *clean[-maximum:],
         ]
 
     def run(
@@ -1229,8 +1325,20 @@ class GroqResponsesAgent:
             self._messages.append(
                 {"role": "user", "content": user_text}
             )
-            ms_football_turn = self._is_ms_football_request(user_text)
+            explicit_msf = self._is_ms_football_request(user_text)
+            contextual_msf = (
+                self._active_domain == "ms_football"
+                and self._looks_like_msf_followup(user_text)
+            )
+            ms_football_turn = explicit_msf or contextual_msf
+            if explicit_msf:
+                self._active_domain = "ms_football"
 
+        msf_tool_names = (
+            self._msf_tool_names_for_text(user_text)
+            if ms_football_turn
+            else None
+        )
         msf_repair_attempted = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
@@ -1246,6 +1354,7 @@ class GroqResponsesAgent:
             response = self._chat(
                 tool_choice="auto",
                 ms_football_only=ms_football_turn,
+                msf_tool_names=msf_tool_names,
             )
             if log:
                 log(
@@ -1379,7 +1488,7 @@ class GroqResponsesAgent:
                         "role": "tool",
                         "tool_call_id": str(call.id),
                         "name": name,
-                        "content": result.as_json(),
+                        "content": self._compact_tool_content(name, result),
                     }
                 )
                 if not result.success:
