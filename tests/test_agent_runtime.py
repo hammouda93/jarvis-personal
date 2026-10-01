@@ -54,6 +54,19 @@ class FakeTools:
             {
                 "type": "function",
                 "function": {
+                    "name": "reset_conversation_context",
+                    "description": "reset temporary conversation context",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "msf_capabilities",
                     "description": "discover MS Football",
                     "parameters": {
@@ -1117,6 +1130,74 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(len(result.actions), 1)
         self.assertTrue(result.actions[0].success)
+
+    def test_groq_semantic_reset_tool_clears_temporary_context(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Nous parlons d'Atlas Nova.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_reset_context",
+                            "name": "reset_conversation_context",
+                            "arguments": "{}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je n'ai plus ce contexte.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        agent.run("Je travaille sur Atlas Nova.")
+        reset_result = agent.run(
+            "Oublie ça, on repart de zéro sur un autre sujet."
+        )
+
+        self.assertEqual(
+            reset_result.actions[0].name,
+            "reset_conversation_context",
+        )
+        self.assertTrue(reset_result.actions[0].success)
+        self.assertIn("repart de zéro", reset_result.text)
+        self.assertEqual(len(agent._messages), 1)
+        self.assertEqual(agent._messages[0]["role"], "system")
+
+        agent.run("De quoi parlait-on avant ?")
+        third_messages = agent.payloads[2]["messages"]
+        self.assertFalse(
+            any(
+                "Atlas Nova" in str(item.get("content", ""))
+                for item in third_messages
+                if isinstance(item, dict)
+            )
+        )
 
     def test_groq_keeps_conversation_history_locally(self):
         tools = FakeTools()
