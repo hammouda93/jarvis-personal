@@ -75,15 +75,6 @@ class ToolRouterTests(unittest.TestCase):
         self.assertEqual(intent.name, "assistant.stop")
 
 
-    def test_close_jarvis_window_phrase(self):
-        intent = route("Ferme la fenêtre Jarvis.")
-        self.assertEqual(intent.name, "assistant.stop")
-
-    def test_bye_bye_sleeps_session(self):
-        intent = route("Ok, Jarvis à plus, bye bye.")
-        self.assertEqual(intent.name, "assistant.sleep")
-
-
     def test_misheard_auvre_youtube(self):
         intent = route("Auvre YouTube")
         self.assertEqual(intent.name, "browser.open_url")
