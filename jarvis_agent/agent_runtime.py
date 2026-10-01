@@ -1378,14 +1378,9 @@ class GroqResponsesAgent:
             calls = self._append_assistant_message(message)
 
             if not calls:
-                recent_msf_grounding = (
-                    self._last_msf_grounding_at > 0
-                    and time.monotonic() - self._last_msf_grounding_at <= 30.0
-                )
                 if (
                     ms_football_turn
                     and not actions
-                    and not recent_msf_grounding
                     and not msf_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
@@ -1413,7 +1408,13 @@ class GroqResponsesAgent:
                     str(getattr(message, "content", "") or "")
                 )
                 if not text:
-                    text = "Je suis là."
+                    if ms_football_turn and not actions:
+                        text = (
+                            "Je n'ai pas réussi à interroger MS Football pour "
+                            "cette demande. Réessayez en reformulant brièvement."
+                        )
+                    else:
+                        text = "Je suis là."
                 self._trim_history()
                 return AgentTurnResult(
                     text=text,
