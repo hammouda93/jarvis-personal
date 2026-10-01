@@ -10,7 +10,6 @@ from jarvis_agent.agent_runtime import (
     _looks_like_action_promise,
     _looks_like_unnecessary_followup,
     _is_explicit_memory_write_request,
-    _is_current_conversation_recall,
     _looks_like_memory_permission_prompt,
     _query_matches_recent_user_context,
     _looks_mostly_english,
@@ -43,6 +42,35 @@ class FakeTools:
                 "function": {
                     "name": "search_web",
                     "description": "search",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "remember_information",
+                    "description": "remember persistent information",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string"},
+                            "tags": {"type": "string"},
+                        },
+                        "required": ["content"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "recall_information",
+                    "description": "recall persistent information",
                     "parameters": {
                         "type": "object",
                         "properties": {"query": {"type": "string"}},
@@ -212,23 +240,6 @@ class FakeGroqAgent(GroqResponsesAgent):
 
 class AgentRuntimeTests(unittest.TestCase):
 
-    def test_current_conversation_recall_is_detected(self):
-        self.assertTrue(
-            _is_current_conversation_recall(
-                "Quel est le nom du projet dont on parle maintenant ?"
-            )
-        )
-        self.assertTrue(
-            _is_current_conversation_recall(
-                "Qu'est-ce que je veux mettre dedans ?"
-            )
-        )
-        self.assertFalse(
-            _is_current_conversation_recall(
-                "Tu te rappelles quel sport j'aime ?"
-            )
-        )
-
     def test_groq_blocks_persistent_recall_for_current_session_question(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
@@ -253,7 +264,7 @@ class AgentRuntimeTests(unittest.TestCase):
                             "type": "function_call",
                             "call_id": "call_recall_current",
                             "name": "recall_information",
-                            "arguments": "{\"query\":\"nom du projet\"}",
+                            "arguments": "{\"query\":\"Atlas Nova\"}",
                         }
                     ]
                 },
@@ -279,7 +290,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
         self.assertNotIn(
-            ("recall_information", {"query": "nom du projet"}),
+            ("recall_information", {"query": "Atlas Nova"}),
             tools.calls,
         )
         self.assertEqual(len(result.actions), 1)
@@ -288,6 +299,60 @@ class AgentRuntimeTests(unittest.TestCase):
             result.actions[0].detail,
             "persistent_recall_blocked_current_context",
         )
+
+    def test_groq_hides_persistent_memory_write_tool_on_ordinary_turn(self):
+        agent = FakeGroqAgent(
+            FakeTools(),
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "Compris."}
+                            ],
+                        }
+                    ]
+                }
+            ],
+        )
+
+        agent.run("Je travaille sur le projet Vega One.")
+
+        names = {
+            item["function"]["name"]
+            for item in agent.payloads[0]["tools"]
+            if item.get("type") == "function"
+        }
+        self.assertNotIn("remember_information", names)
+        self.assertIn("recall_information", names)
+        self.assertIn("reset_conversation_context", names)
+
+    def test_groq_exposes_persistent_memory_write_tool_on_explicit_request(self):
+        agent = FakeGroqAgent(
+            FakeTools(),
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "Compris."}
+                            ],
+                        }
+                    ]
+                }
+            ],
+        )
+
+        agent.run("Retiens que mon projet s'appelle Vega One.")
+
+        names = {
+            item["function"]["name"]
+            for item in agent.payloads[0]["tools"]
+            if item.get("type") == "function"
+        }
+        self.assertIn("remember_information", names)
 
     def test_memory_permission_prompt_is_detected(self):
         self.assertTrue(
