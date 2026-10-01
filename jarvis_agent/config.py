@@ -147,6 +147,10 @@ class Settings:
         os.getenv("JARVIS_GROQ_REASONING_EFFORT") or "low"
     ).strip()
     groq_browser_search: bool = _bool("JARVIS_GROQ_BROWSER_SEARCH", True)
+    groq_max_completion_tokens: int = _int(
+        "JARVIS_GROQ_MAX_COMPLETION_TOKENS",
+        384,
+    )
 
     cerebras_api_key: str = (os.getenv("CEREBRAS_API_KEY") or "").strip()
     cerebras_base_url: str = (
@@ -158,6 +162,14 @@ class Settings:
     cerebras_reasoning_effort: str = (
         os.getenv("JARVIS_CEREBRAS_REASONING_EFFORT") or "low"
     ).strip()
+    cerebras_max_completion_tokens: int = _int(
+        "JARVIS_CEREBRAS_MAX_COMPLETION_TOKENS",
+        1024,
+    )
+    agent_answer_continuations: int = _int(
+        "JARVIS_AGENT_ANSWER_CONTINUATIONS",
+        1,
+    )
 
     openai_api_key: str = (os.getenv("OPENAI_API_KEY") or "").strip()
     openai_base_url: str = (
