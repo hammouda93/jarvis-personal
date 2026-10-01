@@ -5,6 +5,28 @@ from jarvis_agent.tools import ToolIntent
 
 
 class AssistantV3FastPathTests(unittest.TestCase):
+    def test_new_conversation_command_accepts_conversational_prefixes(self):
+        self.assertTrue(
+            AssistantWorker._is_new_conversation_command(
+                "Ok. Nouvelle conversation."
+            )
+        )
+        self.assertTrue(
+            AssistantWorker._is_new_conversation_command(
+                "Très bien, nouvelle discussion."
+            )
+        )
+        self.assertTrue(
+            AssistantWorker._is_new_conversation_command(
+                "Maintenant oublie cette conversation."
+            )
+        )
+        self.assertFalse(
+            AssistantWorker._is_new_conversation_command(
+                "Que penses-tu de notre nouvelle conversation sur Atlas ?"
+            )
+        )
+
     def test_simple_youtube_open_uses_direct_path(self):
         self.assertTrue(
             AssistantWorker._is_simple_direct_action(
