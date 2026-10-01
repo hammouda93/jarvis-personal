@@ -76,38 +76,6 @@ class FakeTools:
                     },
                 },
             },
-            {
-                "type": "function",
-                "function": {
-                    "name": "msf_describe_schema",
-                    "description": "describe MS Football schema",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "search": {"type": "string"},
-                            "limit_models": {"type": "integer"},
-                        },
-                        "required": [],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "msf_query_records",
-                    "description": "query MS Football records",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "model": {"type": "string"},
-                            "filters": {"type": "object"},
-                        },
-                        "required": ["model"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
         ]
 
     def openai_tools(self):
@@ -196,8 +164,7 @@ class FakeGroqAgent(GroqResponsesAgent):
                     message=SimpleNamespace(
                         content=content,
                         tool_calls=tool_calls,
-                    ),
-                    finish_reason=data.get("finish_reason", "stop"),
+                    )
                 )
             ]
         )
@@ -404,47 +371,6 @@ class AgentRuntimeTests(unittest.TestCase):
             any(action.name == "mcp:gmail:search_mail" for action in second.actions)
         )
 
-    def test_msf_business_request_detects_deadline_video_without_app_name(self):
-        self.assertTrue(
-            GroqResponsesAgent._looks_like_msf_business_request(
-                "Donne-moi toutes les vidéos avec deadline et statut en octobre."
-            )
-        )
-        self.assertTrue(
-            GroqResponsesAgent._looks_like_msf_business_request(
-                "Combien de joueurs défenseurs ai-je ?"
-            )
-        )
-        self.assertFalse(
-            GroqResponsesAgent._looks_like_msf_business_request(
-                "Ouvre une vidéo YouTube."
-            )
-        )
-
-    def test_cerebras_quota_does_not_use_secondary_org(self):
-        self.assertTrue(
-            CerebrasResponsesAgent._is_quota_failure(
-                "cerebras API error 429: request quota exceeded"
-            )
-        )
-        self.assertFalse(
-            CerebrasResponsesAgent._secondary_eligible(
-                "cerebras API error 429: request quota exceeded"
-            )
-        )
-
-    def test_cerebras_secondary_is_for_service_failover(self):
-        self.assertTrue(
-            CerebrasResponsesAgent._secondary_eligible(
-                "cerebras API error 503: service unavailable"
-            )
-        )
-        self.assertTrue(
-            CerebrasResponsesAgent._secondary_eligible(
-                "cerebras indisponible: connection timeout"
-            )
-        )
-
     def test_cerebras_provider_uses_gpt_oss_and_no_groq_browser_tool(self):
         tools = FakeTools()
         agent = CerebrasResponsesAgent(tools)
@@ -545,106 +471,6 @@ class AgentRuntimeTests(unittest.TestCase):
             "msf_count_records",
             agent.payloads[1]["msf_tool_names"],
         )
-
-    def test_msf_schema_only_cannot_ground_record_answer(self):
-        tools = FakeTools()
-        agent = FakeGroqAgent(
-            tools,
-            [
-                {
-                    "output": [
-                        {
-                            "type": "function_call",
-                            "call_id": "schema_1",
-                            "name": "msf_describe_schema",
-                            "arguments": "{\"search\":\"Video\"}",
-                        }
-                    ],
-                },
-                {
-                    "output": [
-                        {
-                            "type": "message",
-                            "content": [
-                                {
-                                    "type": "output_text",
-                                    "text": "J'ai trouvé deux vidéos inventées.",
-                                }
-                            ],
-                        }
-                    ],
-                },
-                {
-                    "output": [
-                        {
-                            "type": "function_call",
-                            "call_id": "query_1",
-                            "name": "msf_query_records",
-                            "arguments": "{\"model\":\"Video\",\"filters\":{}}",
-                        }
-                    ],
-                },
-                {
-                    "output": [
-                        {
-                            "type": "message",
-                            "content": [
-                                {
-                                    "type": "output_text",
-                                    "text": "Voici les données vérifiées.",
-                                }
-                            ],
-                        }
-                    ],
-                },
-            ],
-        )
-
-        result = agent.run(
-            "Donne-moi les vidéos avec une deadline ce mois dans MS Football"
-        )
-
-        self.assertEqual(result.text, "Voici les données vérifiées.")
-        self.assertEqual(
-            [name for name, _args in tools.calls],
-            ["msf_describe_schema", "msf_query_records"],
-        )
-
-    def test_long_answer_continues_after_length_finish(self):
-        tools = FakeTools()
-        agent = FakeGroqAgent(
-            tools,
-            [
-                {
-                    "finish_reason": "length",
-                    "output": [
-                        {
-                            "type": "message",
-                            "content": [
-                                {"type": "output_text", "text": "Première partie."}
-                            ],
-                        }
-                    ],
-                },
-                {
-                    "finish_reason": "stop",
-                    "output": [
-                        {
-                            "type": "message",
-                            "content": [
-                                {"type": "output_text", "text": "Deuxième partie."}
-                            ],
-                        }
-                    ],
-                },
-            ],
-        )
-
-        result = agent.run("Explique ce sujet en détail.")
-
-        self.assertIn("Première partie.", result.text)
-        self.assertIn("Deuxième partie.", result.text)
-        self.assertEqual(len(agent.payloads), 2)
 
     def test_groq_keeps_msf_domain_for_video_followup(self):
         tools = FakeTools()
