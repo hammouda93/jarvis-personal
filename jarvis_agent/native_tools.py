@@ -461,12 +461,19 @@ class NativeToolRegistry:
                 "vs code": "vscode",
                 "vscode": "vscode",
                 "visual studio code": "vscode",
+                "bloc notes": "notepad",
+                "bloc-notes": "notepad",
+                "notepad": "notepad",
                 "capture ecran": "snippingtool",
                 "outil capture": "snippingtool",
                 "snipping tool": "snippingtool",
             }
             if normalized in known:
                 result = execute(ToolIntent("app.open", {"app": known[normalized]}))
+                if not result.success:
+                    result = execute(
+                        ToolIntent("app.open_named", {"query": target})
+                    )
             else:
                 result = execute(ToolIntent("app.open_named", {"query": target}))
             return self._convert(name, result)
