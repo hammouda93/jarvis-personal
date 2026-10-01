@@ -166,6 +166,10 @@ class Settings:
         "JARVIS_CEREBRAS_MAX_COMPLETION_TOKENS",
         1024,
     )
+    cerebras_fallback_groq: bool = _bool(
+        "JARVIS_CEREBRAS_FALLBACK_GROQ",
+        True,
+    )
     agent_answer_continuations: int = _int(
         "JARVIS_AGENT_ANSWER_CONTINUATIONS",
         1,
