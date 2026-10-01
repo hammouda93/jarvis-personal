@@ -10,6 +10,7 @@ from jarvis_agent.agent_runtime import (
     _looks_like_action_promise,
     _looks_like_unnecessary_followup,
     _is_explicit_memory_write_request,
+    _is_current_conversation_recall,
     _looks_like_memory_permission_prompt,
     _query_matches_recent_user_context,
     _looks_mostly_english,
@@ -197,6 +198,83 @@ class FakeGroqAgent(GroqResponsesAgent):
 
 
 class AgentRuntimeTests(unittest.TestCase):
+
+    def test_current_conversation_recall_is_detected(self):
+        self.assertTrue(
+            _is_current_conversation_recall(
+                "Quel est le nom du projet dont on parle maintenant ?"
+            )
+        )
+        self.assertTrue(
+            _is_current_conversation_recall(
+                "Qu'est-ce que je veux mettre dedans ?"
+            )
+        )
+        self.assertFalse(
+            _is_current_conversation_recall(
+                "Tu te rappelles quel sport j'aime ?"
+            )
+        )
+
+    def test_groq_blocks_persistent_recall_for_current_session_question(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Nous parlons du projet Atlas Nova.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_recall_current",
+                            "name": "recall_information",
+                            "arguments": "{\"query\":\"nom du projet\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le projet s'appelle Atlas Nova.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        agent.run("Nous parlons du projet Atlas Nova.")
+        result = agent.run(
+            "Quel est le nom du projet dont on parle maintenant ?"
+        )
+
+        self.assertNotIn(
+            ("recall_information", {"query": "nom du projet"}),
+            tools.calls,
+        )
+        self.assertEqual(len(result.actions), 1)
+        self.assertFalse(result.actions[0].success)
+        self.assertEqual(
+            result.actions[0].detail,
+            "persistent_recall_blocked_current_context",
+        )
 
     def test_memory_permission_prompt_is_detected(self):
         self.assertTrue(
