@@ -269,6 +269,13 @@ class AssistantWorker(QObject):
         if lifecycle_handled:
             return keep_listening
 
+        if self._is_new_conversation_command(user_text):
+            self._agent.reset()
+            self._pending_direct_follow_up = ""
+            self.log_line.emit("[SESSION] nouvelle conversation — contexte réinitialisé")
+            self._speak("Très bien. On repart sur une nouvelle conversation.")
+            return True
+
         if self._pending_direct_follow_up:
             follow_up = self._pending_direct_follow_up
             self._pending_direct_follow_up = ""
@@ -299,13 +306,6 @@ class AssistantWorker(QObject):
                 return True
 
         if self._handle_simple_direct_action(user_text, legacy_intent):
-            return True
-
-        if self._is_new_conversation_command(user_text):
-            self._agent.reset()
-            self._pending_direct_follow_up = ""
-            self.log_line.emit("[SESSION] nouvelle conversation — contexte réinitialisé")
-            self._speak("Très bien. On repart sur une nouvelle conversation.")
             return True
 
         self._state(
