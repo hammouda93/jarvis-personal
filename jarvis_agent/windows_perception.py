@@ -97,6 +97,15 @@ def _is_assistant_window(wrapper: Any) -> bool:
     return normalize(_element_name(wrapper)) == "jarvis personal"
 
 
+def _title_app_hint(title: str) -> str:
+    """Extract a stable application suffix from a changing document title."""
+    parts = [part.strip() for part in str(title or "").split(" - ") if part.strip()]
+    if len(parts) < 2:
+        return ""
+    hint = parts[-1]
+    return hint if len(normalize(hint)) >= 4 else ""
+
+
 def _window_by_title(title: str):
     target = (title or "").strip()
     if not target:
@@ -107,9 +116,30 @@ def _window_by_title(title: str):
         top_level_only=True,
     )
     ranked = _rank_wrappers(windows, target)
-    if not ranked or ranked[0][0] < 0.82:
-        return None
-    return ranked[0][1]
+    if ranked and ranked[0][0] >= 0.82:
+        return ranked[0][1]
+
+    # Browser/editor document titles change constantly. If an earlier exact
+    # title became stale, fall back to its stable application suffix
+    # ("Google Chrome", "Visual Studio Code", etc.) instead of failing.
+    hint = _title_app_hint(target)
+    if hint:
+        hinted = [
+            wrapper
+            for wrapper in windows
+            if normalize(hint) in normalize(_element_name(wrapper))
+        ]
+        if len(hinted) == 1:
+            return hinted[0]
+        if hinted:
+            active = [
+                wrapper
+                for wrapper in hinted
+                if bool(getattr(wrapper, "is_active", lambda: False)())
+            ]
+            if len(active) == 1:
+                return active[0]
+    return None
 
 
 def _active_window():
@@ -311,9 +341,27 @@ def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
             ),
             key=lambda pair: -pair[0],
         )
-        if not ranked or ranked[0][0] < 0.82:
-            return None
-        return ranked[0][1]
+        if ranked and ranked[0][0] >= 0.82:
+            return ranked[0][1]
+
+        hint = _title_app_hint(target)
+        if hint:
+            hinted = [
+                item
+                for item in candidates
+                if normalize(hint) in normalize(str(item.get("title") or ""))
+            ]
+            if len(hinted) == 1:
+                return hinted[0]
+            if hinted:
+                try:
+                    foreground = int(ctypes.windll.user32.GetForegroundWindow() or 0)
+                except Exception:
+                    foreground = 0
+                for item in hinted:
+                    if int(item.get("handle") or 0) == foreground:
+                        return item
+        return None
 
     try:
         foreground = int(ctypes.windll.user32.GetForegroundWindow() or 0)
@@ -851,6 +899,38 @@ def _editable_target(wrapper: Any):
     return None
 
 
+def _type_text_into_focused_control(wrapper: Any, value: str) -> bool:
+    """Fallback for accessible controls such as web ComboBox/search fields."""
+    try:
+        wrapper.set_focus()
+    except Exception:
+        pass
+    try:
+        wrapper.click_input()
+    except Exception:
+        pass
+
+    type_keys = getattr(wrapper, "type_keys", None)
+    if callable(type_keys):
+        try:
+            type_keys(
+                "^a",
+                set_foreground=True,
+            )
+        except Exception:
+            pass
+        try:
+            type_keys(
+                value,
+                with_spaces=True,
+                set_foreground=True,
+            )
+            return True
+        except Exception:
+            return False
+    return False
+
+
 def write_ui_element(
     name: str,
     text: str,
@@ -902,18 +982,26 @@ def write_ui_element(
         or ref
         or target
     )
-    if editable is None:
-        return UIActionResult(
-            False,
-            f"L'élément {label} n'accepte pas la saisie directe.",
-            _control_type(wrapper),
-        )
-
-    try:
-        editable.set_focus()
-        editable.set_edit_text(value)
-    except Exception as exc:
-        return UIActionResult(False, f"Impossible d'écrire dans {label}.", str(exc))
+    if editable is not None:
+        try:
+            editable.set_focus()
+            editable.set_edit_text(value)
+        except Exception as exc:
+            return UIActionResult(
+                False,
+                f"Impossible d'écrire dans {label}.",
+                str(exc),
+            )
+    else:
+        # Chromium and other modern apps often expose searchable fields as a
+        # ComboBox without a child Edit wrapper. Focus/click it and type through
+        # its UIA wrapper rather than rejecting the control by type alone.
+        if not _type_text_into_focused_control(wrapper, value):
+            return UIActionResult(
+                False,
+                f"L'élément {label} n'accepte pas la saisie directe.",
+                _control_type(wrapper),
+            )
 
     return UIActionResult(
         True,
