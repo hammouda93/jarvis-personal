@@ -89,7 +89,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "search_web",
-                "Lance une recherche web visible dans le navigateur de l'utilisateur.",
+                "Ouvre une page de recherche web visible dans le navigateur de l'utilisateur. Cet outil ne lit pas les résultats et ne fournit aucune preuve factuelle à lui seul.",
                 {
                     "query": {
                         "type": "string",
@@ -494,9 +494,25 @@ class NativeToolRegistry:
             query = str(args.get("query", "")).strip()
             if len(query) < 2:
                 return self._error(name, "La recherche est vide.")
-            return self._convert(
-                name,
-                execute(ToolIntent("browser.search", {"query": query})),
+            base = execute(ToolIntent("browser.search", {"query": query}))
+            return AgentActionResult(
+                name=name,
+                success=base.success,
+                message=(
+                    "La page de recherche a été ouverte dans le navigateur. "
+                    "Les résultats n'ont pas été lus."
+                    if base.success
+                    else base.message
+                ),
+                detail=json.dumps(
+                    {
+                        "opened_url": base.detail,
+                        "query": query,
+                        "results_read": False,
+                        "factual_evidence": False,
+                    },
+                    ensure_ascii=False,
+                ),
             )
 
         if name == "list_windows":
