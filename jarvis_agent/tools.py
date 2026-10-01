@@ -93,30 +93,22 @@ def route(text: str) -> ToolIntent:
             "quitte jarvis",
             "ferme jarvis",
             "fermez jarvis",
-            "ferme la fenetre jarvis",
-            "fermez la fenetre jarvis",
         )
     ):
         return ToolIntent("assistant.stop")
 
-    if (
-        cmd in {
-            "merci",
-            "c est tout",
-            "c'est tout",
-            "tu peux dormir",
-            "dors",
-            "retourne en veille",
-            "a plus",
-            "a plus jarvis",
-            "au revoir",
-            "bonne nuit",
-            "bye bye",
-            "bye",
-        }
-        or cmd.endswith("a plus bye bye")
-        or cmd.endswith("jarvis a plus bye bye")
-    ):
+    if cmd in {
+        "merci",
+        "c est tout",
+        "c'est tout",
+        "tu peux dormir",
+        "dors",
+        "retourne en veille",
+        "a plus",
+        "a plus jarvis",
+        "au revoir",
+        "bonne nuit",
+    }:
         return ToolIntent("assistant.sleep")
 
     # Time is checked before application commands so a noisy transcription
