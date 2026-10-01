@@ -1636,7 +1636,7 @@ class GroqResponsesAgent:
 
 
 class CerebrasResponsesAgent(GroqResponsesAgent):
-    """Cerebras Chat Completions agent using the same local tool loop."""
+    """Cerebras Chat Completions agent with a Groq quota fallback."""
 
     def __init__(
         self,
@@ -1649,6 +1649,76 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         self.provider_name = "cerebras"
         self.reasoning_effort = settings.cerebras_reasoning_effort
         self.max_completion_tokens = settings.cerebras_max_completion_tokens
+
+    def _chat(
+        self,
+        *,
+        tool_choice: Any = "auto",
+        ms_football_only: bool = False,
+        msf_tool_names: set[str] | None = None,
+    ):
+        try:
+            return super()._chat(
+                tool_choice=tool_choice,
+                ms_football_only=ms_football_only,
+                msf_tool_names=msf_tool_names,
+            )
+        except AgentRuntimeUnavailable as exc:
+            detail = str(exc).lower()
+            quota_failure = (
+                "429" in detail
+                or "quota" in detail
+                or "too_many_requests" in detail
+                or "rate limit" in detail
+            )
+            if (
+                not quota_failure
+                or not settings.cerebras_fallback_groq
+                or not settings.groq_api_key
+            ):
+                raise
+
+            try:
+                from openai import OpenAI
+            except ImportError:
+                raise
+
+            print(
+                "[AGENT] Cerebras quota unavailable; "
+                "falling back to Groq GPT-OSS for this round."
+            )
+            client = OpenAI(
+                api_key=settings.groq_api_key,
+                base_url=settings.groq_base_url.rstrip("/"),
+                timeout=settings.ai_request_timeout_s,
+            )
+            try:
+                return client.chat.completions.create(
+                    model=settings.groq_agent_model,
+                    messages=self._messages,
+                    tools=self._tool_definitions(
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    ),
+                    tool_choice=tool_choice,
+                    parallel_tool_calls=False,
+                    reasoning_effort=settings.groq_reasoning_effort,
+                    temperature=0.1,
+                    max_completion_tokens=settings.groq_max_completion_tokens,
+                )
+            except Exception as fallback_exc:
+                status = getattr(fallback_exc, "status_code", None)
+                body = getattr(fallback_exc, "body", None)
+                fallback_detail = (
+                    body if body is not None else str(fallback_exc)
+                )
+                if status:
+                    raise AgentRuntimeUnavailable(
+                        f"Groq fallback API error {status}: {fallback_detail}"
+                    ) from fallback_exc
+                raise AgentRuntimeUnavailable(
+                    f"Groq fallback indisponible: {fallback_detail}"
+                ) from fallback_exc
 
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
