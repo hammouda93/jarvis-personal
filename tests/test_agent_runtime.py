@@ -59,6 +59,22 @@ class FakeTools:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "msf_count_records",
+                    "description": "count MS Football records",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "model": {"type": "string"},
+                            "filters": {"type": "object"},
+                        },
+                        "required": ["model"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
         ]
 
     def openai_tools(self):
@@ -157,6 +173,7 @@ class FakeGroqAgent(GroqResponsesAgent):
         *,
         tool_choice="auto",
         ms_football_only=False,
+        msf_tool_names=None,
     ):
         self.payloads.append(
             {
@@ -164,10 +181,12 @@ class FakeGroqAgent(GroqResponsesAgent):
                 "tools": copy.deepcopy(
                     self._tool_definitions(
                         ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
                     )
                 ),
                 "tool_choice": tool_choice,
                 "ms_football_only": ms_football_only,
+                "msf_tool_names": set(msf_tool_names or ()),
             }
         )
         return self._response_from_dict(self.responses.pop(0))
@@ -406,8 +425,8 @@ class AgentRuntimeTests(unittest.TestCase):
                         {
                             "type": "function_call",
                             "call_id": "call_msf_1",
-                            "name": "msf_capabilities",
-                            "arguments": "{}",
+                            "name": "msf_count_records",
+                            "arguments": "{\"model\":\"Player\"}",
                         }
                     ],
                 },
@@ -419,7 +438,7 @@ class AgentRuntimeTests(unittest.TestCase):
                             "content": [
                                 {
                                     "type": "output_text",
-                                    "text": "J'ai consulté MS Football.",
+                                    "text": "Il y a 264 joueurs.",
                                 }
                             ],
                         }
@@ -430,18 +449,13 @@ class AgentRuntimeTests(unittest.TestCase):
 
         result = agent.run("Combien de joueurs dans MS Football ?")
 
-        self.assertEqual(result.text, "J'ai consulté MS Football.")
-        self.assertEqual(tools.calls[0][0], "msf_capabilities")
+        self.assertEqual(result.text, "Il y a 264 joueurs.")
+        self.assertEqual(tools.calls[0][0], "msf_count_records")
         self.assertTrue(agent.payloads[0]["ms_football_only"])
         self.assertEqual(agent.payloads[0]["tool_choice"], "auto")
-        self.assertEqual(agent.payloads[1]["tool_choice"], "auto")
-        repair_messages = [
-            item.get("content", "")
-            for item in agent.payloads[1]["messages"]
-            if isinstance(item, dict) and item.get("role") == "user"
-        ]
-        self.assertTrue(
-            any("outils msf_" in value for value in repair_messages)
+        self.assertIn(
+            "msf_count_records",
+            agent.payloads[1]["msf_tool_names"],
         )
 
     def test_groq_hides_msf_tools_from_regular_turns(self):
