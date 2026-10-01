@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from jarvis_agent.tools import _chrome_profile_directory, route
+from jarvis_agent.tools import _chrome_profile_directory, _open_application, route
 
 
 class ToolRouterTests(unittest.TestCase):
@@ -13,6 +13,11 @@ class ToolRouterTests(unittest.TestCase):
         intent = route("Jarvis, ouvre YouTube")
         self.assertEqual(intent.name, "browser.open_url")
         self.assertEqual(intent.args["url"], "https://www.youtube.com")
+
+    def test_open_notepad_routes_to_known_app(self):
+        intent = route("ouvre le Bloc-notes")
+        self.assertEqual(intent.name, "app.open")
+        self.assertEqual(intent.args["app"], "notepad")
 
     def test_open_vscode(self):
         intent = route("ouvre VS Code")
@@ -94,6 +99,37 @@ class ToolRouterTests(unittest.TestCase):
         self.assertEqual(intent.name, "folder.open_named")
         self.assertEqual(intent.args["query"], "media")
         self.assertEqual(intent.args["within"], "baristas")
+
+    @patch("jarvis_agent.tools.os.startfile")
+    @patch("jarvis_agent.tools._find_named_app")
+    @patch("jarvis_agent.tools._spawn")
+    def test_cursor_falls_back_to_dynamic_windows_discovery(
+        self,
+        spawn_mock,
+        find_mock,
+        startfile_mock,
+    ):
+        spawn_mock.return_value = False
+        shortcut = Path(r"C:\Users\test\Desktop\Cursor.lnk")
+        find_mock.return_value = (shortcut, [shortcut])
+
+        result = _open_application("cursor")
+
+        self.assertTrue(result.success)
+        find_mock.assert_called_once_with("Cursor")
+        startfile_mock.assert_called_once_with(str(shortcut))
+
+    @patch("jarvis_agent.tools._spawn")
+    def test_notepad_uses_system_candidates(self, spawn_mock):
+        spawn_mock.return_value = True
+
+        result = _open_application("notepad")
+
+        self.assertTrue(result.success)
+        candidates = spawn_mock.call_args.args[0]
+        self.assertTrue(
+            any("notepad" in str(item).lower() for item in candidates)
+        )
 
     def test_chrome_last_used_profile_is_discovered(self):
         with tempfile.TemporaryDirectory() as tmp:
