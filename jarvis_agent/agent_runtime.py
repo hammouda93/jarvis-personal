@@ -1272,7 +1272,9 @@ class GroqResponsesAgent:
         clean: list[dict[str, Any]] = []
         internal_prefixes = (
             "Réponds à la demande précédente uniquement",
+            "La demande précédente exige des données",
             "Cet outil vient d échouer",
+            "Continue exactement la réponse précédente",
         )
         for item in self._messages[1:]:
             role = str(item.get("role") or "")
