@@ -1237,6 +1237,9 @@ class GroqResponsesAgent:
         tools = self.tools.ollama_tools()
         if ms_football_only:
             allowed = set(msf_tool_names or ())
+            allowed.update({"reset_conversation_context", "return_to_standby"})
+            if self._memory_write_allowed:
+                allowed.add("remember_information")
             tools = [
                 item
                 for item in tools
