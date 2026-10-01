@@ -1038,6 +1038,14 @@ class GroqResponsesAgent:
     @staticmethod
     def _msf_requires_data_read(user_text: str) -> bool:
         text = (user_text or "").lower()
+        if any(
+            marker in text
+            for marker in (
+                "oublie", "autre volet", "on va parler", "on en parlera",
+                "changeons de sujet",
+            )
+        ):
+            return False
         data_terms = (
             "combien", "liste", "donne", "trouve", "quel", "quelle",
             "deadline", "échéance", "echeance", "retard", "reste",
