@@ -148,6 +148,17 @@ class Settings:
     ).strip()
     groq_browser_search: bool = _bool("JARVIS_GROQ_BROWSER_SEARCH", True)
 
+    cerebras_api_key: str = (os.getenv("CEREBRAS_API_KEY") or "").strip()
+    cerebras_base_url: str = (
+        os.getenv("CEREBRAS_BASE_URL") or "https://api.cerebras.ai/v1"
+    ).strip()
+    cerebras_agent_model: str = (
+        os.getenv("JARVIS_CEREBRAS_AGENT_MODEL") or "gpt-oss-120b"
+    ).strip()
+    cerebras_reasoning_effort: str = (
+        os.getenv("JARVIS_CEREBRAS_REASONING_EFFORT") or "low"
+    ).strip()
+
     openai_api_key: str = (os.getenv("OPENAI_API_KEY") or "").strip()
     openai_base_url: str = (
         os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
