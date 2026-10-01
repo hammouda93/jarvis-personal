@@ -595,6 +595,75 @@ class AgentRuntimeTests(unittest.TestCase):
             agent.payloads[1]["msf_tool_names"],
         )
 
+    def test_groq_leaves_msf_domain_after_clear_general_topic_switch(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_players",
+                            "name": "msf_count_records",
+                            "arguments": "{\"model\":\"Player\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "264 joueurs."}
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "D'accord, parlons du projet Atlas.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Tu veux y ajouter des paiements.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        agent.run("Combien de joueurs dans MS Football ?")
+        agent.run("Je travaille maintenant sur le projet Atlas.")
+        result = agent.run("Et je veux aussi ajouter des paiements.")
+
+        self.assertEqual(result.text, "Tu veux y ajouter des paiements.")
+        self.assertFalse(agent.payloads[2]["ms_football_only"])
+        self.assertFalse(agent.payloads[3]["ms_football_only"])
+        regular_tool_names = {
+            item["function"]["name"]
+            for item in agent.payloads[3]["tools"]
+            if item.get("type") == "function"
+        }
+        self.assertNotIn("msf_count_records", regular_tool_names)
+        self.assertNotIn("msf_capabilities", regular_tool_names)
+
     def test_groq_keeps_msf_domain_for_video_followup(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
