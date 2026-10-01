@@ -10,6 +10,7 @@ from jarvis_agent.agent_runtime import (
     _looks_like_action_promise,
     _looks_like_unnecessary_followup,
     _is_explicit_memory_write_request,
+    _looks_like_memory_permission_prompt,
     _query_matches_recent_user_context,
     _looks_mostly_english,
     _visible_text,
@@ -196,6 +197,48 @@ class FakeGroqAgent(GroqResponsesAgent):
 
 
 class AgentRuntimeTests(unittest.TestCase):
+
+    def test_memory_permission_prompt_is_detected(self):
+        self.assertTrue(
+            _looks_like_memory_permission_prompt(
+                "Souhaitez-vous que je retienne cette information ?"
+            )
+        )
+        self.assertFalse(
+            _looks_like_memory_permission_prompt(
+                "D'accord, parlons de votre projet Atlas."
+            )
+        )
+
+    def test_groq_does_not_ask_to_persist_ordinary_conversation_fact(self):
+        agent = FakeGroqAgent(
+            FakeTools(),
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": (
+                                        "Souhaitez-vous que je retienne "
+                                        "cette information ?"
+                                    ),
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+        )
+
+        result = agent.run(
+            "Je travaille sur un projet qui s'appelle Atlas Scope."
+        )
+
+        self.assertNotIn("souhaitez-vous", result.text.lower())
+        self.assertIn("cette conversation", result.text.lower())
 
     def test_memory_write_requires_explicit_user_request(self):
         self.assertFalse(
