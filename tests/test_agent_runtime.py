@@ -404,6 +404,23 @@ class AgentRuntimeTests(unittest.TestCase):
             any(action.name == "mcp:gmail:search_mail" for action in second.actions)
         )
 
+    def test_msf_business_request_detects_deadline_video_without_app_name(self):
+        self.assertTrue(
+            GroqResponsesAgent._looks_like_msf_business_request(
+                "Donne-moi toutes les vidéos avec deadline et statut en octobre."
+            )
+        )
+        self.assertTrue(
+            GroqResponsesAgent._looks_like_msf_business_request(
+                "Combien de joueurs défenseurs ai-je ?"
+            )
+        )
+        self.assertFalse(
+            GroqResponsesAgent._looks_like_msf_business_request(
+                "Ouvre une vidéo YouTube."
+            )
+        )
+
     def test_cerebras_quota_does_not_use_secondary_org(self):
         self.assertTrue(
             CerebrasResponsesAgent._is_quota_failure(
