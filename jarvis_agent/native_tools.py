@@ -208,6 +208,21 @@ class NativeToolRegistry:
                 [],
             ),
             self._ollama(
+                "msf_count_records",
+                "Compte rapidement les enregistrements MS Football via l'ORM Django, avec filtres optionnels. À privilégier pour toute question 'combien' au lieu de charger des lignes ou d'inventer un nom de table SQL.",
+                {
+                    "model": {
+                        "type": "string",
+                        "description": "Modèle Django, par ex. Player, Video ou gestion_joueurs.Video.",
+                    },
+                    "filters": {
+                        "type": "object",
+                        "description": "Filtres Django ORM optionnels.",
+                    },
+                },
+                ["model"],
+            ),
+            self._ollama(
                 "msf_query_records",
                 "Interroge les données MS Football via l'ORM Django sans écrire. Les filtres acceptent les lookups Django comme player__name__icontains, status, deadline__lt.",
                 {
@@ -571,6 +586,14 @@ class NativeToolRegistry:
                 "limit_models": int(args.get("limit_models") or 80),
             }
             result = MS_FOOTBALL_BRIDGE.call("describe_schema", payload)
+            return AgentActionResult(name, result.success, result.message, result.detail)
+
+        if name == "msf_count_records":
+            payload = {
+                "model": str(args.get("model", "")).strip(),
+                "filters": args.get("filters") or {},
+            }
+            result = MS_FOOTBALL_BRIDGE.call("count_records", payload)
             return AgentActionResult(name, result.success, result.message, result.detail)
 
         if name == "msf_query_records":
