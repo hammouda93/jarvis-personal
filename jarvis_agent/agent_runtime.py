@@ -1533,7 +1533,7 @@ class GroqResponsesAgent:
 
 
 class CerebrasResponsesAgent(GroqResponsesAgent):
-    """Cerebras Chat Completions agent using the same local tool loop."""
+    """Cerebras Chat Completions agent with one optional backup credential."""
 
     def __init__(
         self,
@@ -1545,6 +1545,71 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         self.api_key = settings.cerebras_api_key
         self.provider_name = "cerebras"
         self.reasoning_effort = settings.cerebras_reasoning_effort
+
+    @staticmethod
+    def _should_try_secondary(error: AgentRuntimeUnavailable) -> bool:
+        detail = str(error).lower()
+        return any(
+            marker in detail
+            for marker in (
+                "429",
+                "quota",
+                "too_many_requests",
+                "rate limit",
+                "401",
+                "403",
+                "500",
+                "502",
+                "503",
+                "504",
+                "joignable",
+                "timeout",
+                "timed out",
+                "connection",
+            )
+        )
+
+    def _chat(
+        self,
+        *,
+        tool_choice: Any = "auto",
+        ms_football_only: bool = False,
+        msf_tool_names: set[str] | None = None,
+    ):
+        try:
+            return super()._chat(
+                tool_choice=tool_choice,
+                ms_football_only=ms_football_only,
+                msf_tool_names=msf_tool_names,
+            )
+        except AgentRuntimeUnavailable as primary_error:
+            if (
+                not settings.cerebras_secondary_api_key
+                or not self._should_try_secondary(primary_error)
+            ):
+                raise
+
+            print(
+                "[AGENT] Cerebras primary unavailable; "
+                "trying secondary Cerebras API."
+            )
+            primary_api_key = self.api_key
+            primary_base_url = self.base_url
+            primary_client = self._client
+
+            self.api_key = settings.cerebras_secondary_api_key
+            self.base_url = settings.cerebras_secondary_base_url.rstrip("/")
+            self._client = None
+            try:
+                return super()._chat(
+                    tool_choice=tool_choice,
+                    ms_football_only=ms_football_only,
+                    msf_tool_names=msf_tool_names,
+                )
+            finally:
+                self.api_key = primary_api_key
+                self.base_url = primary_base_url
+                self._client = primary_client
 
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
