@@ -1130,10 +1130,10 @@ class GroqResponsesAgent:
             detail = body if body is not None else str(exc)
             if status:
                 raise AgentRuntimeUnavailable(
-                    f"groq API error {status}: {detail}"
+                    f"{self.provider_name} API error {status}: {detail}"
                 ) from exc
             raise AgentRuntimeUnavailable(
-                f"Groq n'est pas joignable: {detail}"
+                f"{self.provider_name} n'est pas joignable: {detail}"
             ) from exc
 
     def _append_assistant_message(self, message) -> list[Any]:
@@ -1353,7 +1353,7 @@ class GroqResponsesAgent:
                 phase("thinking")
             if log:
                 log(
-                    f"[AGENT] provider=groq model={self.model} "
+                    f"[AGENT] provider={self.provider_name} model={self.model} "
                     f"round={round_index}"
                 )
 
@@ -1365,7 +1365,7 @@ class GroqResponsesAgent:
             )
             if log:
                 log(
-                    f"[PERF] groq_round={round_index} "
+                    f"[PERF] {self.provider_name}_round={round_index} "
                     f"seconds={time.perf_counter() - started:.2f}"
                 )
 
@@ -1524,6 +1524,20 @@ class GroqResponsesAgent:
         )
 
 
+class CerebrasResponsesAgent(GroqResponsesAgent):
+    """Cerebras Chat Completions agent using the same local tool loop."""
+
+    def __init__(
+        self,
+        tools: NativeToolRegistry | None = None,
+    ) -> None:
+        super().__init__(tools)
+        self.base_url = settings.cerebras_base_url.rstrip("/")
+        self.model = settings.cerebras_agent_model
+        self.api_key = settings.cerebras_api_key
+        self.provider_name = "cerebras"
+        self.reasoning_effort = settings.cerebras_reasoning_effort
+
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
     if provider == "ollama":
@@ -1532,6 +1546,8 @@ def build_agent_runtime() -> AgentRuntime:
         return OpenAIResponsesAgent()
     if provider == "groq":
         return GroqResponsesAgent()
+    if provider == "cerebras":
+        return CerebrasResponsesAgent()
     raise AgentRuntimeUnavailable(
         f"Agent provider non pris en charge: {settings.agent_provider}"
     )
