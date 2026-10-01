@@ -965,6 +965,7 @@ class GroqResponsesAgent:
         self.api_key = settings.groq_api_key
         self.provider_name = "groq"
         self.reasoning_effort = settings.groq_reasoning_effort
+        self.max_completion_tokens = settings.groq_max_completion_tokens
         self._client = None
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
@@ -1018,6 +1019,26 @@ class GroqResponsesAgent:
             "poste", "solde", "facture", "match", "performance",
         )
         return any(term in text for term in terms)
+
+    @staticmethod
+    def _msf_requires_data_read(user_text: str) -> bool:
+        text = (user_text or "").lower()
+        data_terms = (
+            "combien", "liste", "donne", "trouve", "quel", "quelle",
+            "deadline", "échéance", "echeance", "retard", "reste",
+            "impay", "payé", "paye", "solde", "dernier", "dernière",
+            "etat", "état", "attention", "aujourd", "en cours",
+            "livré", "livre", "total", "statut",
+        )
+        if any(term in text for term in data_terms):
+            return True
+
+        schema_only_terms = (
+            "schéma", "schema", "modèle", "modele", "champ", "capacité",
+            "capacite", "fonctionne", "fonctionnement", "code", "route",
+            "peut faire",
+        )
+        return not any(term in text for term in schema_only_terms)
 
     @staticmethod
     def _msf_tool_names_for_text(user_text: str) -> set[str]:
@@ -1130,7 +1151,7 @@ class GroqResponsesAgent:
                 parallel_tool_calls=False,
                 reasoning_effort=self.reasoning_effort,
                 temperature=0.1,
-                max_completion_tokens=256,
+                max_completion_tokens=self.max_completion_tokens,
             )
         except Exception as exc:
             status = getattr(exc, "status_code", None)
@@ -1284,6 +1305,9 @@ class GroqResponsesAgent:
         end_session = False
         should_exit = False
         failed_results: dict[str, AgentActionResult] = {}
+        successful_msf_data_read = False
+        answer_fragments: list[str] = []
+        continuation_count = 0
 
         if self._pending_function_approval is not None:
             normalized = user_text.strip().lower().strip(" .!?")
@@ -1354,6 +1378,9 @@ class GroqResponsesAgent:
             if ms_football_turn
             else None
         )
+        msf_data_request = (
+            ms_football_turn and self._msf_requires_data_read(user_text)
+        )
         msf_repair_attempted = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
@@ -1382,13 +1409,17 @@ class GroqResponsesAgent:
                     f"{self.provider_name} n'a retourné aucun choix."
                 )
 
-            message = response.choices[0].message
+            choice = response.choices[0]
+            message = choice.message
+            finish_reason = str(
+                getattr(choice, "finish_reason", "") or ""
+            ).lower()
             calls = self._append_assistant_message(message)
 
             if not calls:
                 if (
-                    ms_football_turn
-                    and not actions
+                    msf_data_request
+                    and not successful_msf_data_read
                     and not msf_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
@@ -1400,10 +1431,13 @@ class GroqResponsesAgent:
                         {
                             "role": "user",
                             "content": (
-                                "Réponds à la demande précédente uniquement "
-                                "après avoir consulté les données réelles avec "
-                                "un outil MS Football approprié. Choisis toi-même "
-                                "l'outil adapté parmi les outils msf_* disponibles."
+                                "La demande précédente exige des données "
+                                "réelles MS Football. Ne donne aucun chiffre, "
+                                "nom, date ou enregistrement depuis le schéma ou "
+                                "ta mémoire. Utilise msf_count_records, "
+                                "msf_query_records ou msf_readonly_sql selon "
+                                "le besoin, puis réponds uniquement avec le "
+                                "résultat obtenu."
                             ),
                         }
                     )
@@ -1415,11 +1449,42 @@ class GroqResponsesAgent:
                 text = _visible_text(
                     str(getattr(message, "content", "") or "")
                 )
+
+                if (
+                    finish_reason == "length"
+                    and text
+                    and continuation_count
+                    < max(0, settings.agent_answer_continuations)
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    answer_fragments.append(text)
+                    continuation_count += 1
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Continue exactement la réponse précédente là "
+                                "où elle s'est arrêtée, sans répéter le début."
+                            ),
+                        }
+                    )
+                    if log:
+                        log(
+                            f"[AGENT] continuation={continuation_count} "
+                            "reason=length"
+                        )
+                    continue
+
+                if answer_fragments:
+                    if text:
+                        answer_fragments.append(text)
+                    text = "\n".join(answer_fragments).strip()
+
                 if not text:
-                    if ms_football_turn and not actions:
+                    if msf_data_request and not successful_msf_data_read:
                         text = (
-                            "Je n'ai pas réussi à interroger MS Football pour "
-                            "cette demande. Réessayez en reformulant brièvement."
+                            "Je n'ai pas réussi à obtenir les données réelles "
+                            "de MS Football pour cette demande."
                         )
                     else:
                         text = "Je suis là."
@@ -1483,6 +1548,12 @@ class GroqResponsesAgent:
                     failed_results[signature] = result
                 if result.success and name[:4] == "msf_":
                     self._last_msf_grounding_at = time.monotonic()
+                if result.success and name in {
+                    "msf_count_records",
+                    "msf_query_records",
+                    "msf_readonly_sql",
+                }:
+                    successful_msf_data_read = True
                 end_session = end_session or result.end_session
                 should_exit = should_exit or result.should_exit
 
@@ -1545,6 +1616,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         self.api_key = settings.cerebras_api_key
         self.provider_name = "cerebras"
         self.reasoning_effort = settings.cerebras_reasoning_effort
+        self.max_completion_tokens = settings.cerebras_max_completion_tokens
 
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
