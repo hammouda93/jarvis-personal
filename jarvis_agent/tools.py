@@ -205,6 +205,8 @@ def route(text: str) -> ToolIntent:
             return ToolIntent("app.open", {"app": "cursor"})
         if any(x in cmd for x in ("visual studio code", "vs code", "vscode")):
             return ToolIntent("app.open", {"app": "vscode"})
+        if any(x in cmd for x in ("bloc notes", "bloc-notes", "notepad")):
+            return ToolIntent("app.open", {"app": "notepad"})
         if any(
             x in cmd
             for x in (
@@ -405,14 +407,57 @@ def _open_application(app: str) -> ToolResult:
         ],
         "vscode": [
             os.path.join(local, "Programs", "Microsoft VS Code", "Code.exe") if local else "",
+            os.path.join(program_files, "Microsoft VS Code", "Code.exe"),
             "code",
+        ],
+        "notepad": [
+            os.path.join(windir, "System32", "notepad.exe"),
+            "notepad.exe",
+            "notepad",
         ],
     }
 
     ok = _spawn(candidates.get(app, []))
     if ok:
         return ToolResult(True, "C'est fait.", f"Application ouverte: {app}")
-    return ToolResult(False, f"Je n'ai pas trouvé {app}.", f"Application introuvable: {app}")
+
+    # Install locations differ across Windows/package-manager setups. Fall back
+    # to the same generic Start Menu/Desktop discovery used for arbitrary apps
+    # before declaring a known application missing.
+    discovery_names = {
+        "cursor": "Cursor",
+        "vscode": "Visual Studio Code",
+        "notepad": "Notepad",
+    }
+    query = discovery_names.get(app, app)
+    path, matches = _find_named_app(query)
+    if path is not None:
+        try:
+            os.startfile(str(path))
+            return ToolResult(
+                True,
+                "C'est fait.",
+                f"Application ouverte via raccourci: {path}",
+            )
+        except OSError as exc:
+            return ToolResult(
+                False,
+                f"Je n'ai pas pu ouvrir {query}.",
+                str(exc),
+            )
+
+    if matches:
+        choices = " | ".join(str(item) for item in matches[:3])
+        return ToolResult(
+            False,
+            f"J'ai trouvé plusieurs applications proches de {query}.",
+            choices,
+        )
+    return ToolResult(
+        False,
+        f"Je n'ai pas trouvé {query}.",
+        f"Application introuvable: {app}",
+    )
 
 
 def _normalize_path_name(value: str) -> str:
