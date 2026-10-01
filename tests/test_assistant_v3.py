@@ -21,6 +21,17 @@ class AssistantV3FastPathTests(unittest.TestCase):
             )
         )
 
+    def test_in_app_search_stays_with_agent(self):
+        self.assertFalse(
+            AssistantWorker._is_simple_direct_action(
+                "Recherche dans la barre de recherche YouTube sur le sport.",
+                ToolIntent(
+                    "browser.search",
+                    {"query": "dans la barre de recherche youtube sur le sport"},
+                ),
+            )
+        )
+
     def test_compound_command_stays_with_agent(self):
         self.assertFalse(
             AssistantWorker._is_simple_direct_action(
