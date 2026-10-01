@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Callable, Protocol
 
 from .config import settings
@@ -1636,7 +1637,12 @@ class GroqResponsesAgent:
 
 
 class CerebrasResponsesAgent(GroqResponsesAgent):
-    """Cerebras Chat Completions agent with a Groq quota fallback."""
+    """Cerebras agent with safe cloud/local failover.
+
+    The secondary Cerebras credential is reserved for availability/auth/service
+    failures, not for bypassing provider quota responses. Quota exhaustion
+    falls through to Groq, then to local Ollama.
+    """
 
     def __init__(
         self,
@@ -1650,6 +1656,207 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         self.reasoning_effort = settings.cerebras_reasoning_effort
         self.max_completion_tokens = settings.cerebras_max_completion_tokens
 
+    @staticmethod
+    def _is_quota_failure(detail: str) -> bool:
+        value = (detail or "").lower()
+        return (
+            "429" in value
+            or "quota" in value
+            or "too_many_requests" in value
+            or "rate limit" in value
+            or "rate_limit" in value
+        )
+
+    @staticmethod
+    def _secondary_eligible(detail: str) -> bool:
+        value = (detail or "").lower()
+        if CerebrasResponsesAgent._is_quota_failure(value):
+            return False
+        markers = (
+            "401",
+            "403",
+            "500",
+            "502",
+            "503",
+            "504",
+            "timeout",
+            "timed out",
+            "connection",
+            "connect",
+            "joignable",
+            "temporarily unavailable",
+            "service unavailable",
+        )
+        return any(marker in value for marker in markers)
+
+    def _openai_compatible_chat(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        provider_label: str,
+        reasoning_effort: str,
+        max_completion_tokens: int,
+        tool_choice: Any,
+        ms_football_only: bool,
+        msf_tool_names: set[str] | None,
+    ):
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise AgentRuntimeUnavailable(
+                "Le client OpenAI compatible n'est pas installé."
+            ) from exc
+
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url.rstrip("/"),
+            timeout=settings.ai_request_timeout_s,
+        )
+        try:
+            return client.chat.completions.create(
+                model=model,
+                messages=self._messages,
+                tools=self._tool_definitions(
+                    ms_football_only=ms_football_only,
+                    msf_tool_names=msf_tool_names,
+                ),
+                tool_choice=tool_choice,
+                parallel_tool_calls=False,
+                reasoning_effort=reasoning_effort,
+                temperature=0.1,
+                max_completion_tokens=max_completion_tokens,
+            )
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            body = getattr(exc, "body", None)
+            detail = body if body is not None else str(exc)
+            if status:
+                raise AgentRuntimeUnavailable(
+                    f"{provider_label} API error {status}: {detail}"
+                ) from exc
+            raise AgentRuntimeUnavailable(
+                f"{provider_label} indisponible: {detail}"
+            ) from exc
+
+    def _ollama_messages(self) -> list[dict[str, Any]]:
+        converted: list[dict[str, Any]] = []
+        for item in self._messages:
+            role = str(item.get("role") or "")
+            if role == "tool":
+                converted.append(
+                    {
+                        "role": "tool",
+                        "tool_name": str(item.get("name") or ""),
+                        "content": str(item.get("content") or ""),
+                    }
+                )
+                continue
+
+            message: dict[str, Any] = {
+                "role": role,
+                "content": str(item.get("content") or ""),
+            }
+            raw_calls = item.get("tool_calls") or []
+            if raw_calls:
+                calls = []
+                for call in raw_calls:
+                    function = call.get("function") or {}
+                    raw_arguments = function.get("arguments") or {}
+                    if isinstance(raw_arguments, str):
+                        try:
+                            arguments = json.loads(raw_arguments)
+                        except json.JSONDecodeError:
+                            arguments = {}
+                    elif isinstance(raw_arguments, dict):
+                        arguments = raw_arguments
+                    else:
+                        arguments = {}
+                    calls.append(
+                        {
+                            "function": {
+                                "name": str(function.get("name") or ""),
+                                "arguments": arguments,
+                            }
+                        }
+                    )
+                message["tool_calls"] = calls
+            converted.append(message)
+        return converted
+
+    def _ollama_fallback_chat(
+        self,
+        *,
+        tool_choice: Any,
+        ms_football_only: bool,
+        msf_tool_names: set[str] | None,
+    ):
+        payload = {
+            "model": settings.ollama_agent_model,
+            "messages": self._ollama_messages(),
+            "tools": self._tool_definitions(
+                ms_football_only=ms_football_only,
+                msf_tool_names=msf_tool_names,
+            ),
+            "stream": False,
+            "think": False,
+            "options": {
+                "temperature": 0.1,
+                "num_ctx": settings.ollama_agent_num_ctx,
+                "num_predict": settings.ollama_agent_num_predict,
+            },
+            "keep_alive": settings.ollama_agent_keep_alive,
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            settings.ollama_base_url.rstrip("/") + "/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=settings.ollama_agent_timeout_s,
+            ) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            raise AgentRuntimeUnavailable(
+                f"Ollama fallback indisponible: {exc}"
+            ) from exc
+
+        message = data.get("message") or {}
+        tool_calls = []
+        for index, raw_call in enumerate(message.get("tool_calls") or [], start=1):
+            function = raw_call.get("function") or {}
+            arguments = function.get("arguments") or {}
+            if not isinstance(arguments, str):
+                arguments = json.dumps(arguments, ensure_ascii=False)
+            tool_calls.append(
+                SimpleNamespace(
+                    id=f"ollama_fallback_{index}",
+                    function=SimpleNamespace(
+                        name=str(function.get("name") or ""),
+                        arguments=arguments,
+                    ),
+                )
+            )
+
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=str(message.get("content") or ""),
+                        tool_calls=tool_calls,
+                    ),
+                    finish_reason=(
+                        "tool_calls" if tool_calls else "stop"
+                    ),
+                )
+            ]
+        )
+
     def _chat(
         self,
         *,
@@ -1657,6 +1864,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
     ):
+        primary_error: AgentRuntimeUnavailable | None = None
         try:
             return super()._chat(
                 tool_choice=tool_choice,
@@ -1664,61 +1872,81 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 msf_tool_names=msf_tool_names,
             )
         except AgentRuntimeUnavailable as exc:
-            detail = str(exc).lower()
-            quota_failure = (
-                "429" in detail
-                or "quota" in detail
-                or "too_many_requests" in detail
-                or "rate limit" in detail
-            )
-            if (
-                not quota_failure
-                or not settings.cerebras_fallback_groq
-                or not settings.groq_api_key
-            ):
-                raise
+            primary_error = exc
 
-            try:
-                from openai import OpenAI
-            except ImportError:
-                raise
+        primary_detail = str(primary_error or "")
+        quota_failure = self._is_quota_failure(primary_detail)
 
+        if (
+            settings.cerebras_secondary_failover
+            and settings.cerebras_secondary_api_key
+            and self._secondary_eligible(primary_detail)
+        ):
             print(
-                "[AGENT] Cerebras quota unavailable; "
-                "falling back to Groq GPT-OSS for this round."
-            )
-            client = OpenAI(
-                api_key=settings.groq_api_key,
-                base_url=settings.groq_base_url.rstrip("/"),
-                timeout=settings.ai_request_timeout_s,
+                "[AGENT] Primary Cerebras unavailable; "
+                "trying secondary Cerebras organization."
             )
             try:
-                return client.chat.completions.create(
-                    model=settings.groq_agent_model,
-                    messages=self._messages,
-                    tools=self._tool_definitions(
-                        ms_football_only=ms_football_only,
-                        msf_tool_names=msf_tool_names,
-                    ),
+                return self._openai_compatible_chat(
+                    api_key=settings.cerebras_secondary_api_key,
+                    base_url=settings.cerebras_secondary_base_url,
+                    model=settings.cerebras_agent_model,
+                    provider_label="cerebras-secondary",
+                    reasoning_effort=settings.cerebras_reasoning_effort,
+                    max_completion_tokens=settings.cerebras_max_completion_tokens,
                     tool_choice=tool_choice,
-                    parallel_tool_calls=False,
+                    ms_football_only=ms_football_only,
+                    msf_tool_names=msf_tool_names,
+                )
+            except AgentRuntimeUnavailable as secondary_exc:
+                print(
+                    "[AGENT] Secondary Cerebras unavailable; "
+                    f"continuing failover: {secondary_exc}"
+                )
+
+        if settings.cerebras_fallback_groq and settings.groq_api_key:
+            if quota_failure:
+                print(
+                    "[AGENT] Cerebras quota unavailable; "
+                    "falling back to Groq GPT-OSS for this round."
+                )
+            else:
+                print(
+                    "[AGENT] Cerebras unavailable; "
+                    "falling back to Groq GPT-OSS for this round."
+                )
+            try:
+                return self._openai_compatible_chat(
+                    api_key=settings.groq_api_key,
+                    base_url=settings.groq_base_url,
+                    model=settings.groq_agent_model,
+                    provider_label="groq-fallback",
                     reasoning_effort=settings.groq_reasoning_effort,
-                    temperature=0.1,
                     max_completion_tokens=settings.groq_max_completion_tokens,
+                    tool_choice=tool_choice,
+                    ms_football_only=ms_football_only,
+                    msf_tool_names=msf_tool_names,
                 )
-            except Exception as fallback_exc:
-                status = getattr(fallback_exc, "status_code", None)
-                body = getattr(fallback_exc, "body", None)
-                fallback_detail = (
-                    body if body is not None else str(fallback_exc)
+            except AgentRuntimeUnavailable as groq_exc:
+                print(
+                    "[AGENT] Groq fallback unavailable; "
+                    f"continuing failover: {groq_exc}"
                 )
-                if status:
-                    raise AgentRuntimeUnavailable(
-                        f"Groq fallback API error {status}: {fallback_detail}"
-                    ) from fallback_exc
-                raise AgentRuntimeUnavailable(
-                    f"Groq fallback indisponible: {fallback_detail}"
-                ) from fallback_exc
+
+        if settings.cerebras_fallback_ollama:
+            print(
+                "[AGENT] Cloud brains unavailable; "
+                "falling back to local Ollama."
+            )
+            return self._ollama_fallback_chat(
+                tool_choice=tool_choice,
+                ms_football_only=ms_football_only,
+                msf_tool_names=msf_tool_names,
+            )
+
+        raise primary_error or AgentRuntimeUnavailable(
+            "Aucun cerveau agent n'est disponible."
+        )
 
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
