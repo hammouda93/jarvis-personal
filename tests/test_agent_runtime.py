@@ -404,6 +404,30 @@ class AgentRuntimeTests(unittest.TestCase):
             any(action.name == "mcp:gmail:search_mail" for action in second.actions)
         )
 
+    def test_cerebras_quota_does_not_use_secondary_org(self):
+        self.assertTrue(
+            CerebrasResponsesAgent._is_quota_failure(
+                "cerebras API error 429: request quota exceeded"
+            )
+        )
+        self.assertFalse(
+            CerebrasResponsesAgent._secondary_eligible(
+                "cerebras API error 429: request quota exceeded"
+            )
+        )
+
+    def test_cerebras_secondary_is_for_service_failover(self):
+        self.assertTrue(
+            CerebrasResponsesAgent._secondary_eligible(
+                "cerebras API error 503: service unavailable"
+            )
+        )
+        self.assertTrue(
+            CerebrasResponsesAgent._secondary_eligible(
+                "cerebras indisponible: connection timeout"
+            )
+        )
+
     def test_cerebras_provider_uses_gpt_oss_and_no_groq_browser_tool(self):
         tools = FakeTools()
         agent = CerebrasResponsesAgent(tools)
