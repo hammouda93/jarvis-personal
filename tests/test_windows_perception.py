@@ -3,7 +3,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from jarvis_agent.native_tools import NativeToolRegistry
-from jarvis_agent.windows_perception import inspect_active_window, _score_name
+from jarvis_agent.windows_perception import (
+    inspect_active_window,
+    write_ui_element,
+    _score_name,
+    _title_app_hint,
+)
 
 
 class _FakeRect:
@@ -29,6 +34,43 @@ class _FakeWindow:
 
     def descendants(self):
         return []
+
+
+class _FakeComboBox:
+    element_info = SimpleNamespace(
+        name="Search",
+        control_type="ComboBox",
+        automation_id="searchbox",
+    )
+
+    def __init__(self):
+        self.typed = []
+        self.focused = False
+        self.clicked = False
+
+    def window_text(self):
+        return "Search"
+
+    def rectangle(self):
+        return _FakeRect()
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def descendants(self):
+        return []
+
+    def set_focus(self):
+        self.focused = True
+
+    def click_input(self):
+        self.clicked = True
+
+    def type_keys(self, value, **_kwargs):
+        self.typed.append(value)
 
 
 class WindowsPerceptionTests(unittest.TestCase):
@@ -79,6 +121,42 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertIn("Cursor - Project", result.detail)
         self.assertIn("win32_window_only", result.detail)
         self.assertIn('"controls":[]', result.detail)
+
+    def test_title_app_hint_survives_changing_browser_page(self):
+        self.assertEqual(
+            _title_app_hint(
+                "Pointer GitHub puis tester - Google Chrome"
+            ),
+            "Google Chrome",
+        )
+        self.assertEqual(
+            _title_app_hint(
+                ".env - jarvis-main - Visual Studio Code"
+            ),
+            "Visual Studio Code",
+        )
+
+    @patch("jarvis_agent.windows_perception._snapshot_element")
+    def test_write_ui_element_types_into_combobox_fallback(
+        self,
+        snapshot_mock,
+    ):
+        combo = _FakeComboBox()
+        snapshot_mock.return_value = combo
+
+        result = write_ui_element(
+            "",
+            "Sports et intelligence artificielle",
+            ref="e3",
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(combo.focused)
+        self.assertTrue(combo.clicked)
+        self.assertEqual(
+            combo.typed[-1],
+            "Sports et intelligence artificielle",
+        )
 
     def test_exact_ui_label_scores_highest(self):
         self.assertEqual(_score_name("Paramètres", "Paramètres"), 1.0)
