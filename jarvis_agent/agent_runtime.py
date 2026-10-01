@@ -986,15 +986,20 @@ class GroqResponsesAgent:
 
     def _get_client(self):
         if not self.api_key:
+            env_name = (
+                "CEREBRAS_API_KEY"
+                if self.provider_name == "cerebras"
+                else "GROQ_API_KEY"
+            )
             raise AgentRuntimeUnavailable(
-                "GROQ_API_KEY n'est pas configurée."
+                f"{env_name} n'est pas configurée."
             )
         if self._client is None:
             try:
                 from openai import OpenAI
             except ImportError as exc:
                 raise AgentRuntimeUnavailable(
-                    "Le client OpenAI compatible Groq n'est pas installé. "
+                    "Le client OpenAI compatible n'est pas installé. "
                     "Exécutez pip install -r requirements.txt."
                 ) from exc
             self._client = OpenAI(
@@ -1089,7 +1094,10 @@ class GroqResponsesAgent:
                 if str((item.get("function") or {}).get("name") or "")[:4]
                 != "msf_"
             ]
-            if settings.groq_browser_search:
+            if (
+                self.provider_name == "groq"
+                and settings.groq_browser_search
+            ):
                 tools = [*tools, {"type": "browser_search"}]
         return tools
 
@@ -1371,7 +1379,7 @@ class GroqResponsesAgent:
 
             if not response.choices:
                 raise AgentRuntimeUnavailable(
-                    "Groq n'a retourné aucun choix."
+                    f"{self.provider_name} n'a retourné aucun choix."
                 )
 
             message = response.choices[0].message
