@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -81,13 +82,25 @@ class LocalMemory:
         if not text:
             return []
 
-        words = [
+        raw_words = [
             word.lower()
-            for word in text.replace("'", " ").split()
+            for word in re.findall(r"[a-zA-ZÀ-ÿ0-9]+", text)
             if len(word.strip()) >= 2
         ]
+        stopwords = {
+            "quel", "quelle", "quels", "quelles", "que", "quoi", "qui",
+            "est", "ce", "cet", "cette", "ces", "de", "du", "des", "le",
+            "la", "les", "un", "une", "mon", "ma", "mes", "ton", "ta",
+            "tes", "son", "sa", "ses", "notre", "nos", "votre", "vos",
+            "leur", "leurs", "je", "tu", "il", "elle", "nous", "vous",
+            "ils", "elles", "sur", "dans", "avec", "pour", "et", "ou",
+            "au", "aux", "me", "te", "se", "moi", "toi", "rappelle",
+            "rappelles", "souviens", "remember", "what", "which", "the",
+            "a", "an", "of", "about", "my", "your",
+        }
+        words = [word for word in raw_words if word not in stopwords]
         if not words:
-            words = [text.lower()]
+            words = raw_words or [text.lower()]
 
         clauses = []
         params: list[str | int] = []
@@ -100,7 +113,7 @@ class LocalMemory:
 
         sql = (
             "SELECT id, content, tags, created_at FROM memories WHERE "
-            + " OR ".join(clauses)
+            + " AND ".join(clauses)
             + " ORDER BY id DESC LIMIT ?"
         )
         params.append(max(1, min(int(limit), 20)))
