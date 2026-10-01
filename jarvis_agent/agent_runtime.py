@@ -262,6 +262,19 @@ def _blocked_memory_write_result() -> AgentActionResult:
     )
 
 
+def _blocked_persistent_recall_for_current_context() -> AgentActionResult:
+    return AgentActionResult(
+        name="recall_information",
+        success=False,
+        message=(
+            "L'information est déjà disponible dans le contexte temporaire "
+            "de cette conversation. Utilise ce contexte au lieu de consulter "
+            "la mémoire persistante."
+        ),
+        detail="persistent_recall_blocked_current_context",
+    )
+
+
 def _looks_like_memory_permission_prompt(text: str) -> bool:
     normalized = (text or "").lower().replace("’", "'").replace("‑", "-")
     patterns = (
