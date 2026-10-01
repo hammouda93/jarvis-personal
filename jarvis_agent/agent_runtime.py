@@ -1388,10 +1388,20 @@ class GroqResponsesAgent:
             if role in {"user", "assistant"}:
                 clean.append({"role": role, "content": content})
 
-        maximum = max(4, settings.agent_history_items)
+        maximum_turns = max(4, settings.agent_history_turns)
+        user_turns_seen = 0
+        start_index = 0
+        for index in range(len(clean) - 1, -1, -1):
+            if clean[index].get("role") != "user":
+                continue
+            user_turns_seen += 1
+            if user_turns_seen >= maximum_turns:
+                start_index = index
+                break
+
         self._messages = [
             {"role": "system", "content": _SYSTEM_INSTRUCTIONS},
-            *clean[-maximum:],
+            *clean[start_index:],
         ]
 
     def run(
