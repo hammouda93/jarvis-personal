@@ -128,6 +128,7 @@ class Settings:
     ).strip()
     agent_max_tool_rounds: int = _int("JARVIS_AGENT_MAX_TOOL_ROUNDS", 8)
     agent_history_items: int = _int("JARVIS_AGENT_HISTORY_ITEMS", 8)
+    agent_history_turns: int = _int("JARVIS_AGENT_HISTORY_TURNS", 20)
     ms_football_bridge_url: str = (
         os.getenv("JARVIS_MS_FOOTBALL_BRIDGE_URL")
         or "http://127.0.0.1:8765"
