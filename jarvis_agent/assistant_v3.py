@@ -331,6 +331,7 @@ class AssistantWorker(QObject):
             f"stt_provider={settings.stt_provider} "
             f"local_model={settings.ollama_agent_model} "
             f"groq_model={settings.groq_agent_model} "
+            f"cerebras_model={settings.cerebras_agent_model} "
             f"openai_model={settings.openai_agent_model}"
         )
         self._state(AssistantState.STARTING, "Initialisation de Jarvis…")
