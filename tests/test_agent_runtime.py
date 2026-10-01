@@ -10,6 +10,7 @@ from jarvis_agent.agent_runtime import (
     _looks_like_action_promise,
     _looks_like_unnecessary_followup,
     _is_explicit_memory_write_request,
+    _query_matches_recent_user_context,
     _looks_mostly_english,
     _visible_text,
 )
@@ -819,6 +820,177 @@ class AgentRuntimeTests(unittest.TestCase):
         }
         self.assertNotIn("msf_capabilities", names)
         self.assertIn("open_application", names)
+
+    def test_recent_project_name_matches_temporary_context(self):
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "user",
+                "content": "Je travaille sur un projet qui s'appelle Atlas Scope.",
+            },
+            {"role": "assistant", "content": "D'accord."},
+            {
+                "role": "user",
+                "content": "Donne-moi toutes les infos sur AtlasScope.",
+            },
+        ]
+
+        self.assertTrue(
+            _query_matches_recent_user_context("AtlasScope", messages)
+        )
+        self.assertFalse(
+            _query_matches_recent_user_context("Bitcoin", messages)
+        )
+
+    def test_groq_keeps_project_context_across_fifteen_followups(self):
+        agent = FakeGroqAgent(FakeTools(), [])
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "user",
+                "content": "Mon projet de test s'appelle Atlas Scope.",
+            },
+            {"role": "assistant", "content": "Compris."},
+        ]
+        for index in range(15):
+            messages.extend(
+                [
+                    {
+                        "role": "user",
+                        "content": f"Information suivante numéro {index}.",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": f"Bien reçu {index}.",
+                    },
+                ]
+            )
+        agent._messages = messages
+
+        agent._trim_history()
+
+        user_contents = [
+            item.get("content", "")
+            for item in agent._messages
+            if item.get("role") == "user"
+        ]
+        self.assertIn(
+            "Mon projet de test s'appelle Atlas Scope.",
+            user_contents,
+        )
+        self.assertEqual(len(user_contents), 16)
+
+    def test_groq_blocks_web_search_for_recent_conversation_project(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "D'accord, parlons d'Atlas Scope.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_context_web",
+                            "name": "search_web",
+                            "arguments": "{\"query\":\"AtlasScope\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": (
+                                        "Atlas Scope est le projet dont nous "
+                                        "parlons dans cette conversation."
+                                    ),
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        agent.run("Je travaille sur un projet qui s'appelle Atlas Scope.")
+        result = agent.run("Donne-moi toutes les infos sur AtlasScope.")
+
+        self.assertNotIn(
+            ("search_web", {"query": "AtlasScope"}),
+            tools.calls,
+        )
+        self.assertEqual(len(result.actions), 1)
+        self.assertFalse(result.actions[0].success)
+        self.assertIn(
+            "contextual_subject_web_search_not_requested",
+            result.actions[0].detail,
+        )
+
+    def test_groq_allows_explicit_web_search_for_recent_project_name(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "D'accord."}
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_explicit_web",
+                            "name": "search_web",
+                            "arguments": "{\"query\":\"AtlasScope\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "La recherche web est ouverte.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        agent.run("Je travaille sur un projet qui s'appelle Atlas Scope.")
+        result = agent.run("Recherche AtlasScope sur Internet.")
+
+        self.assertIn(
+            ("search_web", {"query": "AtlasScope"}),
+            tools.calls,
+        )
+        self.assertEqual(len(result.actions), 1)
+        self.assertTrue(result.actions[0].success)
 
     def test_groq_keeps_conversation_history_locally(self):
         tools = FakeTools()
