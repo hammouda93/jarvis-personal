@@ -971,6 +971,7 @@ class GroqResponsesAgent:
         ]
         self._pending_function_approval: dict[str, Any] | None = None
         self._last_msf_grounding_at = 0.0
+        self._active_domain = ""
 
     def reset(self) -> None:
         self._messages = [
@@ -978,6 +979,7 @@ class GroqResponsesAgent:
         ]
         self._pending_function_approval = None
         self._last_msf_grounding_at = 0.0
+        self._active_domain = ""
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         return
@@ -1002,22 +1004,73 @@ class GroqResponsesAgent:
             )
         return self._client
 
+    @staticmethod
+    def _looks_like_msf_followup(user_text: str) -> bool:
+        text = (user_text or "").lower()
+        terms = (
+            "joueur", "player", "vidéo", "video", "livr", "paiement",
+            "payé", "paye", "impay", "abonn", "sportsbase", "club",
+            "poste", "solde", "facture", "match", "performance",
+        )
+        return any(term in text for term in terms)
+
+    @staticmethod
+    def _msf_tool_names_for_text(user_text: str) -> set[str]:
+        text = (user_text or "").lower()
+        names = {
+            "msf_count_records",
+            "msf_describe_schema",
+            "msf_query_records",
+            "msf_readonly_sql",
+        }
+        if any(
+            term in text
+            for term in (
+                "code", "workflow", "fonctionne", "fonctionnement", "route",
+                "page", "écran", "ecran", "ouvre", "ouvrir", "email",
+                "automatisation", "livraison",
+            )
+        ):
+            names.update(
+                {
+                    "msf_search_code",
+                    "msf_list_routes",
+                    "msf_resolve_route",
+                    "open_url",
+                }
+            )
+        if any(
+            term in text
+            for term in (
+                "modifie", "modifier", "change", "changer", "supprime",
+                "supprimer", "crée", "cree", "créer", "ajoute", "ajouter",
+            )
+        ):
+            names.update(
+                {
+                    "msf_prepare_mutation",
+                    "msf_commit_mutation",
+                    "msf_search_code",
+                    "msf_list_routes",
+                }
+            )
+        if any(term in text for term in ("capacité", "capacite", "peut faire", "fonctionnalité", "fonctionnalite")):
+            names.add("msf_capabilities")
+        return names
+
     def _tool_definitions(
         self,
         *,
         ms_football_only: bool = False,
+        msf_tool_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         tools = self.tools.ollama_tools()
         if ms_football_only:
+            allowed = set(msf_tool_names or ())
             tools = [
                 item
                 for item in tools
-                if (
-                    str((item.get("function") or {}).get("name") or "")[:4]
-                    == "msf_"
-                    or str((item.get("function") or {}).get("name") or "")
-                    == "open_url"
-                )
+                if str((item.get("function") or {}).get("name") or "") in allowed
             ]
         else:
             # MS Football schemas are large and irrelevant to normal Windows
@@ -1047,6 +1100,7 @@ class GroqResponsesAgent:
         *,
         tool_choice: Any = "auto",
         ms_football_only: bool = False,
+        msf_tool_names: set[str] | None = None,
     ):
         client = self._get_client()
         try:
@@ -1055,11 +1109,13 @@ class GroqResponsesAgent:
                 messages=self._messages,
                 tools=self._tool_definitions(
                     ms_football_only=ms_football_only,
+                    msf_tool_names=msf_tool_names,
                 ),
                 tool_choice=tool_choice,
                 parallel_tool_calls=False,
                 reasoning_effort=self.reasoning_effort,
                 temperature=0.1,
+                max_completion_tokens=256,
             )
         except Exception as exc:
             status = getattr(exc, "status_code", None)
