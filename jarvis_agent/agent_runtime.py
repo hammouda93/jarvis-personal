@@ -255,6 +255,15 @@ def _blocked_memory_write_result() -> AgentActionResult:
     )
 
 
+def _looks_like_memory_permission_prompt(text: str) -> bool:
+    normalized = (text or "").lower().replace("’", "'")
+    patterns = (
+        r"\b(souhaitez-vous|voulez-vous|veux-tu)\b.{0,48}\b(retenir|mémoriser|memoriser)\b",
+        r"\b(do you want|would you like)\b.{0,48}\b(remember|memorize|memorise|save)\b",
+    )
+    return any(re.search(pattern, normalized, flags=re.DOTALL) for pattern in patterns)
+
+
 def _is_explicit_web_request(text: str) -> bool:
     normalized = (text or "").lower().replace("’", "'")
     markers = (
@@ -1561,6 +1570,14 @@ class GroqResponsesAgent:
                         )
                     else:
                         text = "Je suis là."
+                elif (
+                    not _is_explicit_memory_write_request(user_text)
+                    and _looks_like_memory_permission_prompt(text)
+                ):
+                    text = (
+                        "D'accord. Je garde cette information uniquement dans "
+                        "le contexte de cette conversation."
+                    )
                 self._trim_history()
                 return AgentTurnResult(
                     text=text,
