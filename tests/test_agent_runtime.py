@@ -204,6 +204,11 @@ class AgentRuntimeTests(unittest.TestCase):
                 "Souhaitez-vous que je retienne cette information ?"
             )
         )
+        self.assertTrue(
+            _looks_like_memory_permission_prompt(
+                "Souhaitez‑vous que je retienne cette information ?"
+            )
+        )
         self.assertFalse(
             _looks_like_memory_permission_prompt(
                 "D'accord, parlons de votre projet Atlas."
