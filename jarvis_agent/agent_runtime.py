@@ -1391,6 +1391,12 @@ class GroqResponsesAgent:
             ms_football_turn = explicit_msf or contextual_msf
             if explicit_msf:
                 self._active_domain = "ms_football"
+            elif self._active_domain == "ms_football" and not contextual_msf:
+                # A clear ordinary turn ends the implicit MS Football scope.
+                # This keeps useful follow-ups such as "Et les vidéos ?" while
+                # preventing unrelated later words such as "paiements" from
+                # being forced back into the MS Football database.
+                self._active_domain = ""
 
         msf_tool_names = (
             self._msf_tool_names_for_text(user_text)
