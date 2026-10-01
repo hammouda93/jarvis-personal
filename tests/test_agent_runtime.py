@@ -371,6 +371,23 @@ class AgentRuntimeTests(unittest.TestCase):
             any(action.name == "mcp:gmail:search_mail" for action in second.actions)
         )
 
+    def test_cerebras_secondary_failover_matches_quota_and_service_errors(self):
+        self.assertTrue(
+            CerebrasResponsesAgent._should_try_secondary(
+                AgentRuntimeUnavailable("cerebras API error 429: quota")
+            )
+        )
+        self.assertTrue(
+            CerebrasResponsesAgent._should_try_secondary(
+                AgentRuntimeUnavailable("cerebras API error 503")
+            )
+        )
+        self.assertFalse(
+            CerebrasResponsesAgent._should_try_secondary(
+                AgentRuntimeUnavailable("cerebras API error 400: bad request")
+            )
+        )
+
     def test_cerebras_provider_uses_gpt_oss_and_no_groq_browser_tool(self):
         tools = FakeTools()
         agent = CerebrasResponsesAgent(tools)
