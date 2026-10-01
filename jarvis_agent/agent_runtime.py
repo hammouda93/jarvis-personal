@@ -44,8 +44,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   explicitement de retenir/mémoriser une information. Ne demande pas spontanément
   à l'utilisateur s'il veut mémoriser une information: garde-la seulement dans
   le contexte de conversation tant qu'il ne demande pas de mémoire persistante;
-- si l'utilisateur demande ce que Jarvis se rappelle d'une information passée,
-  utilise recall_information au lieu d'inventer un souvenir;
+- recall_information sert uniquement à consulter la mémoire persistante quand
+  l'information n'est pas déjà disponible dans le contexte de la conversation
+  actuelle. Si la réponse est présente dans l'historique de session, réponds
+  directement sans interroger la mémoire persistante;
 - si l'utilisateur exprime naturellement l'intention d'oublier le contexte
   temporaire actuel, de repartir de zéro ou de commencer une nouvelle
   conversation, appelle reset_conversation_context. Comprends l'intention
@@ -257,37 +259,6 @@ def _blocked_memory_write_result() -> AgentActionResult:
             "sans demande explicite de la mémoriser."
         ),
         detail="memory_write_blocked_not_explicit",
-    )
-
-
-def _is_current_conversation_recall(text: str) -> bool:
-    normalized = (text or "").lower().replace("’", "'")
-    markers = (
-        "dont on parle",
-        "dont nous parlons",
-        "maintenant",
-        "dans cette conversation",
-        "dans notre conversation",
-        "dans cet échange",
-        "dans notre échange",
-        "juste avant",
-        "tout à l'heure",
-        "ce projet",
-        "dedans",
-    )
-    return any(marker in normalized for marker in markers)
-
-
-def _blocked_persistent_recall_for_current_context() -> AgentActionResult:
-    return AgentActionResult(
-        name="recall_information",
-        success=False,
-        message=(
-            "Cette question concerne le contexte de la conversation actuelle. "
-            "Réponds à partir de l'historique de session sans consulter la "
-            "mémoire persistante."
-        ),
-        detail="persistent_recall_blocked_current_context",
     )
 
 
@@ -1157,6 +1128,7 @@ class GroqResponsesAgent:
         self._pending_function_approval: dict[str, Any] | None = None
         self._last_msf_grounding_at = 0.0
         self._active_domain = ""
+        self._memory_write_allowed = False
 
     def reset(self) -> None:
         self._messages = [
@@ -1165,6 +1137,7 @@ class GroqResponsesAgent:
         self._pending_function_approval = None
         self._last_msf_grounding_at = 0.0
         self._active_domain = ""
+        self._memory_write_allowed = False
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         return
@@ -1279,6 +1252,13 @@ class GroqResponsesAgent:
                 if str((item.get("function") or {}).get("name") or "")[:4]
                 != "msf_"
             ]
+            if not self._memory_write_allowed:
+                tools = [
+                    item
+                    for item in tools
+                    if str((item.get("function") or {}).get("name") or "")
+                    != "remember_information"
+                ]
             if (
                 self.provider_name == "groq"
                 and settings.groq_browser_search
@@ -1479,6 +1459,7 @@ class GroqResponsesAgent:
         end_session = False
         should_exit = False
         failed_results: dict[str, AgentActionResult] = {}
+        self._memory_write_allowed = _is_explicit_memory_write_request(user_text)
 
         if self._pending_function_approval is not None:
             normalized = user_text.strip().lower().strip(" .!?")
@@ -1693,7 +1674,10 @@ class GroqResponsesAgent:
                     result = _blocked_memory_write_result()
                 elif (
                     name == "recall_information"
-                    and _is_current_conversation_recall(user_text)
+                    and _query_matches_recent_user_context(
+                        str(arguments.get("query", "")),
+                        self._messages,
+                    )
                 ):
                     result = _blocked_persistent_recall_for_current_context()
                 elif (
