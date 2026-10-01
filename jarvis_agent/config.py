@@ -152,6 +152,14 @@ class Settings:
     cerebras_base_url: str = (
         os.getenv("CEREBRAS_BASE_URL") or "https://api.cerebras.ai/v1"
     ).strip()
+    cerebras_secondary_api_key: str = (
+        os.getenv("CEREBRAS_SECONDARY_API_KEY") or ""
+    ).strip()
+    cerebras_secondary_base_url: str = (
+        os.getenv("CEREBRAS_SECONDARY_BASE_URL")
+        or os.getenv("CEREBRAS_BASE_URL")
+        or "https://api.cerebras.ai/v1"
+    ).strip()
     cerebras_agent_model: str = (
         os.getenv("JARVIS_CEREBRAS_AGENT_MODEL") or "gpt-oss-120b"
     ).strip()
