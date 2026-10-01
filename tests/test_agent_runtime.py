@@ -534,6 +534,71 @@ class AgentRuntimeTests(unittest.TestCase):
             agent.payloads[2]["msf_tool_names"],
         )
 
+    def test_recent_msf_grounding_does_not_skip_new_followup_query(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_first",
+                            "name": "msf_count_records",
+                            "arguments": "{\"model\":\"Player\"}",
+                        }
+                    ],
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "264 joueurs."}
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": ""}
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_followup",
+                            "name": "msf_count_records",
+                            "arguments": "{\"model\":\"Video\"}",
+                        }
+                    ],
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "10 vidéos."}
+                            ],
+                        }
+                    ],
+                },
+            ],
+        )
+
+        agent.run("Combien de joueurs dans MS Football ?")
+        result = agent.run("Et combien de vidéos sont en cours ?")
+
+        self.assertEqual(result.text, "10 vidéos.")
+        self.assertEqual(tools.calls[-1][0], "msf_count_records")
+        self.assertGreaterEqual(len(agent.payloads), 5)
+
     def test_groq_hides_msf_tools_from_regular_turns(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
