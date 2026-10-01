@@ -1042,6 +1042,49 @@ class GroqResponsesAgent:
         return any(term in text for term in terms)
 
     @staticmethod
+    def _looks_like_msf_business_request(user_text: str) -> bool:
+        text = (user_text or "").lower()
+        compact = re.sub(r"[^a-z0-9à-ÿ]+", " ", text)
+
+        if any(
+            term in compact
+            for term in (
+                "sportsbase",
+                "abonnement performance",
+                "automationrun",
+                "client portal",
+                "espace client",
+            )
+        ):
+            return True
+
+        video_terms = ("vidéo", "video", "vidéos", "videos")
+        video_context = (
+            "deadline", "statut", "status", "pending", "delivered",
+            "in progress", "livrée", "livre", "paiement", "impay",
+            "avance", "solde",
+        )
+        if any(term in compact for term in video_terms) and any(
+            term in compact for term in video_context
+        ):
+            return True
+
+        football_terms = (
+            "joueur", "joueurs", "player", "players",
+        )
+        player_context = (
+            "club", "poste", "position", "défenseur", "defenseur",
+            "milieu", "attaquant", "gardien", "dernier ajouté",
+            "derniers ajoutés",
+        )
+        if any(term in compact for term in football_terms) and any(
+            term in compact for term in player_context
+        ):
+            return True
+
+        return False
+
+    @staticmethod
     def _msf_requires_data_read(user_text: str) -> bool:
         text = (user_text or "").lower()
         if any(
@@ -1170,13 +1213,18 @@ class GroqResponsesAgent:
         msf_tool_names: set[str] | None = None,
     ):
         client = self._get_client()
-        try:
+
+        def create_chat(
+            *,
+            domain_only: bool,
+            domain_tools: set[str] | None,
+        ):
             return client.chat.completions.create(
                 model=self.model,
                 messages=self._messages,
                 tools=self._tool_definitions(
-                    ms_football_only=ms_football_only,
-                    msf_tool_names=msf_tool_names,
+                    ms_football_only=domain_only,
+                    msf_tool_names=domain_tools,
                 ),
                 tool_choice=tool_choice,
                 parallel_tool_calls=False,
@@ -1184,10 +1232,54 @@ class GroqResponsesAgent:
                 temperature=0.1,
                 max_completion_tokens=self.max_completion_tokens,
             )
+
+        try:
+            return create_chat(
+                domain_only=ms_football_only,
+                domain_tools=msf_tool_names,
+            )
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             body = getattr(exc, "body", None)
             detail = body if body is not None else str(exc)
+            detail_text = str(detail)
+
+            # GPT-OSS can correctly infer that an utterance concerns MS Football
+            # even when STT dropped the literal words "MS Football". Some
+            # providers reject that inferred tool call when the domain pack was
+            # omitted from request.tools. Repair the routing locally and retry
+            # the same provider instead of treating this as provider downtime.
+            missing_tool_match = re.search(
+                r"attempted to call tool ['\"](msf_[a-z0-9_]+)['\"] "
+                r"which was not in request\.tools",
+                detail_text,
+                flags=re.IGNORECASE,
+            )
+            if status == 400 and missing_tool_match:
+                attempted = missing_tool_match.group(1)
+                repair_tools = set(msf_tool_names or ())
+                repair_tools.update(
+                    {
+                        attempted,
+                        "msf_count_records",
+                        "msf_describe_schema",
+                        "msf_query_records",
+                    }
+                )
+                print(
+                    "[AGENT] Dynamic MS Football routing repair: "
+                    f"adding {attempted} and retrying {self.provider_name}."
+                )
+                try:
+                    return create_chat(
+                        domain_only=True,
+                        domain_tools=repair_tools,
+                    )
+                except Exception as retry_exc:
+                    status = getattr(retry_exc, "status_code", None)
+                    body = getattr(retry_exc, "body", None)
+                    detail = body if body is not None else str(retry_exc)
+
             if status:
                 raise AgentRuntimeUnavailable(
                     f"{self.provider_name} API error {status}: {detail}"
@@ -1397,7 +1489,10 @@ class GroqResponsesAgent:
             self._messages.append(
                 {"role": "user", "content": user_text}
             )
-            explicit_msf = self._is_ms_football_request(user_text)
+            explicit_msf = (
+                self._is_ms_football_request(user_text)
+                or self._looks_like_msf_business_request(user_text)
+            )
             contextual_msf = (
                 self._active_domain == "ms_football"
                 and self._looks_like_msf_followup(user_text)
@@ -1873,6 +1968,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             )
         except AgentRuntimeUnavailable as exc:
             primary_error = exc
+            print(f"[AGENT] Primary Cerebras error: {exc}")
 
         primary_detail = str(primary_error or "")
         quota_failure = self._is_quota_failure(primary_detail)
