@@ -1021,8 +1021,15 @@ class GroqResponsesAgent:
             "msf_count_records",
             "msf_describe_schema",
             "msf_query_records",
-            "msf_readonly_sql",
         }
+        if any(
+            term in text
+            for term in (
+                "sql", "jointure", "agrég", "agreg", "group by",
+                "analyse complexe", "statistique complexe",
+            )
+        ):
+            names.add("msf_readonly_sql")
         if any(
             term in text
             for term in (
