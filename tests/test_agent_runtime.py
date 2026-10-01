@@ -9,6 +9,7 @@ from jarvis_agent.agent_runtime import (
     CerebrasResponsesAgent,
     _looks_like_action_promise,
     _looks_like_unnecessary_followup,
+    _is_explicit_memory_write_request,
     _looks_mostly_english,
     _visible_text,
 )
@@ -194,6 +195,111 @@ class FakeGroqAgent(GroqResponsesAgent):
 
 
 class AgentRuntimeTests(unittest.TestCase):
+
+    def test_memory_write_requires_explicit_user_request(self):
+        self.assertFalse(
+            _is_explicit_memory_write_request(
+                "Mon deuxième projet s'appelle Neptune."
+            )
+        )
+        self.assertFalse(
+            _is_explicit_memory_write_request(
+                "Je travaille actuellement sur le projet Atlas."
+            )
+        )
+        self.assertTrue(
+            _is_explicit_memory_write_request(
+                "Retiens que mon projet préféré s'appelle Orion."
+            )
+        )
+        self.assertTrue(
+            _is_explicit_memory_write_request(
+                "Garde ça en mémoire pour plus tard."
+            )
+        )
+
+    def test_groq_blocks_unsolicited_persistent_memory_write(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_memory_blocked",
+                            "name": "remember_information",
+                            "arguments": "{\"content\":\"Projet Neptune\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "D'accord.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Mon deuxième projet s'appelle Neptune.")
+
+        self.assertEqual(tools.calls, [])
+        self.assertEqual(len(result.actions), 1)
+        self.assertFalse(result.actions[0].success)
+        self.assertEqual(
+            result.actions[0].detail,
+            "memory_write_blocked_not_explicit",
+        )
+
+    def test_groq_allows_explicit_persistent_memory_write(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_memory_allowed",
+                            "name": "remember_information",
+                            "arguments": "{\"content\":\"Projet Orion\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "C'est mémorisé.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Retiens que mon projet de test préféré s'appelle Orion."
+        )
+
+        self.assertEqual(
+            tools.calls,
+            [("remember_information", {"content": "Projet Orion"})],
+        )
+        self.assertEqual(len(result.actions), 1)
+        self.assertTrue(result.actions[0].success)
 
     def test_action_promise_is_detected(self):
         self.assertTrue(
