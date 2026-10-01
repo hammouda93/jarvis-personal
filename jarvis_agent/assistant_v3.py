@@ -93,40 +93,6 @@ class AssistantWorker(QObject):
         return True, True
 
     @staticmethod
-    def _is_new_conversation_command(user_text: str) -> bool:
-        """Recognize a session reset even with short conversational fillers."""
-        normalized = (user_text or "").lower().replace("’", "'").replace("‑", "-")
-        normalized = re.sub(r"[^a-z0-9à-ÿ' -]+", " ", normalized)
-        normalized = re.sub(r"\s+", " ", normalized).strip(" .!?,-")
-
-        fillers = (
-            "ok ",
-            "okay ",
-            "d'accord ",
-            "daccord ",
-            "bon ",
-            "très bien ",
-            "tres bien ",
-            "maintenant ",
-            "ok maintenant ",
-            "okay maintenant ",
-        )
-        changed = True
-        while changed:
-            changed = False
-            for prefix in fillers:
-                if normalized.startswith(prefix):
-                    normalized = normalized[len(prefix):].strip(" .!?,-")
-                    changed = True
-                    break
-
-        return normalized in {
-            "nouvelle conversation",
-            "nouvelle discussion",
-            "oublie cette conversation",
-        }
-
-    @staticmethod
     def _is_simple_direct_action(user_text: str, intent: ToolIntent) -> bool:
         """Fast path only for one explicit deterministic action.
 
@@ -268,13 +234,6 @@ class AssistantWorker(QObject):
         lifecycle_handled, keep_listening = self._handle_lifecycle(user_text)
         if lifecycle_handled:
             return keep_listening
-
-        if self._is_new_conversation_command(user_text):
-            self._agent.reset()
-            self._pending_direct_follow_up = ""
-            self.log_line.emit("[SESSION] nouvelle conversation — contexte réinitialisé")
-            self._speak("Très bien. On repart sur une nouvelle conversation.")
-            return True
 
         if self._pending_direct_follow_up:
             follow_up = self._pending_direct_follow_up
