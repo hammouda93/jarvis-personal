@@ -29,6 +29,7 @@ class AssistantWorker(QObject):
     state_changed = Signal(str)
     status_changed = Signal(str)
     transcript_changed = Signal(str)
+    response_changed = Signal(str)
     detail_changed = Signal(str)
     audio_level_changed = Signal(float)
     log_line = Signal(str)
@@ -56,6 +57,8 @@ class AssistantWorker(QObject):
         if not text:
             return
         text = re.sub(r"[*_#]+", "", text).replace("`", "").strip()
+        if text != settings.wake_phrase:
+            self.response_changed.emit(text)
         self._state(AssistantState.SPEAKING, text)
         self.log_line.emit(f"[TTS] {text}")
         self._tts.speak(text, on_level=self._level)
