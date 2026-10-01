@@ -256,10 +256,11 @@ def _blocked_memory_write_result() -> AgentActionResult:
 
 
 def _looks_like_memory_permission_prompt(text: str) -> bool:
-    normalized = (text or "").lower().replace("’", "'")
+    normalized = (text or "").lower().replace("’", "'").replace("‑", "-")
     patterns = (
-        r"\b(souhaitez-vous|voulez-vous|veux-tu)\b.{0,48}\b(retenir|mémoriser|memoriser)\b",
-        r"\b(do you want|would you like)\b.{0,48}\b(remember|memorize|memorise|save)\b",
+        r"\b(souhaitez-vous|voulez-vous|veux-tu)\b.{0,64}\b(retien(?:s|ne|nes|nent)?|retenir|mémoris(?:e|es|er|ez)?|memoris(?:e|es|er|ez)?)\b",
+        r"\b(souhaitez-vous|voulez-vous|veux-tu)\b.{0,64}\b(garder|garde|gardez)\b.{0,24}\ben mémoire\b",
+        r"\b(do you want|would you like)\b.{0,64}\b(remember|memorize|memorise|save)\b",
     )
     return any(re.search(pattern, normalized, flags=re.DOTALL) for pattern in patterns)
 
