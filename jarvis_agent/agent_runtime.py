@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import socket
@@ -40,9 +41,15 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
 - n'invente jamais qu'une action a réussi;
 - n'invente pas une capacité qui n'existe pas;
 - n'enregistre rien dans la mémoire personnelle sauf si l'utilisateur demande
-  explicitement de retenir/mémoriser une information;
+  explicitement de retenir/mémoriser une information. Ne demande pas spontanément
+  à l'utilisateur s'il veut mémoriser une information: garde-la seulement dans
+  le contexte de conversation tant qu'il ne demande pas de mémoire persistante;
 - si l'utilisateur demande ce que Jarvis se rappelle d'une information passée,
   utilise recall_information au lieu d'inventer un souvenir;
+- si un nom, projet ou sujet vient d'être introduit par l'utilisateur dans la
+  conversation, utilise d'abord ce contexte quand il demande des informations
+  dessus. Ne lance pas une recherche web sauf s'il demande explicitement de
+  chercher/vérifier sur Internet ou si le contexte ne suffit clairement pas;
 - pour agir dans une application déjà ouverte, utilise d'abord list_windows ou
   inspect_active_window afin d'observer l'interface réelle;
 - ne devine jamais le nom d'un bouton ou d'un menu si inspect_active_window peut
@@ -66,6 +73,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   "voulez-vous que je..." pour une étape déjà demandée;
 - si la cible demandée est un site ou service web, utilise open_url directement
   lorsque son URL est connue; ouvrir seulement Chrome n'accomplit pas la demande;
+- search_web ouvre seulement la page de résultats dans le navigateur de
+  l'utilisateur. Son succès ne signifie PAS que les résultats ont été lus et
+  ne constitue jamais une preuve factuelle. N'invente jamais des faits, sources,
+  prix, fonctionnalités ou actualités à partir du seul retour de search_web;
 - n'annonce jamais "je vais chercher/ouvrir/faire" sans appeler l'outil dans le
   même tour.
 - pour toute demande concernant MS Football, ne devine jamais le schéma, les
@@ -241,6 +252,73 @@ def _blocked_memory_write_result() -> AgentActionResult:
             "sans demande explicite de la mémoriser."
         ),
         detail="memory_write_blocked_not_explicit",
+    )
+
+
+def _is_explicit_web_request(text: str) -> bool:
+    normalized = (text or "").lower().replace("’", "'")
+    markers = (
+        "cherche", "recherche", "sur internet", "internet", "sur le web",
+        "web", "google", "en ligne", "vérifie en ligne", "verifie en ligne",
+        "search", "look up", "online",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def _query_matches_recent_user_context(
+    query: str,
+    messages: list[dict[str, Any]],
+) -> bool:
+    """Detect a named subject that was just introduced in conversation.
+
+    This prevents a model from treating a user-created project name as an
+    unknown public product and launching a web search without being asked.
+    """
+    query_words = re.findall(r"[a-z0-9]+", (query or "").lower())
+    query_compact = "".join(query_words)
+    if len(query_compact) < 5:
+        return False
+
+    user_texts = [
+        str(item.get("content") or "")
+        for item in messages
+        if item.get("role") == "user"
+    ]
+    # The last user message is the current request. Compare only with earlier
+    # conversational turns.
+    for text in user_texts[:-1][-8:]:
+        words = re.findall(r"[a-z0-9]+", text.lower())
+        for size in range(1, min(4, len(words)) + 1):
+            for start in range(0, len(words) - size + 1):
+                candidate = "".join(words[start : start + size])
+                if len(candidate) < 4:
+                    continue
+                if query_compact in candidate or candidate in query_compact:
+                    return True
+                if difflib.SequenceMatcher(
+                    None, query_compact, candidate
+                ).ratio() >= 0.86:
+                    return True
+    return False
+
+
+def _blocked_contextual_web_search_result(query: str) -> AgentActionResult:
+    return AgentActionResult(
+        name="search_web",
+        success=False,
+        message=(
+            "Ce sujet correspond à un élément déjà introduit dans la "
+            "conversation. Utilise d'abord le contexte de conversation; "
+            "une recherche web n'a pas été demandée."
+        ),
+        detail=json.dumps(
+            {
+                "query": query,
+                "reason": "contextual_subject_web_search_not_requested",
+                "results_read": False,
+            },
+            ensure_ascii=False,
+        ),
     )
 
 
@@ -1531,6 +1609,17 @@ class GroqResponsesAgent:
                     and not _is_explicit_memory_write_request(user_text)
                 ):
                     result = _blocked_memory_write_result()
+                elif (
+                    name == "search_web"
+                    and not _is_explicit_web_request(user_text)
+                    and _query_matches_recent_user_context(
+                        str(arguments.get("query", "")),
+                        self._messages,
+                    )
+                ):
+                    result = _blocked_contextual_web_search_result(
+                        str(arguments.get("query", ""))
+                    )
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
