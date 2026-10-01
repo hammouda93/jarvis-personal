@@ -6,6 +6,7 @@ from jarvis_agent.agent_runtime import (
     OllamaToolAgent,
     OpenAIResponsesAgent,
     GroqResponsesAgent,
+    CerebrasResponsesAgent,
     _looks_like_action_promise,
     _looks_like_unnecessary_followup,
     _looks_mostly_english,
@@ -369,6 +370,19 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(
             any(action.name == "mcp:gmail:search_mail" for action in second.actions)
         )
+
+    def test_cerebras_provider_uses_gpt_oss_and_no_groq_browser_tool(self):
+        tools = FakeTools()
+        agent = CerebrasResponsesAgent(tools)
+        agent.api_key = "test"
+
+        self.assertEqual(agent.provider_name, "cerebras")
+        self.assertEqual(agent.model, "gpt-oss-120b")
+        names = {
+            item.get("type")
+            for item in agent._tool_definitions()
+        }
+        self.assertNotIn("browser_search", names)
 
     def test_groq_provider_uses_gpt_oss_chat_tools(self):
         tools = FakeTools()
