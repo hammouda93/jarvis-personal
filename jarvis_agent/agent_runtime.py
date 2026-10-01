@@ -1017,6 +1017,8 @@ class GroqResponsesAgent:
             "joueur", "player", "vidéo", "video", "livr", "paiement",
             "payé", "paye", "impay", "abonn", "sportsbase", "club",
             "poste", "solde", "facture", "match", "performance",
+            "tu inventes", "réessaie", "reessaie", "précédent",
+            "precedent", "inspecte", "inspect", "msf",
         )
         return any(term in text for term in terms)
 
@@ -1125,10 +1127,12 @@ class GroqResponsesAgent:
     @staticmethod
     def _is_ms_football_request(user_text: str) -> bool:
         normalized = (user_text or "").lower()
+        compact = re.sub(r"[^a-z0-9]+", "", normalized)
         return (
             "ms football" in normalized
-            or "msfootball" in normalized
-            or "ms_football" in normalized
+            or "msfootball" in compact
+            or "mscootball" in compact
+            or "msf" in normalized.split()
         )
 
     def _chat(
