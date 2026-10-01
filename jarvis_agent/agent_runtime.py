@@ -255,6 +255,37 @@ def _blocked_memory_write_result() -> AgentActionResult:
     )
 
 
+def _is_current_conversation_recall(text: str) -> bool:
+    normalized = (text or "").lower().replace("’", "'")
+    markers = (
+        "dont on parle",
+        "dont nous parlons",
+        "maintenant",
+        "dans cette conversation",
+        "dans notre conversation",
+        "dans cet échange",
+        "dans notre échange",
+        "juste avant",
+        "tout à l'heure",
+        "ce projet",
+        "dedans",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def _blocked_persistent_recall_for_current_context() -> AgentActionResult:
+    return AgentActionResult(
+        name="recall_information",
+        success=False,
+        message=(
+            "Cette question concerne le contexte de la conversation actuelle. "
+            "Réponds à partir de l'historique de session sans consulter la "
+            "mémoire persistante."
+        ),
+        detail="persistent_recall_blocked_current_context",
+    )
+
+
 def _looks_like_memory_permission_prompt(text: str) -> bool:
     normalized = (text or "").lower().replace("’", "'").replace("‑", "-")
     patterns = (
@@ -1638,6 +1669,11 @@ class GroqResponsesAgent:
                     and not _is_explicit_memory_write_request(user_text)
                 ):
                     result = _blocked_memory_write_result()
+                elif (
+                    name == "recall_information"
+                    and _is_current_conversation_recall(user_text)
+                ):
+                    result = _blocked_persistent_recall_for_current_context()
                 elif (
                     name == "search_web"
                     and not _is_explicit_web_request(user_text)
