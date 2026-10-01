@@ -286,7 +286,8 @@ def _query_matches_recent_user_context(
     ]
     # The last user message is the current request. Compare only with earlier
     # conversational turns.
-    for text in user_texts[:-1][-8:]:
+    context_turns = max(8, settings.agent_history_turns)
+    for text in user_texts[:-1][-context_turns:]:
         words = re.findall(r"[a-z0-9]+", text.lower())
         for size in range(1, min(4, len(words)) + 1):
             for start in range(0, len(words) - size + 1):
