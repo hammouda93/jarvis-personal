@@ -213,6 +213,37 @@ def _looks_like_unnecessary_followup(text: str) -> bool:
     return any(marker in lower for marker in markers)
 
 
+def _is_explicit_memory_write_request(text: str) -> bool:
+    """Allow persistent memory writes only when the user explicitly asks.
+
+    Model instructions are not a sufficient safety boundary: a model may still
+    choose remember_information for an ordinary statement. Keep the final
+    decision deterministic in the runtime so conversation context and
+    persistent memory remain separate.
+    """
+    normalized = (text or "").lower().replace("’", "'").strip()
+    patterns = (
+        r"\b(retiens|retenez|mémorise|memorise|mémorisez|memorisez)\b",
+        r"\b(garde|gardez|conserve|conservez)\b.{0,32}\ben mémoire\b",
+        r"\b(souviens-toi|souvenez-vous)\b",
+        r"\b(remember|memorize|memorise)\b",
+        r"\b(save|keep)\b.{0,24}\b(in )?(memory|mind)\b",
+    )
+    return any(re.search(pattern, normalized, flags=re.DOTALL) for pattern in patterns)
+
+
+def _blocked_memory_write_result() -> AgentActionResult:
+    return AgentActionResult(
+        name="remember_information",
+        success=False,
+        message=(
+            "Je n'enregistre pas cette information dans la mémoire persistante "
+            "sans demande explicite de la mémoriser."
+        ),
+        detail="memory_write_blocked_not_explicit",
+    )
+
+
 def _looks_mostly_english(text: str) -> bool:
     words = re.findall(r"[a-zA-ZÀ-ÿ']+", (text or "").lower())
     if len(words) < 4:
@@ -476,7 +507,13 @@ class OllamaToolAgent:
                     phase("acting")
 
                 tool_started = time.perf_counter()
-                result = self.tools.execute(name, arguments)
+                if (
+                    name == "remember_information"
+                    and not _is_explicit_memory_write_request(user_text)
+                ):
+                    result = _blocked_memory_write_result()
+                else:
+                    result = self.tools.execute(name, arguments)
                 if log:
                     log(
                         f"[PERF] tool={name} "
@@ -893,7 +930,13 @@ class OpenAIResponsesAgent:
                         should_exit=should_exit,
                     )
 
-                result = self.tools.execute(name, arguments)
+                if (
+                    name == "remember_information"
+                    and not _is_explicit_memory_write_request(user_text)
+                ):
+                    result = _blocked_memory_write_result()
+                else:
+                    result = self.tools.execute(name, arguments)
                 actions.append(result)
                 if result.success and name.startswith("msf_"):
                     self._last_msf_grounding_at = time.monotonic()
@@ -1477,7 +1520,13 @@ class GroqResponsesAgent:
                     )
 
                 tool_started = time.perf_counter()
-                result = self.tools.execute(name, arguments)
+                if (
+                    name == "remember_information"
+                    and not _is_explicit_memory_write_request(user_text)
+                ):
+                    result = _blocked_memory_write_result()
+                else:
+                    result = self.tools.execute(name, arguments)
                 actions.append(result)
                 if not result.success:
                     failed_results[signature] = result
