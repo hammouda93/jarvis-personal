@@ -228,6 +228,161 @@ def _native_visible_windows(*, limit: int = 20) -> list[dict[str, Any]]:
     return items
 
 
+def _native_window_candidates(*, limit: int = 40) -> list[dict[str, Any]]:
+    """Return visible top-level windows in Win32 z-order with stable handles."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    items: list[dict[str, Any]] = []
+    seen: set[int] = set()
+
+    enum_proc = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HWND,
+        wintypes.LPARAM,
+    )
+
+    @enum_proc
+    def callback(hwnd, _lparam):
+        try:
+            handle = int(hwnd or 0)
+            if not handle or handle in seen or not user32.IsWindowVisible(hwnd):
+                return True
+
+            length = int(user32.GetWindowTextLengthW(hwnd) or 0)
+            if length <= 0:
+                return True
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            title = str(buffer.value or "").strip()
+            key = normalize(title)
+            if not key:
+                return True
+
+            rect = wintypes.RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                bounds = (0, 0, 0, 0)
+            else:
+                bounds = (
+                    int(rect.left),
+                    int(rect.top),
+                    int(rect.right),
+                    int(rect.bottom),
+                )
+
+            width = max(0, bounds[2] - bounds[0])
+            height = max(0, bounds[3] - bounds[1])
+            if width < 80 or height < 60:
+                return True
+            if key in {"program manager", "barre des taches"}:
+                return True
+
+            seen.add(handle)
+            items.append(
+                {
+                    "handle": handle,
+                    "title": title[:180],
+                    "bounds": bounds,
+                }
+            )
+            return len(items) < max(1, min(int(limit), 80))
+        except Exception:
+            return True
+
+    user32.EnumWindows(callback, 0)
+    return items
+
+
+def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
+    """Resolve a requested/foreground work window without UI Automation."""
+    import ctypes
+
+    candidates = _native_window_candidates(limit=60)
+    if not candidates:
+        return None
+
+    target = (title or "").strip()
+    if target:
+        ranked = sorted(
+            (
+                (_score_name(target, str(item.get("title") or "")), item)
+                for item in candidates
+            ),
+            key=lambda pair: -pair[0],
+        )
+        if not ranked or ranked[0][0] < 0.82:
+            return None
+        return ranked[0][1]
+
+    try:
+        foreground = int(ctypes.windll.user32.GetForegroundWindow() or 0)
+    except Exception:
+        foreground = 0
+
+    if foreground:
+        for item in candidates:
+            if int(item.get("handle") or 0) != foreground:
+                continue
+            if normalize(str(item.get("title") or "")) != "jarvis personal":
+                return item
+            break
+
+    # EnumWindows follows top-level z-order. If Jarvis temporarily owns the
+    # foreground, choose the first substantial visible non-Jarvis work window.
+    for item in candidates:
+        if normalize(str(item.get("title") or "")) == "jarvis personal":
+            continue
+        return item
+    return None
+
+
+def _uia_window_from_handle(handle: int):
+    """Attach UI Automation directly to an already resolved Win32 HWND."""
+    specification = _desktop().window(handle=int(handle))
+    wrapper_object = getattr(specification, "wrapper_object", None)
+    if callable(wrapper_object):
+        return wrapper_object()
+    return specification
+
+
+def _native_compact_window(item: dict[str, Any]) -> dict[str, Any]:
+    bounds = tuple(item.get("bounds") or (0, 0, 0, 0))
+    return {
+        "title": str(item.get("title") or ""),
+        "type": "Window",
+        "bounds": [int(value) for value in bounds],
+    }
+
+
+def _native_only_inspection(
+    item: dict[str, Any],
+    *,
+    uia_error: str,
+) -> UIActionResult:
+    """Return useful window perception even when its UIA tree is unavailable."""
+    global _SNAPSHOT_ELEMENTS, _SNAPSHOT_WINDOW_TITLE
+
+    _SNAPSHOT_ELEMENTS = {}
+    _SNAPSHOT_WINDOW_TITLE = str(item.get("title") or "").strip()
+    payload = {
+        "window": _native_compact_window(item),
+        "controls": [],
+        "fallback": "win32_window_only",
+        "uia_error": str(uia_error or "")[:300],
+        "note": (
+            "La fenêtre est identifiée par Win32, mais son arbre UI Automation "
+            "n'est pas disponible. Les actions par ref nécessitent une nouvelle "
+            "inspection UIA."
+        ),
+    }
+    return UIActionResult(
+        True,
+        f"Fenêtre détectée: {_SNAPSHOT_WINDOW_TITLE or 'sans titre'}.",
+        _json(payload),
+    )
+
+
 def list_windows(*, limit: int = 20) -> UIActionResult:
     uia_error = ""
     items: list[dict[str, Any]] = []
@@ -298,20 +453,78 @@ def inspect_active_window(
     """
     global _SNAPSHOT_ELEMENTS, _SNAPSHOT_WINDOW_TITLE
 
+    window = None
+    native_item: dict[str, Any] | None = None
+    uia_error = ""
+
     try:
         window = _window_by_title(title) if title else _active_window()
     except Exception as exc:
-        return UIActionResult(False, "Impossible d'inspecter la fenêtre.", str(exc))
+        uia_error = str(exc)
 
+    # UI Automation top-level enumeration can intermittently fail with
+    # WinError 6 when a window disappears. Resolve the HWND with Win32, then
+    # attach UIA directly to that stable handle instead of enumerating again.
     if window is None:
-        if title:
-            return UIActionResult(False, f"Fenêtre introuvable: {title}.")
-        return UIActionResult(False, "Aucune fenêtre active détectée.")
+        try:
+            native_item = _native_target_window(title)
+        except Exception as exc:
+            native_error = str(exc)
+            detail = f"UIA: {uia_error}; Win32: {native_error}" if uia_error else native_error
+            return UIActionResult(
+                False,
+                "Impossible d'inspecter la fenêtre.",
+                detail,
+            )
+
+        if native_item is None:
+            if title:
+                detail = uia_error or title
+                return UIActionResult(False, f"Fenêtre introuvable: {title}.", detail)
+            return UIActionResult(
+                False,
+                "Aucune fenêtre active détectée.",
+                uia_error,
+            )
+
+        try:
+            window = _uia_window_from_handle(int(native_item["handle"]))
+        except Exception as exc:
+            attach_error = str(exc)
+            combined = (
+                f"{uia_error}; attach: {attach_error}"
+                if uia_error
+                else attach_error
+            )
+            return _native_only_inspection(native_item, uia_error=combined)
 
     try:
         descendants = window.descendants()
     except Exception as exc:
-        return UIActionResult(False, "Impossible de lire les éléments de la fenêtre.", str(exc))
+        # We may still know the exact native window even if a process exposes
+        # no usable UIA descendants.
+        if native_item is None:
+            try:
+                handle = int(getattr(window, "handle", 0) or 0)
+                if handle:
+                    native_item = next(
+                        (
+                            item
+                            for item in _native_window_candidates(limit=60)
+                            if int(item.get("handle") or 0) == handle
+                        ),
+                        None,
+                    )
+            except Exception:
+                native_item = None
+        if native_item is not None:
+            combined = f"{uia_error}; descendants: {exc}" if uia_error else str(exc)
+            return _native_only_inspection(native_item, uia_error=combined)
+        return UIActionResult(
+            False,
+            "Impossible de lire les éléments de la fenêtre.",
+            str(exc),
+        )
 
     interactive: list[Any] = []
     informative: list[Any] = []
@@ -392,6 +605,7 @@ def inspect_active_window(
     payload = {
         "window": _compact_window(window),
         "controls": controls,
+        "fallback": "win32_handle_to_uia" if native_item is not None else None,
         "note": (
             "Utiliser ref pour un contrôle sans nom. "
             "Les refs restent valables jusqu'à la prochaine inspection."
