@@ -20,6 +20,36 @@ class LocalMemoryTests(unittest.TestCase):
             self.assertEqual(len(results), 1)
             self.assertIn("golf", results[0].content.lower())
 
+    def test_multiword_query_requires_all_significant_terms(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memory = LocalMemory(Path(tmp) / "memory.sqlite3")
+            memory.remember(
+                "Projet Atlas : ajouter un espace client",
+                tags="Atlas",
+            )
+            memory.remember(
+                "Mon autre projet de test s'appelle Polaris 418",
+                tags="projet test",
+            )
+
+            self.assertEqual(memory.search("Atlas Nova"), [])
+            atlas = memory.search("projet Atlas")
+            self.assertEqual(len(atlas), 1)
+            self.assertIn("Atlas", atlas[0].content)
+
+    def test_recall_ignores_common_question_words(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memory = LocalMemory(Path(tmp) / "memory.sqlite3")
+            memory.remember(
+                "J'aime le golf le week-end.",
+                tags="sport loisirs",
+            )
+
+            results = memory.search("Quel sport j'aime ?")
+
+            self.assertEqual(len(results), 1)
+            self.assertIn("golf", results[0].content.lower())
+
     def test_unknown_memory_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
             memory = LocalMemory(Path(tmp) / "memory.sqlite3")
