@@ -480,7 +480,11 @@ class ArchitectureExtensionTests(unittest.TestCase):
                         name="inspect_active_window",
                         success=True,
                         message="ok",
-                        detail='{"window":{"title":"Bloc-notes"}}',
+                        detail=(
+                            '{"window":{"title":"Bloc-notes"},'
+                            '"controls":[{"type":"Button",'
+                            '"name":"Ajouter un nouvel onglet"}]}'
+                        ),
                         end_session=False,
                         should_exit=False,
                     ),
