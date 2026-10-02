@@ -7,6 +7,30 @@ from pathlib import Path
 from jarvis_agent.capability_registry import (
     DEFAULT_CAPABILITY_REGISTRY,
 )
+from jarvis_agent.approval_manager import (
+    ApprovalStatus,
+    HumanApprovalManager,
+)
+from jarvis_agent.context_broker import ContextBroker, ContextItem
+from jarvis_agent.event_bus import BusEvent, MissionEventBus
+from jarvis_agent.kernel_policy import KernelPolicy
+from jarvis_agent.knowledge_policy import (
+    KnowledgeAccessPolicy,
+    KnowledgePrincipal,
+)
+from jarvis_agent.mission_context_store import MissionContextStore
+from jarvis_agent.mission_scheduler import MissionScheduler
+from jarvis_agent.model_router import (
+    LightweightModelRouter,
+    ModelCandidate,
+    RouteRequest,
+)
+from jarvis_agent.plugin_manifest import PluginManifest
+from jarvis_agent.replay_sandbox import (
+    ReplayAction,
+    ReplayPlan,
+    ReplayRunner,
+)
 from jarvis_agent.connector_gateway import (
     ConnectorGateway,
     ConnectorResult,
@@ -24,8 +48,15 @@ from jarvis_agent.dev_supervisor import (
 from jarvis_agent.event_journal import StructuredEventJournal
 from jarvis_agent.kernel_contracts import (
     EventKind,
+    KernelRequest,
+    KnowledgeIdentity,
     KnowledgeScope,
+    MissionContext,
+    MissionStatus,
     PromotionTarget,
+    RiskLevel,
+    SharingPolicy,
+    SyscallKind,
 )
 from jarvis_agent.model_telemetry import ModelTelemetryStore
 from jarvis_agent.regression_registry import (
@@ -237,6 +268,429 @@ class KernelFoundationTests(unittest.TestCase):
 
         self.assertIn("TEST-WIN-BASELINE", ids)
         self.assertIn("TEST-VISION-LAYER", ids)
+
+    def test_mission_context_store_round_trips_and_detects_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MissionContextStore(
+                Path(tmp) / "missions.sqlite3"
+            )
+            context = MissionContext(
+                mission_id="m_ctx",
+                user_goal="Open Chrome",
+                status=MissionStatus.RUNNING,
+                user_id="u1",
+                owner_agent_id="windows",
+                current_step="Open application",
+                current_step_id="s1",
+                expected_state={"app": "chrome"},
+                proof_refs=["p1"],
+            )
+            version = store.save(context)
+            self.assertEqual(version, 1)
+
+            loaded = store.load("m_ctx")
+            self.assertIsNotNone(loaded)
+            restored, current_version = loaded
+            self.assertEqual(current_version, 1)
+            self.assertEqual(restored.current_step_id, "s1")
+            self.assertEqual(restored.proof_refs, ["p1"])
+
+            restored.current_step = "Verify window"
+            version2 = store.save(
+                restored,
+                expected_version=current_version,
+            )
+            self.assertEqual(version2, 2)
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "mission_context_version_conflict",
+            ):
+                store.save(restored, expected_version=1)
+
+    def test_knowledge_policy_is_fail_closed_by_user_and_agent(self):
+        identity = KnowledgeIdentity(
+            scope=KnowledgeScope.USER,
+            owner_user_id="u1",
+            owner_agent_id="windows",
+            sharing_policy=SharingPolicy.PRIVATE,
+        )
+        owner = KnowledgePrincipal(
+            user_id="u1",
+            agent_id="windows",
+        )
+        other_user = KnowledgePrincipal(
+            user_id="u2",
+            agent_id="windows",
+        )
+        other_agent = KnowledgePrincipal(
+            user_id="u1",
+            agent_id="browser",
+        )
+
+        self.assertTrue(
+            KnowledgeAccessPolicy.can_read(identity, owner)
+        )
+        self.assertTrue(
+            KnowledgeAccessPolicy.can_write(identity, owner)
+        )
+        self.assertFalse(
+            KnowledgeAccessPolicy.can_read(identity, other_user)
+        )
+        self.assertFalse(
+            KnowledgeAccessPolicy.can_read(identity, other_agent)
+        )
+
+        core_identity = KnowledgeIdentity(
+            scope=KnowledgeScope.CORE,
+            sharing_policy=SharingPolicy.PUBLIC,
+        )
+        self.assertTrue(
+            KnowledgeAccessPolicy.can_read(core_identity, owner)
+        )
+        self.assertFalse(
+            KnowledgeAccessPolicy.can_write(core_identity, owner)
+        )
+
+    def test_scheduler_prioritizes_then_preserves_fifo(self):
+        scheduler = MissionScheduler()
+        scheduler.submit(
+            KernelRequest(
+                request_id="r1",
+                mission_id="m1",
+                syscall_kind=SyscallKind.TOOL,
+                capability="computer.observe",
+                agent_id="windows",
+                priority=100,
+            )
+        )
+        scheduler.submit(
+            KernelRequest(
+                request_id="r2",
+                mission_id="m1",
+                syscall_kind=SyscallKind.TOOL,
+                capability="computer.observe",
+                agent_id="windows",
+                priority=10,
+            )
+        )
+        scheduler.submit(
+            KernelRequest(
+                request_id="r3",
+                mission_id="m1",
+                syscall_kind=SyscallKind.TOOL,
+                capability="computer.observe",
+                agent_id="windows",
+                priority=10,
+            )
+        )
+
+        first = scheduler.next_request()
+        second = scheduler.next_request()
+        third = scheduler.next_request()
+
+        self.assertEqual(first.request.request_id, "r2")
+        self.assertEqual(second.request.request_id, "r3")
+        self.assertEqual(third.request.request_id, "r1")
+
+        response = scheduler.complete(
+            "r2",
+            success=True,
+            result={"verified": True},
+        )
+        self.assertTrue(response.success)
+        self.assertGreaterEqual(response.waiting_ms, 0.0)
+        self.assertGreaterEqual(response.turnaround_ms, 0.0)
+
+    def test_approval_manager_is_persistent_and_single_use(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = HumanApprovalManager(
+                Path(tmp) / "approvals.sqlite3"
+            )
+            approval = manager.create(
+                mission_id="m1",
+                request_id="r_send",
+                agent_id="communications",
+                capability="communications.send",
+                summary="Send message",
+                risk=RiskLevel.EXTERNAL_SIDE_EFFECT,
+                ttl_s=60,
+            )
+            self.assertEqual(
+                approval.status,
+                ApprovalStatus.PENDING,
+            )
+            self.assertTrue(
+                manager.resolve(
+                    approval.approval_id,
+                    approved=True,
+                )
+            )
+            self.assertTrue(manager.consume(approval.approval_id))
+            self.assertFalse(manager.consume(approval.approval_id))
+            final = manager.get(approval.approval_id)
+            self.assertEqual(final.status, ApprovalStatus.CONSUMED)
+
+    def test_kernel_policy_enforces_agent_capability_and_tool_permissions(self):
+        policy = KernelPolicy()
+
+        allowed = policy.authorize(
+            KernelRequest(
+                request_id="r_ok",
+                mission_id="m1",
+                syscall_kind=SyscallKind.TOOL,
+                capability="computer.observe",
+                agent_id="windows",
+                payload={"tool_name": "inspect_active_window"},
+            )
+        )
+        self.assertTrue(allowed.allowed)
+        self.assertFalse(allowed.requires_approval)
+
+        denied = policy.authorize(
+            KernelRequest(
+                request_id="r_bad",
+                mission_id="m1",
+                syscall_kind=SyscallKind.TOOL,
+                capability="computer.observe",
+                agent_id="windows",
+                payload={"tool_name": "msf_commit_mutation"},
+            )
+        )
+        self.assertFalse(denied.allowed)
+        self.assertEqual(
+            denied.reason,
+            "tool_not_allowed_for_agent",
+        )
+
+        external = policy.authorize(
+            KernelRequest(
+                request_id="r_msf",
+                mission_id="m1",
+                syscall_kind=SyscallKind.TOOL,
+                capability="msf.commit_mutation",
+                agent_id="ms_football",
+                payload={"tool_name": "msf_commit_mutation"},
+            )
+        )
+        self.assertTrue(external.allowed)
+        self.assertTrue(external.requires_approval)
+
+    def test_replay_runner_is_backend_neutral_and_evaluates_final_state(self):
+        class FakeSandbox:
+            sandbox_id = "fake"
+
+            def __init__(self):
+                self.calls = []
+                self.recording = False
+
+            def reset(self, environment_id):
+                self.calls.append(("reset", environment_id))
+
+            def start_recording(self, replay_id):
+                self.recording = True
+                self.calls.append(("record", replay_id))
+
+            def execute(self, action):
+                self.calls.append(
+                    ("execute", action.action_type)
+                )
+                return {"success": True, "action": action.action_type}
+
+            def observe(self):
+                return {"window": "Chrome"}
+
+            def evaluate(
+                self,
+                *,
+                expected_state,
+                action_results,
+                final_observation,
+            ):
+                return {
+                    "success": (
+                        final_observation.get("window")
+                        == expected_state.get("window")
+                    )
+                }
+
+            def stop_recording(self, replay_id):
+                self.recording = False
+                return [f"{replay_id}.mp4"]
+
+        sandbox = FakeSandbox()
+        runner = ReplayRunner(sandbox)
+        result = runner.run(
+            ReplayPlan(
+                replay_id="rp1",
+                mission_id="m1",
+                environment_id="windows-snapshot",
+                actions=[
+                    ReplayAction(
+                        "open_application",
+                        {"name": "Chrome"},
+                    )
+                ],
+                expected_state={"window": "Chrome"},
+                record_video=True,
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.artifacts, ["rp1.mp4"])
+        self.assertIn(("reset", "windows-snapshot"), sandbox.calls)
+
+    def test_context_broker_keeps_required_mission_and_respects_budget(self):
+        broker = ContextBroker()
+        mission = MissionContext(
+            mission_id="m1",
+            user_goal="Open Chrome",
+            status=MissionStatus.RUNNING,
+        )
+        required = broker.mission_item(mission)
+        optional_high = ContextItem(
+            item_id="high",
+            source="lesson",
+            content="important " * 20,
+            scope=KnowledgeScope.SKILL,
+            relevance=0.95,
+            priority=10,
+            estimated_tokens=20,
+        )
+        optional_low = ContextItem(
+            item_id="low",
+            source="history",
+            content="less important " * 40,
+            scope=KnowledgeScope.SESSION,
+            relevance=0.2,
+            priority=200,
+            estimated_tokens=80,
+        )
+
+        selection = broker.select(
+            [optional_low, required, optional_high],
+            token_budget=required.token_estimate() + 30,
+        )
+
+        ids = [item.item_id for item in selection.items]
+        self.assertIn(required.item_id, ids)
+        self.assertIn("high", ids)
+        self.assertIn("low", selection.omitted_item_ids)
+
+    def test_model_router_uses_telemetry_and_circuit_breaker_without_wiring_live(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            telemetry = ModelTelemetryStore(
+                Path(tmp) / "router.sqlite3"
+            )
+            telemetry.record(
+                provider="cerebras",
+                model="gpt-oss-120b",
+                success=True,
+                latency_s=0.4,
+                task_class="windows",
+            )
+            telemetry.record(
+                provider="groq",
+                model="gpt-oss-120b",
+                success=False,
+                latency_s=0.8,
+                task_class="windows",
+                error_kind="rate_limit",
+            )
+            router = LightweightModelRouter(
+                [
+                    ModelCandidate(
+                        provider="cerebras",
+                        model="gpt-oss-120b",
+                        task_tags=("windows",),
+                    ),
+                    ModelCandidate(
+                        provider="groq",
+                        model="gpt-oss-120b",
+                        task_tags=("windows",),
+                    ),
+                ],
+                telemetry=telemetry,
+            )
+
+            decision = router.route(
+                RouteRequest(
+                    task_class="windows",
+                    required_tags=("windows",),
+                    latency_budget_ms=1000,
+                )
+            )
+            self.assertIsNotNone(decision)
+            self.assertEqual(decision.provider, "cerebras")
+
+            router.note_failure(
+                "cerebras",
+                "gpt-oss-120b",
+                cooldown_s=60,
+            )
+            fallback = router.route(
+                RouteRequest(
+                    task_class="windows",
+                    required_tags=("windows",),
+                )
+            )
+            self.assertEqual(fallback.provider, "groq")
+
+    def test_plugin_manifest_rejects_unsafe_high_risk_defaults(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "high_risk_plugin_requires_confirmation",
+        ):
+            PluginManifest.from_dict(
+                {
+                    "plugin_id": "mail_plugin",
+                    "name": "Mail",
+                    "version": "1.0.0",
+                    "agent_id": "communications",
+                    "entrypoint": "mail.agent:MailAgent",
+                    "risk_level": "external_side_effect",
+                    "requires_confirmation": False,
+                }
+            )
+
+        manifest = PluginManifest.from_dict(
+            {
+                "plugin_id": "msf_plugin",
+                "name": "MS Football",
+                "version": "1.0.0",
+                "agent_id": "ms_football",
+                "entrypoint": "plugins.msf:MSFAgent",
+                "allowed_tools": ["msf_query_records"],
+                "memory_scopes": ["domain", "skill", "test"],
+                "risk_level": "read",
+                "test_pack": ["TEST-MSF-001"],
+            }
+        )
+        self.assertEqual(manifest.agent_id, "ms_football")
+
+    def test_event_bus_isolates_failing_observers(self):
+        bus = MissionEventBus()
+        received = []
+
+        def good(event):
+            received.append(event.kind)
+
+        def bad(_event):
+            raise RuntimeError("observer failed")
+
+        bus.subscribe(EventKind.TOOL_RESULT, bad)
+        bus.subscribe(EventKind.TOOL_RESULT, good)
+
+        errors = bus.publish(
+            BusEvent(
+                kind=EventKind.TOOL_RESULT.value,
+                mission_id="m1",
+                payload={"tool": "open_application"},
+            )
+        )
+
+        self.assertEqual(received, ["tool.result"])
+        self.assertEqual(errors, ["observer failed"])
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
