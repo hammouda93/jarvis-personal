@@ -97,6 +97,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   nom. Choisis replace seulement si l'utilisateur veut remplacer le contenu,
   append s'il veut conserver le texte existant et ajouter à la fin, et insert
   s'il veut écrire à la position actuelle du curseur;
+- une saisie et une validation sont deux actions distinctes. Si l'utilisateur
+  demande seulement d'écrire/saisir dans un champ, arrête-toi après l'écriture
+  vérifiée. N'appuie sur Enter et ne clique sur un bouton de validation/recherche
+  que si cette validation fait explicitement partie de la demande;
 - quand l'inspection fournit value sur un champ/document, traite cette valeur
   comme l'état réel visible. Ne reconstruis jamais le contenu depuis la mémoire
   de conversation si l'interface fournit une valeur actuelle;
@@ -1938,6 +1942,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=settings.cerebras_request_timeout_s,
+                max_retries=0,
             )
         return self._client
 
@@ -1989,6 +1994,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             api_key=settings.groq_api_key,
             base_url=settings.groq_base_url.rstrip("/"),
             timeout=min(settings.ai_request_timeout_s, 15.0),
+            max_retries=0,
         )
         try:
             return client.chat.completions.create(
