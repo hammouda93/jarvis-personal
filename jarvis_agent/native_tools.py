@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .agent_knowledge import AGENT_KNOWLEDGE
+from .background_web_research import BACKGROUND_WEB_RESEARCH
 from .config import settings
 from .memory import LOCAL_MEMORY
 from .ms_football_bridge import MS_FOOTBALL_BRIDGE
