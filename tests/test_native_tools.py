@@ -268,6 +268,10 @@ class NativeToolRegistryTests(unittest.TestCase):
         payload = json.loads(result.detail)
         self.assertTrue(payload["lessons"])
 
+    @patch(
+        "jarvis_agent.native_tools.settings",
+        replace(real_settings, operational_learning_enabled=True),
+    )
     def test_successful_app_open_updates_local_app_profile(self):
         with patch("jarvis_agent.native_tools.execute") as execute_mock:
             execute_mock.return_value = ToolResult(
