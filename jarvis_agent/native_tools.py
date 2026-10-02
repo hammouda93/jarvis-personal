@@ -158,7 +158,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "write_ui_element",
-                "Écrit du texte dans un champ observé sans valider automatiquement. Utilise ref après inspection pour les champs sans libellé, comme certaines barres de recherche web.",
+                "Écrit du texte dans un contrôle réellement éditable observé (Edit, Document ou ComboBox) sans valider automatiquement. N'utilise jamais un Text, TabItem ou libellé statique comme cible d'écriture. Utilise ref après inspection pour les champs sans libellé.",
                 {
                     "name": {
                         "type": "string",
@@ -177,7 +177,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "press_key",
-                "Envoie une touche de navigation sûre à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End.",
+                "Envoie une touche de navigation sûre à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End, Alt+Left et Alt+Right pour navigation arrière/avant.",
                 {
                     "key": {
                         "type": "string",
