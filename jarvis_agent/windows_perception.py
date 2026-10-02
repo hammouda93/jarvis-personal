@@ -1030,9 +1030,17 @@ def write_ui_element(
     text: str,
     *,
     ref: str = "",
+    mode: str = "replace",
 ) -> UIActionResult:
     target = (name or "").strip()
     value = str(text or "")
+    normalized_mode = normalize(mode or "replace")
+    if normalized_mode not in {"replace", "append", "insert"}:
+        return UIActionResult(
+            False,
+            "Mode d'écriture invalide. Utilisez replace, append ou insert.",
+            normalized_mode,
+        )
     if len(value) > 4000:
         return UIActionResult(False, "Le texte est trop long pour une saisie UI directe.")
 
@@ -1069,6 +1077,15 @@ def write_ui_element(
             )
         return UIActionResult(False, f"Champ introuvable: {target}.")
 
+    control_type = _control_type(wrapper)
+    if control_type not in {"Edit", "Document", "ComboBox"}:
+        label = _element_name(wrapper) or _automation_id(wrapper) or ref or target
+        return UIActionResult(
+            False,
+            f"L'élément {label} n'accepte pas la saisie directe.",
+            control_type,
+        )
+
     editable = _editable_target(wrapper)
     label = (
         _element_name(wrapper)
@@ -1076,10 +1093,34 @@ def write_ui_element(
         or ref
         or target
     )
-    if editable is not None:
+    before = _control_value(editable or wrapper)
+
+    if normalized_mode == "insert":
+        active = editable or wrapper
+        try:
+            active.set_focus()
+        except Exception:
+            pass
+        type_keys = getattr(active, "type_keys", None)
+        if not callable(type_keys):
+            return UIActionResult(
+                False,
+                f"Impossible d'insérer du texte dans {label}.",
+                control_type,
+            )
+        try:
+            type_keys(value, with_spaces=True, set_foreground=True)
+        except Exception as exc:
+            return UIActionResult(
+                False,
+                f"Impossible d'insérer du texte dans {label}.",
+                str(exc),
+            )
+    elif editable is not None:
+        desired = value if normalized_mode == "replace" else before + value
         try:
             editable.set_focus()
-            editable.set_edit_text(value)
+            editable.set_edit_text(desired)
         except Exception as exc:
             return UIActionResult(
                 False,
@@ -1087,20 +1128,48 @@ def write_ui_element(
                 str(exc),
             )
     else:
-        # Chromium and other modern apps often expose searchable fields as a
-        # ComboBox without a child Edit wrapper. Focus/click it and type through
-        # its UIA wrapper rather than rejecting the control by type alone.
-        if not _type_text_into_focused_control(wrapper, value):
+        if normalized_mode == "append":
+            try:
+                wrapper.set_focus()
+                wrapper.click_input()
+                type_keys = getattr(wrapper, "type_keys", None)
+                if not callable(type_keys):
+                    raise RuntimeError("type_keys indisponible")
+                type_keys("{END}", set_foreground=True)
+                type_keys(value, with_spaces=True, set_foreground=True)
+            except Exception as exc:
+                return UIActionResult(
+                    False,
+                    f"Impossible d'ajouter du texte dans {label}.",
+                    str(exc),
+                )
+        elif not _type_text_into_focused_control(wrapper, value):
             return UIActionResult(
                 False,
                 f"L'élément {label} n'accepte pas la saisie directe.",
-                _control_type(wrapper),
+                control_type,
             )
+
+    after = _control_value(editable or wrapper)
+    if normalized_mode == "replace":
+        verified = bool(after) and after == value
+    elif normalized_mode == "append":
+        verified = bool(after) and after.endswith(value) and len(after) >= len(before)
+    else:
+        verified = bool(after) and value in after
 
     return UIActionResult(
         True,
         f"Texte saisi dans {label}.",
-        "Texte saisi sans validation automatique.",
+        _json(
+            {
+                "mode": normalized_mode,
+                "verified": verified,
+                "before": before[:500],
+                "value": after[:500],
+                "value_length": len(after),
+            }
+        ),
     )
 
 
@@ -1133,6 +1202,20 @@ def press_key(key: str) -> UIActionResult:
             "Cette touche n'est pas autorisée par le contrôle Windows de Jarvis.",
         )
     try:
+        if (
+            _SNAPSHOT_WINDOW_TITLE
+            and normalize(_SNAPSHOT_WINDOW_TITLE) != "jarvis personal"
+        ):
+            try:
+                target_window = _window_by_title(_SNAPSHOT_WINDOW_TITLE)
+                if target_window is not None:
+                    try:
+                        target_window.restore()
+                    except Exception:
+                        pass
+                    target_window.set_focus()
+            except Exception:
+                pass
         _send_keys(sequence)
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'envoyer la touche {key}.", str(exc))
