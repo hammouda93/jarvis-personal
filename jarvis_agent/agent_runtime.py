@@ -80,6 +80,12 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   petite action utile, exécute-la, puis réobserve avant de poursuivre si
   l'interface a pu changer. Continue jusqu'à l'objectif demandé, pas seulement
   jusqu'à la première action réussie;
+- privilégie l'interface structurée UIA parce qu'elle est plus rapide et précise.
+  Si UIA est ambigu, incomplet, duplique des résultats, ne permet pas de distinguer
+  un classement visuel ou ne montre pas la preuve finale, utilise observe_screen
+  comme fallback visuel local. Ne prends pas de screenshot inutilement;
+- observe_screen est un capteur, pas une action: sa description peut aider à
+  choisir un contrôle mais l'état réel doit encore être vérifié après l'action;
 - pour agir dans une application déjà ouverte, ou dans une application que tu
   viens d'ouvrir pendant cette conversation, inspecte/active d'abord la fenêtre
   existante au lieu de relancer une nouvelle instance inutilement;
@@ -282,6 +288,7 @@ def _looks_like_pseudo_tool_syntax(text: str) -> bool:
     compact = lower.replace("_", "").replace("-", "")
     tool_names = (
         "inspectactivewindow",
+        "observescreen",
         "listwindows",
         "activatewindow",
         "clickuielement",
@@ -386,6 +393,7 @@ def _actions_have_verified_proof(
     for action in actions[last_mutation + 1 :]:
         if action.success and action.name in {
             "inspect_active_window",
+            "observe_screen",
             "list_windows",
         }:
             return True
@@ -2031,6 +2039,7 @@ class GroqResponsesAgent:
                     ui_verification_required = True
                 elif result.success and name in {
                     "inspect_active_window",
+                    "observe_screen",
                     "list_windows",
                 }:
                     ui_verification_required = False
