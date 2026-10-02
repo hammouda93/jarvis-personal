@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Mapping
 
 from .capability_registry import (
@@ -62,6 +63,27 @@ class ContextualAgentRouteDecision:
     candidate_agents: tuple[str, ...]
     reason: str
     needs_review: bool = False
+
+
+def _context_contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    """Match context terms without accidental substring collisions.
+
+    Application names and semantic markers are matched as complete lexical
+    terms/phrases. URL schemes remain literal substring markers.
+    """
+    haystack = str(text or "").lower()
+    for raw_term in terms:
+        term = str(raw_term or "").strip().lower()
+        if not term:
+            continue
+        if term in {"http://", "https://"}:
+            if term in haystack:
+                return True
+            continue
+        pattern = r"(?<!\w)" + re.escape(term) + r"(?!\w)"
+        if re.search(pattern, haystack):
+            return True
+    return False
 
 
 class CapabilityAgentRouter:
@@ -240,7 +262,7 @@ class CapabilityAgentRouter:
         if (
             current_application
             and "browser" in candidates
-            and any(term in current_application for term in browser_terms)
+            and _context_contains_any(current_application, browser_terms)
         ):
             return ContextualAgentRouteDecision(
                 tool_name=tool_name,
@@ -251,7 +273,7 @@ class CapabilityAgentRouter:
         if (
             current_application
             and "windows" in candidates
-            and any(term in current_application for term in windows_terms)
+            and _context_contains_any(current_application, windows_terms)
         ):
             return ContextualAgentRouteDecision(
                 tool_name=tool_name,
@@ -265,7 +287,7 @@ class CapabilityAgentRouter:
         browser_goal_terms = browser_terms + ("onglet", " tab ")
         if (
             "browser" in candidates
-            and any(term in user_goal for term in browser_goal_terms)
+            and _context_contains_any(user_goal, browser_goal_terms)
         ):
             return ContextualAgentRouteDecision(
                 tool_name=tool_name,
@@ -275,7 +297,7 @@ class CapabilityAgentRouter:
             )
         if (
             "windows" in candidates
-            and any(term in user_goal for term in windows_terms)
+            and _context_contains_any(user_goal, windows_terms)
         ):
             return ContextualAgentRouteDecision(
                 tool_name=tool_name,
@@ -289,7 +311,7 @@ class CapabilityAgentRouter:
         # "onglet"/"TabItem" are deliberately excluded.
         if (
             "browser" in candidates
-            and any(term in observed_window for term in browser_terms)
+            and _context_contains_any(observed_window, browser_terms)
         ):
             return ContextualAgentRouteDecision(
                 tool_name=tool_name,
@@ -299,7 +321,7 @@ class CapabilityAgentRouter:
             )
         if (
             "windows" in candidates
-            and any(term in observed_window for term in windows_terms)
+            and _context_contains_any(observed_window, windows_terms)
         ):
             return ContextualAgentRouteDecision(
                 tool_name=tool_name,
