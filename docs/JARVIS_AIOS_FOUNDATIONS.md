@@ -218,6 +218,9 @@ python -m jarvis_agent.kernel_cli agents
 python -m jarvis_agent.kernel_cli capabilities
 python -m jarvis_agent.kernel_cli connectors
 python -m jarvis_agent.kernel_cli tests
+python -m jarvis_agent.kernel_cli missions
+python -m jarvis_agent.kernel_cli corrections
+python -m jarvis_agent.kernel_cli approvals
 python -m jarvis_agent.kernel_cli stats
 ```
 
@@ -227,6 +230,171 @@ Later, if structured tracing is enabled and wired:
 python -m jarvis_agent.kernel_cli trace <mission_id>
 python -m jarvis_agent.kernel_cli models --hours 24
 ```
+
+## 10. Persistent mission context
+
+`jarvis_agent/mission_context_store.py`
+
+Adds versioned local persistence for long-running missions:
+
+- mission/user/agent identity
+- current step and step id
+- pending action/confirmation
+- expected and observed state
+- artifact refs
+- proof refs
+- knowledge refs
+- resumable statuses
+
+Updates support optimistic concurrency so two future agents cannot silently
+overwrite the same mission state.
+
+## 11. Knowledge isolation policy
+
+`jarvis_agent/knowledge_policy.py`
+
+Adds fail-closed access checks using:
+
+- knowledge scope
+- owner user
+- owner agent
+- organization
+- sharing policy
+
+Ordinary knowledge writes can never mutate `CORE`; Core changes must go through
+the Dev Supervisor + regression path.
+
+## 12. Mission scheduler and passive Jarvis Kernel
+
+`jarvis_agent/mission_scheduler.py`
+`jarvis_agent/kernel_policy.py`
+`jarvis_agent/kernel_service.py`
+
+The passive Kernel now models:
+
+`authorize → approval if required → queue → start → complete → event/trace`
+
+The scheduler provides priority plus stable FIFO, cancellation, queue status,
+waiting time and turnaround time.
+
+This layer is not in the live interaction path yet.
+
+## 13. Human approval manager
+
+`jarvis_agent/approval_manager.py`
+
+External/destructive capabilities can create persistent approval requests.
+Approved requests are consumable exactly once before execution.
+
+This will eventually replace prompt-only security for high-risk agents and
+connectors.
+
+## 14. Correction candidate persistence
+
+`jarvis_agent/correction_store.py`
+
+Human feedback is staged as a pending correction candidate.
+
+Detection, validation and promotion are separate:
+
+`feedback → candidate → tests/proof → user validation → promotion`
+
+A candidate cannot be promoted before explicit accepted validation.
+
+## 15. Context broker
+
+`jarvis_agent/context_broker.py`
+
+Provides deterministic budgeted context selection for future specialized agents:
+
+- required mission state first
+- then optional items by priority/relevance
+- deterministic token estimate
+- omitted item tracking
+
+It does not replace today's conversation history.
+
+## 16. Lightweight model router
+
+`jarvis_agent/model_router.py`
+
+Implements the useful AIOS SmartRouting ideas without LiteLLM/Chroma/PuLP:
+
+- task tags
+- context eligibility
+- latency budget
+- cost budget
+- passive historical success rate
+- rate-limit penalty
+- local-model preference
+- temporary circuit breaker
+
+It is intentionally not connected to the current Cerebras → secondary
+Cerebras → Groq path during our live validation.
+
+## 17. Replay sandbox contract
+
+`jarvis_agent/replay_sandbox.py`
+
+Provider-neutral lifecycle:
+
+`reset → record → execute actions → observe → evaluate → artifacts`
+
+A future LiteCUA/VMware/VirtualBox/Docker backend can implement this interface
+without replacing real-PC Windows UIA.
+
+## 18. Plugin manifest
+
+`jarvis_agent/plugin_manifest.py`
+
+Future plugins/agents can declare:
+
+- agent and entrypoint
+- capabilities
+- tools/connectors
+- domains/network hosts/file roots
+- memory scopes
+- risk
+- confirmation requirements
+- regression test pack
+
+High-risk plugins without confirmation are rejected by validation. Dynamic
+third-party loading is deliberately not implemented yet.
+
+## 19. Mission Event Bus
+
+`jarvis_agent/event_bus.py`
+
+Adds an isolated in-process publisher/subscriber contract. A failing observer
+cannot break the command path. The Event Journal remains the durable history;
+the Event Bus is for future Dev Supervisor/metrics/agent observers.
+
+## 20. Connector Gateway
+
+`jarvis_agent/connector_gateway.py`
+
+Separates logical capabilities from physical backends and enforces confirmation
+for external side effects. Backend priority can be API → MCP → local/UI without
+changing the agent's semantic request.
+
+## 21. Validation
+
+`tests/test_kernel_foundations.py`
+
+Covers the passive architecture, including isolation, write barrier, mission
+persistence, scheduler ordering, approval single-use, Kernel authorization,
+connector permissions, correction promotion gates, replay, model telemetry and
+routing, plugin safety and event observer isolation.
+
+`scripts/run_architecture_foundations_validation.ps1` runs:
+
+1. syntax preflight for all foundation modules
+2. foundation unit tests
+3. the historical Jarvis baseline regression
+
+The acceptance condition is therefore:
+
+**new architecture present + old Jarvis behavior still green.**
 
 ## What is deliberately NOT done yet
 
