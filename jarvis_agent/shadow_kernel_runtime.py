@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+from .config import Settings
+from .kernel_contracts import EventKind, MissionContext, MissionStatus
+from .kernel_stack import PassiveKernelStack, build_passive_kernel_stack
+
+
+def _default_shadow_dir() -> Path:
+    root = Path(
+        os.getenv("LOCALAPPDATA")
+        or os.getenv("XDG_STATE_HOME")
+        or Path.home()
+    )
+    return root / "JarvisPersonal" / "kernel_shadow"
+
+
+@dataclass(frozen=True)
+class ShadowObservation:
+    mission_id: str
+    success: bool
+    action_count: int
+    candidate_agents: tuple[str, ...]
+
+
+class KernelShadowObserver:
+    """Observe the live runtime without participating in control.
+
+    This is the first convergence step between the current authoritative
+    AgentRuntime and the passive Kernel foundations. It records the mission,
+    actual live actions and passive agent candidates into an isolated Kernel
+    stack, but it never submits a KernelRequest, runs the dispatcher, changes
+    routing, calls a tool, or mutates the live AgentRuntime result.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_dir: str | Path,
+        owner_user_id: str,
+        settings: Settings,
+    ):
+        self.owner_user_id = str(owner_user_id or "local-user")
+        self.stack: PassiveKernelStack = build_passive_kernel_stack(
+            base_dir=base_dir,
+            owner_user_id=self.owner_user_id,
+            settings=settings,
+        )
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "KernelShadowObserver":
+        configured_dir = str(settings.kernel_shadow_dir or "").strip()
+        return cls(
+            base_dir=(
+                Path(configured_dir).expanduser()
+                if configured_dir
+                else _default_shadow_dir()
+            ),
+            owner_user_id=settings.kernel_shadow_user_id,
+            settings=settings,
+        )
+
+    def _candidate_agents(self, tool_names: Iterable[str]) -> tuple[str, ...]:
+        names = {str(name or "").strip() for name in tool_names if str(name or "").strip()}
+        candidates: list[str] = []
+        for manifest in self.stack.registry.agents():
+            if names.intersection(set(manifest.allowed_tools)):
+                candidates.append(manifest.agent_id)
+        return tuple(dict.fromkeys(candidates))
+
+    @staticmethod
+    def _action_payload(
+        action: Any,
+        *,
+        explicit_name: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "tool_name": str(
+                explicit_name
+                or getattr(action, "name", "")
+                or "direct_action"
+            ),
+            "success": bool(getattr(action, "success", False)),
+            "message": str(getattr(action, "message", "") or "")[:1200],
+            "detail": str(getattr(action, "detail", "") or "")[:2400],
+            "end_session": bool(getattr(action, "end_session", False)),
+            "should_exit": bool(getattr(action, "should_exit", False)),
+        }
+
+    def observe_turn(
+        self,
+        user_text: str,
+        *,
+        source: str,
+        actions: Sequence[Any] = (),
+        action_names: Sequence[str] | None = None,
+        response_text: str = "",
+        success: bool | None = None,
+    ) -> ShadowObservation:
+        """Mirror one completed live turn into the passive Kernel stores.
+
+        The live result has already been decided/executed before this method is
+        called. No Kernel execution path is invoked here.
+        """
+        source = str(source or "live_runtime")
+        action_list = list(actions or ())
+        explicit_names = list(action_names or ())
+        payloads = [
+            self._action_payload(
+                action,
+                explicit_name=(
+                    explicit_names[index]
+                    if index < len(explicit_names)
+                    else None
+                ),
+            )
+            for index, action in enumerate(action_list)
+        ]
+        tool_names = [item["tool_name"] for item in payloads]
+        candidate_agents = self._candidate_agents(tool_names)
+
+        mission_id = self.stack.journal.create_mission(
+            goal_summary=str(user_text or "")[:600],
+            user_id=self.owner_user_id,
+            owner_agent_id="interaction",
+        )
+        self.stack.journal.set_status(mission_id, MissionStatus.RUNNING)
+        self.stack.journal.append_event(
+            mission_id=mission_id,
+            kind=EventKind.USER_INPUT,
+            agent_id="interaction",
+            component="kernel_shadow",
+            payload={
+                "text": str(user_text or "")[:2400],
+                "source": source,
+                "shadow": True,
+                "authoritative": False,
+            },
+        )
+
+        if tool_names or candidate_agents:
+            self.stack.journal.append_event(
+                mission_id=mission_id,
+                kind=EventKind.AGENT_SELECTED,
+                agent_id="interaction",
+                component="kernel_shadow",
+                payload={
+                    "mode": "shadow",
+                    "authoritative": False,
+                    "actual_live_tools": tool_names,
+                    "candidate_agents": list(candidate_agents),
+                },
+            )
+
+        for payload in payloads:
+            self.stack.journal.append_event(
+                mission_id=mission_id,
+                kind=EventKind.TOOL_RESULT,
+                agent_id="interaction",
+                component="live_runtime_shadow",
+                success=payload["success"],
+                payload=payload,
+            )
+
+        failures = [item for item in payloads if not item["success"]]
+        turn_success = (
+            bool(success)
+            if success is not None
+            else not bool(failures)
+        )
+        final_status = (
+            MissionStatus.COMPLETED
+            if turn_success
+            else MissionStatus.FAILED
+        )
+
+        observed_state = {
+            "shadow": True,
+            "authoritative": False,
+            "source": source,
+            "action_count": len(payloads),
+            "failed_action_count": len(failures),
+            "actual_live_tools": tool_names,
+            "candidate_agents": list(candidate_agents),
+        }
+        context = MissionContext(
+            mission_id=mission_id,
+            user_goal=str(user_text or "")[:600],
+            status=final_status,
+            user_id=self.owner_user_id,
+            owner_agent_id="interaction",
+            observed_state=observed_state,
+            tags=["shadow", "live-runtime", source],
+        )
+        self.stack.mission_store.save(context)
+
+        self.stack.journal.append_event(
+            mission_id=mission_id,
+            kind=EventKind.OBSERVATION,
+            agent_id="interaction",
+            component="kernel_shadow",
+            success=turn_success,
+            payload={
+                **observed_state,
+                "response_text": str(response_text or "")[:2400],
+            },
+        )
+        self.stack.journal.finish_mission(
+            mission_id,
+            success=turn_success,
+            summary=str(response_text or "")[:1200],
+            agent_id="interaction",
+        )
+
+        return ShadowObservation(
+            mission_id=mission_id,
+            success=turn_success,
+            action_count=len(payloads),
+            candidate_agents=candidate_agents,
+        )
+
+    def observe_agent_turn(
+        self,
+        user_text: str,
+        turn: Any,
+        *,
+        source: str = "agent_runtime",
+    ) -> ShadowObservation:
+        return self.observe_turn(
+            user_text,
+            source=source,
+            actions=tuple(getattr(turn, "actions", ()) or ()),
+            response_text=str(getattr(turn, "text", "") or ""),
+        )
+
+    def observe_direct_turn(
+        self,
+        user_text: str,
+        *,
+        intent_name: str,
+        result: Any,
+        response_text: str = "",
+        source: str = "direct_runtime",
+    ) -> ShadowObservation:
+        return self.observe_turn(
+            user_text,
+            source=source,
+            actions=(result,),
+            action_names=(str(intent_name),),
+            response_text=response_text,
+            success=bool(getattr(result, "success", False)),
+        )
