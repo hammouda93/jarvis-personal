@@ -12,6 +12,7 @@ from jarvis_agent.approval_manager import (
     HumanApprovalManager,
 )
 from jarvis_agent.context_broker import ContextBroker, ContextItem
+from jarvis_agent.component_registry import DEFAULT_COMPONENT_REGISTRY
 from jarvis_agent.event_bus import BusEvent, MissionEventBus
 from jarvis_agent.kernel_policy import KernelPolicy
 from jarvis_agent.knowledge_policy import (
@@ -905,6 +906,10 @@ class KernelFoundationTests(unittest.TestCase):
             "TEST-VISION-LAYER",
             app_plan.selected_test_ids,
         )
+        self.assertIn(
+            "windows_perception",
+            app_plan.component_ids,
+        )
 
         user_assessment = FailureAssessment(
             kind=FailureKind.USER_PREFERENCE,
@@ -925,6 +930,19 @@ class KernelFoundationTests(unittest.TestCase):
             "user_preference",
         )
         self.assertIn("keep_user_scoped", user_plan.notes)
+
+    def test_component_registry_finds_smallest_known_code_surfaces(self):
+        components = DEFAULT_COMPONENT_REGISTRY.for_paths(
+            [
+                "jarvis_agent/windows_perception.py",
+                "jarvis_agent/screen_vision.py",
+            ]
+        )
+        ids = {item.component_id for item in components}
+
+        self.assertIn("windows_perception", ids)
+        self.assertIn("screen_vision", ids)
+        self.assertNotIn("ms_football", ids)
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
