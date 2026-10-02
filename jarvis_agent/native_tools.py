@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .agent_knowledge import AGENT_KNOWLEDGE
+from .config import settings
 from .memory import LOCAL_MEMORY
 from .ms_football_bridge import MS_FOOTBALL_BRIDGE
 from .screen_vision import observe_screen
@@ -999,6 +1000,8 @@ class NativeToolRegistry:
         return self._error(name, "Cette capacité n'existe pas dans Jarvis.")
 
     def _open_from_learned_profile(self, target: str) -> ToolResult | None:
+        if not settings.operational_learning_enabled:
+            return None
         if not self._safe_target(target):
             return None
         try:
@@ -1030,6 +1033,8 @@ class NativeToolRegistry:
         return None
 
     def _record_app_launch(self, target: str, result: ToolResult) -> None:
+        if not settings.operational_learning_enabled:
+            return
         try:
             self.knowledge.upsert_app_profile(
                 display_name=target,
@@ -1044,6 +1049,8 @@ class NativeToolRegistry:
             pass
 
     def _record_inspected_app(self, result) -> None:
+        if not settings.operational_learning_enabled:
+            return
         if not result.success:
             return
         try:
