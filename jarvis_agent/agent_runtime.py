@@ -350,7 +350,16 @@ def _completed_action_capabilities(
     for action in actions:
         if not action.success:
             continue
-        if action.name in {"write_ui_element", "write_visual_target"}:
+        if action.name == "write_ui_element":
+            try:
+                payload = json.loads(action.detail or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            if payload.get("verified") is True:
+                completed.add("write_ui")
+        elif action.name == "write_visual_target":
+            # Visual writes require a separate after-state observation; the
+            # existing UI verification loop owns that proof.
             completed.add("write_ui")
         elif action.name == "type_text_active_window":
             try:
