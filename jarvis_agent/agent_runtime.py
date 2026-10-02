@@ -767,6 +767,45 @@ def _blocked_contextual_web_search_result(query: str) -> AgentActionResult:
     )
 
 
+def _blocked_visible_web_search_result(query: str) -> AgentActionResult:
+    return AgentActionResult(
+        name="open_web_search",
+        success=False,
+        message=(
+            "Le navigateur visible n'a pas été ouvert car l'utilisateur n'a "
+            "pas demandé d'afficher une recherche web."
+        ),
+        detail=json.dumps(
+            {
+                "query": query,
+                "reason": "visible_web_search_not_explicit",
+                "visible_browser_opened": False,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
+def _blocked_research_budget_result(query: str) -> AgentActionResult:
+    return AgentActionResult(
+        name="research_web",
+        success=False,
+        message=(
+            "La limite de recherche web de ce tour est atteinte. "
+            "Utilise les preuves déjà récupérées ou demande une précision "
+            "si elles ne suffisent pas."
+        ),
+        detail=json.dumps(
+            {
+                "query": query,
+                "reason": "per_turn_research_budget_exhausted",
+                "visible_browser_opened": False,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
 def _looks_mostly_english(text: str) -> bool:
     words = re.findall(r"[a-zA-ZÀ-ÿ']+", (text or "").lower())
     if len(words) < 4:
@@ -2206,6 +2245,7 @@ class GroqResponsesAgent:
         pending_ui_action_repair_attempted = False
         skill_learning_checkpoint_attempted = False
         lesson_learning_checkpoint_attempted = False
+        research_web_calls = 0
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
