@@ -86,7 +86,12 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
 - utilise write_ui_element uniquement sur un contrôle réellement éditable
   observé (Edit, Document ou ComboBox). Ne choisis jamais un Text, TabItem ou
   libellé statique comme cible d'écriture; utilise ref si le champ n'a pas de
-  nom. Cet outil saisit le texte sans valider;
+  nom. Choisis replace seulement si l'utilisateur veut remplacer le contenu,
+  append s'il veut conserver le texte existant et ajouter à la fin, et insert
+  s'il veut écrire à la position actuelle du curseur;
+- quand l'inspection fournit value sur un champ/document, traite cette valeur
+  comme l'état réel visible. Ne reconstruis jamais le contenu depuis la mémoire
+  de conversation si l'interface fournit une valeur actuelle;
 - press_key est réservé à la navigation simple, jamais à des raccourcis
   destructifs ou à l'exécution de commandes arbitraires;
 - après click_ui_element, write_ui_element, press_key, close_window ou toute
@@ -1813,9 +1818,16 @@ class GroqResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
-                if result.success and name in {
+                if result.success and name == "write_ui_element":
+                    try:
+                        write_detail = json.loads(result.detail or "{}")
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        write_detail = {}
+                    ui_verification_required = not bool(
+                        write_detail.get("verified")
+                    )
+                elif result.success and name in {
                     "click_ui_element",
-                    "write_ui_element",
                     "press_key",
                 }:
                     ui_verification_required = True
