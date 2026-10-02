@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from types import SimpleNamespace
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,8 +15,10 @@ from jarvis_agent.execution_managers import (
 from jarvis_agent.kernel_contracts import (
     KernelRequest,
     KnowledgeScope,
+    MissionStatus,
     PromotionTarget,
     SyscallKind,
+    SyscallStatus,
 )
 from jarvis_agent.kernel_dispatcher import KernelDispatcher
 from jarvis_agent.kernel_stack import build_passive_kernel_stack
@@ -27,6 +30,7 @@ from jarvis_agent.config import settings as real_settings
 from jarvis_agent.model_catalog import CurrentModelCatalog
 from jarvis_agent.promotion_gate import CorrectionPromotionGate
 from jarvis_agent.supervisor_validation import SupervisorValidationState
+from jarvis_agent.shadow_kernel_runtime import KernelShadowObserver
 from jarvis_agent.dev_supervisor import candidate_from_assessment, FailureAssessment, FailureKind
 from jarvis_agent.local_rpc_security import (
     CapabilityTokenAuthority,
@@ -346,6 +350,129 @@ class ArchitectureExtensionTests(unittest.TestCase):
             )
             self.assertTrue(
                 Path(tmp, "agent_knowledge.sqlite3").exists()
+            )
+
+    def test_kernel_shadow_observes_live_turn_without_dispatching(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = replace(
+                real_settings,
+                kernel_shadow_enabled=True,
+                kernel_shadow_dir=str(Path(tmp) / "shadow"),
+                kernel_shadow_user_id="user-1",
+                cerebras_api_key="",
+                groq_api_key="",
+                openai_api_key="",
+            )
+            observer = KernelShadowObserver(
+                base_dir=Path(tmp) / "shadow",
+                owner_user_id="user-1",
+                settings=configured,
+            )
+            turn = SimpleNamespace(
+                text="Le Bloc-notes est ouvert.",
+                actions=(
+                    SimpleNamespace(
+                        name="open_application",
+                        success=True,
+                        message="ok",
+                        detail='{"name":"Notepad","verified":true}',
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                ),
+            )
+
+            observation = observer.observe_agent_turn(
+                "Ouvre le Bloc-notes.",
+                turn,
+            )
+
+            self.assertTrue(observation.success)
+            self.assertEqual(observation.action_count, 1)
+            self.assertIn("windows", observation.candidate_agents)
+
+            loaded = observer.stack.mission_store.load(
+                observation.mission_id
+            )
+            self.assertIsNotNone(loaded)
+            context, _version = loaded
+            self.assertEqual(context.status, MissionStatus.COMPLETED)
+            self.assertIn("shadow", context.tags)
+            self.assertEqual(
+                context.observed_state["actual_live_tools"],
+                ["open_application"],
+            )
+
+            trace = observer.stack.journal.mission_trace(
+                observation.mission_id
+            )
+            kinds = [item["kind"] for item in trace]
+            self.assertIn("user.input", kinds)
+            self.assertIn("agent.selected", kinds)
+            self.assertIn("tool.result", kinds)
+            self.assertIn("observation", kinds)
+            self.assertIn("mission.completed", kinds)
+
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.QUEUED
+                ),
+                [],
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.RUNNING
+                ),
+                [],
+            )
+            self.assertIsNone(
+                observer.stack.kernel.next_request(timeout_s=0.0)
+            )
+
+    def test_kernel_shadow_records_direct_fast_path_without_rerouting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = replace(
+                real_settings,
+                kernel_shadow_enabled=True,
+                kernel_shadow_dir=str(Path(tmp) / "shadow"),
+                kernel_shadow_user_id="user-1",
+            )
+            observer = KernelShadowObserver(
+                base_dir=Path(tmp) / "shadow",
+                owner_user_id="user-1",
+                settings=configured,
+            )
+            direct_result = SimpleNamespace(
+                success=True,
+                message="Il est 20 heures.",
+                detail="20:00",
+                end_session=False,
+                should_exit=False,
+            )
+
+            observation = observer.observe_direct_turn(
+                "Quelle heure est-il ?",
+                intent_name="system.time",
+                result=direct_result,
+                response_text="Il est 20 heures.",
+            )
+
+            self.assertTrue(observation.success)
+            self.assertEqual(observation.action_count, 1)
+            loaded = observer.stack.mission_store.load(
+                observation.mission_id
+            )
+            self.assertIsNotNone(loaded)
+            context, _version = loaded
+            self.assertEqual(
+                context.observed_state["actual_live_tools"],
+                ["system.time"],
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.QUEUED
+                ),
+                [],
             )
 
     def test_capability_token_cannot_authorize_undeclared_capability(self):
