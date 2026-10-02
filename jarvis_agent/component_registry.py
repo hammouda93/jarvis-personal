@@ -138,7 +138,10 @@ def build_default_component_registry() -> ComponentRegistry:
                 "jarvis_agent/knowledge_broker.py",
             ),
             tags=("memory", "knowledge", "learning"),
-            default_test_ids=("TEST-MEMORY-KNOWLEDGE",),
+            default_test_ids=(
+                "TEST-MEMORY-KNOWLEDGE",
+                "TEST-KERNEL-FOUNDATIONS",
+            ),
         )
     )
     registry.register(
@@ -195,6 +198,7 @@ def build_default_component_registry() -> ComponentRegistry:
                 "jarvis_agent/execution_managers.py",
             ),
             tags=("kernel", "scheduler", "multi_agent", "observability"),
+            default_test_ids=("TEST-KERNEL-FOUNDATIONS",),
         )
     )
 
