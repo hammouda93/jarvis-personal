@@ -1358,8 +1358,6 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
-        self._skill_write_allowed = False
-        self._lesson_write_allowed = False
 
     def reset(self) -> None:
         self._messages = [
@@ -1369,6 +1367,8 @@ class GroqResponsesAgent:
         self._last_msf_grounding_at = 0.0
         self._active_domain = ""
         self._memory_write_allowed = False
+        self._skill_write_allowed = False
+        self._lesson_write_allowed = False
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         return
