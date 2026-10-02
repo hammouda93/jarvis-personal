@@ -1923,6 +1923,24 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         self.provider_name = "cerebras"
         self.reasoning_effort = settings.cerebras_reasoning_effort
 
+    def _get_client(self):
+        if not self.api_key:
+            raise AgentRuntimeUnavailable("CEREBRAS_API_KEY n'est pas configurée.")
+        if self._client is None:
+            try:
+                from openai import OpenAI
+            except ImportError as exc:
+                raise AgentRuntimeUnavailable(
+                    "Le client OpenAI compatible n'est pas installé. "
+                    "Exécutez pip install -r requirements.txt."
+                ) from exc
+            self._client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=settings.cerebras_request_timeout_s,
+            )
+        return self._client
+
     @staticmethod
     def _should_try_secondary(error: AgentRuntimeUnavailable) -> bool:
         detail = str(error).lower()
