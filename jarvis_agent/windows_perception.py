@@ -202,7 +202,10 @@ def _control_value(wrapper: Any) -> str:
         except Exception:
             pass
 
-    iface_value = getattr(wrapper, "iface_value", None)
+    try:
+        iface_value = getattr(wrapper, "iface_value", None)
+    except Exception:
+        iface_value = None
     if iface_value is not None:
         try:
             value = str(iface_value.CurrentValue or "").strip()
@@ -211,7 +214,10 @@ def _control_value(wrapper: Any) -> str:
         except Exception:
             pass
 
-    legacy = getattr(wrapper, "legacy_properties", None)
+    try:
+        legacy = getattr(wrapper, "legacy_properties", None)
+    except Exception:
+        legacy = None
     if callable(legacy):
         try:
             props = legacy() or {}
