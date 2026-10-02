@@ -91,15 +91,6 @@ class AgentContextInjector:
                 and mission.user_id != request.user_id
             ):
                 raise PermissionError("mission_user_mismatch")
-        if (
-            mission.owner_agent_id is not None
-            and request.agent_id != mission.owner_agent_id
-        ):
-            # Child/specialized agents may still receive mission context only if
-            # they are declared providers for at least one mission capability
-            # later. Until that routing is wired, fail closed by default.
-            pass
-
         principal = KnowledgePrincipal(
             user_id=request.user_id or mission.user_id,
             agent_id=request.agent_id,
