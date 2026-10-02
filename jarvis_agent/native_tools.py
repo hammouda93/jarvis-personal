@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
@@ -573,6 +574,10 @@ class NativeToolRegistry:
 
         if name == "open_application":
             target = str(args.get("name", "")).strip()
+            learned = self._open_from_learned_profile(target)
+            if learned is not None:
+                return self._convert(name, learned)
+
             suffix = Path(target).suffix.lower()
             if suffix in {".exe", ".msi", ".bat", ".cmd", ".ps1"}:
                 result = execute(
@@ -992,6 +997,37 @@ class NativeToolRegistry:
             return self._convert(name, execute(ToolIntent("assistant.sleep")))
 
         return self._error(name, "Cette capacité n'existe pas dans Jarvis.")
+
+    def _open_from_learned_profile(self, target: str) -> ToolResult | None:
+        if not self._safe_target(target):
+            return None
+        try:
+            context = self.knowledge.relevant_context(target, limit=3)
+        except Exception:
+            return None
+
+        for profile in list(context.get("app_profiles") or []):
+            hint = str(profile.get("launch_hint") or "").strip()
+            if not hint:
+                continue
+            if hint.lower().startswith("application ouverte via raccourci:"):
+                hint = hint.split(":", 1)[1].strip()
+            expanded = Path(os.path.expandvars(os.path.expanduser(hint)))
+            if not expanded.exists():
+                continue
+            try:
+                os.startfile(str(expanded))
+            except OSError:
+                continue
+            self._last_app_hint = str(
+                profile.get("display_name") or target
+            )
+            return ToolResult(
+                True,
+                "C'est fait.",
+                str(expanded),
+            )
+        return None
 
     def _record_app_launch(self, target: str, result: ToolResult) -> None:
         try:
