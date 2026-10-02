@@ -254,7 +254,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "press_key",
-                "Envoie une touche de navigation sûre à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End, Alt+Left et Alt+Right pour navigation arrière/avant.",
+                "Envoie une touche ou un raccourci clavier sûr à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End, Alt+Left/Alt+Right, Ctrl+S, Ctrl+Shift+S, Ctrl+F, Ctrl+L, Ctrl+C/V/A/Z/Y. Réinspecter ensuite si le raccourci peut modifier l'interface.",
                 {
                     "key": {
                         "type": "string",
