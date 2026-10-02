@@ -49,10 +49,11 @@ class _FakeTab:
         automation_id="",
     )
 
-    def __init__(self, name, selected=False):
+    def __init__(self, name, selected=False, top=0):
         self.name = name
         self.selected = selected
         self.clicked = False
+        self.top = top
 
     def window_text(self):
         return self.name
@@ -66,6 +67,14 @@ class _FakeTab:
     def click_input(self):
         self.clicked = True
         self.selected = True
+
+    def rectangle(self):
+        return SimpleNamespace(
+            left=20,
+            top=self.top,
+            right=240,
+            bottom=self.top + 48,
+        )
 
 
 class _FakeTabWindow:
@@ -83,6 +92,9 @@ class _FakeTabWindow:
 
     def descendants(self):
         return list(self.tabs)
+
+    def rectangle(self):
+        return SimpleNamespace(left=0, top=0, right=1200, bottom=900)
 
 
 class _FakeComboBox:
@@ -253,10 +265,41 @@ class WindowsPerceptionTests(unittest.TestCase):
             ),
             0.90,
         )
+        self.assertGreaterEqual(
+            _window_identity_score(
+                "CursorUserSetup",
+                "Installation - Cursor (User)",
+            ),
+            0.90,
+        )
         self.assertLess(
             _window_identity_score("Search", "(5) YouTube - Google Chrome"),
             0.82,
         )
+
+    @patch("jarvis_agent.windows_perception.time.sleep")
+    @patch("jarvis_agent.windows_perception._send_keys")
+    @patch("jarvis_agent.windows_perception._active_window")
+    def test_close_tab_ignores_page_internal_tabitems(
+        self,
+        active_window_mock,
+        send_keys_mock,
+        sleep_mock,
+    ):
+        browser_tab = _FakeTab("(5) YouTube - Utilisation mémoire", top=4)
+        shorts_filter = _FakeTab("Shorts", top=236)
+        all_filter = _FakeTab("Tout", top=236)
+        before = _FakeTabWindow([all_filter, shorts_filter, browser_tab])
+        after = _FakeTabWindow([all_filter, shorts_filter])
+        active_window_mock.side_effect = [before, after]
+
+        result = close_tab("YouTube")
+
+        self.assertTrue(result.success)
+        self.assertTrue(browser_tab.clicked)
+        self.assertFalse(shorts_filter.clicked)
+        self.assertFalse(all_filter.clicked)
+        send_keys_mock.assert_called_once_with("^w")
 
     @patch("jarvis_agent.windows_perception.time.sleep")
     @patch("jarvis_agent.windows_perception._send_keys")
