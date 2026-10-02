@@ -59,6 +59,20 @@ class JarvisKernel:
         self.event_bus = event_bus or MissionEventBus()
         self.journal = journal
         self.request_store = request_store
+        # Snapshot only the requests that were already RUNNING when this
+        # Kernel instance started. Those may have crossed an external side
+        # effect before the previous process crashed and therefore require
+        # explicit recovery instead of automatic replay. Requests that become
+        # RUNNING normally in this process must not be reported as crash
+        # recovery candidates.
+        self._startup_recovery_request_ids: set[str] = (
+            {
+                request.request_id
+                for request in request_store.recovery_required()
+            }
+            if request_store is not None
+            else set()
+        )
         self._pending_approval_requests: dict[str, KernelRequest] = {}
 
     def _emit(
@@ -336,7 +350,11 @@ class JarvisKernel:
     def recovery_required_requests(self) -> list[KernelRequest]:
         if self.request_store is None:
             return []
-        return self.request_store.recovery_required()
+        return [
+            request
+            for request in self.request_store.recovery_required()
+            if request.request_id in self._startup_recovery_request_ids
+        ]
 
     def complete(
         self,
