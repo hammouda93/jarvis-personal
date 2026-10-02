@@ -16,5 +16,6 @@ if ([string]::IsNullOrWhiteSpace($LogPath)) {
 }
 
 Write-Host "Jarvis UTF-8 log: $LogPath"
-python run_jarvis.py 2>&1 | Tee-Object -FilePath $LogPath
+$command = "python run_jarvis.py 2>&1"
+cmd.exe /d /s /c $command | Tee-Object -FilePath $LogPath
 exit $LASTEXITCODE
