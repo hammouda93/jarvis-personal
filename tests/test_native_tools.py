@@ -191,6 +191,7 @@ class NativeToolRegistryTests(unittest.TestCase):
         }
         self.assertIn("observe_screen", names)
         self.assertIn("click_visual_target", names)
+        self.assertIn("write_visual_target", names)
         self.assertIn("search_agent_knowledge", names)
         self.assertIn("save_verified_skill", names)
         self.assertIn("save_feedback_lesson", names)
@@ -257,6 +258,35 @@ class NativeToolRegistryTests(unittest.TestCase):
         click_mock.assert_called_once_with(
             target="bouton Enregistrer",
             title="Enregistrer sous",
+        )
+
+    @patch("jarvis_agent.native_tools.write_visual_target")
+    def test_write_visual_target_routes_to_local_visual_action(
+        self,
+        write_mock,
+    ):
+        write_mock.return_value = SimpleNamespace(
+            success=True,
+            message="written",
+            detail='{"verified":false,"confidence":0.94}',
+        )
+
+        result = self.registry.execute(
+            "write_visual_target",
+            {
+                "title": "Enregistrer sous",
+                "target": "champ Nom du fichier",
+                "text": "jarvis_test.txt",
+                "mode": "replace",
+            },
+        )
+
+        self.assertTrue(result.success)
+        write_mock.assert_called_once_with(
+            target="champ Nom du fichier",
+            text="jarvis_test.txt",
+            title="Enregistrer sous",
+            mode="replace",
         )
 
     def test_verified_skill_tool_writes_to_injected_local_store(self):
