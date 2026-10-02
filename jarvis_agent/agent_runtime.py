@@ -1851,7 +1851,60 @@ class GroqResponsesAgent:
             parsed = result.detail
 
         if isinstance(parsed, dict):
-            if name == "msf_query_records":
+            if name == "inspect_active_window":
+                parsed = dict(parsed)
+                controls = [
+                    dict(item)
+                    for item in list(parsed.get("controls") or [])
+                    if isinstance(item, dict)
+                ]
+                capabilities = dict(parsed.get("capabilities") or {})
+                writable = [
+                    dict(item)
+                    for item in list(capabilities.get("writable") or [])
+                    if isinstance(item, dict)
+                ][:12]
+                actionable = [
+                    dict(item)
+                    for item in list(capabilities.get("actionable") or [])
+                    if isinstance(item, dict)
+                ][:16]
+                capabilities["writable"] = writable
+                capabilities["actionable"] = actionable
+                parsed["capabilities"] = capabilities
+
+                important_refs = {
+                    str(item.get("ref") or "")
+                    for item in [*writable, *actionable]
+                    if item.get("ref")
+                }
+                important_controls = [
+                    item
+                    for item in controls
+                    if str(item.get("ref") or "") in important_refs
+                ]
+                other_controls = [
+                    item
+                    for item in controls
+                    if str(item.get("ref") or "") not in important_refs
+                ]
+                compact_controls = []
+                seen_refs: set[str] = set()
+                for item in [*important_controls, *other_controls]:
+                    ref = str(item.get("ref") or "")
+                    if ref and ref in seen_refs:
+                        continue
+                    if ref:
+                        seen_refs.add(ref)
+                    compact_controls.append(item)
+                    if len(compact_controls) >= 24:
+                        break
+                parsed["controls"] = compact_controls
+                if len(controls) > len(compact_controls):
+                    parsed["controls_omitted"] = (
+                        len(controls) - len(compact_controls)
+                    )
+            elif name == "msf_query_records":
                 parsed = dict(parsed)
                 rows = list(parsed.get("rows") or [])
                 parsed["rows"] = rows[:10]
@@ -1907,8 +1960,12 @@ class GroqResponsesAgent:
             )
 
         detail_text = str(detail or "")
-        if len(detail_text) > 3500:
-            detail_text = detail_text[:3500] + "…"
+        max_detail = 6000 if name in {
+            "inspect_active_window",
+            "observe_screen",
+        } else 3500
+        if len(detail_text) > max_detail:
+            detail_text = detail_text[:max_detail] + "…"
 
         return json.dumps(
             {
