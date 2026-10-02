@@ -51,6 +51,51 @@ class EnvironmentSecretProvider:
         return value or None
 
 
+class WindowsCredentialSecretProvider:
+    """Read one exact Jarvis credential target without enumerating the vault."""
+
+    provider_id = "windows_credential_manager"
+
+    def __init__(self, *, target_prefix: str = "Jarvis"):
+        self.target_prefix = str(target_prefix or "Jarvis").strip("/")
+
+    def target_name(self, ref: SecretRef) -> str:
+        return (
+            f"{self.target_prefix}/"
+            f"{ref.namespace.strip('/')}/"
+            f"{ref.name}"
+        )
+
+    def get(self, ref: SecretRef) -> str | None:
+        try:
+            import win32cred
+        except ImportError:
+            return None
+
+        try:
+            credential = win32cred.CredRead(
+                self.target_name(ref),
+                win32cred.CRED_TYPE_GENERIC,
+            )
+        except Exception:
+            return None
+
+        blob = credential.get("CredentialBlob")
+        if blob is None:
+            return None
+        if isinstance(blob, bytes):
+            for encoding in ("utf-16-le", "utf-8"):
+                try:
+                    value = blob.decode(encoding).strip("\x00").strip()
+                    if value:
+                        return value
+                except UnicodeDecodeError:
+                    continue
+            return None
+        value = str(blob).strip()
+        return value or None
+
+
 class CompositeSecretProvider:
     """Try providers in order without exposing which value was returned."""
 
