@@ -174,6 +174,7 @@ class NativeToolRegistryTests(unittest.TestCase):
             for item in self.registry.ollama_tools()
         }
         self.assertIn("open_file", tools)
+        self.assertIn("close_tab", tools)
         self.assertIn("type_text_active_window", tools)
         self.assertIn("mode", tools["write_ui_element"]["properties"])
         self.assertEqual(
@@ -193,6 +194,22 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertIn("save_verified_skill", names)
         self.assertIn("save_feedback_lesson", names)
         self.assertIn("agent_knowledge_stats", names)
+
+    @patch("jarvis_agent.native_tools.close_tab")
+    def test_close_tab_routes_separately_from_close_window(self, close_tab_mock):
+        close_tab_mock.return_value = SimpleNamespace(
+            success=True,
+            message="closed",
+            detail='{"verified":true}',
+        )
+
+        result = self.registry.execute(
+            "close_tab",
+            {"name": "YouTube"},
+        )
+
+        self.assertTrue(result.success)
+        close_tab_mock.assert_called_once_with("YouTube")
 
     @patch("jarvis_agent.native_tools.observe_screen")
     def test_observe_screen_routes_to_local_visual_sensor(self, observe_mock):
