@@ -54,6 +54,8 @@ from jarvis_agent.model_router import (
 )
 from jarvis_agent.llm_manager import RoutedLLMExecutionManager
 from jarvis_agent.plugin_manifest import PluginManifest
+from jarvis_agent.plugin_policy import PluginPermissionPolicy
+from jarvis_agent.mcp_connector_adapter import MCPConnectorAdapter
 from jarvis_agent.replay_sandbox import (
     ReplayAction,
     ReplayPlan,
@@ -1792,6 +1794,91 @@ class KernelFoundationTests(unittest.TestCase):
                 scheduled.request.step_id,
                 "observe",
             )
+
+    def test_plugin_permission_policy_is_fail_closed(self):
+        manifest = PluginManifest.from_dict(
+            {
+                "plugin_id": "secure_plugin",
+                "name": "Secure",
+                "version": "1.0.0",
+                "agent_id": "communications",
+                "entrypoint": "plugins.secure:Agent",
+                "allowed_tools": ["read_tool"],
+                "allowed_connectors": ["gmail"],
+                "allowed_network_hosts": ["api.example.com"],
+                "allowed_file_roots": ["C:/JarvisSandbox"],
+                "risk_level": "read",
+            }
+        )
+
+        self.assertTrue(
+            PluginPermissionPolicy.tool(
+                manifest,
+                "read_tool",
+            ).allowed
+        )
+        self.assertFalse(
+            PluginPermissionPolicy.tool(
+                manifest,
+                "send_tool",
+            ).allowed
+        )
+        self.assertTrue(
+            PluginPermissionPolicy.network_url(
+                manifest,
+                "https://api.example.com/v1/items",
+            ).allowed
+        )
+        self.assertFalse(
+            PluginPermissionPolicy.network_url(
+                manifest,
+                "https://evil.example/v1/items",
+            ).allowed
+        )
+
+    def test_mcp_connector_adapter_uses_explicit_capability_mapping_only(self):
+        class Transport:
+            transport_id = "mcp-test"
+
+            def __init__(self):
+                self.calls = []
+
+            def call_tool(self, tool_name, arguments):
+                self.calls.append((tool_name, arguments))
+                return {
+                    "success": True,
+                    "message": "ok",
+                    "data": {"id": 1},
+                }
+
+        transport = Transport()
+        adapter = MCPConnectorAdapter(
+            connector_id="gmail",
+            transport=transport,
+            capability_to_tool={
+                "search_messages": "gmail_search",
+            },
+        )
+
+        result = adapter.execute(
+            "search_messages",
+            {"q": "Jarvis"},
+        )
+        denied = adapter.execute(
+            "send_message",
+            {"to": "x@example.com"},
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            transport.calls,
+            [("gmail_search", {"q": "Jarvis"})],
+        )
+        self.assertFalse(denied.success)
+        self.assertEqual(
+            denied.error,
+            "mcp_tool_mapping_missing",
+        )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
