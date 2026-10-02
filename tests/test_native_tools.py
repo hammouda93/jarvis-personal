@@ -1,14 +1,24 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+from jarvis_agent.agent_knowledge import AgentKnowledgeStore
 from jarvis_agent.native_tools import NativeToolRegistry
 from jarvis_agent.tools import ToolResult
 
 
 class NativeToolRegistryTests(unittest.TestCase):
     def setUp(self):
-        self.registry = NativeToolRegistry()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.knowledge = AgentKnowledgeStore(
+            Path(self.tmp.name) / "agent_knowledge.sqlite3"
+        )
+        self.registry = NativeToolRegistry(knowledge=self.knowledge)
+
+    def tearDown(self):
+        self.tmp.cleanup()
 
     @patch("jarvis_agent.native_tools.execute")
     def test_unknown_named_app_uses_generic_discovery(self, execute_mock):
@@ -138,6 +148,86 @@ class NativeToolRegistryTests(unittest.TestCase):
             ),
             {"replace", "append", "insert"},
         )
+
+    def test_registry_exposes_operational_knowledge_tools(self):
+        names = {
+            item["function"]["name"]
+            for item in self.registry.ollama_tools()
+        }
+        self.assertIn("search_agent_knowledge", names)
+        self.assertIn("save_verified_skill", names)
+        self.assertIn("save_feedback_lesson", names)
+        self.assertIn("agent_knowledge_stats", names)
+
+    def test_verified_skill_tool_writes_to_injected_local_store(self):
+        result = self.registry.execute(
+            "save_verified_skill",
+            {
+                "name": "generic_edit_document",
+                "goal": "Edit an existing document without losing content.",
+                "app_scope": "text editor",
+                "procedure": [
+                    "Inspect the editable document.",
+                    "Use append when content must be preserved.",
+                ],
+                "success_checks": [
+                    "The resulting document value contains old and new text."
+                ],
+            },
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(self.knowledge.stats()["skills"], 1)
+        self.assertEqual(
+            self.knowledge.get_skill("generic_edit_document").version,
+            1,
+        )
+
+    def test_feedback_lesson_tool_writes_to_injected_local_store(self):
+        result = self.registry.execute(
+            "save_feedback_lesson",
+            {
+                "scope": "ui",
+                "pattern": "user confirms previous mutation",
+                "rule": "Do not repeat the mutation after a confirmation.",
+            },
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(self.knowledge.stats()["lessons"], 1)
+
+    def test_search_agent_knowledge_returns_matching_context(self):
+        self.knowledge.record_lesson(
+            scope="messaging",
+            pattern="contact search versus message composer",
+            rule="Do not type a message into the contact search field.",
+        )
+
+        result = self.registry.execute(
+            "search_agent_knowledge",
+            {"query": "messaging contact search", "limit": 3},
+        )
+
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["lessons"])
+
+    def test_successful_app_open_updates_local_app_profile(self):
+        with patch("jarvis_agent.native_tools.execute") as execute_mock:
+            execute_mock.return_value = ToolResult(
+                True,
+                "ok",
+                r"C:\\Users\\test\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+            )
+
+            result = self.registry.execute(
+                "open_application",
+                {"name": "Cursor"},
+            )
+
+        self.assertTrue(result.success)
+        context = self.knowledge.relevant_context("Cursor", limit=3)
+        self.assertTrue(context["app_profiles"])
 
     def test_tool_result_is_json_for_model_observation(self):
         result = self.registry._error("open_application", "introuvable")
