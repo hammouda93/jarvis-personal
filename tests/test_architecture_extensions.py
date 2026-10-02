@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from jarvis_agent.agent_knowledge import AgentKnowledgeStore
@@ -13,6 +14,7 @@ from jarvis_agent.execution_managers import (
 from jarvis_agent.kernel_contracts import (
     KernelRequest,
     KnowledgeScope,
+    PromotionTarget,
     SyscallKind,
 )
 from jarvis_agent.kernel_dispatcher import KernelDispatcher
@@ -20,6 +22,11 @@ from jarvis_agent.kernel_request_store import KernelRequestStore
 from jarvis_agent.kernel_service import JarvisKernel
 from jarvis_agent.knowledge_broker import KnowledgeBroker
 from jarvis_agent.knowledge_policy import KnowledgePrincipal
+from jarvis_agent.config import settings as real_settings
+from jarvis_agent.model_catalog import CurrentModelCatalog
+from jarvis_agent.promotion_gate import CorrectionPromotionGate
+from jarvis_agent.supervisor_validation import SupervisorValidationState
+from jarvis_agent.dev_supervisor import candidate_from_assessment, FailureAssessment, FailureKind
 from jarvis_agent.local_rpc_security import (
     CapabilityTokenAuthority,
     LocalRPCPolicy,
@@ -177,6 +184,126 @@ class ArchitectureExtensionTests(unittest.TestCase):
         self.assertTrue(LocalRPCPolicy("::1").validate_host())
         self.assertFalse(LocalRPCPolicy("0.0.0.0").validate_host())
         self.assertFalse(LocalRPCPolicy("192.168.1.10").validate_host())
+
+    def test_model_catalog_describes_current_providers_without_routing(self):
+        configured = replace(
+            real_settings,
+            cerebras_api_key="cerebras-test",
+            groq_api_key="groq-test",
+            vision_enabled=True,
+            openai_api_key="",
+        )
+        catalog = CurrentModelCatalog(configured)
+
+        entries = catalog.entries()
+        providers = {item.candidate.provider for item in entries}
+        self.assertIn("cerebras", providers)
+        self.assertIn("groq", providers)
+        self.assertIn("ollama", providers)
+        self.assertIn("openai", providers)
+
+        candidates = catalog.configured_candidates()
+        configured_pairs = {
+            (item.provider, item.model)
+            for item in candidates
+        }
+        self.assertIn(
+            ("cerebras", configured.cerebras_agent_model),
+            configured_pairs,
+        )
+        self.assertIn(
+            ("groq", configured.groq_agent_model),
+            configured_pairs,
+        )
+        self.assertNotIn(
+            ("openai", configured.openai_agent_model),
+            configured_pairs,
+        )
+
+    def test_core_feedback_cannot_be_promoted_as_automatic_memory(self):
+        assessment = FailureAssessment(
+            kind=FailureKind.CORE_INVARIANT,
+            summary="An explicit tab request must never close the full window.",
+            confidence=0.98,
+            proposed_scope=KnowledgeScope.CORE,
+            promotion_target=PromotionTarget.CORE_INVARIANT,
+            evidence_event_ids=("e1", "e2"),
+            component="agent_runtime",
+        )
+        candidate = candidate_from_assessment(
+            mission_id="m-core",
+            assessment=assessment,
+            user_id="user-1",
+            agent_id="windows",
+            test_ids=["TEST-WIN-BASELINE"],
+            evidence={"proof": "verified"},
+        )
+        candidate.validated = True
+        gate_state = SupervisorValidationState(
+            candidate_id=candidate.candidate_id,
+            tests_passed=True,
+            replay_passed=True,
+            proof_present=True,
+            ready_for_user_validation=True,
+            blockers=(),
+        )
+
+        decision = CorrectionPromotionGate().evaluate(
+            candidate,
+            prevalidation=gate_state,
+        )
+
+        self.assertTrue(decision.allowed)
+        self.assertFalse(decision.automatic_write_allowed)
+        self.assertTrue(decision.requires_dev_patch_pipeline)
+
+    def test_user_preference_can_only_promote_after_evidence_and_validation(self):
+        assessment = FailureAssessment(
+            kind=FailureKind.USER_PREFERENCE,
+            summary="Use the user's preferred delivery wording.",
+            confidence=0.9,
+            proposed_scope=KnowledgeScope.USER,
+            promotion_target=PromotionTarget.USER_PREFERENCE,
+            evidence_event_ids=("e1",),
+        )
+        candidate = candidate_from_assessment(
+            mission_id="m-user",
+            assessment=assessment,
+            user_id="user-1",
+            agent_id="communications",
+            evidence={"proof": "confirmed"},
+        )
+        not_ready = SupervisorValidationState(
+            candidate_id=candidate.candidate_id,
+            tests_passed=True,
+            replay_passed=True,
+            proof_present=True,
+            ready_for_user_validation=False,
+            blockers=("replay_not_green",),
+        )
+
+        blocked = CorrectionPromotionGate().evaluate(
+            candidate,
+            prevalidation=not_ready,
+        )
+        self.assertFalse(blocked.allowed)
+
+        candidate.validated = True
+        ready = SupervisorValidationState(
+            candidate_id=candidate.candidate_id,
+            tests_passed=True,
+            replay_passed=True,
+            proof_present=True,
+            ready_for_user_validation=True,
+            blockers=(),
+        )
+        allowed = CorrectionPromotionGate().evaluate(
+            candidate,
+            prevalidation=ready,
+        )
+        self.assertTrue(allowed.allowed)
+        self.assertTrue(allowed.automatic_write_allowed)
+        self.assertFalse(allowed.requires_dev_patch_pipeline)
 
     def test_capability_token_cannot_authorize_undeclared_capability(self):
         authority = CapabilityTokenAuthority()
