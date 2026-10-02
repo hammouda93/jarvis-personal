@@ -8,6 +8,7 @@ from typing import Any
 from .agent_knowledge import AGENT_KNOWLEDGE
 from .memory import LOCAL_MEMORY
 from .ms_football_bridge import MS_FOOTBALL_BRIDGE
+from .screen_vision import observe_screen
 from .tools import ToolIntent, ToolResult, execute, normalize
 from .windows_perception import (
     activate_window,
@@ -133,6 +134,21 @@ class NativeToolRegistry:
                         "type": "string",
                         "description": "Titre optionnel de la fenêtre à inspecter. Sans titre, inspecte la fenêtre de travail active en ignorant l'interface Jarvis.",
                     }
+                },
+                [],
+            ),
+            self._ollama(
+                "observe_screen",
+                "Fallback visuel local: capture la fenêtre réelle et la fait analyser par un modèle vision Ollama local. À utiliser seulement si inspect_active_window est ambigu/incomplet, pour distinguer des éléments visuels, des résultats ordonnés ou vérifier un état que UIA ne montre pas clairement.",
+                {
+                    "title": {
+                        "type": "string",
+                        "description": "Titre optionnel de la fenêtre à observer visuellement.",
+                    },
+                    "focus": {
+                        "type": "string",
+                        "description": "Question visuelle précise, sans données secrètes inutiles.",
+                    },
                 },
                 [],
             ),
@@ -672,6 +688,17 @@ class NativeToolRegistry:
             title = str(args.get("title", "")).strip() or None
             result = inspect_active_window(title=title)
             self._record_inspected_app(result)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "observe_screen":
+            title = str(args.get("title", "")).strip() or None
+            focus = str(args.get("focus", "")).strip()
+            result = observe_screen(title=title, focus=focus)
             return AgentActionResult(
                 name=name,
                 success=result.success,
