@@ -534,6 +534,25 @@ def application_speech_hints(limit: int = 40) -> tuple[str, ...]:
     return tuple(names[: max(1, min(int(limit), 80))])
 
 
+def _app_binary_roots() -> list[Path]:
+    local = os.getenv("LOCALAPPDATA", "")
+    program_files = os.getenv("ProgramFiles", r"C:\Program Files")
+    program_files_x86 = os.getenv(
+        "ProgramFiles(x86)",
+        r"C:\Program Files (x86)",
+    )
+    roots = [
+        Path(local) / "Programs" if local else None,
+        Path(program_files),
+        Path(program_files_x86),
+    ]
+    return [
+        root
+        for root in roots
+        if root is not None and root.exists() and root.is_dir()
+    ]
+
+
 def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
     wanted = _normalize_path_name(query)
     compact = wanted.replace(" ", "")
@@ -603,6 +622,47 @@ def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
                         dirs[:] = []
                         break
                 if visited >= 1200:
+                    break
+        except OSError:
+            continue
+
+    # Some apps (including package-manager installs) have no usable Start
+    # Menu shortcut. Search common application roots for matching executables,
+    # with strict depth/visit limits so this remains a bounded discovery step.
+    for root in _app_binary_roots():
+        base_depth = len(root.parts)
+        visited = 0
+        try:
+            for current, dirs, files in os.walk(root):
+                current_path = Path(current)
+                depth = len(current_path.parts) - base_depth
+                if depth >= 4:
+                    dirs[:] = []
+                    continue
+                for filename in files:
+                    path = Path(filename)
+                    if path.suffix.lower() != ".exe":
+                        continue
+                    lowered = filename.lower()
+                    if any(
+                        bad in lowered
+                        for bad in (
+                            "uninstall",
+                            "update",
+                            "updater",
+                            "service",
+                            "server",
+                            "helper",
+                            "crashpad",
+                        )
+                    ):
+                        continue
+                    consider(current_path / filename)
+                    visited += 1
+                    if visited >= 2500:
+                        dirs[:] = []
+                        break
+                if visited >= 2500:
                     break
         except OSError:
             continue
