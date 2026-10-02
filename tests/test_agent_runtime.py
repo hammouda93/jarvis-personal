@@ -197,6 +197,22 @@ class FakeTools:
             {
                 "type": "function",
                 "function": {
+                    "name": "click_visual_target",
+                    "description": "local visual target click",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target": {"type": "string"},
+                            "title": {"type": "string"},
+                        },
+                        "required": ["target"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "search_agent_knowledge",
                     "description": "search operational knowledge",
                     "parameters": {
@@ -650,6 +666,7 @@ class AgentRuntimeTests(unittest.TestCase):
         }
 
         self.assertNotIn("observe_screen", definitions)
+        self.assertNotIn("click_visual_target", definitions)
         self.assertNotIn("type_text_active_window", definitions)
         self.assertNotIn("search_agent_knowledge", definitions)
         self.assertNotIn("save_verified_skill", definitions)
@@ -1162,6 +1179,124 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
         self.assertIn("étape suivante", result.text)
+
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(
+            real_settings,
+            compatibility_baseline=False,
+            vision_enabled=True,
+            vision_actions_enabled=False,
+            operational_learning_enabled=False,
+            strict_proof_enabled=False,
+            focused_typing_fallback_enabled=False,
+        ),
+    )
+    def test_groq_vision_mode_exposes_observation_but_not_visual_click(self):
+        agent = FakeGroqAgent(FakeTools(), [])
+        definitions = {
+            item["function"]["name"]
+            for item in agent._tool_definitions()
+            if item.get("type") == "function"
+        }
+
+        self.assertIn("observe_screen", definitions)
+        self.assertNotIn("click_visual_target", definitions)
+        self.assertNotIn("type_text_active_window", definitions)
+
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(
+            real_settings,
+            compatibility_baseline=False,
+            vision_enabled=True,
+            vision_actions_enabled=True,
+            operational_learning_enabled=False,
+            strict_proof_enabled=False,
+            focused_typing_fallback_enabled=False,
+        ),
+    )
+    def test_groq_visual_click_requires_after_state_verification(self):
+        class VisualTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "click_visual_target":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="clicked",
+                        detail='{"verified":false,"confidence":0.91}',
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = VisualTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_visual",
+                            "name": "click_visual_target",
+                            "arguments": (
+                                '{"target":"bouton Enregistrer",'
+                                '"title":"Enregistrer sous"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le bouton a été cliqué.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_verify_visual",
+                            "name": "inspect_active_window",
+                            "arguments": "{}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le nouvel état est visible.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Clique sur le bouton Enregistrer.")
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            ["click_visual_target", "inspect_active_window"],
+        )
+        self.assertIn("visible", result.text)
 
     def test_verified_proof_requires_mutation_and_after_state(self):
         self.assertFalse(
