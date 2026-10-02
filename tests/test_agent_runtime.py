@@ -704,7 +704,27 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
     def test_groq_repairs_write_goal_after_only_opening_application(self):
-        tools = FakeTools()
+        class VerifiedRepairTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "write_ui_element":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="ok",
+                        detail=(
+                            '{"verified":true,'
+                            '"value":"Bonjour Jarvis"}'
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = VerifiedRepairTools()
         agent = FakeGroqAgent(
             tools,
             [
@@ -783,7 +803,26 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("écrit", result.text)
 
     def test_groq_blocks_window_close_when_user_requested_tab(self):
-        tools = FakeTools()
+        class VerifiedTabTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "close_tab":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="ok",
+                        detail=(
+                            '{"target":"YouTube","verified":true}'
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = VerifiedTabTools()
         agent = FakeGroqAgent(
             tools,
             [
