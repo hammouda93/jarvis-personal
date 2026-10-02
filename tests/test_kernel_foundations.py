@@ -71,6 +71,7 @@ from jarvis_agent.connector_registry import (
 )
 from jarvis_agent.correction_store import CorrectionCandidateStore
 from jarvis_agent.kernel_service import JarvisKernel
+from jarvis_agent.kernel_request_store import KernelRequestStore
 from jarvis_agent.dev_supervisor import (
     FailureAssessment,
     FailureKind,
@@ -89,6 +90,7 @@ from jarvis_agent.kernel_contracts import (
     RiskLevel,
     SharingPolicy,
     SyscallKind,
+    SyscallStatus,
 )
 from jarvis_agent.model_telemetry import ModelTelemetryStore
 from jarvis_agent.regression_registry import (
@@ -1381,6 +1383,83 @@ class KernelFoundationTests(unittest.TestCase):
             self.assertEqual(
                 [item.task_id for item in restored.ready()],
                 ["act"],
+            )
+
+    def test_kernel_request_store_restores_only_safe_queued_requests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "requests.sqlite3"
+            store = KernelRequestStore(path)
+            queued = KernelRequest(
+                request_id="r_queued",
+                mission_id="m1",
+                syscall_kind=SyscallKind.TOOL,
+                capability="computer.observe",
+                agent_id="windows",
+                payload={"tool_name": "inspect_active_window"},
+            )
+            running = KernelRequest(
+                request_id="r_running",
+                mission_id="m1",
+                syscall_kind=SyscallKind.TOOL,
+                capability="computer.interact",
+                agent_id="windows",
+                payload={"tool_name": "click_ui_element"},
+            )
+            store.put(queued, status=SyscallStatus.QUEUED)
+            store.put(running, status=SyscallStatus.RUNNING)
+
+            kernel = JarvisKernel(request_store=store)
+            restored = kernel.restore_queued_requests()
+
+            self.assertEqual(restored, ["r_queued"])
+            scheduled = kernel.next_request()
+            self.assertEqual(
+                scheduled.request.request_id,
+                "r_queued",
+            )
+            recovery = kernel.recovery_required_requests()
+            self.assertEqual(
+                [item.request_id for item in recovery],
+                ["r_running"],
+            )
+
+    def test_kernel_request_store_tracks_live_passive_kernel_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KernelRequestStore(
+                Path(tmp) / "requests.sqlite3"
+            )
+            kernel = JarvisKernel(request_store=store)
+            request = KernelRequest(
+                request_id="r_lifecycle",
+                mission_id="m1",
+                syscall_kind=SyscallKind.TOOL,
+                capability="computer.observe",
+                agent_id="windows",
+                payload={"tool_name": "inspect_active_window"},
+            )
+
+            submission = kernel.submit(request)
+            self.assertTrue(submission.queued)
+            self.assertEqual(
+                store.get("r_lifecycle")["status"],
+                SyscallStatus.QUEUED,
+            )
+
+            scheduled = kernel.next_request()
+            self.assertEqual(
+                store.get("r_lifecycle")["status"],
+                SyscallStatus.RUNNING,
+            )
+
+            response = kernel.complete(
+                scheduled.request.request_id,
+                success=True,
+                result={"verified": True},
+            )
+            self.assertTrue(response.success)
+            self.assertEqual(
+                store.get("r_lifecycle")["status"],
+                SyscallStatus.SUCCEEDED,
             )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
