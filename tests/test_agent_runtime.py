@@ -15,13 +15,28 @@ from jarvis_agent.agent_runtime import (
     _query_matches_recent_user_context,
     _looks_mostly_english,
     _visible_text,
+    _actions_have_verified_proof,
+    _looks_like_clear_operational_feedback,
 )
 from jarvis_agent.native_tools import AgentActionResult
+
+
+class FakeKnowledge:
+    def __init__(self):
+        self.context = {"skills": [], "lessons": [], "app_profiles": []}
+        self.runs = []
+
+    def relevant_context(self, query, *, limit=3):
+        return copy.deepcopy(self.context)
+
+    def record_run(self, **kwargs):
+        self.runs.append(copy.deepcopy(kwargs))
 
 
 class FakeTools:
     def __init__(self):
         self.calls = []
+        self.knowledge = FakeKnowledge()
 
     def ollama_tools(self):
         return [
@@ -111,6 +126,78 @@ class FakeTools:
                             },
                         },
                         "required": ["text"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "observe_screen",
+                    "description": "local visual observation",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "focus": {"type": "string"},
+                        },
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_agent_knowledge",
+                    "description": "search operational knowledge",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "save_verified_skill",
+                    "description": "save verified reusable skill",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "goal": {"type": "string"},
+                            "procedure": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "success_checks": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": [
+                            "name", "goal", "procedure", "success_checks"
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "save_feedback_lesson",
+                    "description": "save reusable feedback lesson",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "scope": {"type": "string"},
+                            "pattern": {"type": "string"},
+                            "rule": {"type": "string"},
+                        },
+                        "required": ["pattern", "rule"],
                         "additionalProperties": False,
                     },
                 },
@@ -481,6 +568,268 @@ class AgentRuntimeTests(unittest.TestCase):
             ],
         )
         self.assertIn("visible", result.text)
+
+    def test_verified_proof_requires_mutation_and_after_state(self):
+        self.assertFalse(
+            _actions_have_verified_proof(
+                [
+                    AgentActionResult(
+                        "inspect_active_window",
+                        True,
+                        "ok",
+                        "{}",
+                    )
+                ]
+            )
+        )
+        self.assertTrue(
+            _actions_have_verified_proof(
+                [
+                    AgentActionResult(
+                        "click_ui_element",
+                        True,
+                        "ok",
+                        "{}",
+                    ),
+                    AgentActionResult(
+                        "observe_screen",
+                        True,
+                        "ok",
+                        '{"observation":"new state visible"}',
+                    ),
+                ]
+            )
+        )
+
+    def test_clear_operational_feedback_detector(self):
+        self.assertTrue(
+            _looks_like_clear_operational_feedback(
+                "Non, tu as juste recherché le contact, tu n'as pas envoyé le message."
+            )
+        )
+        self.assertFalse(
+            _looks_like_clear_operational_feedback(
+                "Oui, maintenant c'est bon."
+            )
+        )
+
+    def test_groq_blocks_skill_learning_without_verified_proof(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_skill_blocked",
+                            "name": "save_verified_skill",
+                            "arguments": (
+                                '{"name":"send_message","goal":"Send a message",'
+                                '"procedure":["open conversation"],'
+                                '"success_checks":["message visible"]}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je n'enregistre pas encore ce skill.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Envoie un message.")
+
+        self.assertNotIn(
+            ("save_verified_skill", {
+                "name": "send_message",
+                "goal": "Send a message",
+                "procedure": ["open conversation"],
+                "success_checks": ["message visible"],
+            }),
+            tools.calls,
+        )
+        self.assertEqual(
+            result.actions[0].detail,
+            "skill_write_blocked_without_verified_proof",
+        )
+
+    def test_groq_allows_skill_learning_after_verified_ui_mutation(self):
+        class VerifiedTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "write_ui_element":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="ok",
+                        detail='{"verified":true,"mode":"append"}',
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = VerifiedTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_write_proof",
+                            "name": "write_ui_element",
+                            "arguments": (
+                                '{"ref":"e1","text":" test","mode":"append"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_skill_allowed",
+                            "name": "save_verified_skill",
+                            "arguments": (
+                                '{"name":"append_document_text",'
+                                '"goal":"Append text without losing existing content",'
+                                '"procedure":["inspect document","append text"],'
+                                '"success_checks":["old and new text visible"]}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "C'est fait.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ajoute du texte après le contenu existant.")
+
+        self.assertTrue(
+            any(name == "save_verified_skill" for name, _args in tools.calls)
+        )
+        self.assertTrue(
+            any(action.name == "save_verified_skill" for action in result.actions)
+        )
+
+    def test_groq_blocks_feedback_lesson_without_user_correction(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_lesson_blocked",
+                            "name": "save_feedback_lesson",
+                            "arguments": (
+                                '{"scope":"ui","pattern":"confirmation",'
+                                '"rule":"do not repeat"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Compris.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Oui, c'est bon.")
+
+        self.assertEqual(
+            result.actions[0].detail,
+            "lesson_write_blocked_without_clear_feedback",
+        )
+
+    def test_groq_injects_relevant_local_knowledge_ephemerally(self):
+        tools = FakeTools()
+        tools.knowledge.context = {
+            "skills": [
+                {
+                    "name": "messaging_send_message",
+                    "goal": "Send a message",
+                    "procedure": ["open conversation", "verify send"],
+                }
+            ],
+            "lessons": [],
+            "app_profiles": [],
+        }
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je vais utiliser la procédure locale.",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+        )
+
+        agent.run("Envoie un message avec WhatsApp.")
+
+        messages = agent.payloads[0]["messages"]
+        self.assertTrue(
+            any(
+                item.get("role") == "system"
+                and "CONNAISSANCE_OPERATIONNELLE_LOCALE"
+                in str(item.get("content") or "")
+                for item in messages
+            )
+        )
+        self.assertFalse(
+            any(
+                item.get("role") == "system"
+                and "CONNAISSANCE_OPERATIONNELLE_LOCALE"
+                in str(item.get("content") or "")
+                for item in agent._messages[1:]
+            )
+        )
 
     def test_groq_blocks_persistent_recall_for_current_session_question(self):
         tools = FakeTools()
