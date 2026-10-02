@@ -6,6 +6,7 @@ from jarvis_agent.native_tools import NativeToolRegistry
 from jarvis_agent.windows_perception import (
     inspect_active_window,
     write_ui_element,
+    _control_value,
     _score_name,
     _title_app_hint,
 )
@@ -141,7 +142,32 @@ class _FakeDocument:
         self.value = value
 
 
+class _FakeNoValuePatternDocument:
+    element_info = SimpleNamespace(
+        name="Visible document text",
+        control_type="Document",
+        automation_id="TextEditor",
+    )
+
+    @property
+    def iface_value(self):
+        raise RuntimeError("ValuePattern unavailable")
+
+    def window_text(self):
+        return "Visible document text"
+
+    def legacy_properties(self):
+        return {}
+
+
 class WindowsPerceptionTests(unittest.TestCase):
+    def test_control_value_tolerates_missing_uia_value_pattern(self):
+        wrapper = _FakeNoValuePatternDocument()
+
+        value = _control_value(wrapper)
+
+        self.assertEqual(value, "Visible document text")
+
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._native_target_window")
     @patch("jarvis_agent.windows_perception._active_window")
