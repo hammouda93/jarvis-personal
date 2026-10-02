@@ -390,6 +390,8 @@ class ArchitectureExtensionTests(unittest.TestCase):
             self.assertTrue(observation.success)
             self.assertEqual(observation.action_count, 1)
             self.assertIn("windows", observation.candidate_agents)
+            self.assertFalse(observation.needs_review)
+            self.assertFalse(observation.recovered_after_failure)
 
             loaded = observer.stack.mission_store.load(
                 observation.mission_id
@@ -487,6 +489,8 @@ class ArchitectureExtensionTests(unittest.TestCase):
             )
 
             self.assertTrue(observation.success)
+            self.assertTrue(observation.needs_review)
+            self.assertTrue(observation.recovered_after_failure)
             context, _version = observer.stack.mission_store.load(
                 observation.mission_id
             )
@@ -539,6 +543,8 @@ class ArchitectureExtensionTests(unittest.TestCase):
 
             self.assertTrue(observation.success)
             self.assertEqual(observation.action_count, 1)
+            self.assertIn("interaction", observation.candidate_agents)
+            self.assertFalse(observation.needs_review)
             loaded = observer.stack.mission_store.load(
                 observation.mission_id
             )
