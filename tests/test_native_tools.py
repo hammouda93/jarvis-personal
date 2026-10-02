@@ -34,6 +34,32 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertEqual(intent.name, "app.open_named")
         self.assertEqual(intent.args["query"], "VLC Media Player")
 
+    @patch("jarvis_agent.native_tools.os.startfile")
+    @patch("jarvis_agent.native_tools.execute")
+    def test_learned_app_profile_is_reused_before_rescanning_windows(
+        self,
+        execute_mock,
+        startfile_mock,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            shortcut = Path(tmp) / "WhatsApp.lnk"
+            shortcut.write_bytes(b"")
+            self.knowledge.upsert_app_profile(
+                display_name="WhatsApp",
+                aliases=["WhatsApp Desktop"],
+                launch_hint=str(shortcut),
+                success=True,
+            )
+
+            result = self.registry.execute(
+                "open_application",
+                {"name": "WhatsApp"},
+            )
+
+        self.assertTrue(result.success)
+        startfile_mock.assert_called_once_with(str(shortcut))
+        execute_mock.assert_not_called()
+
     @patch("jarvis_agent.native_tools.execute")
     def test_known_app_failure_falls_back_to_generic_discovery(
         self,
