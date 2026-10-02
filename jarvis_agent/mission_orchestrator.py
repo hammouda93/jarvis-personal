@@ -295,8 +295,10 @@ class MissionOrchestrator:
             elif status == SyscallStatus.WAITING_APPROVAL:
                 waiting_approval.append(request.request_id)
 
+        approvals_restored = self.kernel.restore_pending_approvals()
         queued_restored = self.kernel.restore_queued_requests()
         return {
+            "approvals_restored": approvals_restored,
             "queued_restored": [
                 request_id
                 for request_id in queued_restored
