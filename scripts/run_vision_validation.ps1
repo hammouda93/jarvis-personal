@@ -12,6 +12,16 @@ $env:PYTHONUTF8 = "1"
 Write-Host "=== Jarvis vision validation ==="
 Write-Host ""
 
+Write-Host "0/2 Python syntax preflight..."
+$compileCommand = "python -m py_compile jarvis_agent\screen_vision.py jarvis_agent\windows_perception.py jarvis_agent\native_tools.py jarvis_agent\agent_runtime.py"
+cmd.exe /d /s /c $compileCommand
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Python syntax preflight FAILED."
+    exit $LASTEXITCODE
+}
+Write-Host "Python syntax preflight OK."
+Write-Host ""
+
 Write-Host "1/2 Historical baseline regression..."
 powershell -ExecutionPolicy Bypass -File .\scripts\run_baseline_regression.ps1
 if ($LASTEXITCODE -ne 0) {
