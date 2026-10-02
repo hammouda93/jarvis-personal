@@ -457,6 +457,29 @@ def _uia_window_from_handle(handle: int):
     return specification
 
 
+def _uia_window_from_native_with_retry(
+    item: dict[str, Any],
+    *,
+    attempts: int = 4,
+    delay_s: float = 0.12,
+):
+    """Retry UIA attachment for a freshly opened/still-initializing HWND."""
+    last_error: Exception | None = None
+    handle = int(item.get("handle") or 0)
+    if not handle:
+        raise RuntimeError("Fenêtre native sans handle valide.")
+
+    for attempt in range(max(1, attempts)):
+        try:
+            return _uia_window_from_handle(handle)
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(max(0.0, delay_s))
+    assert last_error is not None
+    raise last_error
+
+
 def _native_compact_window(item: dict[str, Any]) -> dict[str, Any]:
     bounds = tuple(item.get("bounds") or (0, 0, 0, 0))
     return {
@@ -599,7 +622,7 @@ def inspect_active_window(
             )
 
         try:
-            window = _uia_window_from_handle(int(native_item["handle"]))
+            window = _uia_window_from_native_with_retry(native_item)
         except Exception as exc:
             attach_error = str(exc)
             combined = (
@@ -612,8 +635,7 @@ def inspect_active_window(
     try:
         descendants = window.descendants()
     except Exception as exc:
-        # We may still know the exact native window even if a process exposes
-        # no usable UIA descendants.
+        first_desc_error = exc
         if native_item is None:
             try:
                 handle = int(getattr(window, "handle", 0) or 0)
@@ -628,14 +650,41 @@ def inspect_active_window(
                     )
             except Exception:
                 native_item = None
+
         if native_item is not None:
-            combined = f"{uia_error}; descendants: {exc}" if uia_error else str(exc)
-            return _native_only_inspection(native_item, uia_error=combined)
-        return UIActionResult(
-            False,
-            "Impossible de lire les éléments de la fenêtre.",
-            str(exc),
-        )
+            try:
+                time.sleep(0.12)
+                window = _uia_window_from_native_with_retry(
+                    native_item,
+                    attempts=3,
+                    delay_s=0.12,
+                )
+                descendants = window.descendants()
+            except Exception:
+                descendants = None
+        else:
+            descendants = None
+
+        if descendants is not None:
+            pass
+        else:
+            exc = first_desc_error
+                # no usable UIA descendants.
+            if native_item is not None:
+                combined = (
+                    f"{uia_error}; descendants: {exc}"
+                    if uia_error
+                    else str(exc)
+                )
+                return _native_only_inspection(
+                    native_item,
+                    uia_error=combined,
+                )
+            return UIActionResult(
+                False,
+                "Impossible de lire les éléments de la fenêtre.",
+                str(exc),
+            )
 
     interactive: list[Any] = []
     documents: list[Any] = []
