@@ -163,6 +163,16 @@ class Settings:
         "JARVIS_DEV_SUPERVISOR_ENABLED",
         False,
     )
+    kernel_shadow_enabled: bool = _bool(
+        "JARVIS_KERNEL_SHADOW_ENABLED",
+        False,
+    )
+    kernel_shadow_dir: str = (
+        os.getenv("JARVIS_KERNEL_SHADOW_DIR") or ""
+    ).strip()
+    kernel_shadow_user_id: str = (
+        os.getenv("JARVIS_KERNEL_SHADOW_USER_ID") or "local-user"
+    ).strip() or "local-user"
     ms_football_bridge_url: str = (
         os.getenv("JARVIS_MS_FOOTBALL_BRIDGE_URL")
         or "http://127.0.0.1:8765"
