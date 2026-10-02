@@ -402,6 +402,23 @@ class ArchitectureExtensionTests(unittest.TestCase):
                 context.observed_state["actual_live_tools"],
                 ["open_application"],
             )
+            self.assertEqual(
+                context.observed_state["shadow_task_count"],
+                1,
+            )
+            graph = observer.stack.graph_store.load(
+                observation.mission_id
+            )
+            self.assertIsNotNone(graph)
+            self.assertEqual(len(graph.nodes()), 1)
+            self.assertEqual(
+                graph.nodes()[0].payload["tool_name"],
+                "open_application",
+            )
+            self.assertEqual(
+                graph.nodes()[0].status.value,
+                "completed",
+            )
 
             trace = observer.stack.journal.mission_trace(
                 observation.mission_id
