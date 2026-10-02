@@ -10,7 +10,10 @@ def _configure_console_streams() -> None:
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
             try:
-                reconfigure(errors="backslashreplace")
+                reconfigure(
+                    encoding="utf-8",
+                    errors="backslashreplace",
+                )
             except Exception:
                 pass
 
