@@ -517,7 +517,7 @@ preserving:
 - private/shared policy
 - metadata and relevance
 
-The current operational knowledge database is not migrated yet.
+The current operational knowledge database is not migrated. Instead, `agent_knowledge_adapter.py` projects the existing skills/lessons/app profiles into scoped Kernel knowledge while preserving the original SQLite store as the source of truth.
 
 ## 29. Cross-agent Context Injector
 
@@ -623,6 +623,89 @@ Plugin policy enforces declared:
 Secrets can remain environment-backed for compatibility. An optional
 non-enumerating Windows Credential Manager provider can read one exact target
 without listing the Windows vault.
+
+## 35. Legacy operational knowledge adapter
+
+`jarvis_agent/agent_knowledge_adapter.py`
+
+Bridges the existing `agent_knowledge.sqlite3` store into the scoped Kernel
+knowledge model without migration.
+
+Projection rules:
+
+- existing skills → `SKILL`
+- existing app profiles → `APP`
+- existing lessons → `USER` by default, never silently `CORE`
+
+The adapter enforces the configured owner user id. Future compatible writes can
+map back into the existing store, while Core changes remain forbidden through
+ordinary knowledge writes.
+
+## 36. Kernel Dispatcher
+
+`jarvis_agent/kernel_dispatcher.py`
+
+Closes the passive execution loop:
+
+`KernelRequest → Scheduler → ExecutionManager → Kernel.complete → KernelResponse`
+
+Manager failures are converted into failed Kernel responses so scheduler
+capacity is always released. This is still not wired into the voice/runtime
+path.
+
+## 37. Local RPC security contract
+
+`jarvis_agent/local_rpc_security.py`
+
+Any future Kernel/Replay RPC endpoint is expected to be loopback-only
+(`127.0.0.1`, `::1`, or localhost) and capability-token protected.
+
+No server is started by this module. In particular, `0.0.0.0` is rejected by
+the policy contract.
+
+## 38. Current model catalog
+
+`jarvis_agent/model_catalog.py`
+
+Describes the models already present in Jarvis (Cerebras GPT-OSS, Groq GPT-OSS,
+local Ollama agent/vision models, optional OpenAI provider) as candidates for
+the passive future router.
+
+It does not change the current live failover chain.
+
+Inspect it with:
+
+```powershell
+python -m jarvis_agent.kernel_cli model-catalog
+```
+
+## 39. Feedback Promotion Gate
+
+`jarvis_agent/promotion_gate.py`
+
+Human validation is necessary but not sufficient for promotion.
+
+- CORE → never an automatic memory write; requires Dev Supervisor patch/test/replay.
+- REGRESSION_TEST → controlled registry update.
+- APP / DOMAIN / AGENT / SKILL / USER / SESSION → may become scoped knowledge only after evidence + tests/replay requirements + explicit user validation.
+
+This prevents a user-specific correction from silently changing Core behavior.
+
+## 40. Kernel foundations regression pack
+
+`TEST-KERNEL-FOUNDATIONS`
+
+The regression registry now contains a dedicated pack for Kernel/multi-agent
+changes. The architecture validation runner performs:
+
+1. Python syntax preflight
+2. Kernel/foundation unit tests
+3. architecture extension tests
+4. historical Jarvis baseline regression
+
+The acceptance rule remains:
+
+**new foundations present + old live Jarvis behavior unchanged.**
 
 ## What is deliberately NOT done yet
 
