@@ -222,6 +222,14 @@ class Settings:
     vision_max_width: int = _int("JARVIS_VISION_MAX_WIDTH", 1600)
     vision_num_predict: int = _int("JARVIS_VISION_NUM_PREDICT", 420)
     vision_local_only: bool = _bool("JARVIS_VISION_LOCAL_ONLY", True)
+    vision_actions_enabled: bool = _bool(
+        "JARVIS_VISION_ACTIONS_ENABLED",
+        False,
+    )
+    vision_min_confidence: float = _float(
+        "JARVIS_VISION_MIN_CONFIDENCE",
+        0.72,
+    )
     vision_save_evidence: bool = _bool(
         "JARVIS_VISION_SAVE_EVIDENCE",
         False,
