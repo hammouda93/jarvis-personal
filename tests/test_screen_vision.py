@@ -1,10 +1,15 @@
 import base64
 import json
+import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from jarvis_agent.screen_vision import observe_screen
+from jarvis_agent.screen_vision import (
+    click_visual_target,
+    locate_visual_target,
+    observe_screen,
+)
 
 
 class _FakeHTTPResponse:
@@ -91,6 +96,112 @@ class ScreenVisionTests(unittest.TestCase):
             base64.b64decode(image),
             b"fake-image",
         )
+
+    @patch("jarvis_agent.screen_vision._call_local_vision")
+    @patch("jarvis_agent.screen_vision._capture_window_bytes")
+    @patch("jarvis_agent.screen_vision.settings")
+    def test_visual_target_localization_returns_normalized_box(
+        self,
+        settings_mock,
+        capture_mock,
+        vision_mock,
+    ):
+        settings_mock.vision_enabled = True
+        settings_mock.vision_local_only = True
+        settings_mock.ollama_base_url = "http://127.0.0.1:11434"
+        settings_mock.vision_model = "gemma3:latest"
+        capture_mock.return_value = (
+            b"fake-image",
+            {
+                "title": "Enregistrer sous",
+                "bounds": [500, 200, 1500, 1000],
+                "captured_width": 1000,
+                "captured_height": 800,
+            },
+        )
+        vision_mock.return_value = (
+            '{"found":true,"label":"Enregistrer","role":"button",'
+            '"box_1000":[700,800,900,900],"confidence":0.93,'
+            '"reason":"button visible"}',
+            0.42,
+        )
+
+        result = locate_visual_target(
+            target="bouton Enregistrer",
+            title="Enregistrer sous",
+        )
+
+        self.assertTrue(result.success)
+        detail = json.loads(result.detail)
+        self.assertEqual(detail["box_1000"], [700, 800, 900, 900])
+        self.assertEqual(detail["confidence"], 0.93)
+
+    @patch("jarvis_agent.screen_vision.locate_visual_target")
+    @patch("jarvis_agent.screen_vision.settings")
+    def test_visual_click_maps_normalized_box_to_window_coordinates(
+        self,
+        settings_mock,
+        locate_mock,
+    ):
+        settings_mock.vision_actions_enabled = True
+        settings_mock.vision_min_confidence = 0.72
+        locate_mock.return_value = SimpleNamespace(
+            success=True,
+            message="located",
+            detail=json.dumps(
+                {
+                    "bounds": [500, 200, 1500, 1000],
+                    "box_1000": [700, 800, 900, 900],
+                    "confidence": 0.93,
+                    "label": "Enregistrer",
+                }
+            ),
+        )
+        mouse_mock = SimpleNamespace()
+        mouse_mock.click = Mock()
+
+        with patch.dict(
+            sys.modules,
+            {"pywinauto": SimpleNamespace(mouse=mouse_mock)},
+        ):
+            result = click_visual_target(
+                target="bouton Enregistrer",
+                title="Enregistrer sous",
+            )
+
+        self.assertTrue(result.success)
+        mouse_mock.click.assert_called_once_with(
+            button="left",
+            coords=(1300, 880),
+        )
+        detail = json.loads(result.detail)
+        self.assertFalse(detail["verified"])
+
+    @patch("jarvis_agent.screen_vision.locate_visual_target")
+    @patch("jarvis_agent.screen_vision.settings")
+    def test_visual_click_rejects_low_confidence_target(
+        self,
+        settings_mock,
+        locate_mock,
+    ):
+        settings_mock.vision_actions_enabled = True
+        settings_mock.vision_min_confidence = 0.80
+        locate_mock.return_value = SimpleNamespace(
+            success=True,
+            message="located",
+            detail=json.dumps(
+                {
+                    "bounds": [0, 0, 1000, 800],
+                    "box_1000": [100, 100, 200, 200],
+                    "confidence": 0.55,
+                }
+            ),
+        )
+
+        result = click_visual_target(target="ambiguous button")
+
+        self.assertFalse(result.success)
+        self.assertIn("confiance", result.message.lower())
 
     @patch("jarvis_agent.screen_vision._capture_window_bytes")
     @patch("jarvis_agent.screen_vision.settings")
