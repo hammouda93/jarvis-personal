@@ -2671,7 +2671,11 @@ class GroqResponsesAgent:
                 ):
                     pending_ui_action = None
                     pending_ui_action_repair_attempted = False
-                if name == "close_window" and not result.success:
+                if (
+                    name == "close_window"
+                    and not result.success
+                    and result.detail != "close_window_blocked_for_tab_request"
+                ):
                     close_recovery_required = True
                 if (
                     settings.operational_learning_enabled
