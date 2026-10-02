@@ -111,6 +111,56 @@ def _title_app_hint(title: str) -> str:
     return hint if len(normalize(hint)) >= 4 else ""
 
 
+_GENERIC_WINDOW_ROLE_WORDS = {
+    "app",
+    "application",
+    "assistant",
+    "config",
+    "configuration",
+    "dialog",
+    "dialogue",
+    "fenetre",
+    "install",
+    "installation",
+    "installer",
+    "programme",
+    "program",
+    "setup",
+    "update",
+    "updater",
+    "user",
+    "utilisateur",
+    "window",
+    "wizard",
+}
+
+
+def _window_identity_tokens(value: str) -> set[str]:
+    """Return app-identity tokens while ignoring generic window-role words."""
+    normalized = normalize(value)
+    tokens = {
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9._+-]*", normalized)
+        if len(token) >= 2 and token not in _GENERIC_WINDOW_ROLE_WORDS
+    }
+    return tokens
+
+
+def _window_identity_score(query: str, candidate: str) -> float:
+    """Generic app/window identity score resilient to localized setup titles."""
+    wanted = _window_identity_tokens(query)
+    actual = _window_identity_tokens(candidate)
+    if not wanted or not actual:
+        return 0.0
+    overlap = wanted & actual
+    if not overlap:
+        return 0.0
+    if wanted <= actual or actual <= wanted:
+        return 0.97
+    union = wanted | actual
+    return 0.72 + (0.22 * (len(overlap) / max(1, len(union))))
+
+
 def _window_by_title(title: str):
     target = (title or "").strip()
     if not target:
@@ -123,6 +173,29 @@ def _window_by_title(title: str):
     ranked = _rank_wrappers(windows, target)
     if ranked and ranked[0][0] >= 0.82:
         return ranked[0][1]
+
+    identity_ranked = sorted(
+        (
+            (_window_identity_score(target, _element_name(wrapper)), wrapper)
+            for wrapper in windows
+        ),
+        key=lambda pair: -pair[0],
+    )
+    if identity_ranked and identity_ranked[0][0] >= 0.90:
+        top = identity_ranked[0][0]
+        tied = [
+            wrapper
+            for score, wrapper in identity_ranked
+            if abs(score - top) < 0.015
+        ]
+        if len(tied) == 1:
+            return tied[0]
+        for wrapper in tied:
+            try:
+                if bool(getattr(wrapper, "is_active", lambda: False)()):
+                    return wrapper
+            except Exception:
+                continue
 
     # Browser/editor document titles change constantly. If an earlier exact
     # title became stale, fall back to its stable application suffix
@@ -406,6 +479,38 @@ def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
         )
         if ranked and ranked[0][0] >= 0.82:
             return ranked[0][1]
+
+        identity_ranked = sorted(
+            (
+                (
+                    _window_identity_score(
+                        target,
+                        str(item.get("title") or ""),
+                    ),
+                    item,
+                )
+                for item in candidates
+            ),
+            key=lambda pair: -pair[0],
+        )
+        if identity_ranked and identity_ranked[0][0] >= 0.90:
+            top = identity_ranked[0][0]
+            tied = [
+                item
+                for score, item in identity_ranked
+                if abs(score - top) < 0.015
+            ]
+            if len(tied) == 1:
+                return tied[0]
+            try:
+                foreground = int(
+                    ctypes.windll.user32.GetForegroundWindow() or 0
+                )
+            except Exception:
+                foreground = 0
+            for item in tied:
+                if int(item.get("handle") or 0) == foreground:
+                    return item
 
         hint = _title_app_hint(target)
         if hint:
