@@ -100,7 +100,11 @@ def _is_assistant_window(wrapper: Any) -> bool:
 
 def _title_app_hint(title: str) -> str:
     """Extract a stable application suffix from a changing document title."""
-    parts = [part.strip() for part in str(title or "").split(" - ") if part.strip()]
+    parts = [
+        part.strip()
+        for part in re.split(r"\s+(?:-|–|—|\|)\s+", str(title or ""))
+        if part.strip()
+    ]
     if len(parts) < 2:
         return ""
     hint = parts[-1]
@@ -184,6 +188,45 @@ def _compact_window(wrapper: Any) -> dict[str, Any]:
     }
 
 
+def _control_value(wrapper: Any) -> str:
+    """Best-effort readable value for text controls and hyperlinks."""
+    if wrapper is None:
+        return ""
+
+    getter = getattr(wrapper, "get_value", None)
+    if callable(getter):
+        try:
+            value = str(getter() or "").strip()
+            if value:
+                return value
+        except Exception:
+            pass
+
+    iface_value = getattr(wrapper, "iface_value", None)
+    if iface_value is not None:
+        try:
+            value = str(iface_value.CurrentValue or "").strip()
+            if value:
+                return value
+        except Exception:
+            pass
+
+    legacy = getattr(wrapper, "legacy_properties", None)
+    if callable(legacy):
+        try:
+            props = legacy() or {}
+            for key in ("Value", "value"):
+                value = str(props.get(key) or "").strip()
+                if value:
+                    return value
+        except Exception:
+            pass
+
+    if _control_type(wrapper) in {"Edit", "Document", "ComboBox"}:
+        return _element_name(wrapper)
+    return ""
+
+
 def _compact_control(ref: str, wrapper: Any) -> dict[str, Any]:
     control_type = _control_type(wrapper)
     item: dict[str, Any] = {
@@ -199,6 +242,16 @@ def _compact_control(ref: str, wrapper: Any) -> dict[str, Any]:
         item["name"] = name[:160]
     if automation_id:
         item["id"] = automation_id[:100]
+
+    value = _control_value(wrapper)
+    if value:
+        if control_type == "Hyperlink":
+            item["target"] = value[:500]
+        elif control_type in {"Edit", "Document", "ComboBox"}:
+            item["value"] = value[:500]
+            if len(value) > 500:
+                item["value_length"] = len(value)
+
     item["bounds"] = list(_rect_tuple(wrapper))
     return item
 
@@ -636,6 +689,14 @@ def inspect_active_window(
 
     content_controls = [item for item in interactive if inside_content(item)]
     chrome_controls = [item for item in interactive if not inside_content(item)]
+
+    def visual_order(wrapper: Any) -> tuple[int, int, int, int]:
+        left, top, right, bottom = _rect_tuple(wrapper)
+        return (top, left, bottom, right)
+
+    content_controls.sort(key=visual_order)
+    chrome_controls.sort(key=visual_order)
+    documents.sort(key=visual_order)
 
     max_items = max(8, min(int(limit), 40))
     selected: list[Any] = []
