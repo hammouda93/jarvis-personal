@@ -302,21 +302,42 @@ def _looks_like_action_promise(text: str) -> bool:
 
 
 def _requested_action_capabilities(text: str) -> set[str]:
-    """Infer only broad UI action contracts, never app-specific workflows."""
+    """Infer broad UI action contracts with conservative STT recovery.
+
+    The recovery rules stay capability-level rather than app-specific. They
+    only reinterpret a known speech substitution when the surrounding command
+    already expresses the corresponding action.
+    """
     normalized = normalize(text)
     required: set[str] = set()
 
-    if re.search(
+    explicit_write = re.search(
         r"\b(?:ecris|ecrire|saisis|saisir|tape|taper|ajoute|ajouter|"
         r"insere|inserer|remplace|remplacer|write|type|append|insert|replace)\b",
         normalized,
-    ):
+    )
+    # French STT can turn imperative "écris" into the noun "écrivain".
+    # Accept it only at the start of an instruction or after a sequencing word
+    # so ordinary mentions such as "un écrivain français" stay conversational.
+    stt_write = re.search(
+        r"(?:^|\b(?:et|puis|ensuite)\s+)ecrivain\b",
+        normalized,
+    )
+    if explicit_write or stt_write:
         required.add("write_ui")
 
-    if (
-        re.search(r"\b(?:ferme|fermer|close|fermez)\b", normalized)
-        and re.search(r"\b(?:onglet|onglets|tab|tabs)\b", normalized)
-    ):
+    close_requested = re.search(
+        r"\b(?:ferme|fermer|close|fermez)\b",
+        normalized,
+    )
+    explicit_tab = re.search(
+        r"\b(?:onglet|onglets|tab|tabs)\b",
+        normalized,
+    )
+    # A recurring French STT substitution is "l'anglais" for "l'onglet".
+    # Treat it as a tab reference only inside an explicit close command.
+    stt_tab = re.search(r"\bl[' ]anglais\b", normalized)
+    if close_requested and (explicit_tab or stt_tab):
         required.add("close_tab")
 
     return required
