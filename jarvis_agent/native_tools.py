@@ -5,6 +5,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
+from .agent_knowledge import AGENT_KNOWLEDGE
 from .memory import LOCAL_MEMORY
 from .ms_football_bridge import MS_FOOTBALL_BRIDGE
 from .tools import ToolIntent, ToolResult, execute, normalize
@@ -48,6 +49,9 @@ class NativeToolRegistry:
     The model receives verbs, not a catalog of hard-coded phrases. Targets such
     as VLC, Baristas or a future application/folder remain arguments.
     """
+
+    def __init__(self) -> None:
+        self._last_app_hint = ""
 
     def ollama_tools(self) -> list[dict[str, Any]]:
         return [
@@ -381,6 +385,88 @@ class NativeToolRegistry:
                 [],
             ),
             self._ollama(
+                "search_agent_knowledge",
+                "Recherche dans la mémoire opérationnelle locale de Jarvis: skills réutilisables, leçons de comportement et profils d'applications. Cette mémoire est distincte des souvenirs personnels.",
+                {
+                    "query": {
+                        "type": "string",
+                        "description": "Mission, application ou problème opérationnel à retrouver.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Nombre maximum d'éléments de chaque catégorie.",
+                    },
+                },
+                ["query"],
+            ),
+            self._ollama(
+                "save_verified_skill",
+                "Enregistre localement une procédure réutilisable uniquement après une réussite réellement vérifiée. Le contenu doit rester générique: aucune donnée personnelle, aucun message privé, aucune coordonnée fixe d'écran.",
+                {
+                    "name": {
+                        "type": "string",
+                        "description": "Nom générique stable du skill, par ex. messaging_send_message.",
+                    },
+                    "goal": {
+                        "type": "string",
+                        "description": "Objectif générique du skill sans nom de personne ni contenu privé.",
+                    },
+                    "app_scope": {
+                        "type": "string",
+                        "description": "Application ou portée optionnelle, par ex. messaging_app.",
+                    },
+                    "procedure": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Étapes abstraites et adaptables à l'interface réelle.",
+                    },
+                    "success_checks": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Preuves observables requises avant d'annoncer le succès.",
+                    },
+                    "failure_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Erreurs génériques déjà rencontrées à éviter.",
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": "Confiance entre 0 et 1.",
+                    },
+                },
+                ["name", "goal", "procedure", "success_checks"],
+            ),
+            self._ollama(
+                "save_feedback_lesson",
+                "Enregistre une correction comportementale générique issue d'un feedback utilisateur clair. Ne stocke jamais le contenu privé de la conversation.",
+                {
+                    "scope": {
+                        "type": "string",
+                        "description": "Portée générique: global, ui, messaging, browser, etc.",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Situation générique qui déclenche la leçon.",
+                    },
+                    "rule": {
+                        "type": "string",
+                        "description": "Règle générale à appliquer la prochaine fois.",
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": "Confiance entre 0 et 1.",
+                    },
+                },
+                ["pattern", "rule"],
+            ),
+            self._ollama(
+                "agent_knowledge_stats",
+                "Retourne les compteurs de la mémoire opérationnelle locale de Jarvis.",
+                {},
+                [],
+            ),
+            self._ollama(
                 "remember_information",
                 "Enregistre localement une information que l'utilisateur demande explicitement à Jarvis de retenir.",
                 {
@@ -506,6 +592,7 @@ class NativeToolRegistry:
                     )
             else:
                 result = execute(ToolIntent("app.open_named", {"query": target}))
+            self._record_app_launch(target, result)
             return self._convert(name, result)
 
         if name == "open_file":
@@ -583,6 +670,7 @@ class NativeToolRegistry:
         if name == "inspect_active_window":
             title = str(args.get("title", "")).strip() or None
             result = inspect_active_window(title=title)
+            self._record_inspected_app(result)
             return AgentActionResult(
                 name=name,
                 success=result.success,
@@ -742,6 +830,84 @@ class NativeToolRegistry:
             )
             return AgentActionResult(name, result.success, result.message, result.detail)
 
+        if name == "search_agent_knowledge":
+            query = str(args.get("query", "")).strip()
+            if len(query) < 3:
+                return self._error(name, "La recherche de connaissance est trop vague.")
+            payload = AGENT_KNOWLEDGE.relevant_context(
+                query,
+                limit=int(args.get("limit") or 4),
+            )
+            return AgentActionResult(
+                name=name,
+                success=True,
+                message="Connaissances opérationnelles locales consultées.",
+                detail=json.dumps(payload, ensure_ascii=False),
+            )
+
+        if name == "save_verified_skill":
+            try:
+                item = AGENT_KNOWLEDGE.upsert_skill(
+                    name=str(args.get("name", "")).strip(),
+                    goal=str(args.get("goal", "")).strip(),
+                    app_scope=str(args.get("app_scope", "")).strip(),
+                    procedure=list(args.get("procedure") or []),
+                    success_checks=list(args.get("success_checks") or []),
+                    failure_patterns=list(args.get("failure_patterns") or []),
+                    confidence=float(args.get("confidence") or 0.7),
+                    source="verified_agent",
+                )
+            except (TypeError, ValueError) as exc:
+                return self._error(name, str(exc))
+            return AgentActionResult(
+                name=name,
+                success=True,
+                message="Skill opérationnel enregistré localement.",
+                detail=json.dumps(
+                    {
+                        "skill_id": item.id,
+                        "name": item.name,
+                        "version": item.version,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+
+        if name == "save_feedback_lesson":
+            try:
+                item = AGENT_KNOWLEDGE.record_lesson(
+                    scope=str(args.get("scope", "global")).strip() or "global",
+                    pattern=str(args.get("pattern", "")).strip(),
+                    rule=str(args.get("rule", "")).strip(),
+                    confidence=float(args.get("confidence") or 0.8),
+                    source="user_feedback",
+                )
+            except (TypeError, ValueError) as exc:
+                return self._error(name, str(exc))
+            return AgentActionResult(
+                name=name,
+                success=True,
+                message="Leçon opérationnelle enregistrée localement.",
+                detail=json.dumps(
+                    {
+                        "lesson_id": item.id,
+                        "evidence_count": item.evidence_count,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+
+        if name == "agent_knowledge_stats":
+            return AgentActionResult(
+                name=name,
+                success=True,
+                message="Statistiques de connaissance locale.",
+                detail=json.dumps(
+                    AGENT_KNOWLEDGE.stats(),
+                    ensure_ascii=False,
+                ),
+            )
+
         if name == "get_current_time":
             return self._convert(name, execute(ToolIntent("system.time")))
 
@@ -798,6 +964,53 @@ class NativeToolRegistry:
             return self._convert(name, execute(ToolIntent("assistant.sleep")))
 
         return self._error(name, "Cette capacité n'existe pas dans Jarvis.")
+
+    def _record_app_launch(self, target: str, result: ToolResult) -> None:
+        try:
+            AGENT_KNOWLEDGE.upsert_app_profile(
+                display_name=target,
+                aliases=[target],
+                launch_hint=result.detail if result.success else "",
+                success=result.success,
+                observed_capabilities=["launch"],
+            )
+            if result.success:
+                self._last_app_hint = target
+        except Exception:
+            pass
+
+    def _record_inspected_app(self, result) -> None:
+        if not result.success:
+            return
+        try:
+            payload = json.loads(result.detail or "{}")
+            window = dict(payload.get("window") or {})
+            title = str(window.get("title") or "").strip()
+            if not title:
+                return
+            parts = [
+                part.strip()
+                for part in title.replace("–", " - ").replace("—", " - ").split(" - ")
+                if part.strip()
+            ]
+            display = self._last_app_hint or (parts[-1] if parts else title)
+            controls = list(payload.get("controls") or [])
+            capabilities = sorted(
+                {
+                    str(item.get("type") or "").strip()
+                    for item in controls
+                    if str(item.get("type") or "").strip()
+                }
+            )[:20]
+            AGENT_KNOWLEDGE.upsert_app_profile(
+                display_name=display,
+                aliases=[display],
+                window_title_patterns=[title],
+                observed_capabilities=capabilities,
+                success=True,
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _safe_target(value: str) -> bool:
