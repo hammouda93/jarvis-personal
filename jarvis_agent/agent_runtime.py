@@ -413,10 +413,58 @@ def _operational_knowledge_message(user_text: str, knowledge=None) -> str:
         return ""
     if not any(context.values()):
         return ""
+
+    compact = {
+        "skills": [
+            {
+                key: item.get(key)
+                for key in (
+                    "name",
+                    "goal",
+                    "app_scope",
+                    "procedure",
+                    "success_checks",
+                    "failure_patterns",
+                    "confidence",
+                )
+                if item.get(key) not in (None, "", [], ())
+            }
+            for item in list(context.get("skills") or [])
+        ],
+        "lessons": [
+            {
+                key: item.get(key)
+                for key in (
+                    "scope",
+                    "pattern",
+                    "rule",
+                    "confidence",
+                    "evidence_count",
+                )
+                if item.get(key) not in (None, "", [], ())
+            }
+            for item in list(context.get("lessons") or [])
+        ],
+        "app_profiles": [
+            {
+                key: item.get(key)
+                for key in (
+                    "display_name",
+                    "aliases",
+                    "observed_capabilities",
+                    "confidence",
+                    "success_count",
+                    "failure_count",
+                )
+                if item.get(key) not in (None, "", [], ())
+            }
+            for item in list(context.get("app_profiles") or [])
+        ],
+    }
     return (
         "CONNAISSANCE_OPERATIONNELLE_LOCALE (peut être obsolète; adapte-la "
         "toujours à l'état réel et vérifie l'écran/outils):\n"
-        + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+        + json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
     )
 
 
