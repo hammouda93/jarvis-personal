@@ -3276,11 +3276,18 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
         agent.run("Je travaille sur un projet qui s'appelle Atlas Scope.")
-        result = agent.run("Recherche AtlasScope sur Internet.")
+        phases = []
+        result = agent.run(
+            "Recherche AtlasScope sur Internet.",
+            phase=phases.append,
+        )
 
         self.assertIn(
             ("research_web", {"query": "AtlasScope"}),
             tools.calls,
+        )
+        self.assertFalse(
+            any(value.startswith("researching:") for value in phases)
         )
         self.assertEqual(len(result.actions), 1)
         self.assertTrue(result.actions[0].success)
@@ -3389,11 +3396,29 @@ class AgentRuntimeTests(unittest.TestCase):
             ],
         )
 
-        result = agent.run("Ouvre Example App.")
+        phases = []
+        result = agent.run(
+            "Ouvre Example App.",
+            phase=phases.append,
+        )
 
         self.assertEqual(
             [name for name, _args in tools.calls],
             ["open_application", "research_web"],
+        )
+        research_phases = [
+            value
+            for value in phases
+            if value.startswith("researching:")
+        ]
+        self.assertEqual(len(research_phases), 1)
+        research_payload = json.loads(
+            research_phases[0].split(":", 1)[1]
+        )
+        self.assertEqual(research_payload["reason"], "local_failure")
+        self.assertIn(
+            "Windows packaged app launch methods",
+            research_payload["query"],
         )
         self.assertEqual(len(result.actions), 2)
         self.assertFalse(result.actions[0].success)
