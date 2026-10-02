@@ -506,6 +506,8 @@ def write_visual_target(
                 previous_text = None
             finally:
                 win32clipboard.CloseClipboard()
+        except Exception:
+            previous_text = None
 
         win32clipboard.OpenClipboard()
         try:
