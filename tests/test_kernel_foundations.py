@@ -7,6 +7,23 @@ from pathlib import Path
 from jarvis_agent.capability_registry import (
     DEFAULT_CAPABILITY_REGISTRY,
 )
+from jarvis_agent.agent_factory import (
+    AgentFactory,
+    AgentLifecycle,
+)
+from jarvis_agent.execution_managers import (
+    ExecutionManagerRegistry,
+    ManagerExecutionResult,
+    ToolExecutionManager,
+)
+from jarvis_agent.mission_orchestrator import MissionOrchestrator
+from jarvis_agent.plugin_loader import PluginCatalog
+from jarvis_agent.replay_adapter import MCPReplaySandboxAdapter
+from jarvis_agent.scoped_knowledge_store import SQLiteScopedKnowledgeBackend
+from jarvis_agent.tool_gateway import (
+    ScopedToolGateway,
+    ToolGatewayResult,
+)
 from jarvis_agent.approval_manager import (
     ApprovalStatus,
     HumanApprovalManager,
@@ -1027,6 +1044,297 @@ class KernelFoundationTests(unittest.TestCase):
         self.assertIn("windows_perception", ids)
         self.assertIn("screen_vision", ids)
         self.assertNotIn("ms_football", ids)
+
+    def test_agent_factory_requires_trusted_builder_and_tracks_children(self):
+        class FakeAgent:
+            def run(self, task):
+                return {"echo": task.get("value")}
+
+        factory = AgentFactory()
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "agent_builder_not_registered",
+        ):
+            factory.spawn(
+                agent_id="windows",
+                mission_id="m_factory",
+            )
+
+        factory.register_builder("windows", FakeAgent)
+        parent = factory.spawn(
+            agent_id="windows",
+            mission_id="m_factory",
+        )
+        self.assertEqual(parent.lifecycle, AgentLifecycle.CREATED)
+
+        result = factory.execute(
+            parent.process_id,
+            {"value": 7},
+        )
+        self.assertEqual(result, {"echo": 7})
+        self.assertEqual(
+            factory.get(parent.process_id).lifecycle,
+            AgentLifecycle.COMPLETED,
+        )
+
+    def test_tool_gateway_denies_cross_agent_tool_use(self):
+        gateway = ScopedToolGateway()
+        gateway.register_tool(
+            "inspect_active_window",
+            lambda args: ToolGatewayResult(
+                tool_name="inspect_active_window",
+                success=True,
+                message="ok",
+                detail={"args": args},
+            ),
+        )
+
+        allowed = gateway.execute(
+            agent_id="windows",
+            tool_name="inspect_active_window",
+            arguments={"title": "Chrome"},
+        )
+        denied = gateway.execute(
+            agent_id="communications",
+            tool_name="inspect_active_window",
+            arguments={},
+        )
+
+        self.assertTrue(allowed.success)
+        self.assertFalse(denied.success)
+        self.assertEqual(
+            denied.error,
+            "tool_not_allowed_for_agent",
+        )
+
+    def test_execution_manager_registry_dispatches_by_syscall_kind(self):
+        gateway = ScopedToolGateway()
+        gateway.register_tool(
+            "inspect_active_window",
+            lambda args: ToolGatewayResult(
+                tool_name="inspect_active_window",
+                success=True,
+                message="observed",
+                detail={"title": args.get("title")},
+            ),
+        )
+        managers = ExecutionManagerRegistry()
+        managers.register(ToolExecutionManager(gateway))
+
+        result = managers.execute(
+            KernelRequest(
+                request_id="r_exec",
+                mission_id="m_exec",
+                syscall_kind=SyscallKind.TOOL,
+                capability="computer.observe",
+                agent_id="windows",
+                payload={
+                    "tool_name": "inspect_active_window",
+                    "arguments": {"title": "Chrome"},
+                },
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            result.result["detail"]["title"],
+            "Chrome",
+        )
+
+    def test_persistent_scoped_knowledge_backend_keeps_identity_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = SQLiteScopedKnowledgeBackend(
+                Path(tmp) / "scoped.sqlite3"
+            )
+            broker = KnowledgeBroker(backend)
+            owner = KnowledgePrincipal(
+                user_id="u1",
+                agent_id="windows",
+            )
+            other = KnowledgePrincipal(
+                user_id="u2",
+                agent_id="windows",
+            )
+            record = ScopedKnowledgeRecord(
+                knowledge_id="pref_browser",
+                identity=KnowledgeIdentity(
+                    scope=KnowledgeScope.USER,
+                    owner_user_id="u1",
+                    owner_agent_id="windows",
+                    sharing_policy=SharingPolicy.PRIVATE,
+                ),
+                content="Prefer Chrome for browsing.",
+                metadata={"source": "validated_feedback"},
+                relevance=0.95,
+            )
+
+            self.assertTrue(
+                broker.write(record, principal=owner)
+            )
+            self.assertEqual(
+                [item.knowledge_id for item in broker.search(
+                    "Chrome",
+                    principal=owner,
+                )],
+                ["pref_browser"],
+            )
+            self.assertEqual(
+                broker.search("Chrome", principal=other),
+                [],
+            )
+
+    def test_plugin_catalog_validates_metadata_without_importing_entrypoint(self):
+        catalog = PluginCatalog()
+        manifest = PluginManifest.from_dict(
+            {
+                "plugin_id": "demo_plugin",
+                "name": "Demo",
+                "version": "1.0.0",
+                "agent_id": "windows",
+                "entrypoint": "unsafe.module:Agent",
+                "allowed_tools": ["inspect_active_window"],
+                "risk_level": "read",
+            }
+        )
+        catalog.add_manifest(
+            manifest,
+            manifest_path="plugins/demo/manifest.json",
+        )
+
+        record = catalog.get("demo_plugin")
+        self.assertIsNotNone(record)
+        self.assertEqual(
+            record.manifest.entrypoint,
+            "unsafe.module:Agent",
+        )
+        self.assertEqual(
+            len(catalog.enabled_for_agent("windows")),
+            1,
+        )
+
+    def test_mcp_replay_adapter_translates_backend_neutrally(self):
+        class FakeTransport:
+            transport_id = "fake-mcp"
+
+            def __init__(self):
+                self.calls = []
+
+            def call(self, method, payload=None):
+                self.calls.append((method, dict(payload or {})))
+                if method == "observe":
+                    return {"window": "Chrome"}
+                if method == "evaluate":
+                    return {"success": True}
+                if method == "stop_recording":
+                    return {"artifacts": ["replay.mp4"]}
+                return {"success": True}
+
+        transport = FakeTransport()
+        adapter = MCPReplaySandboxAdapter(transport)
+
+        adapter.reset("vm1")
+        adapter.start_recording("rp1")
+        action_result = adapter.execute(
+            ReplayAction(
+                "open_application",
+                {"name": "Chrome"},
+            )
+        )
+        observation = adapter.observe()
+        evaluation = adapter.evaluate(
+            expected_state={"window": "Chrome"},
+            action_results=[action_result],
+            final_observation=observation,
+        )
+        artifacts = adapter.stop_recording("rp1")
+
+        self.assertTrue(action_result["success"])
+        self.assertEqual(observation["window"], "Chrome")
+        self.assertTrue(evaluation["success"])
+        self.assertEqual(artifacts, ["replay.mp4"])
+
+    def test_mission_orchestrator_dispatches_dependencies_and_persists_completion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            contexts = MissionContextStore(
+                Path(tmp) / "mission_context.sqlite3"
+            )
+            journal = StructuredEventJournal(
+                Path(tmp) / "events.sqlite3"
+            )
+            kernel = JarvisKernel(journal=journal)
+            orchestrator = MissionOrchestrator(
+                kernel=kernel,
+                context_store=contexts,
+            )
+            context = MissionContext(
+                mission_id="m_orch",
+                user_goal="Observe then interact",
+                user_id="u1",
+                owner_agent_id="windows",
+            )
+            graph = MissionTaskGraph("m_orch")
+            graph.add(
+                TaskNode(
+                    task_id="observe",
+                    mission_id="m_orch",
+                    capability="computer.observe",
+                    agent_id="windows",
+                    payload={
+                        "tool_name": "inspect_active_window",
+                    },
+                    priority=10,
+                )
+            )
+            graph.add(
+                TaskNode(
+                    task_id="act",
+                    mission_id="m_orch",
+                    capability="computer.interact",
+                    agent_id="windows",
+                    dependencies={"observe"},
+                    payload={
+                        "tool_name": "click_ui_element",
+                    },
+                    priority=20,
+                )
+            )
+            orchestrator.register(context, graph)
+
+            first = orchestrator.dispatch_ready("m_orch")
+            self.assertEqual(
+                [item.task_id for item in first],
+                ["observe"],
+            )
+            scheduled = kernel.next_request()
+            self.assertEqual(
+                scheduled.request.step_id,
+                "observe",
+            )
+            orchestrator.complete_request(
+                scheduled.request.request_id,
+                success=True,
+                result={"window": "Chrome"},
+            )
+
+            second = orchestrator.dispatch_ready("m_orch")
+            self.assertEqual(
+                [item.task_id for item in second],
+                ["act"],
+            )
+            scheduled2 = kernel.next_request()
+            orchestrator.complete_request(
+                scheduled2.request.request_id,
+                success=True,
+                result={"clicked": True},
+            )
+
+            loaded = contexts.load("m_orch")
+            self.assertIsNotNone(loaded)
+            restored, _version = loaded
+            self.assertEqual(
+                restored.status,
+                MissionStatus.COMPLETED,
+            )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
