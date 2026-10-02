@@ -14,6 +14,7 @@ from .agent_knowledge import AGENT_KNOWLEDGE
 from .config import settings
 from .connectors import CONNECTORS
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
+from .tools import normalize
 
 
 LogFn = Callable[[str], None]
@@ -750,6 +751,8 @@ def _filter_optional_ollama_tools(
         )
     if not settings.vision_enabled:
         blocked.add("observe_screen")
+    if settings.compatibility_baseline:
+        blocked.add("type_text_active_window")
     if not blocked:
         return tools
     return [
@@ -775,6 +778,8 @@ def _filter_optional_openai_tools(
         )
     if not settings.vision_enabled:
         blocked.add("observe_screen")
+    if settings.compatibility_baseline:
+        blocked.add("type_text_active_window")
     if not blocked:
         return tools
     return [
