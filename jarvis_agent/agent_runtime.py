@@ -2542,7 +2542,10 @@ class GroqResponsesAgent:
                         text="Très bien. J'oublie le contexte de cette conversation et on repart de zéro.",
                         actions=tuple(actions),
                     )
-                if not result.success:
+                if (
+                    not result.success
+                    and result.detail != "ui_action_blocked_until_reinspection"
+                ):
                     failed_results[signature] = result
                 if result.success and name[:4] == "msf_":
                     self._last_msf_grounding_at = time.monotonic()
