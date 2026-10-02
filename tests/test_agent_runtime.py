@@ -138,6 +138,49 @@ class FakeTools:
             {
                 "type": "function",
                 "function": {
+                    "name": "type_text_active_window",
+                    "description": "unverified focused typing",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "title": {"type": "string"},
+                            "mode": {"type": "string"},
+                        },
+                        "required": ["text"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "close_window",
+                    "description": "close a top level window",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"title": {"type": "string"}},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "close_tab",
+                    "description": "close a tab without closing the window",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "observe_screen",
                     "description": "local visual observation",
                     "parameters": {
@@ -607,6 +650,7 @@ class AgentRuntimeTests(unittest.TestCase):
         }
 
         self.assertNotIn("observe_screen", definitions)
+        self.assertNotIn("type_text_active_window", definitions)
         self.assertNotIn("search_agent_knowledge", definitions)
         self.assertNotIn("save_verified_skill", definitions)
         self.assertNotIn("save_feedback_lesson", definitions)
@@ -621,6 +665,141 @@ class AgentRuntimeTests(unittest.TestCase):
                 in str(item.get("content") or "")
                 for item in agent.payloads[0]["messages"]
             )
+        )
+
+    def test_groq_repairs_write_goal_after_only_opening_application(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_open_notepad",
+                            "name": "open_application",
+                            "arguments": '{"name":"Notepad"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "C'est fait.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect_notepad",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Bloc-notes"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_write_notepad",
+                            "name": "write_ui_element",
+                            "arguments": (
+                                '{"ref":"e7","text":"Bonjour Jarvis",'
+                                '"mode":"replace"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le texte a été écrit.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Écris Bonjour Jarvis dans le Bloc-notes.")
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            [
+                "open_application",
+                "inspect_active_window",
+                "write_ui_element",
+            ],
+        )
+        self.assertIn("écrit", result.text)
+
+    def test_groq_blocks_window_close_when_user_requested_tab(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_wrong_close",
+                            "name": "close_window",
+                            "arguments": '{"title":"YouTube"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_close_tab",
+                            "name": "close_tab",
+                            "arguments": '{"name":"YouTube"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "L'onglet YouTube est fermé.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ferme seulement l'onglet YouTube.")
+
+        self.assertNotIn(
+            ("close_window", {"title": "YouTube"}),
+            tools.calls,
+        )
+        self.assertIn(
+            ("close_tab", {"name": "YouTube"}),
+            tools.calls,
+        )
+        self.assertEqual(
+            result.actions[0].detail,
+            "close_window_blocked_for_tab_request",
         )
 
     def test_verified_proof_requires_mutation_and_after_state(self):
