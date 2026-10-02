@@ -375,9 +375,6 @@ def _actions_have_verified_proof(
         "write_ui_element",
         "press_key",
         "close_window",
-        "open_application",
-        "open_file",
-        "open_url",
         "msf_commit_mutation",
     }
     authoritative_mutations = {
@@ -1518,15 +1515,35 @@ class GroqResponsesAgent:
         msf_tool_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         tools = self.tools.ollama_tools()
+        if not settings.operational_learning_enabled:
+            tools = [
+                item
+                for item in tools
+                if str((item.get("function") or {}).get("name") or "")
+                not in {
+                    "search_agent_knowledge",
+                    "save_verified_skill",
+                    "save_feedback_lesson",
+                    "agent_knowledge_stats",
+                }
+            ]
+        if not settings.vision_enabled:
+            tools = [
+                item
+                for item in tools
+                if str((item.get("function") or {}).get("name") or "")
+                != "observe_screen"
+            ]
         if ms_football_only:
             allowed = set(msf_tool_names or ())
             allowed.update(
                 {
                     "reset_conversation_context",
                     "return_to_standby",
-                    "search_agent_knowledge",
                 }
             )
+            if settings.operational_learning_enabled:
+                allowed.add("search_agent_knowledge")
             if self._skill_write_allowed:
                 allowed.add("save_verified_skill")
             if self._lesson_write_allowed:
@@ -1775,8 +1792,9 @@ class GroqResponsesAgent:
         failed_results: dict[str, AgentActionResult] = {}
         self._memory_write_allowed = _is_explicit_memory_write_request(user_text)
         self._skill_write_allowed = False
-        self._lesson_write_allowed = _looks_like_clear_operational_feedback(
-            user_text
+        self._lesson_write_allowed = (
+            settings.operational_learning_enabled
+            and _looks_like_clear_operational_feedback(user_text)
         )
 
         if self._pending_function_approval is not None:
@@ -1831,9 +1849,13 @@ class GroqResponsesAgent:
                 if item.get("role") == "user"
             )
         else:
-            knowledge_message = _operational_knowledge_message(
-                user_text,
-                self.knowledge,
+            knowledge_message = (
+                _operational_knowledge_message(
+                    user_text,
+                    self.knowledge,
+                )
+                if settings.operational_learning_enabled
+                else ""
             )
             if knowledge_message:
                 self._messages.append(
@@ -1950,7 +1972,7 @@ class GroqResponsesAgent:
                             "content": (
                                 "Une action vient de modifier l'interface. "
                                 "Avant de conclure, vérifie réellement l'état final "
-                                "avec inspect_active_window, observe_screen ou list_windows. "
+                                "avec inspect_active_window ou list_windows. "
                                 "N'affirme pas le résultat avant cette observation."
                             ),
                         }
@@ -1980,7 +2002,8 @@ class GroqResponsesAgent:
                 )
 
                 if (
-                    _actions_have_verified_proof(actions)
+                    settings.operational_learning_enabled
+                    and _actions_have_verified_proof(actions)
                     and len(reusable_actions) >= 3
                     and not learned_skill_this_turn
                     and not skill_learning_checkpoint_attempted
@@ -2009,7 +2032,8 @@ class GroqResponsesAgent:
                     continue
 
                 if (
-                    self._lesson_write_allowed
+                    settings.operational_learning_enabled
+                    and self._lesson_write_allowed
                     and not learned_lesson_this_turn
                     and not lesson_learning_checkpoint_attempted
                     and round_index < settings.agent_max_tool_rounds
@@ -2081,11 +2105,12 @@ class GroqResponsesAgent:
 
                 if self._messages and self._messages[-1].get("role") == "assistant":
                     self._messages[-1]["content"] = text
-                _record_operational_run(
-                    user_text,
-                    actions,
-                    self.knowledge,
-                )
+                if settings.operational_learning_enabled:
+                    _record_operational_run(
+                        user_text,
+                        actions,
+                        self.knowledge,
+                    )
                 self._trim_history()
                 return AgentTurnResult(
                     text=text,
@@ -2194,7 +2219,10 @@ class GroqResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
-                if _actions_have_verified_proof(actions):
+                if (
+                    settings.operational_learning_enabled
+                    and _actions_have_verified_proof(actions)
+                ):
                     self._skill_write_allowed = True
                 if result.success and name == "write_ui_element":
                     try:
@@ -2207,20 +2235,29 @@ class GroqResponsesAgent:
                 elif result.success and name in {
                     "click_ui_element",
                     "press_key",
-                    "open_application",
-                    "open_file",
-                    "open_url",
                 }:
                     ui_verification_required = True
-                elif result.success and name == "close_window":
-                    ui_verification_required = (
-                        "vérifiée" not in (result.detail or "").lower()
-                    )
+                elif (
+                    settings.strict_proof_enabled
+                    and result.success
+                    and name in {
+                        "open_application",
+                        "open_file",
+                        "open_url",
+                        "close_window",
+                    }
+                ):
+                    ui_verification_required = True
                 elif result.success and name in {
                     "inspect_active_window",
-                    "observe_screen",
                     "list_windows",
                 }:
+                    ui_verification_required = False
+                elif (
+                    settings.vision_enabled
+                    and result.success
+                    and name == "observe_screen"
+                ):
                     ui_verification_required = False
 
                 if name == "reset_conversation_context" and result.success:
