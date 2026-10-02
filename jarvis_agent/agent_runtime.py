@@ -400,9 +400,10 @@ def _actions_have_verified_proof(
     return False
 
 
-def _operational_knowledge_message(user_text: str) -> str:
+def _operational_knowledge_message(user_text: str, knowledge=None) -> str:
+    store = knowledge or AGENT_KNOWLEDGE
     try:
-        context = AGENT_KNOWLEDGE.relevant_context(user_text, limit=3)
+        context = store.relevant_context(user_text, limit=3)
     except Exception:
         return ""
     if not any(context.values()):
@@ -417,6 +418,7 @@ def _operational_knowledge_message(user_text: str) -> str:
 def _record_operational_run(
     user_text: str,
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+    knowledge=None,
 ) -> None:
     if not actions:
         return
@@ -440,7 +442,8 @@ def _record_operational_run(
                 for action in actions
             ],
         }
-        AGENT_KNOWLEDGE.record_run(
+        store = knowledge or AGENT_KNOWLEDGE
+        store.record_run(
             status=status,
             goal=user_text,
             actions=[action.name for action in actions],
@@ -1334,6 +1337,7 @@ class GroqResponsesAgent:
         tools: NativeToolRegistry | None = None,
     ) -> None:
         self.tools = tools or NATIVE_TOOLS
+        self.knowledge = getattr(self.tools, "knowledge", AGENT_KNOWLEDGE)
         self.base_url = settings.groq_base_url.rstrip("/")
         self.model = settings.groq_agent_model
         self.api_key = settings.groq_api_key
@@ -1744,7 +1748,10 @@ class GroqResponsesAgent:
                 if item.get("role") == "user"
             )
         else:
-            knowledge_message = _operational_knowledge_message(user_text)
+            knowledge_message = _operational_knowledge_message(
+                user_text,
+                self.knowledge,
+            )
             if knowledge_message:
                 self._messages.append(
                     {"role": "system", "content": knowledge_message}
@@ -1916,7 +1923,11 @@ class GroqResponsesAgent:
 
                 if self._messages and self._messages[-1].get("role") == "assistant":
                     self._messages[-1]["content"] = text
-                _record_operational_run(user_text, actions)
+                _record_operational_run(
+                    user_text,
+                    actions,
+                    self.knowledge,
+                )
                 self._trim_history()
                 return AgentTurnResult(
                     text=text,
