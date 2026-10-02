@@ -94,6 +94,10 @@ from jarvis_agent.dev_supervisor import (
     validation_destination,
 )
 from jarvis_agent.event_journal import StructuredEventJournal
+from jarvis_agent.tracing_runtime import (
+    StructuredTracingRuntime,
+    TracingToolRegistry,
+)
 from jarvis_agent.incident_bundle import IncidentBundleBuilder
 from jarvis_agent.kernel_contracts import (
     EventKind,
@@ -2124,6 +2128,85 @@ class KernelFoundationTests(unittest.TestCase):
         )
         self.assertTrue(ready.ready_for_user_validation)
         self.assertEqual(ready.blockers, ())
+
+    def test_structured_tracing_runtime_records_tool_args_without_reasoning(self):
+        class Action:
+            def __init__(self, success=True):
+                self.success = success
+                self.message = "ok"
+                self.detail = "done"
+                self.end_session = False
+                self.should_exit = False
+
+        class Tools:
+            knowledge = None
+
+            def execute(self, name, arguments, approved=False):
+                return Action(True)
+
+        class Result:
+            text = "Terminé"
+            actions = (Action(True),)
+            end_session = False
+            should_exit = False
+
+        class Runtime:
+            def __init__(self, tools):
+                self.tools = tools
+
+            def reset(self):
+                return None
+
+            def warm_up(self, log=None):
+                return None
+
+            def run(self, user_text, log=None, phase=None):
+                self.tools.execute(
+                    "open_application",
+                    {"name": "Chrome"},
+                )
+                return Result()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = StructuredEventJournal(
+                Path(tmp) / "trace.sqlite3"
+            )
+            proxy = TracingToolRegistry(
+                Tools(),
+                journal=journal,
+            )
+            runtime = StructuredTracingRuntime(
+                Runtime(proxy),
+                proxy,
+                journal=journal,
+            )
+
+            result = runtime.run("Ouvre Chrome")
+
+            self.assertEqual(result.text, "Terminé")
+            missions = journal.recent_missions(limit=5)
+            self.assertEqual(len(missions), 1)
+            trace = journal.mission_trace(
+                missions[0]["mission_id"]
+            )
+            kinds = [item["kind"] for item in trace]
+            self.assertIn("tool.requested", kinds)
+            self.assertIn("tool.result", kinds)
+            request = next(
+                item
+                for item in trace
+                if item["kind"] == "tool.requested"
+            )
+            self.assertEqual(
+                request["payload"]["arguments"],
+                {"name": "Chrome"},
+            )
+            self.assertFalse(
+                any(
+                    "chain_of_thought" in str(item["payload"])
+                    for item in trace
+                )
+            )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
