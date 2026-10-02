@@ -446,6 +446,69 @@ class ArchitectureExtensionTests(unittest.TestCase):
                 observer.stack.kernel.next_request(timeout_s=0.0)
             )
 
+    def test_kernel_shadow_keeps_recovered_agent_turn_completed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = replace(
+                real_settings,
+                kernel_shadow_enabled=True,
+                kernel_shadow_dir=str(Path(tmp) / "shadow"),
+                kernel_shadow_user_id="user-1",
+            )
+            observer = KernelShadowObserver(
+                base_dir=Path(tmp) / "shadow",
+                owner_user_id="user-1",
+                settings=configured,
+            )
+            turn = SimpleNamespace(
+                text="L'onglet YouTube est fermé.",
+                actions=(
+                    SimpleNamespace(
+                        name="close_window",
+                        success=False,
+                        message="Utilisez close_tab.",
+                        detail="close_window_blocked_for_tab_request",
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                    SimpleNamespace(
+                        name="close_tab",
+                        success=True,
+                        message="ok",
+                        detail='{"target":"YouTube","verified":true}',
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                ),
+            )
+
+            observation = observer.observe_agent_turn(
+                "Ferme seulement l'onglet YouTube.",
+                turn,
+            )
+
+            self.assertTrue(observation.success)
+            context, _version = observer.stack.mission_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(context.status, MissionStatus.COMPLETED)
+            self.assertEqual(
+                context.observed_state["failed_action_count"],
+                1,
+            )
+            graph = observer.stack.graph_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(
+                [node.status.value for node in graph.nodes()],
+                ["failed", "completed"],
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.QUEUED
+                ),
+                [],
+            )
+
     def test_kernel_shadow_records_direct_fast_path_without_rerouting(self):
         with tempfile.TemporaryDirectory() as tmp:
             configured = replace(
