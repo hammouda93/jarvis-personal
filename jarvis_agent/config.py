@@ -129,6 +129,14 @@ class Settings:
     agent_max_tool_rounds: int = _int("JARVIS_AGENT_MAX_TOOL_ROUNDS", 8)
     agent_history_items: int = _int("JARVIS_AGENT_HISTORY_ITEMS", 8)
     agent_history_turns: int = _int("JARVIS_AGENT_HISTORY_TURNS", 20)
+    operational_learning_enabled: bool = _bool(
+        "JARVIS_OPERATIONAL_LEARNING_ENABLED",
+        False,
+    )
+    strict_proof_enabled: bool = _bool(
+        "JARVIS_STRICT_PROOF_ENABLED",
+        False,
+    )
     ms_football_bridge_url: str = (
         os.getenv("JARVIS_MS_FOOTBALL_BRIDGE_URL")
         or "http://127.0.0.1:8765"
@@ -196,7 +204,7 @@ class Settings:
     ollama_model: str = (
         os.getenv("JARVIS_OLLAMA_MODEL") or "gemma3:latest"
     ).strip()
-    vision_enabled: bool = _bool("JARVIS_VISION_ENABLED", True)
+    vision_enabled: bool = _bool("JARVIS_VISION_ENABLED", False)
     vision_model: str = (
         os.getenv("JARVIS_VISION_MODEL") or "gemma3:latest"
     ).strip()
