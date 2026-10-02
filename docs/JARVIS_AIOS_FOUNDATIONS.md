@@ -396,6 +396,60 @@ The acceptance condition is therefore:
 
 **new architecture present + old Jarvis behavior still green.**
 
+## 22. Mission task graph
+
+`jarvis_agent/task_graph.py`
+
+Separates mission orchestration from resource scheduling.
+
+A mission can model:
+
+- parent/child task dependencies
+- ready/running/waiting/completed/failed/cancelled states
+- waiting for user
+- waiting for external systems
+- downstream cancellation after a failed prerequisite
+
+This is the layer AIOS itself does not fully provide for our long-running
+Jarvis workflows.
+
+## 23. Dev Supervisor component map and planner
+
+`jarvis_agent/component_registry.py`
+`jarvis_agent/supervisor_planner.py`
+
+The component registry maps known Jarvis code surfaces to capabilities and
+regression packs, including:
+
+- Windows/UIA
+- local screen vision
+- agent runtime
+- operational knowledge
+- MS Football
+- voice interaction
+- passive Kernel foundations
+
+The Supervisor Planner combines:
+
+correction candidate
++ changed paths
++ tags
++ component defaults
+→ selected regression packs
++ replay requirement
++ promotion destination
++ mandatory user validation
+
+## 24. Per-agent concurrency
+
+`jarvis_agent/mission_scheduler.py`
+
+The passive scheduler now enforces per-agent concurrency limits. The passive
+`JarvisKernel` derives those limits from `AgentManifest.max_concurrency`.
+
+This prevents a future specialized agent from running more simultaneous
+syscalls than its declared capacity while preserving priority + FIFO ordering.
+
 ## What is deliberately NOT done yet
 
 - no AIOS dependency
