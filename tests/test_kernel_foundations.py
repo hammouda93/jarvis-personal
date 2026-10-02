@@ -7,6 +7,10 @@ from pathlib import Path
 from jarvis_agent.capability_registry import (
     DEFAULT_CAPABILITY_REGISTRY,
 )
+from jarvis_agent.connector_gateway import (
+    ConnectorGateway,
+    ConnectorResult,
+)
 from jarvis_agent.connector_registry import (
     ConnectorBackend,
     DEFAULT_CONNECTOR_REGISTRY,
@@ -159,6 +163,41 @@ class KernelFoundationTests(unittest.TestCase):
                 "send_message",
             )
         )
+
+    def test_connector_gateway_enforces_confirmation_and_backend_priority(self):
+        class FakeAdapter:
+            connector_id = "whatsapp"
+            backend = ConnectorBackend.WINDOWS_UI
+
+            def execute(self, capability, arguments):
+                return ConnectorResult(
+                    connector_id=self.connector_id,
+                    capability=capability,
+                    success=True,
+                    message="sent",
+                    data={"arguments": arguments},
+                )
+
+        gateway = ConnectorGateway()
+        gateway.register_adapter(FakeAdapter())
+
+        blocked = gateway.execute(
+            connector_id="whatsapp",
+            capability="send_message",
+            arguments={"contact": "Dali", "text": "Bonjour"},
+            approved=False,
+        )
+        self.assertFalse(blocked.success)
+        self.assertEqual(blocked.error, "approval_required")
+
+        sent = gateway.execute(
+            connector_id="whatsapp",
+            capability="send_message",
+            arguments={"contact": "Dali", "text": "Bonjour"},
+            approved=True,
+        )
+        self.assertTrue(sent.success)
+        self.assertEqual(sent.message, "sent")
 
     def test_dev_supervisor_candidate_stays_pending_until_validation(self):
         assessment = FailureAssessment(
