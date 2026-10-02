@@ -42,6 +42,22 @@ class AssistantWorker(QObject):
         self._agent = build_agent_runtime()
         self._conversation_language = "fr"
         self._pending_direct_follow_up = ""
+        self._kernel_shadow = None
+        self._kernel_shadow_boot_error = ""
+        if settings.kernel_shadow_enabled:
+            try:
+                from .shadow_kernel_runtime import KernelShadowObserver
+
+                self._kernel_shadow = KernelShadowObserver.from_settings(
+                    settings
+                )
+            except Exception as exc:
+                # Shadow mode must never prevent the authoritative runtime
+                # from starting. The error is surfaced once boot logging is
+                # available.
+                self._kernel_shadow_boot_error = (
+                    f"{type(exc).__name__}: {exc}"
+                )
 
     def _state(self, state: AssistantState, status: str | None = None) -> None:
         self.state_changed.emit(state.value)
@@ -72,6 +88,43 @@ class AssistantWorker(QObject):
     def stop(self) -> None:
         self._stop.set()
 
+    def _shadow_observe(
+        self,
+        user_text: str,
+        *,
+        source: str,
+        actions=(),
+        action_names=None,
+        response_text: str = "",
+        success: bool | None = None,
+    ) -> None:
+        """Best-effort passive mirror; never affect the live control path."""
+        if self._kernel_shadow is None:
+            return
+        try:
+            observation = self._kernel_shadow.observe_turn(
+                user_text,
+                source=source,
+                actions=tuple(actions or ()),
+                action_names=tuple(action_names or ()),
+                response_text=response_text,
+                success=success,
+            )
+            self.log_line.emit(
+                "[KERNEL_SHADOW] "
+                f"mission={observation.mission_id} "
+                f"source={source} "
+                f"actions={observation.action_count} "
+                f"success={int(observation.success)} "
+                "authoritative=0"
+            )
+        except Exception as exc:
+            self.log_line.emit(
+                "[KERNEL_SHADOW] observer_error="
+                f"{type(exc).__name__}:{exc} "
+                "live_runtime_unchanged=1"
+            )
+
     def _handle_lifecycle(self, user_text: str) -> tuple[bool, bool]:
         """Return (handled, keep_listening)."""
         intent = route(user_text)
@@ -82,6 +135,14 @@ class AssistantWorker(QObject):
         spoken = tool_message(intent, result, self._conversation_language)
         self.log_line.emit(
             f"[DIRECT] lifecycle={intent.name} success={result.success}"
+        )
+        self._shadow_observe(
+            user_text,
+            source="lifecycle_fast_path",
+            actions=(result,),
+            action_names=(intent.name,),
+            response_text=spoken,
+            success=result.success,
         )
         self._speak(spoken)
 
@@ -186,6 +247,14 @@ class AssistantWorker(QObject):
             f"args={intent.args} follow_up={result.follow_up}"
         )
         spoken = tool_message(intent, result, self._conversation_language)
+        self._shadow_observe(
+            user_text,
+            source="direct_fast_path",
+            actions=(result,),
+            action_names=(intent.name,),
+            response_text=spoken,
+            success=result.success,
+        )
         self.detail_changed.emit(
             f"{intent.name}:{'ok' if result.success else 'erreur'}"
         )
@@ -303,6 +372,14 @@ class AssistantWorker(QObject):
                     result,
                     self._conversation_language,
                 )
+                self._shadow_observe(
+                    user_text,
+                    source="direct_follow_up",
+                    actions=(result,),
+                    action_names=(follow_intent.name,),
+                    response_text=spoken,
+                    success=result.success,
+                )
                 self._speak(spoken)
                 self._state(
                     AssistantState.SUCCESS if result.success else AssistantState.ERROR,
@@ -326,12 +403,25 @@ class AssistantWorker(QObject):
             )
         except AgentRuntimeUnavailable as exc:
             self.log_line.emit(f"[AGENT] unavailable: {exc}")
+            self._shadow_observe(
+                user_text,
+                source="agent_runtime",
+                response_text=str(exc),
+                success=False,
+            )
             self._state(AssistantState.ERROR, "Cerveau agent indisponible")
             self._speak(
                 "Mon cerveau agent n'est pas disponible pour le moment. "
                 "Vérifiez le modèle configuré puis réessayez."
             )
             return True
+
+        self._shadow_observe(
+            user_text,
+            source="agent_runtime",
+            actions=turn.actions,
+            response_text=turn.text,
+        )
 
         if turn.actions:
             details = " · ".join(
@@ -362,6 +452,17 @@ class AssistantWorker(QObject):
     @Slot()
     def run(self) -> None:
         self.log_line.emit("[BOOT] Jarvis native agent runtime started")
+        if self._kernel_shadow is not None:
+            self.log_line.emit(
+                "[KERNEL_SHADOW] enabled=1 authoritative=0 "
+                "dispatch=0 routing_override=0"
+            )
+        elif settings.kernel_shadow_enabled:
+            self.log_line.emit(
+                "[KERNEL_SHADOW] enabled=0 init_error="
+                + self._kernel_shadow_boot_error
+                + " live_runtime_unchanged=1"
+            )
         self.log_line.emit(
             f"[AI] provider={settings.agent_provider} "
             f"stt_provider={settings.stt_provider} "
