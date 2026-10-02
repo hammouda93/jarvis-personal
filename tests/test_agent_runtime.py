@@ -61,8 +61,21 @@ class FakeTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "search_web",
-                    "description": "search",
+                    "name": "research_web",
+                    "description": "background research",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "open_web_search",
+                    "description": "visible browser search",
                     "parameters": {
                         "type": "object",
                         "properties": {"query": {"type": "string"}},
@@ -2647,7 +2660,7 @@ class AgentRuntimeTests(unittest.TestCase):
                             },
                             {
                                 "function": {
-                                    "name": "search_web",
+                                    "name": "open_web_search",
                                     "arguments": {"query": "agents IA"},
                                 }
                             },
@@ -3183,7 +3196,7 @@ class AgentRuntimeTests(unittest.TestCase):
                         {
                             "type": "function_call",
                             "call_id": "call_context_web",
-                            "name": "search_web",
+                            "name": "research_web",
                             "arguments": "{\"query\":\"AtlasScope\"}",
                         }
                     ]
@@ -3211,7 +3224,7 @@ class AgentRuntimeTests(unittest.TestCase):
         result = agent.run("Donne-moi toutes les infos sur AtlasScope.")
 
         self.assertNotIn(
-            ("search_web", {"query": "AtlasScope"}),
+            ("research_web", {"query": "AtlasScope"}),
             tools.calls,
         )
         self.assertEqual(len(result.actions), 1)
@@ -3241,7 +3254,7 @@ class AgentRuntimeTests(unittest.TestCase):
                         {
                             "type": "function_call",
                             "call_id": "call_explicit_web",
-                            "name": "search_web",
+                            "name": "research_web",
                             "arguments": "{\"query\":\"AtlasScope\"}",
                         }
                     ]
@@ -3266,11 +3279,125 @@ class AgentRuntimeTests(unittest.TestCase):
         result = agent.run("Recherche AtlasScope sur Internet.")
 
         self.assertIn(
-            ("search_web", {"query": "AtlasScope"}),
+            ("research_web", {"query": "AtlasScope"}),
             tools.calls,
         )
         self.assertEqual(len(result.actions), 1)
         self.assertTrue(result.actions[0].success)
+
+    def test_groq_blocks_visible_search_when_user_did_not_request_browser(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_visible_search",
+                            "name": "open_web_search",
+                            "arguments": "{\"query\":\"Windows AUMID docs\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "J'ai recherché la documentation.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Trouve la meilleure méthode documentée pour lancer une app MSIX."
+        )
+
+        self.assertNotIn(
+            ("open_web_search", {"query": "Windows AUMID docs"}),
+            tools.calls,
+        )
+        self.assertEqual(len(result.actions), 1)
+        self.assertFalse(result.actions[0].success)
+        self.assertIn(
+            "visible_web_search_not_explicit",
+            result.actions[0].detail,
+        )
+
+    def test_groq_can_research_in_background_after_recoverable_failure(self):
+        class RecoveryTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "open_application":
+                    return AgentActionResult(
+                        name=name,
+                        success=False,
+                        message="application not found",
+                        detail="Application introuvable",
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="research complete",
+                    detail='{"provider":"groq_browser_search","visible_browser_opened":false}',
+                )
+
+        tools = RecoveryTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_open",
+                            "name": "open_application",
+                            "arguments": "{\"name\":\"Example App\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_research",
+                            "name": "research_web",
+                            "arguments": "{\"query\":\"Windows packaged app launch methods\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "J'ai trouvé une méthode alternative documentée.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ouvre Example App.")
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            ["open_application", "research_web"],
+        )
+        self.assertEqual(len(result.actions), 2)
+        self.assertFalse(result.actions[0].success)
+        self.assertTrue(result.actions[1].success)
 
     def test_groq_semantic_reset_tool_clears_temporary_context(self):
         tools = FakeTools()
