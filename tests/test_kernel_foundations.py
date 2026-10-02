@@ -31,6 +31,11 @@ from jarvis_agent.replay_sandbox import (
     ReplayPlan,
     ReplayRunner,
 )
+from jarvis_agent.task_graph import (
+    MissionTaskGraph,
+    TaskNode,
+    TaskStatus,
+)
 from jarvis_agent.connector_gateway import (
     ConnectorGateway,
     ConnectorResult,
@@ -814,6 +819,60 @@ class KernelFoundationTests(unittest.TestCase):
                 EventKind.SYSCALL_COMPLETED.value,
                 observed,
             )
+
+    def test_task_graph_separates_dependencies_from_resource_scheduler(self):
+        graph = MissionTaskGraph("m_graph")
+        graph.add(
+            TaskNode(
+                task_id="observe",
+                mission_id="m_graph",
+                capability="computer.observe",
+                agent_id="windows",
+                priority=10,
+            )
+        )
+        graph.add(
+            TaskNode(
+                task_id="act",
+                mission_id="m_graph",
+                capability="computer.interact",
+                agent_id="windows",
+                dependencies={"observe"},
+                priority=20,
+            )
+        )
+        graph.add(
+            TaskNode(
+                task_id="verify",
+                mission_id="m_graph",
+                capability="computer.observe",
+                agent_id="windows",
+                dependencies={"act"},
+                priority=30,
+            )
+        )
+
+        self.assertEqual(
+            [item.task_id for item in graph.ready()],
+            ["observe"],
+        )
+        graph.mark_running("observe")
+        graph.mark_completed("observe", {"window": "Chrome"})
+        self.assertEqual(
+            [item.task_id for item in graph.ready()],
+            ["act"],
+        )
+        graph.mark_running("act")
+        graph.pause_for_user("act")
+        self.assertEqual(
+            graph.get("act").status,
+            TaskStatus.WAITING_USER,
+        )
+        graph.mark_completed("act", {"clicked": True})
+        self.assertEqual(
+            [item.task_id for item in graph.ready()],
+            ["verify"],
+        )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
