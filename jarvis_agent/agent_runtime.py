@@ -10,6 +10,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
+from .agent_knowledge import AGENT_KNOWLEDGE
 from .config import settings
 from .connectors import CONNECTORS
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
@@ -44,6 +45,23 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   explicitement de retenir/mémoriser une information. Ne demande pas spontanément
   à l'utilisateur s'il veut mémoriser une information: garde-la seulement dans
   le contexte de conversation tant qu'il ne demande pas de mémoire persistante;
+- la mémoire opérationnelle locale (skills, lessons, app profiles) est distincte
+  de la mémoire personnelle. Utilise les connaissances opérationnelles injectées
+  seulement comme procédure/historique de travail, jamais comme vérité sur l'état
+  actuel de l'écran;
+- lorsqu'une procédure multi-étapes réutilisable vient de réussir avec une preuve
+  observable, tu peux appeler save_verified_skill une seule fois pour enregistrer
+  une version générique. N'enregistre jamais de nom de contact, contenu de message,
+  mot de passe, token, donnée personnelle, coordonnée fixe ou contenu utilisateur;
+- lorsqu'un utilisateur corrige clairement ton comportement, transforme la
+  correction en règle générale avec save_feedback_lesson si elle est réutilisable.
+  N'enregistre pas la donnée privée qui a déclenché la correction;
+- une simple confirmation utilisateur ("oui c'est bon", "maintenant ça marche")
+  confirme l'état précédent: elle ne demande jamais de répéter la mutation;
+- pour toute action externe dont le succès compte (message envoyé, upload terminé,
+  fenêtre fermée, donnée modifiée), ne formule une affirmation de succès que si
+  une preuve après action est réellement observée. Une action déclenchée n'est
+  pas à elle seule une preuve de résultat;
 - recall_information sert uniquement à consulter la mémoire persistante quand
   l'information n'est pas déjà disponible dans le contexte de la conversation
   actuelle. Si la réponse est présente dans l'historique de session, réponds
@@ -315,6 +333,118 @@ def _is_explicit_memory_write_request(text: str) -> bool:
         r"\b(save|keep)\b.{0,24}\b(in )?(memory|mind)\b",
     )
     return any(re.search(pattern, normalized, flags=re.DOTALL) for pattern in patterns)
+
+
+def _looks_like_clear_operational_feedback(text: str) -> bool:
+    normalized = (text or "").lower().replace("’", "'")
+    correction_markers = (
+        "non,", "non ", "ce n'est pas", "c'est pas", "tu as juste",
+        "tu n'as pas", "je t'ai dit", "je voulais dire", "pas comme ça",
+        "pas comme ca", "incorrect", "erreur", "wrong", "that's not",
+        "you only", "you didn't",
+    )
+    return any(marker in normalized for marker in correction_markers)
+
+
+def _action_detail_dict(action: AgentActionResult) -> dict[str, Any]:
+    try:
+        value = json.loads(action.detail or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _actions_have_verified_proof(
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> bool:
+    if not actions:
+        return False
+
+    mutation_names = {
+        "click_ui_element",
+        "write_ui_element",
+        "press_key",
+        "close_window",
+        "open_application",
+        "open_file",
+        "open_url",
+        "msf_commit_mutation",
+    }
+    last_mutation = -1
+    for index, action in enumerate(actions):
+        if action.name in mutation_names and action.success:
+            last_mutation = index
+        payload = _action_detail_dict(action)
+        if action.success and payload.get("verified") is True:
+            return True
+        if action.success and "vérifiée" in (action.detail or "").lower():
+            return True
+
+    if last_mutation < 0:
+        return all(action.success for action in actions)
+
+    for action in actions[last_mutation + 1 :]:
+        if action.success and action.name in {
+            "inspect_active_window",
+            "list_windows",
+        }:
+            return True
+    return False
+
+
+def _operational_knowledge_message(user_text: str) -> str:
+    try:
+        context = AGENT_KNOWLEDGE.relevant_context(user_text, limit=3)
+    except Exception:
+        return ""
+    if not any(context.values()):
+        return ""
+    return (
+        "CONNAISSANCE_OPERATIONNELLE_LOCALE (peut être obsolète; adapte-la "
+        "toujours à l'état réel et vérifie l'écran/outils):\n"
+        + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+    )
+
+
+def _record_operational_run(
+    user_text: str,
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> None:
+    if not actions:
+        return
+    try:
+        all_success = all(action.success for action in actions)
+        verified = all_success and _actions_have_verified_proof(actions)
+        if verified:
+            status = "verified"
+        elif any(not action.success for action in actions):
+            status = "failed" if not any(action.success for action in actions) else "partial"
+        else:
+            status = "partial"
+        proof = {
+            "verified": verified,
+            "tools": [
+                {
+                    "name": action.name,
+                    "success": action.success,
+                    "self_verified": _action_detail_dict(action).get("verified") is True,
+                }
+                for action in actions
+            ],
+        }
+        AGENT_KNOWLEDGE.record_run(
+            status=status,
+            goal=user_text,
+            actions=[action.name for action in actions],
+            proof=proof,
+            error="; ".join(
+                action.message
+                for action in actions
+                if not action.success
+            )[:800],
+        )
+    except Exception:
+        pass
 
 
 def _blocked_memory_write_result() -> AgentActionResult:
@@ -1317,7 +1447,15 @@ class GroqResponsesAgent:
         tools = self.tools.ollama_tools()
         if ms_football_only:
             allowed = set(msf_tool_names or ())
-            allowed.update({"reset_conversation_context", "return_to_standby"})
+            allowed.update(
+                {
+                    "reset_conversation_context",
+                    "return_to_standby",
+                    "search_agent_knowledge",
+                    "save_verified_skill",
+                    "save_feedback_lesson",
+                }
+            )
             if self._memory_write_allowed:
                 allowed.add("remember_information")
             tools = [
@@ -1598,6 +1736,24 @@ class GroqResponsesAgent:
                 if item.get("role") == "user"
             )
         else:
+            knowledge_message = _operational_knowledge_message(user_text)
+            if knowledge_message:
+                self._messages.append(
+                    {"role": "system", "content": knowledge_message}
+                )
+                if log:
+                    try:
+                        knowledge_payload = json.loads(
+                            knowledge_message.split("\n", 1)[1]
+                        )
+                        log(
+                            "[KNOWLEDGE] injected "
+                            f"skills={len(knowledge_payload.get('skills', []))} "
+                            f"lessons={len(knowledge_payload.get('lessons', []))} "
+                            f"apps={len(knowledge_payload.get('app_profiles', []))}"
+                        )
+                    except Exception:
+                        log("[KNOWLEDGE] injected")
             self._messages.append(
                 {"role": "user", "content": user_text}
             )
@@ -1752,6 +1908,7 @@ class GroqResponsesAgent:
 
                 if self._messages and self._messages[-1].get("role") == "assistant":
                     self._messages[-1]["content"] = text
+                _record_operational_run(user_text, actions)
                 self._trim_history()
                 return AgentTurnResult(
                     text=text,
@@ -1811,6 +1968,32 @@ class GroqResponsesAgent:
                     and not _is_explicit_memory_write_request(user_text)
                 ):
                     result = _blocked_memory_write_result()
+                elif (
+                    name == "save_verified_skill"
+                    and not _actions_have_verified_proof(actions)
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "Le skill n'est pas enregistré: aucune preuve "
+                            "vérifiée de réussite n'existe encore dans ce tour."
+                        ),
+                        detail="skill_write_blocked_without_verified_proof",
+                    )
+                elif (
+                    name == "save_feedback_lesson"
+                    and not _looks_like_clear_operational_feedback(user_text)
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La leçon n'est pas enregistrée: aucune correction "
+                            "utilisateur claire n'a été détectée dans ce tour."
+                        ),
+                        detail="lesson_write_blocked_without_clear_feedback",
+                    )
                 elif (
                     name == "recall_information"
                     and _query_matches_recent_user_context(
