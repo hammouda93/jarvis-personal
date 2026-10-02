@@ -736,3 +736,59 @@ battery is green.
 8. Add isolated replay/sandbox before automatic patch execution.
 9. Add multi-agent write barrier/scheduler when true concurrency is introduced.
 10. Only then consider adaptive LLM routing from passive telemetry.
+
+## 41. Live Runtime → Kernel shadow convergence V1
+
+Development branch: `feature/unified-personal-agent-shadow-v1`.
+
+This is the first deliberate convergence step between the authoritative live
+Agent Runtime and the passive Kernel foundations.
+
+The rule remains strict:
+
+```text
+LIVE RUNTIME = authoritative execution
+KERNEL SHADOW = observation only
+```
+
+When `JARVIS_KERNEL_SHADOW_ENABLED=1`, completed live turns are mirrored into
+an isolated passive Kernel stack:
+
+- user goal → shadow mission
+- actual live tool results → shadow events
+- actual live tool names → passive candidate-agent projection
+- final live result → shadow mission status / observed state
+
+The shadow path explicitly does **not**:
+
+- submit `KernelRequest` objects
+- run the Kernel dispatcher
+- override the live Agent Runtime
+- select a different live agent/model
+- call tools itself
+- change approval behavior
+- modify the live result returned to the user
+
+The observer is best-effort and fail-open with respect to the existing runtime:
+an observer initialization/write failure is logged, while the current live
+runtime continues unchanged.
+
+Activation remains opt-in:
+
+```env
+JARVIS_KERNEL_SHADOW_ENABLED=0
+JARVIS_KERNEL_SHADOW_DIR=
+JARVIS_KERNEL_SHADOW_USER_ID=local-user
+```
+
+Promotion beyond shadow mode is allowed only after:
+
+1. historical baseline regression remains green;
+2. Kernel/foundation regression remains green;
+3. manual live behavior remains equivalent;
+4. shadow traces show correct mission/action projection;
+5. no Kernel request is dispatched during shadow operation.
+
+The next convergence step is to derive a passive task graph and supervisor
+assessment from these shadow missions while execution still remains owned by
+the historical live runtime.
