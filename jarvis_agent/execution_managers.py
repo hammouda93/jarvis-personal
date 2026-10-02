@@ -64,7 +64,10 @@ class ConnectorExecutionManager:
             or request.capability
         )
         arguments = dict(request.payload.get("arguments") or {})
-        approved = bool(request.payload.get("approved"))
+        approved = bool(
+            request.payload.get("_kernel_approved") is True
+            and request.payload.get("_kernel_approval_id")
+        )
         response = self.gateway.execute(
             connector_id=connector_id,
             capability=capability,
