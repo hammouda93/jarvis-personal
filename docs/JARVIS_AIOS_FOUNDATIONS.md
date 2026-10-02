@@ -789,6 +789,22 @@ Promotion beyond shadow mode is allowed only after:
 4. shadow traces show correct mission/action projection;
 5. no Kernel request is dispatched during shadow operation.
 
-The next convergence step is to derive a passive task graph and supervisor
-assessment from these shadow missions while execution still remains owned by
-the historical live runtime.
+The shadow observer now also persists a passive task graph built from the
+actions that the historical live runtime actually executed. These graph nodes
+are evidence only; they are never scheduled.
+
+Inspect the isolated shadow state with:
+
+```powershell
+python -m jarvis_agent.shadow_kernel_cli stats
+python -m jarvis_agent.shadow_kernel_cli missions
+python -m jarvis_agent.shadow_kernel_cli trace <mission_id>
+python -m jarvis_agent.shadow_kernel_cli graph <mission_id>
+```
+
+In strict shadow mode, `stats` must keep both
+`queued_kernel_requests=0` and `running_kernel_requests=0`.
+
+The next convergence step is to add a passive supervisor assessment over these
+shadow missions while execution still remains owned by the historical live
+runtime.
