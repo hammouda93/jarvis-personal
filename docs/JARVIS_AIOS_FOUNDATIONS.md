@@ -1,0 +1,259 @@
+# Jarvis — AIOS-inspired foundations
+
+This document records the architecture concepts adopted after the AIOS /
+Cerebrum code audit. Jarvis is **not** being migrated to AIOS.
+
+## Non-regression rule
+
+Historical Jarvis behavior remains authoritative while the current Windows/UI
+and local-vision test battery is being validated.
+
+All foundations in this document are either metadata-only, passive stores, or
+disabled by default:
+
+- `JARVIS_STRUCTURED_TRACING_ENABLED=0`
+- `JARVIS_MODEL_TELEMETRY_ENABLED=0`
+- `JARVIS_AGENT_REGISTRY_ENABLED=0`
+- `JARVIS_DEV_SUPERVISOR_ENABLED=0`
+
+Do not enable them merely to debug an unrelated Windows/UI test.
+
+## 1. Kernel contracts
+
+`jarvis_agent/kernel_contracts.py`
+
+Introduces stable contracts without moving the current runtime:
+
+- `MissionStatus`
+- `EventKind`
+- `KnowledgeScope`
+- `PromotionTarget`
+- `RiskLevel`
+- `CapabilitySpec`
+- `AgentManifest`
+- `MissionContext`
+- `CorrectionCandidate`
+
+Knowledge scopes are intentionally distinct:
+
+- `CORE`
+- `APP`
+- `DOMAIN`
+- `AGENT`
+- `SKILL`
+- `USER`
+- `TEST`
+- `SESSION`
+
+A user-specific correction must not silently become a CORE invariant.
+
+## 2. Structured mission/event journal
+
+`jarvis_agent/event_journal.py`
+
+Local SQLite store:
+
+`%LOCALAPPDATA%\JarvisPersonal\mission_events.sqlite3`
+
+It is designed to reconstruct:
+
+user input/intent summary → selected agent/capability → tool request → tool result
+→ observation → proof → feedback → correction candidate → test/replay result.
+
+The journal stores structured operational evidence, **not hidden model chain of
+thought**. Secret-like fields and common personal paths/emails are redacted.
+
+The journal is not connected to the live runtime while
+`JARVIS_STRUCTURED_TRACING_ENABLED=0`.
+
+## 3. Agent / capability registry
+
+`jarvis_agent/capability_registry.py`
+
+Current declarative manifests:
+
+- windows
+- browser
+- ms_football
+- communications
+- developer
+
+Examples of capabilities:
+
+- `computer.observe`
+- `computer.interact`
+- `browser.search`
+- `msf.read`
+- `msf.commit_mutation`
+- `communications.send`
+- `developer.test`
+- `developer.replay`
+
+Each agent declares tool/connectors and memory scopes. This is the future
+enforcement boundary; it is **not yet the active router**.
+
+## 4. Connector registry
+
+`jarvis_agent/connector_registry.py`
+
+Defines a stable logical capability contract independent from the backend.
+
+Backends:
+
+1. API
+2. MCP
+3. local SDK
+4. database
+5. browser
+6. Windows UI
+
+Initial connector metadata:
+
+- Gmail
+- WhatsApp
+- Instagram
+- GitHub
+
+No credentials are stored and no external account is connected by this module.
+
+Example future flow:
+
+`communications.send → Connector Gateway → Gmail API / MCP / UI backend`
+
+The LLM should not need to know OAuth/token implementation details.
+
+## 5. Scoped write barrier
+
+`jarvis_agent/write_barrier.py`
+
+AIOS-inspired read-after-write primitive for future concurrent agents.
+
+A reader snapshots the current sequence for one user/scope and waits only for
+writes that existed at snapshot time. Newer writes do not indefinitely block
+the old read.
+
+It is not wired into the current single-agent knowledge path yet.
+
+## 6. Dev Supervisor contracts
+
+`jarvis_agent/dev_supervisor.py`
+
+Failure categories include:
+
+- CORE_INVARIANT
+- TOOL_PRIMITIVE
+- APP_PROFILE
+- SKILL
+- USER_PREFERENCE
+- STT
+- MODEL_REASONING
+- MISSING_CAPABILITY
+- UI_CHANGED
+- CONNECTOR
+- UNKNOWN
+
+A `FailureAssessment` can create a pending `CorrectionCandidate`.
+
+A candidate is never promoted automatically. User validation can later send it
+to one of:
+
+- core regression + patch
+- app profile
+- domain knowledge
+- agent policy
+- verified skill
+- user preference
+- regression test
+- session-only state
+
+This is the base for:
+
+`Observe → understand → investigate → correct → test → replay → validate → learn`
+
+## 7. Regression registry
+
+`jarvis_agent/regression_registry.py`
+
+Regression packs can be selected by tags or changed file paths.
+
+Initial packs:
+
+- TEST-WIN-BASELINE
+- TEST-VISION-LAYER
+- TEST-MEMORY-KNOWLEDGE
+
+Future Dev Supervisor patches should select relevant tests automatically before
+running the full suite.
+
+## 8. Passive LLM telemetry
+
+`jarvis_agent/model_telemetry.py`
+
+Local SQLite store:
+
+`%LOCALAPPDATA%\JarvisPersonal\model_telemetry.sqlite3`
+
+Tracks, when explicitly enabled/wired later:
+
+- provider
+- model
+- task class
+- latency
+- success/failure
+- rate-limit errors
+- token counts when available
+- estimated cost when available
+
+This does **not** alter current Cerebras/Groq routing.
+
+It is the lightweight foundation for a future adaptive `ModelRouter` without
+bringing AIOS SmartRouting's Chroma/PuLP/LiteLLM stack into Jarvis.
+
+## 9. CLI
+
+Inspect the passive architecture:
+
+```powershell
+python -m jarvis_agent.kernel_cli agents
+python -m jarvis_agent.kernel_cli capabilities
+python -m jarvis_agent.kernel_cli connectors
+python -m jarvis_agent.kernel_cli tests
+python -m jarvis_agent.kernel_cli stats
+```
+
+Later, if structured tracing is enabled and wired:
+
+```powershell
+python -m jarvis_agent.kernel_cli trace <mission_id>
+python -m jarvis_agent.kernel_cli models --hours 24
+```
+
+## What is deliberately NOT done yet
+
+- no AIOS dependency
+- no Cerebrum dependency
+- no AIOS kernel server
+- no Mem0 migration
+- no SmartRouting replacement
+- no active specialized-agent router
+- no automatic Gmail/WhatsApp/Instagram access
+- no automatic Dev Supervisor code patching
+- no automatic promotion of feedback to Core
+- no multi-agent scheduler in the live request path
+- no VM controller replacing real Windows UIA
+
+These remain staged future integrations after the current UI/vision test
+battery is green.
+
+## Future activation order
+
+1. Finish Windows/UIA + local vision validation.
+2. Enable operational learning only and validate skills/lessons.
+3. Wire structured tracing passively.
+4. Promote validated behaviors into the regression registry.
+5. Introduce specialized agents behind the capability registry.
+6. Add Connector Gateway (Gmail first; then GitHub/WhatsApp/Instagram as appropriate).
+7. Add Dev Supervisor trace analysis and test selection.
+8. Add isolated replay/sandbox before automatic patch execution.
+9. Add multi-agent write barrier/scheduler when true concurrency is introduced.
+10. Only then consider adaptive LLM routing from passive telemetry.
