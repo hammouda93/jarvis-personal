@@ -15,6 +15,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .windows_app_discovery import (
+    launch_registered_app,
+    resolve_registered_app,
+)
+
 
 @dataclass(frozen=True)
 class ToolIntent:
@@ -421,15 +426,33 @@ def _open_application(app: str) -> ToolResult:
     if ok:
         return ToolResult(True, "C'est fait.", f"Application ouverte: {app}")
 
-    # Install locations differ across Windows/package-manager setups. Fall back
-    # to the same generic Start Menu/Desktop discovery used for arbitrary apps
-    # before declaring a known application missing.
+    # Install locations differ across classic Win32, MSIX/Store and package
+    # manager setups. Ask Windows' registered application inventory before
+    # scanning the filesystem. Get-StartApps/AUMID is the authoritative launch
+    # route for many packaged applications that do not expose a stable .exe.
     discovery_names = {
         "cursor": "Cursor",
         "vscode": "Visual Studio Code",
         "notepad": "Notepad",
     }
     query = discovery_names.get(app, app)
+    registered, registered_matches = resolve_registered_app(query)
+    if registered is not None and launch_registered_app(registered):
+        return ToolResult(
+            True,
+            "C'est fait.",
+            json.dumps(
+                {
+                    "application": registered.name,
+                    "source": registered.source,
+                    "launch_kind": registered.launch_kind,
+                    "app_id": registered.app_id,
+                    "executable": registered.executable,
+                },
+                ensure_ascii=False,
+            ),
+        )
+
     path, matches = _find_named_app(query)
     if path is not None:
         try:
@@ -451,6 +474,16 @@ def _open_application(app: str) -> ToolResult:
         return ToolResult(
             False,
             f"J'ai trouvé plusieurs applications proches de {query}.",
+            choices,
+        )
+    if registered_matches:
+        choices = " | ".join(
+            f"{item.name} [{item.source}]"
+            for item in registered_matches[:3]
+        )
+        return ToolResult(
+            False,
+            f"J'ai trouvé plusieurs applications Windows proches de {query}.",
             choices,
         )
     return ToolResult(
@@ -920,6 +953,24 @@ def execute(intent: ToolIntent) -> ToolResult:
 
     if intent.name == "app.open_named":
         query = str(intent.args.get("query", "")).strip()
+
+        registered, registered_matches = resolve_registered_app(query)
+        if registered is not None and launch_registered_app(registered):
+            return ToolResult(
+                True,
+                f"J'ai ouvert {registered.name}.",
+                json.dumps(
+                    {
+                        "application": registered.name,
+                        "source": registered.source,
+                        "launch_kind": registered.launch_kind,
+                        "app_id": registered.app_id,
+                        "executable": registered.executable,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+
         path, matches = _find_named_app(query)
         if path is not None:
             try:
@@ -941,6 +992,18 @@ def execute(intent: ToolIntent) -> ToolResult:
                 False,
                 f"J'ai trouvé plusieurs applications proches : {choices}. Pouvez-vous préciser ?",
                 " | ".join(str(item) for item in matches[:3]),
+            )
+        if registered_matches:
+            choices = ", ".join(
+                item.name for item in registered_matches[:3]
+            )
+            return ToolResult(
+                False,
+                f"J'ai trouvé plusieurs applications Windows proches : {choices}. Pouvez-vous préciser ?",
+                json.dumps(
+                    [item.as_dict() for item in registered_matches[:3]],
+                    ensure_ascii=False,
+                ),
             )
         return ToolResult(
             False,
