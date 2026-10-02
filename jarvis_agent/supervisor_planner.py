@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+from .component_registry import (
+    ComponentRegistry,
+    DEFAULT_COMPONENT_REGISTRY,
+)
 from .dev_supervisor import validation_destination
 from .kernel_contracts import CorrectionCandidate, PromotionTarget
 from .regression_registry import (
@@ -16,6 +20,7 @@ class SupervisorPlan:
     candidate_id: str
     destination: str
     selected_test_ids: tuple[str, ...]
+    component_ids: tuple[str, ...]
     requires_replay: bool
     requires_user_validation: bool = True
     notes: tuple[str, ...] = ()
@@ -31,8 +36,10 @@ class SupervisorPlanner:
     def __init__(
         self,
         registry: RegressionRegistry | None = None,
+        components: ComponentRegistry | None = None,
     ):
         self.registry = registry or DEFAULT_REGRESSION_REGISTRY
+        self.components = components or DEFAULT_COMPONENT_REGISTRY
 
     def plan(
         self,
@@ -46,6 +53,8 @@ class SupervisorPlanner:
             for test_id in candidate.test_ids
             if str(test_id)
         }
+        changed_paths = list(changed_paths)
+        tags = list(tags)
         selected.update(
             spec.test_id
             for spec in self.registry.select(
@@ -53,6 +62,16 @@ class SupervisorPlanner:
                 changed_paths=changed_paths,
             )
         )
+
+        components = {
+            spec.component_id: spec
+            for spec in [
+                *self.components.for_paths(changed_paths),
+                *self.components.for_tags(tags),
+            ]
+        }
+        for spec in components.values():
+            selected.update(spec.default_test_ids)
 
         replay_targets = {
             PromotionTarget.CORE_INVARIANT,
@@ -77,6 +96,7 @@ class SupervisorPlanner:
             candidate_id=candidate.candidate_id,
             destination=validation_destination(candidate),
             selected_test_ids=tuple(sorted(selected)),
+            component_ids=tuple(sorted(components)),
             requires_replay=requires_replay,
             requires_user_validation=True,
             notes=tuple(notes),
