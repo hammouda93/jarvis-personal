@@ -1,3 +1,38 @@
+## Staged rollout / compatibility baseline
+
+Jarvis starts in historical compatibility mode by default:
+
+```text
+JARVIS_COMPATIBILITY_BASELINE=1
+learning=off
+vision=off
+strict proof=off
+```
+
+In this mode, the pre-skills system instructions and tool-loop behavior are used.
+Existing operational knowledge remains on disk but is not injected into GPT-OSS,
+app profiles are not reused/updated, and `observe_screen` is hidden from the
+model.
+
+Validate the historical UI/app test battery first. Then test extensions one at
+a time by setting `JARVIS_COMPATIBILITY_BASELINE=0` and enabling only one
+feature:
+
+```text
+JARVIS_OPERATIONAL_LEARNING_ENABLED=1
+JARVIS_VISION_ENABLED=1
+JARVIS_STRICT_PROOF_ENABLED=1
+```
+
+Do not enable all three just to debug one behavior.
+
+Before a clean learning experiment, operational knowledge can be reset without
+touching personal memory:
+
+```powershell
+python -m jarvis_agent.knowledge_cli reset-operational --yes
+```
+
 # Jarvis local learning and visual fallback
 
 Jarvis keeps personal memory and operational learning separate.
