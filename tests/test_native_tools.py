@@ -174,6 +174,7 @@ class NativeToolRegistryTests(unittest.TestCase):
             for item in self.registry.ollama_tools()
         }
         self.assertIn("open_file", tools)
+        self.assertIn("type_text_active_window", tools)
         self.assertIn("mode", tools["write_ui_element"]["properties"])
         self.assertEqual(
             set(
