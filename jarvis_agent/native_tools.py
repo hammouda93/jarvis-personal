@@ -19,6 +19,7 @@ from .windows_perception import (
     inspect_active_window,
     list_windows,
     press_key,
+    type_text_active_window,
     write_ui_element,
 )
 
@@ -215,6 +216,26 @@ class NativeToolRegistry:
                         "type": "string",
                         "enum": ["replace", "append", "insert"],
                         "description": "replace=remplacer tout; append=ajouter en conservant l'existant; insert=insérer au curseur.",
+                    },
+                },
+                ["text"],
+            ),
+            self._ollama(
+                "type_text_active_window",
+                "Fallback clavier générique quand inspect_active_window échoue ou retourne controls=[]/win32_window_only. Active la fenêtre demandée puis saisit le texte dans le contrôle actuellement au focus. À utiliser seulement si la cible de saisie est évidente; réinspecter ensuite si une preuve est nécessaire.",
+                {
+                    "text": {
+                        "type": "string",
+                        "description": "Texte à saisir.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Titre ou nom de la fenêtre cible, optionnel.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["replace", "append", "insert"],
+                        "description": "replace=Ctrl+A puis saisie; append=fin puis saisie; insert=saisie au curseur.",
                     },
                 },
                 ["text"],
@@ -754,6 +775,22 @@ class NativeToolRegistry:
             text = str(args.get("text", ""))
             mode = str(args.get("mode", "replace")).strip() or "replace"
             result = write_ui_element(target, text, ref=ref, mode=mode)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "type_text_active_window":
+            text_value = str(args.get("text", ""))
+            title = str(args.get("title", "")).strip()
+            mode = str(args.get("mode", "insert")).strip() or "insert"
+            result = type_text_active_window(
+                text_value,
+                title=title,
+                mode=mode,
+            )
             return AgentActionResult(
                 name=name,
                 success=result.success,
