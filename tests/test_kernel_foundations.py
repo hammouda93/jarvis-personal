@@ -2208,6 +2208,58 @@ class KernelFoundationTests(unittest.TestCase):
                 )
             )
 
+    def test_kernel_restores_pending_approval_mapping_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            request_path = Path(tmp) / "requests.sqlite3"
+            approval_path = Path(tmp) / "approvals.sqlite3"
+
+            requests1 = KernelRequestStore(request_path)
+            approvals1 = HumanApprovalManager(approval_path)
+            kernel1 = JarvisKernel(
+                request_store=requests1,
+                approvals=approvals1,
+            )
+            request = KernelRequest(
+                request_id="r_approval_restart",
+                mission_id="m_restart",
+                syscall_kind=SyscallKind.TOOL,
+                capability="msf.commit_mutation",
+                agent_id="ms_football",
+                payload={"tool_name": "msf_commit_mutation"},
+            )
+
+            submission = kernel1.submit(
+                request,
+                approval_summary="Commit mutation",
+            )
+            self.assertTrue(submission.requires_approval)
+            self.assertFalse(submission.queued)
+
+            requests2 = KernelRequestStore(request_path)
+            approvals2 = HumanApprovalManager(approval_path)
+            kernel2 = JarvisKernel(
+                request_store=requests2,
+                approvals=approvals2,
+            )
+
+            restored = kernel2.restore_pending_approvals()
+
+            self.assertEqual(
+                restored,
+                [submission.approval_id],
+            )
+            resumed = kernel2.resolve_approval(
+                submission.approval_id,
+                approved=True,
+            )
+            self.assertIsNotNone(resumed)
+            self.assertTrue(resumed.queued)
+            scheduled = kernel2.next_request()
+            self.assertEqual(
+                scheduled.request.request_id,
+                "r_approval_restart",
+            )
+
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = ModelTelemetryStore(
