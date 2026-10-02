@@ -82,7 +82,7 @@ class BackgroundWebResearch:
                 },
                 {"role": "user", "content": query},
             ],
-            "temperature": 0,
+            "temperature": 1,
             "max_completion_tokens": 4096,
             "tool_choice": "required",
             "tools": [{"type": "browser_search"}],
