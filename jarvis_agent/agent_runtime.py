@@ -659,6 +659,55 @@ def _visible_text(value: str) -> str:
     return text
 
 
+def _filter_optional_ollama_tools(
+    tools: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    blocked: set[str] = set()
+    if not settings.operational_learning_enabled:
+        blocked.update(
+            {
+                "search_agent_knowledge",
+                "save_verified_skill",
+                "save_feedback_lesson",
+                "agent_knowledge_stats",
+            }
+        )
+    if not settings.vision_enabled:
+        blocked.add("observe_screen")
+    if not blocked:
+        return tools
+    return [
+        item
+        for item in tools
+        if str((item.get("function") or {}).get("name") or "")
+        not in blocked
+    ]
+
+
+def _filter_optional_openai_tools(
+    tools: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    blocked: set[str] = set()
+    if not settings.operational_learning_enabled:
+        blocked.update(
+            {
+                "search_agent_knowledge",
+                "save_verified_skill",
+                "save_feedback_lesson",
+                "agent_knowledge_stats",
+            }
+        )
+    if not settings.vision_enabled:
+        blocked.add("observe_screen")
+    if not blocked:
+        return tools
+    return [
+        item
+        for item in tools
+        if str(item.get("name") or "") not in blocked
+    ]
+
+
 class OllamaToolAgent:
     """Native Ollama tool loop.
 
@@ -692,7 +741,9 @@ class OllamaToolAgent:
                 {"role": "system", "content": _effective_system_instructions()},
                 {"role": "user", "content": "Réponds seulement OK.\n/no_think"},
             ],
-            "tools": self.tools.ollama_tools(),
+            "tools": _filter_optional_ollama_tools(
+                self.tools.ollama_tools()
+            ),
             "stream": False,
             "think": False,
             "options": {
@@ -779,7 +830,9 @@ class OllamaToolAgent:
                 {
                     "model": self.model,
                     "messages": self._messages,
-                    "tools": self.tools.ollama_tools(),
+                    "tools": _filter_optional_ollama_tools(
+                        self.tools.ollama_tools()
+                    ),
                     "stream": False,
                     "think": False,
                     "options": {
@@ -1014,7 +1067,9 @@ class OpenAIResponsesAgent:
             ) from exc
 
     def _tool_definitions(self) -> list[dict[str, Any]]:
-        tools = self.tools.openai_tools()
+        tools = _filter_optional_openai_tools(
+            self.tools.openai_tools()
+        )
         web_enabled = (
             settings.openai_web_search
             if self.provider_name == "openai"
