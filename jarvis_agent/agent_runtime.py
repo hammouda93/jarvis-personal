@@ -2964,14 +2964,43 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
 
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
+
+    tools = NATIVE_TOOLS
+    tracing_tools = None
+    journal = None
+    if settings.structured_tracing_enabled:
+        from .event_journal import StructuredEventJournal
+        from .tracing_runtime import (
+            StructuredTracingRuntime,
+            TracingToolRegistry,
+        )
+
+        journal = StructuredEventJournal()
+        tracing_tools = TracingToolRegistry(
+            NATIVE_TOOLS,
+            journal=journal,
+        )
+        tools = tracing_tools
+
     if provider == "ollama":
-        return OllamaToolAgent()
-    if provider == "openai":
-        return OpenAIResponsesAgent()
-    if provider == "groq":
-        return GroqResponsesAgent()
-    if provider == "cerebras":
-        return CerebrasResponsesAgent()
-    raise AgentRuntimeUnavailable(
-        f"Agent provider non pris en charge: {settings.agent_provider}"
-    )
+        runtime: AgentRuntime = OllamaToolAgent(tools)
+    elif provider == "openai":
+        runtime = OpenAIResponsesAgent(tools)
+    elif provider == "groq":
+        runtime = GroqResponsesAgent(tools)
+    elif provider == "cerebras":
+        runtime = CerebrasResponsesAgent(tools)
+    else:
+        raise AgentRuntimeUnavailable(
+            f"Agent provider non pris en charge: {settings.agent_provider}"
+        )
+
+    if tracing_tools is not None and journal is not None:
+        from .tracing_runtime import StructuredTracingRuntime
+
+        return StructuredTracingRuntime(
+            runtime,
+            tracing_tools,
+            journal=journal,
+        )
+    return runtime
