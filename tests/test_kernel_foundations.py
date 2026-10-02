@@ -17,6 +17,7 @@ from jarvis_agent.agent_factory import (
 from jarvis_agent.execution_managers import (
     ExecutionManagerRegistry,
     ManagerExecutionResult,
+    StorageExecutionManager,
     ToolExecutionManager,
 )
 from jarvis_agent.mission_orchestrator import MissionOrchestrator
@@ -27,6 +28,7 @@ from jarvis_agent.tool_gateway import (
     ScopedToolGateway,
     ToolGatewayResult,
 )
+from jarvis_agent.workspace_storage import WorkspaceStorage
 from jarvis_agent.approval_manager import (
     ApprovalStatus,
     HumanApprovalManager,
@@ -1919,6 +1921,66 @@ class KernelFoundationTests(unittest.TestCase):
             calls,
             [("Jarvis/jarvis/groq_api_key", 1)],
         )
+
+    def test_storage_manager_is_sandboxed_to_workspace_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = WorkspaceStorage(Path(tmp) / "workspaces")
+            manager = StorageExecutionManager(storage)
+
+            write = manager.execute(
+                KernelRequest(
+                    request_id="r_store_write",
+                    mission_id="m_store",
+                    syscall_kind=SyscallKind.STORAGE,
+                    capability="developer.patch",
+                    agent_id="developer",
+                    payload={
+                        "operation": "write_text",
+                        "workspace_id": "ws1",
+                        "path": "patches/change.txt",
+                        "content": "hello",
+                    },
+                )
+            )
+            self.assertTrue(write.success)
+
+            read = manager.execute(
+                KernelRequest(
+                    request_id="r_store_read",
+                    mission_id="m_store",
+                    syscall_kind=SyscallKind.STORAGE,
+                    capability="developer.inspect",
+                    agent_id="developer",
+                    payload={
+                        "operation": "read_text",
+                        "workspace_id": "ws1",
+                        "path": "patches/change.txt",
+                    },
+                )
+            )
+            self.assertTrue(read.success)
+            self.assertEqual(read.result["content"], "hello")
+
+            escape = manager.execute(
+                KernelRequest(
+                    request_id="r_store_escape",
+                    mission_id="m_store",
+                    syscall_kind=SyscallKind.STORAGE,
+                    capability="developer.patch",
+                    agent_id="developer",
+                    payload={
+                        "operation": "write_text",
+                        "workspace_id": "ws1",
+                        "path": "../escape.txt",
+                        "content": "blocked",
+                    },
+                )
+            )
+            self.assertFalse(escape.success)
+            self.assertIn(
+                "workspace_path_escape",
+                escape.error,
+            )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
