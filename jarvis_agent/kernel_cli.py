@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 
+from .approval_manager import HumanApprovalManager
 from .capability_registry import DEFAULT_CAPABILITY_REGISTRY
 from .connector_registry import DEFAULT_CONNECTOR_REGISTRY
+from .correction_store import CorrectionCandidateStore
 from .event_journal import StructuredEventJournal
+from .mission_context_store import MissionContextStore
 from .model_telemetry import ModelTelemetryStore
 from .regression_registry import DEFAULT_REGRESSION_REGISTRY
 
@@ -20,6 +23,9 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("capabilities", help="List declared capabilities.")
     sub.add_parser("connectors", help="List connector contracts.")
     sub.add_parser("tests", help="List regression test registry.")
+    sub.add_parser("missions", help="List resumable mission contexts.")
+    sub.add_parser("corrections", help="List pending correction candidates.")
+    sub.add_parser("approvals", help="List pending human approvals.")
     sub.add_parser("stats", help="Show passive architecture store counters.")
 
     trace = sub.add_parser("trace", help="Show one structured mission trace.")
@@ -61,6 +67,26 @@ def main() -> int:
             spec.as_dict()
             for spec in DEFAULT_REGRESSION_REGISTRY.all()
         ]
+    elif args.command == "missions":
+        value = MissionContextStore().list_resumable(limit=100)
+    elif args.command == "corrections":
+        value = CorrectionCandidateStore().pending(limit=100)
+    elif args.command == "approvals":
+        value = [
+            {
+                "approval_id": item.approval_id,
+                "mission_id": item.mission_id,
+                "request_id": item.request_id,
+                "agent_id": item.agent_id,
+                "capability": item.capability,
+                "summary": item.summary,
+                "risk": item.risk.value,
+                "status": item.status.value,
+                "created_at": item.created_at,
+                "expires_at": item.expires_at,
+            }
+            for item in HumanApprovalManager().pending()
+        ]
     elif args.command == "stats":
         value = {
             "events": StructuredEventJournal().stats(),
@@ -72,6 +98,15 @@ def main() -> int:
             "connectors": len(DEFAULT_CONNECTOR_REGISTRY.all()),
             "regression_tests": len(
                 DEFAULT_REGRESSION_REGISTRY.all()
+            ),
+            "resumable_missions": len(
+                MissionContextStore().list_resumable(limit=500)
+            ),
+            "pending_corrections": len(
+                CorrectionCandidateStore().pending(limit=500)
+            ),
+            "pending_approvals": len(
+                HumanApprovalManager().pending()
             ),
         }
     elif args.command == "trace":
