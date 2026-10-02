@@ -7,6 +7,7 @@ from .kernel_contracts import KernelRequest, MissionContext, MissionStatus, Sysc
 from .kernel_service import JarvisKernel, KernelSubmission
 from .mission_context_store import MissionContextStore
 from .task_graph import MissionTaskGraph, TaskNode, TaskStatus
+from .task_graph_store import TaskGraphStore
 
 
 @dataclass(frozen=True)
@@ -29,9 +30,11 @@ class MissionOrchestrator:
         *,
         kernel: JarvisKernel,
         context_store: MissionContextStore | None = None,
+        graph_store: TaskGraphStore | None = None,
     ):
         self.kernel = kernel
         self.context_store = context_store or MissionContextStore()
+        self.graph_store = graph_store or TaskGraphStore()
         self._graphs: dict[str, MissionTaskGraph] = {}
         self._request_to_task: dict[str, tuple[str, str]] = {}
         self._submitted_tasks: set[tuple[str, str]] = set()
@@ -45,9 +48,17 @@ class MissionOrchestrator:
             raise ValueError("mission_graph_context_mismatch")
         self._graphs[context.mission_id] = graph
         self.context_store.save(context)
+        self.graph_store.save(graph)
 
     def graph(self, mission_id: str) -> MissionTaskGraph | None:
-        return self._graphs.get(str(mission_id))
+        key = str(mission_id)
+        current = self._graphs.get(key)
+        if current is not None:
+            return current
+        restored = self.graph_store.load(key)
+        if restored is not None:
+            self._graphs[key] = restored
+        return restored
 
     @staticmethod
     def _kind_for(node: TaskNode) -> SyscallKind:
@@ -70,7 +81,7 @@ class MissionOrchestrator:
         self,
         mission_id: str,
     ) -> list[OrchestrationStep]:
-        graph = self._graphs.get(str(mission_id))
+        graph = self.graph(str(mission_id))
         if graph is None:
             raise KeyError("mission_graph_not_registered")
 
@@ -138,6 +149,7 @@ class MissionOrchestrator:
             )
 
         self.context_store.save(context, expected_version=version)
+        self.graph_store.save(graph)
         return steps
 
     def resolve_approval(
@@ -178,6 +190,7 @@ class MissionOrchestrator:
             graph.cancel_downstream(task_id)
             context.status = MissionStatus.FAILED
         self.context_store.save(context, expected_version=version)
+        self.graph_store.save(graph)
         return submission
 
     def complete_request(
@@ -227,6 +240,7 @@ class MissionOrchestrator:
             context.status = MissionStatus.FAILED
 
         self.context_store.save(context, expected_version=version)
+        self.graph_store.save(graph)
         return response
 
     def resumable(self, *, user_id: str | None = None) -> list[dict]:
