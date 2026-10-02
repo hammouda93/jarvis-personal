@@ -21,6 +21,7 @@ Write-Host ""
 $tests = @(
     "tests.test_windows_perception",
     "tests.test_tools",
+    "tests.test_stt",
     "tests.test_native_tools",
     "tests.test_assistant_v3",
     "tests.test_ui_logging",
