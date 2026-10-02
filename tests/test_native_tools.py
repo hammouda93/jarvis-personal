@@ -125,6 +125,20 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertFalse(result.success)
         execute_mock.assert_not_called()
 
+    def test_registry_exposes_generic_file_open_and_write_modes(self):
+        tools = {
+            item["function"]["name"]: item["function"]["parameters"]
+            for item in self.registry.ollama_tools()
+        }
+        self.assertIn("open_file", tools)
+        self.assertIn("mode", tools["write_ui_element"]["properties"])
+        self.assertEqual(
+            set(
+                tools["write_ui_element"]["properties"]["mode"]["enum"]
+            ),
+            {"replace", "append", "insert"},
+        )
+
     def test_tool_result_is_json_for_model_observation(self):
         result = self.registry._error("open_application", "introuvable")
         payload = json.loads(result.as_json())
