@@ -15,6 +15,11 @@ from jarvis_agent.context_broker import ContextBroker, ContextItem
 from jarvis_agent.component_registry import DEFAULT_COMPONENT_REGISTRY
 from jarvis_agent.event_bus import BusEvent, MissionEventBus
 from jarvis_agent.kernel_policy import KernelPolicy
+from jarvis_agent.knowledge_broker import (
+    InMemoryKnowledgeBackend,
+    KnowledgeBroker,
+    ScopedKnowledgeRecord,
+)
 from jarvis_agent.knowledge_policy import (
     KnowledgeAccessPolicy,
     KnowledgePrincipal,
@@ -359,6 +364,56 @@ class KernelFoundationTests(unittest.TestCase):
         )
         self.assertFalse(
             KnowledgeAccessPolicy.can_write(core_identity, owner)
+        )
+
+    def test_knowledge_broker_applies_scope_isolation_and_write_barrier(self):
+        backend = InMemoryKnowledgeBackend()
+        broker = KnowledgeBroker(backend)
+        owner = KnowledgePrincipal(
+            user_id="u1",
+            agent_id="windows",
+        )
+        other = KnowledgePrincipal(
+            user_id="u2",
+            agent_id="windows",
+        )
+        record = ScopedKnowledgeRecord(
+            knowledge_id="k1",
+            identity=KnowledgeIdentity(
+                scope=KnowledgeScope.USER,
+                owner_user_id="u1",
+                owner_agent_id="windows",
+                sharing_policy=SharingPolicy.PRIVATE,
+            ),
+            content="Prefer Chrome for browsing.",
+            relevance=0.9,
+        )
+
+        self.assertTrue(
+            broker.write(record, principal=owner)
+        )
+        self.assertEqual(
+            [item.knowledge_id for item in broker.search(
+                "Chrome",
+                principal=owner,
+            )],
+            ["k1"],
+        )
+        self.assertEqual(
+            broker.search("Chrome", principal=other),
+            [],
+        )
+
+        denied = ScopedKnowledgeRecord(
+            knowledge_id="core1",
+            identity=KnowledgeIdentity(
+                scope=KnowledgeScope.CORE,
+                sharing_policy=SharingPolicy.PUBLIC,
+            ),
+            content="Global core rule",
+        )
+        self.assertFalse(
+            broker.write(denied, principal=owner)
         )
 
     def test_scheduler_prioritizes_then_preserves_fifo(self):
