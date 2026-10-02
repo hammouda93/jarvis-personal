@@ -65,6 +65,35 @@ class RiskLevel(str, Enum):
     DESTRUCTIVE = "destructive"
 
 
+class SharingPolicy(str, Enum):
+    PRIVATE = "private"
+    USER_SHARED = "user_shared"
+    AGENT_SHARED = "agent_shared"
+    ORGANIZATION_SHARED = "organization_shared"
+    PUBLIC = "public"
+
+
+class SyscallKind(str, Enum):
+    LLM = "llm"
+    TOOL = "tool"
+    MEMORY = "memory"
+    STORAGE = "storage"
+    CONNECTOR = "connector"
+    OBSERVATION = "observation"
+    TEST = "test"
+    REPLAY = "replay"
+
+
+class SyscallStatus(str, Enum):
+    CREATED = "created"
+    QUEUED = "queued"
+    RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 @dataclass(frozen=True)
 class CapabilitySpec:
     name: str
@@ -115,11 +144,72 @@ class MissionContext:
     user_id: str | None = None
     owner_agent_id: str | None = None
     current_step: str = ""
+    current_step_id: str | None = None
     pending_confirmation: bool = False
+    pending_action: dict[str, Any] = field(default_factory=dict)
     expected_state: dict[str, Any] = field(default_factory=dict)
     observed_state: dict[str, Any] = field(default_factory=dict)
     artifacts: list[str] = field(default_factory=list)
+    proof_refs: list[str] = field(default_factory=list)
+    knowledge_refs: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["status"] = self.status.value
+        return data
+
+
+@dataclass(frozen=True)
+class KnowledgeIdentity:
+    scope: KnowledgeScope
+    owner_user_id: str | None = None
+    owner_agent_id: str | None = None
+    organization_id: str | None = None
+    app_id: str | None = None
+    domain: str | None = None
+    skill_id: str | None = None
+    sharing_policy: SharingPolicy = SharingPolicy.PRIVATE
+
+    def as_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["scope"] = self.scope.value
+        data["sharing_policy"] = self.sharing_policy.value
+        return data
+
+
+@dataclass
+class KernelRequest:
+    request_id: str
+    mission_id: str
+    syscall_kind: SyscallKind
+    capability: str
+    agent_id: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    step_id: str | None = None
+    user_id: str | None = None
+    priority: int = 100
+    requires_approval: bool = False
+    created_at: float | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["syscall_kind"] = self.syscall_kind.value
+        return data
+
+
+@dataclass
+class KernelResponse:
+    request_id: str
+    mission_id: str
+    status: SyscallStatus
+    success: bool
+    result: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
+    started_at: float | None = None
+    ended_at: float | None = None
+    waiting_ms: float | None = None
+    turnaround_ms: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         data = asdict(self)
