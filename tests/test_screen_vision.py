@@ -9,6 +9,7 @@ from jarvis_agent.screen_vision import (
     click_visual_target,
     locate_visual_target,
     observe_screen,
+    write_visual_target,
 )
 
 
@@ -24,6 +25,35 @@ class _FakeHTTPResponse:
 
     def read(self):
         return json.dumps(self.payload).encode("utf-8")
+
+
+class _FakeClipboard:
+    CF_UNICODETEXT = 13
+    value = "previous"
+
+    @classmethod
+    def OpenClipboard(cls):
+        return None
+
+    @classmethod
+    def CloseClipboard(cls):
+        return None
+
+    @classmethod
+    def IsClipboardFormatAvailable(cls, _fmt):
+        return True
+
+    @classmethod
+    def GetClipboardData(cls, _fmt):
+        return cls.value
+
+    @classmethod
+    def EmptyClipboard(cls):
+        cls.value = ""
+
+    @classmethod
+    def SetClipboardText(cls, value, _fmt):
+        cls.value = value
 
 
 class ScreenVisionTests(unittest.TestCase):
@@ -202,6 +232,53 @@ class ScreenVisionTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertIn("confiance", result.message.lower())
+
+    @patch("jarvis_agent.screen_vision.time.sleep")
+    @patch("jarvis_agent.screen_vision._send_keys")
+    @patch("jarvis_agent.screen_vision.click_visual_target")
+    def test_visual_write_targets_field_then_pastes_text(
+        self,
+        click_mock,
+        send_keys_mock,
+        sleep_mock,
+    ):
+        click_mock.return_value = SimpleNamespace(
+            success=True,
+            message="clicked",
+            detail=json.dumps(
+                {
+                    "target": "champ Nom du fichier",
+                    "confidence": 0.94,
+                    "verified": False,
+                }
+            ),
+        )
+
+        with patch.dict(
+            sys.modules,
+            {"win32clipboard": _FakeClipboard},
+        ):
+            result = write_visual_target(
+                target="champ Nom du fichier",
+                text="jarvis_test.txt",
+                title="Enregistrer sous",
+                mode="replace",
+            )
+
+        self.assertTrue(result.success)
+        click_mock.assert_called_once_with(
+            target="champ Nom du fichier",
+            title="Enregistrer sous",
+        )
+        self.assertEqual(
+            [call.args[0] for call in send_keys_mock.call_args_list],
+            ["^a", "^v"],
+        )
+        self.assertEqual(_FakeClipboard.value, "previous")
+        detail = json.loads(result.detail)
+        self.assertFalse(detail["verified"])
+        self.assertEqual(detail["text_length"], len("jarvis_test.txt"))
+        sleep_mock.assert_called_once()
 
     @patch("jarvis_agent.screen_vision._capture_window_bytes")
     @patch("jarvis_agent.screen_vision.settings")
