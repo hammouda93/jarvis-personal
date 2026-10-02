@@ -381,7 +381,7 @@ def _actions_have_verified_proof(
             return True
 
     if last_mutation < 0:
-        return all(action.success for action in actions)
+        return False
 
     for action in actions[last_mutation + 1 :]:
         if action.success and action.name in {
