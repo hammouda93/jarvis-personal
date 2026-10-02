@@ -83,6 +83,41 @@ class FakeTools:
             {
                 "type": "function",
                 "function": {
+                    "name": "inspect_active_window",
+                    "description": "inspect UI",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                        },
+                        "required": [],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "write_ui_element",
+                    "description": "write UI",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "ref": {"type": "string"},
+                            "text": {"type": "string"},
+                            "mode": {
+                                "type": "string",
+                                "enum": ["replace", "append", "insert"],
+                            },
+                        },
+                        "required": ["text"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "reset_conversation_context",
                     "description": "reset temporary conversation context",
                     "parameters": {
@@ -305,6 +340,77 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn(("inspect_active_window", {}), tools.calls)
         self.assertNotIn('{"type"', result.text)
         self.assertIn("réellement", result.text)
+
+    def test_groq_skips_extra_inspection_when_write_self_verifies(self):
+        class VerifiedWriteTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "write_ui_element":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="ok",
+                        detail=(
+                            '{"mode":"append","verified":true,'
+                            '"before":"Bonjour Jarvis",'
+                            '"value":"Bonjour Jarvis test"}'
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = VerifiedWriteTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_write_verified",
+                            "name": "write_ui_element",
+                            "arguments": (
+                                '{"ref":"e7","text":" test","mode":"append"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le texte a été ajouté.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ajoute test après Bonjour Jarvis.")
+
+        self.assertEqual(
+            tools.calls,
+            [
+                (
+                    "write_ui_element",
+                    {
+                        "ref": "e7",
+                        "text": " test",
+                        "mode": "append",
+                    },
+                )
+            ],
+        )
+        self.assertIn("ajouté", result.text)
 
     def test_groq_verifies_ui_after_write_before_concluding(self):
         tools = FakeTools()
