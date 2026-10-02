@@ -45,23 +45,6 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   explicitement de retenir/mémoriser une information. Ne demande pas spontanément
   à l'utilisateur s'il veut mémoriser une information: garde-la seulement dans
   le contexte de conversation tant qu'il ne demande pas de mémoire persistante;
-- la mémoire opérationnelle locale (skills, lessons, app profiles) est distincte
-  de la mémoire personnelle. Utilise les connaissances opérationnelles injectées
-  seulement comme procédure/historique de travail, jamais comme vérité sur l'état
-  actuel de l'écran;
-- lorsqu'une procédure multi-étapes réutilisable vient de réussir avec une preuve
-  observable, tu peux appeler save_verified_skill une seule fois pour enregistrer
-  une version générique. N'enregistre jamais de nom de contact, contenu de message,
-  mot de passe, token, donnée personnelle, coordonnée fixe ou contenu utilisateur;
-- lorsqu'un utilisateur corrige clairement ton comportement, transforme la
-  correction en règle générale avec save_feedback_lesson si elle est réutilisable.
-  N'enregistre pas la donnée privée qui a déclenché la correction;
-- une simple confirmation utilisateur ("oui c'est bon", "maintenant ça marche")
-  confirme l'état précédent: elle ne demande jamais de répéter la mutation;
-- pour toute action externe dont le succès compte (message envoyé, upload terminé,
-  fenêtre fermée, donnée modifiée), ne formule une affirmation de succès que si
-  une preuve après action est réellement observée. Une action déclenchée n'est
-  pas à elle seule une preuve de résultat;
 - recall_information sert uniquement à consulter la mémoire persistante quand
   l'information n'est pas déjà disponible dans le contexte de la conversation
   actuelle. Si la réponse est présente dans l'historique de session, réponds
@@ -80,12 +63,6 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   petite action utile, exécute-la, puis réobserve avant de poursuivre si
   l'interface a pu changer. Continue jusqu'à l'objectif demandé, pas seulement
   jusqu'à la première action réussie;
-- privilégie l'interface structurée UIA parce qu'elle est plus rapide et précise.
-  Si UIA est ambigu, incomplet, duplique des résultats, ne permet pas de distinguer
-  un classement visuel ou ne montre pas la preuve finale, utilise observe_screen
-  comme fallback visuel local. Ne prends pas de screenshot inutilement;
-- observe_screen est un capteur, pas une action: sa description peut aider à
-  choisir un contrôle mais l'état réel doit encore être vérifié après l'action;
 - pour agir dans une application déjà ouverte, ou dans une application que tu
   viens d'ouvrir pendant cette conversation, inspecte/active d'abord la fenêtre
   existante au lieu de relancer une nouvelle instance inutilement;
@@ -202,6 +179,32 @@ Ne révèle jamais de raisonnement interne, de chaîne de pensée, de balises <t
 ou de notes techniques destinées au modèle. Seule la réponse finale utile doit
 être visible ou prononcée.
 """
+
+
+_EXPERIMENTAL_SYSTEM_INSTRUCTIONS = """
+Extensions expérimentales optionnelles:
+- la mémoire opérationnelle locale (skills, lessons, app profiles) est distincte
+  de la mémoire personnelle;
+- lorsqu'une procédure multi-étapes réutilisable vient de réussir avec une vraie
+  preuve de mutation, tu peux enregistrer une version générique avec
+  save_verified_skill si cet outil est disponible;
+- lorsqu'un utilisateur corrige clairement ton comportement, tu peux enregistrer
+  une règle générale avec save_feedback_lesson si cet outil est disponible;
+- une simple confirmation utilisateur ("oui c'est bon", "maintenant ça marche")
+  confirme l'état précédent et ne demande jamais de répéter la mutation;
+- si observe_screen est disponible, utilise-le seulement comme fallback quand
+  UIA est ambigu ou incomplet. UIA reste prioritaire.
+"""
+
+
+def _effective_system_instructions() -> str:
+    if (
+        settings.operational_learning_enabled
+        or settings.vision_enabled
+        or settings.strict_proof_enabled
+    ):
+        return _SYSTEM_INSTRUCTIONS + _EXPERIMENTAL_SYSTEM_INSTRUCTIONS
+    return _SYSTEM_INSTRUCTIONS
 
 
 @dataclass(frozen=True)
@@ -674,12 +677,12 @@ class OllamaToolAgent:
         self.base_url = settings.ollama_base_url.rstrip("/")
         self.model = settings.ollama_agent_model
         self._messages: list[dict[str, Any]] = [
-            {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
+            {"role": "system", "content": _effective_system_instructions()}
         ]
 
     def reset(self) -> None:
         self._messages = [
-            {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
+            {"role": "system", "content": _effective_system_instructions()}
         ]
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
@@ -689,7 +692,7 @@ class OllamaToolAgent:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": _SYSTEM_INSTRUCTIONS},
+                {"role": "system", "content": _effective_system_instructions()},
                 {"role": "user", "content": "Réponds seulement OK.\n/no_think"},
             ],
             "tools": self.tools.ollama_tools(),
@@ -937,7 +940,7 @@ class OllamaToolAgent:
             return
         recent = self._messages[-maximum:]
         self._messages = [
-            {"role": "system", "content": _SYSTEM_INSTRUCTIONS},
+            {"role": "system", "content": _effective_system_instructions()},
             *recent,
         ]
 
@@ -1399,7 +1402,7 @@ class GroqResponsesAgent:
         self.reasoning_effort = settings.groq_reasoning_effort
         self._client = None
         self._messages: list[dict[str, Any]] = [
-            {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
+            {"role": "system", "content": _effective_system_instructions()}
         ]
         self._pending_function_approval: dict[str, Any] | None = None
         self._last_msf_grounding_at = 0.0
@@ -1410,7 +1413,7 @@ class GroqResponsesAgent:
 
     def reset(self) -> None:
         self._messages = [
-            {"role": "system", "content": _SYSTEM_INSTRUCTIONS}
+            {"role": "system", "content": _effective_system_instructions()}
         ]
         self._pending_function_approval = None
         self._last_msf_grounding_at = 0.0
@@ -1755,7 +1758,7 @@ class GroqResponsesAgent:
                 break
 
         self._messages = [
-            {"role": "system", "content": _SYSTEM_INSTRUCTIONS},
+            {"role": "system", "content": _effective_system_instructions()},
             *clean[start_index:],
         ]
 
