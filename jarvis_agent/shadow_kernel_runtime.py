@@ -8,6 +8,7 @@ from typing import Any, Iterable, Sequence
 from .config import Settings
 from .kernel_contracts import EventKind, MissionContext, MissionStatus
 from .kernel_stack import PassiveKernelStack, build_passive_kernel_stack
+from .task_graph import MissionTaskGraph, TaskNode, TaskStatus
 
 
 def _default_shadow_dir() -> Path:
@@ -166,6 +167,56 @@ class KernelShadowObserver:
                 payload=payload,
             )
 
+        shadow_graph = MissionTaskGraph(mission_id)
+        previous_task_id: str | None = None
+        for index, payload in enumerate(payloads, start=1):
+            per_action_candidates = self._candidate_agents(
+                [payload["tool_name"]]
+            )
+            task_id = f"live_{index:03d}"
+            node = TaskNode(
+                task_id=task_id,
+                mission_id=mission_id,
+                capability="shadow.observed_action",
+                agent_id=(
+                    per_action_candidates[0]
+                    if len(per_action_candidates) == 1
+                    else "interaction"
+                ),
+                dependencies=(
+                    {previous_task_id}
+                    if previous_task_id is not None
+                    else set()
+                ),
+                status=(
+                    TaskStatus.COMPLETED
+                    if payload["success"]
+                    else TaskStatus.FAILED
+                ),
+                priority=100 + index,
+                payload={
+                    "mode": "shadow",
+                    "authoritative": False,
+                    "tool_name": payload["tool_name"],
+                    "candidate_agents": list(per_action_candidates),
+                },
+                result={
+                    "success": payload["success"],
+                    "message": payload["message"],
+                    "detail": payload["detail"],
+                },
+                error=(
+                    ""
+                    if payload["success"]
+                    else payload["message"] or payload["detail"]
+                ),
+            )
+            shadow_graph.add(node)
+            previous_task_id = task_id
+
+        if payloads:
+            self.stack.graph_store.save(shadow_graph)
+
         failures = [item for item in payloads if not item["success"]]
         turn_success = (
             bool(success)
@@ -186,6 +237,8 @@ class KernelShadowObserver:
             "failed_action_count": len(failures),
             "actual_live_tools": tool_names,
             "candidate_agents": list(candidate_agents),
+            "shadow_task_count": len(payloads),
+            "shadow_task_graph_persisted": bool(payloads),
         }
         context = MissionContext(
             mission_id=mission_id,
