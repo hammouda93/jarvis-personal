@@ -411,6 +411,35 @@ class KernelFoundationTests(unittest.TestCase):
         self.assertGreaterEqual(response.waiting_ms, 0.0)
         self.assertGreaterEqual(response.turnaround_ms, 0.0)
 
+    def test_scheduler_enforces_per_agent_concurrency_limit(self):
+        scheduler = MissionScheduler(
+            concurrency_limits={"windows": 1}
+        )
+        for request_id in ("r1", "r2"):
+            scheduler.submit(
+                KernelRequest(
+                    request_id=request_id,
+                    mission_id="m1",
+                    syscall_kind=SyscallKind.TOOL,
+                    capability="computer.observe",
+                    agent_id="windows",
+                    priority=10,
+                )
+            )
+
+        first = scheduler.next_request()
+        self.assertEqual(first.request.request_id, "r1")
+        self.assertIsNone(scheduler.next_request(timeout_s=0.01))
+
+        scheduler.complete(
+            "r1",
+            success=True,
+            result={"verified": True},
+        )
+        second = scheduler.next_request(timeout_s=0.01)
+        self.assertIsNotNone(second)
+        self.assertEqual(second.request.request_id, "r2")
+
     def test_approval_manager_is_persistent_and_single_use(self):
         with tempfile.TemporaryDirectory() as tmp:
             manager = HumanApprovalManager(
