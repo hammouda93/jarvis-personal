@@ -117,6 +117,69 @@ class KernelShadowObserver:
                 candidates.append(manifest.agent_id)
         return tuple(dict.fromkeys(candidates))
 
+    @staticmethod
+    def _text_agent_hint(user_text: str) -> str | None:
+        text = str(user_text or "").lower()
+        browser_terms = (
+            "youtube", "chrome", "google", "navigateur", "browser",
+            "onglet", "tab", "site", "url", "page web", "internet",
+        )
+        windows_terms = (
+            "bloc-note", "bloc note", "bloc-notes", "notepad",
+            "vscode", "vs code", "cursor", "application", "dossier",
+            "fichier", "fenêtre", "fenetre",
+        )
+        if any(term in text for term in browser_terms):
+            return "browser"
+        if any(term in text for term in windows_terms):
+            return "windows"
+        return None
+
+    def _mission_agent_hint(
+        self,
+        user_text: str,
+        payloads: Sequence[dict[str, Any]],
+    ) -> str | None:
+        text_hint = self._text_agent_hint(user_text)
+        if text_hint:
+            return text_hint
+
+        decisive_tools = {
+            "browser.open_url": "browser",
+            "browser.search": "browser",
+            "browser.search_prompt": "browser",
+            "search_web": "browser",
+            "open_url": "browser",
+            "app.open": "windows",
+            "folder.open": "windows",
+            "folder.open_named": "windows",
+            "open_application": "windows",
+            "open_file": "windows",
+            "open_folder": "windows",
+        }
+        for payload in payloads:
+            tool_name = str(payload.get("tool_name") or "")
+            hinted = decisive_tools.get(tool_name)
+            if hinted:
+                return hinted
+        return None
+
+    def _resolved_agent(
+        self,
+        tool_name: str,
+        *,
+        mission_agent_hint: str | None,
+    ) -> tuple[str, tuple[str, ...]]:
+        candidates = self._candidate_agents([tool_name])
+        if len(candidates) == 1:
+            return candidates[0], candidates
+        if (
+            mission_agent_hint is not None
+            and mission_agent_hint in candidates
+        ):
+            return mission_agent_hint, candidates
+        return "interaction", candidates
+
     def _supervisor_assessment(
         self,
         payloads: Sequence[dict[str, Any]],
@@ -131,10 +194,13 @@ class KernelShadowObserver:
             tool_name = str(payload.get("tool_name") or "")
             if not bool(payload.get("success")):
                 failed_tools.append(tool_name)
-            candidates = self._candidate_agents([tool_name])
+            candidates = tuple(payload.get("candidate_agents") or ())
+            resolved_agent = str(
+                payload.get("resolved_agent") or "interaction"
+            )
             if not candidates:
                 unmapped_tools.append(tool_name)
-            elif len(candidates) > 1:
+            elif len(candidates) > 1 and resolved_agent == "interaction":
                 ambiguous_tools.append(tool_name)
 
         recovered_after_failure = bool(failed_tools) and bool(turn_success)
@@ -202,6 +268,17 @@ class KernelShadowObserver:
         ]
         tool_names = [item["tool_name"] for item in payloads]
         candidate_agents = self._candidate_agents(tool_names)
+        mission_agent_hint = self._mission_agent_hint(
+            user_text,
+            payloads,
+        )
+        for payload in payloads:
+            resolved_agent, per_action_candidates = self._resolved_agent(
+                payload["tool_name"],
+                mission_agent_hint=mission_agent_hint,
+            )
+            payload["candidate_agents"] = list(per_action_candidates)
+            payload["resolved_agent"] = resolved_agent
 
         mission_id = self.stack.journal.create_mission(
             goal_summary=str(user_text or "")[:600],
@@ -233,6 +310,11 @@ class KernelShadowObserver:
                     "authoritative": False,
                     "actual_live_tools": tool_names,
                     "candidate_agents": list(candidate_agents),
+                    "mission_agent_hint": mission_agent_hint,
+                    "resolved_agents": [
+                        payload["resolved_agent"]
+                        for payload in payloads
+                    ],
                 },
             )
 
@@ -249,18 +331,16 @@ class KernelShadowObserver:
         shadow_graph = MissionTaskGraph(mission_id)
         previous_task_id: str | None = None
         for index, payload in enumerate(payloads, start=1):
-            per_action_candidates = self._candidate_agents(
-                [payload["tool_name"]]
+            per_action_candidates = tuple(
+                payload.get("candidate_agents") or ()
             )
             task_id = f"live_{index:03d}"
             node = TaskNode(
                 task_id=task_id,
                 mission_id=mission_id,
                 capability="shadow.observed_action",
-                agent_id=(
-                    per_action_candidates[0]
-                    if len(per_action_candidates) == 1
-                    else "interaction"
+                agent_id=str(
+                    payload.get("resolved_agent") or "interaction"
                 ),
                 dependencies=(
                     {previous_task_id}
@@ -278,6 +358,10 @@ class KernelShadowObserver:
                     "authoritative": False,
                     "tool_name": payload["tool_name"],
                     "candidate_agents": list(per_action_candidates),
+                    "resolved_agent": str(
+                        payload.get("resolved_agent") or "interaction"
+                    ),
+                    "mission_agent_hint": mission_agent_hint,
                 },
                 result={
                     "success": payload["success"],
@@ -320,6 +404,11 @@ class KernelShadowObserver:
             "failed_action_count": len(failures),
             "actual_live_tools": tool_names,
             "candidate_agents": list(candidate_agents),
+            "mission_agent_hint": mission_agent_hint,
+            "resolved_agents": [
+                payload["resolved_agent"]
+                for payload in payloads
+            ],
             "shadow_task_count": len(payloads),
             "shadow_task_graph_persisted": bool(payloads),
             "supervisor": supervisor.as_dict(),
