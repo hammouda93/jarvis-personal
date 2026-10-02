@@ -59,6 +59,7 @@ from jarvis_agent.task_graph import (
     TaskNode,
     TaskStatus,
 )
+from jarvis_agent.task_graph_store import TaskGraphStore
 from jarvis_agent.supervisor_planner import SupervisorPlanner
 from jarvis_agent.connector_gateway import (
     ConnectorGateway,
@@ -1334,6 +1335,52 @@ class KernelFoundationTests(unittest.TestCase):
             self.assertEqual(
                 restored.status,
                 MissionStatus.COMPLETED,
+            )
+
+    def test_task_graph_store_restores_completed_and_pending_dependencies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TaskGraphStore(
+                Path(tmp) / "graphs.sqlite3"
+            )
+            graph = MissionTaskGraph("m_restore")
+            graph.add(
+                TaskNode(
+                    task_id="observe",
+                    mission_id="m_restore",
+                    capability="computer.observe",
+                    agent_id="windows",
+                )
+            )
+            graph.add(
+                TaskNode(
+                    task_id="act",
+                    mission_id="m_restore",
+                    capability="computer.interact",
+                    agent_id="windows",
+                    dependencies={"observe"},
+                )
+            )
+            graph.mark_running("observe")
+            graph.mark_completed(
+                "observe",
+                {"window": "Chrome"},
+            )
+            store.save(graph)
+
+            restored = store.load("m_restore")
+
+            self.assertIsNotNone(restored)
+            self.assertEqual(
+                restored.get("observe").status,
+                TaskStatus.COMPLETED,
+            )
+            self.assertEqual(
+                restored.get("observe").result,
+                {"window": "Chrome"},
+            )
+            self.assertEqual(
+                [item.task_id for item in restored.ready()],
+                ["act"],
             )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
