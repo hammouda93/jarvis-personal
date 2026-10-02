@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from .agent_router import AgentRoutingContext
 from .config import Settings
 from .kernel_contracts import EventKind, MissionContext, MissionStatus
 from .kernel_stack import PassiveKernelStack, build_passive_kernel_stack
@@ -164,21 +165,70 @@ class KernelShadowObserver:
                 return hinted
         return None
 
-    def _resolved_agent(
-        self,
-        tool_name: str,
+    @staticmethod
+    def _infer_domain(user_text: str, tool_name: str) -> str:
+        text = str(user_text or "").lower()
+        name = str(tool_name or "").lower()
+        if (
+            name.startswith("msf_")
+            or "ms football" in text
+            or "ms_football" in text
+        ):
+            return "ms_football"
+        return ""
+
+    @staticmethod
+    def _infer_application(
+        user_text: str,
+        detail: str,
         *,
         mission_agent_hint: str | None,
-    ) -> tuple[str, tuple[str, ...]]:
-        candidates = self._candidate_agents([tool_name])
-        if len(candidates) == 1:
-            return candidates[0], candidates
-        if (
-            mission_agent_hint is not None
-            and mission_agent_hint in candidates
-        ):
-            return mission_agent_hint, candidates
-        return "interaction", candidates
+    ) -> str:
+        text = " ".join(
+            (
+                str(user_text or ""),
+                str(detail or ""),
+            )
+        ).lower()
+        application_terms = (
+            ("youtube", ("youtube",)),
+            ("chrome", ("chrome", "google chrome")),
+            ("firefox", ("firefox",)),
+            ("edge", ("microsoft edge", " edge ")),
+            ("notepad", ("notepad", "bloc-notes", "bloc note")),
+            ("cursor", ("cursor",)),
+            ("vscode", ("vscode", "vs code", "visual studio code")),
+            ("explorer", ("explorer", "explorateur", "dossier", "fichier")),
+            ("windows", ("installer", "installation")),
+        )
+        for application, terms in application_terms:
+            if any(term in text for term in terms):
+                return application
+        return str(mission_agent_hint or "")
+
+    def _routing_capabilities(
+        self,
+        candidate_agents: Sequence[str],
+    ) -> tuple[str, ...]:
+        capabilities: list[str] = []
+        for agent_id in candidate_agents:
+            manifest = self.stack.registry.get_agent(agent_id)
+            if manifest is not None:
+                capabilities.extend(manifest.capabilities)
+        return tuple(dict.fromkeys(capabilities))
+
+    def _routing_permissions(
+        self,
+        tool_name: str,
+        candidate_agents: Sequence[str],
+    ) -> tuple[str, ...]:
+        permissions: list[str] = []
+        for agent_id in candidate_agents:
+            if self.stack.registry.tool_allowed(agent_id, tool_name):
+                permissions.append(f"{agent_id}:{tool_name}")
+            elif agent_id == "interaction":
+                permissions.append(f"interaction:{tool_name}")
+        return tuple(permissions)
 
     def _supervisor_assessment(
         self,
@@ -272,13 +322,54 @@ class KernelShadowObserver:
             user_text,
             payloads,
         )
+        available_agents = tuple(
+            manifest.agent_id
+            for manifest in self.stack.registry.agents()
+        ) + ("interaction",)
+        previous_tool = ""
+        previous_agent = ""
+        mission_history: list[str] = []
         for payload in payloads:
-            resolved_agent, per_action_candidates = self._resolved_agent(
-                payload["tool_name"],
-                mission_agent_hint=mission_agent_hint,
+            tool_name = str(payload["tool_name"])
+            per_action_candidates = self._candidate_agents([tool_name])
+            routing_context = AgentRoutingContext(
+                user_goal=str(user_text or "")[:600],
+                current_tool=tool_name,
+                previous_tool=previous_tool,
+                previous_agent=previous_agent,
+                current_application=self._infer_application(
+                    user_text,
+                    str(payload.get("detail") or ""),
+                    mission_agent_hint=mission_agent_hint,
+                ),
+                observed_window=str(payload.get("detail") or "")[:1200],
+                mission_history=tuple(mission_history),
+                domain=self._infer_domain(user_text, tool_name),
+                available_agents=available_agents,
+                capabilities=self._routing_capabilities(
+                    per_action_candidates
+                ),
+                permissions=self._routing_permissions(
+                    tool_name,
+                    per_action_candidates,
+                ),
             )
-            payload["candidate_agents"] = list(per_action_candidates)
-            payload["resolved_agent"] = resolved_agent
+            decision = self.stack.agent_router.route_contextual(
+                routing_context,
+                candidate_agents=per_action_candidates,
+            )
+            payload["candidate_agents"] = list(
+                decision.candidate_agents
+            )
+            payload["resolved_agent"] = decision.agent_id
+            payload["routing_reason"] = decision.reason
+            payload["routing_needs_review"] = decision.needs_review
+            payload["routing_context"] = routing_context.as_dict()
+            mission_history.append(
+                f"{tool_name}->{decision.agent_id}"
+            )
+            previous_tool = tool_name
+            previous_agent = decision.agent_id
 
         mission_id = self.stack.journal.create_mission(
             goal_summary=str(user_text or "")[:600],
@@ -313,6 +404,10 @@ class KernelShadowObserver:
                     "mission_agent_hint": mission_agent_hint,
                     "resolved_agents": [
                         payload["resolved_agent"]
+                        for payload in payloads
+                    ],
+                    "routing_reasons": [
+                        payload["routing_reason"]
                         for payload in payloads
                     ],
                 },
@@ -362,6 +457,15 @@ class KernelShadowObserver:
                         payload.get("resolved_agent") or "interaction"
                     ),
                     "mission_agent_hint": mission_agent_hint,
+                    "routing_reason": str(
+                        payload.get("routing_reason") or ""
+                    ),
+                    "routing_needs_review": bool(
+                        payload.get("routing_needs_review")
+                    ),
+                    "routing_context": dict(
+                        payload.get("routing_context") or {}
+                    ),
                 },
                 result={
                     "success": payload["success"],
@@ -407,6 +511,14 @@ class KernelShadowObserver:
             "mission_agent_hint": mission_agent_hint,
             "resolved_agents": [
                 payload["resolved_agent"]
+                for payload in payloads
+            ],
+            "routing_reasons": [
+                payload["routing_reason"]
+                for payload in payloads
+            ],
+            "routing_needs_review": [
+                bool(payload.get("routing_needs_review"))
                 for payload in payloads
             ],
             "shadow_task_count": len(payloads),
