@@ -199,13 +199,12 @@ class CapabilityAgentRouter:
                     reason="explicit_domain",
                 )
 
-        application_text = " ".join(
-            (
-                str(context.current_application or ""),
-                str(context.observed_window or ""),
-                str(context.user_goal or ""),
-            )
-        ).lower()
+        current_application = str(
+            context.current_application or ""
+        ).lower().strip()
+        user_goal = str(context.user_goal or "").lower()
+        observed_window = str(context.observed_window or "").lower()
+
         browser_terms = (
             "chrome",
             "youtube",
@@ -213,19 +212,15 @@ class CapabilityAgentRouter:
             "edge",
             "browser",
             "navigateur",
-            "onglet",
-            " tab ",
             "site web",
             "page web",
             "http://",
             "https://",
-            " url ",
         )
         windows_terms = (
             "notepad",
             "bloc-notes",
             "bloc note",
-            "bloc-notes",
             "cursor",
             "vscode",
             "vs code",
@@ -236,9 +231,41 @@ class CapabilityAgentRouter:
             "fenêtre windows",
             "fenetre windows",
         )
+
+        # current_application is already the Shadow observer's normalized
+        # application inference. Treat it as stronger evidence than raw UI
+        # inspection text: desktop apps such as modern Notepad legitimately
+        # expose controls named "onglet", which must not turn them into a
+        # Browser mission.
+        if (
+            current_application
+            and "browser" in candidates
+            and any(term in current_application for term in browser_terms)
+        ):
+            return ContextualAgentRouteDecision(
+                tool_name=tool_name,
+                agent_id="browser",
+                candidate_agents=candidates,
+                reason="application_context",
+            )
+        if (
+            current_application
+            and "windows" in candidates
+            and any(term in current_application for term in windows_terms)
+        ):
+            return ContextualAgentRouteDecision(
+                tool_name=tool_name,
+                agent_id="windows",
+                candidate_agents=candidates,
+                reason="application_context",
+            )
+
+        # When no normalized application is available, use the user's goal.
+        # Goal-level tab wording is meaningful; raw control dumps are not.
+        browser_goal_terms = browser_terms + ("onglet", " tab ")
         if (
             "browser" in candidates
-            and any(term in application_text for term in browser_terms)
+            and any(term in user_goal for term in browser_goal_terms)
         ):
             return ContextualAgentRouteDecision(
                 tool_name=tool_name,
@@ -248,7 +275,31 @@ class CapabilityAgentRouter:
             )
         if (
             "windows" in candidates
-            and any(term in application_text for term in windows_terms)
+            and any(term in user_goal for term in windows_terms)
+        ):
+            return ContextualAgentRouteDecision(
+                tool_name=tool_name,
+                agent_id="windows",
+                candidate_agents=candidates,
+                reason="application_context",
+            )
+
+        # Raw observation text is last-resort evidence and only strong
+        # application identifiers are considered. Generic UI words such as
+        # "onglet"/"TabItem" are deliberately excluded.
+        if (
+            "browser" in candidates
+            and any(term in observed_window for term in browser_terms)
+        ):
+            return ContextualAgentRouteDecision(
+                tool_name=tool_name,
+                agent_id="browser",
+                candidate_agents=candidates,
+                reason="application_context",
+            )
+        if (
+            "windows" in candidates
+            and any(term in observed_window for term in windows_terms)
         ):
             return ContextualAgentRouteDecision(
                 tool_name=tool_name,
