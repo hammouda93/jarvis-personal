@@ -147,6 +147,22 @@ class Settings:
         "JARVIS_FOCUSED_TYPING_FALLBACK_ENABLED",
         False,
     )
+    structured_tracing_enabled: bool = _bool(
+        "JARVIS_STRUCTURED_TRACING_ENABLED",
+        False,
+    )
+    model_telemetry_enabled: bool = _bool(
+        "JARVIS_MODEL_TELEMETRY_ENABLED",
+        False,
+    )
+    agent_registry_enabled: bool = _bool(
+        "JARVIS_AGENT_REGISTRY_ENABLED",
+        False,
+    )
+    dev_supervisor_enabled: bool = _bool(
+        "JARVIS_DEV_SUPERVISOR_ENABLED",
+        False,
+    )
     ms_football_bridge_url: str = (
         os.getenv("JARVIS_MS_FOOTBALL_BRIDGE_URL")
         or "http://127.0.0.1:8765"
