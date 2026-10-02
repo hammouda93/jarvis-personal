@@ -790,7 +790,18 @@ class AgentRuntimeTests(unittest.TestCase):
                 }
             ],
             "lessons": [],
-            "app_profiles": [],
+            "app_profiles": [
+                {
+                    "display_name": "WhatsApp",
+                    "aliases": ["WhatsApp Desktop"],
+                    "launch_hint": r"C:\\Users\\private\\WhatsApp.lnk",
+                    "window_title_patterns": ["Private chat - WhatsApp"],
+                    "observed_capabilities": ["Edit", "Button"],
+                    "confidence": 0.8,
+                    "success_count": 2,
+                    "failure_count": 0,
+                }
+            ],
         }
         agent = FakeGroqAgent(
             tools,
@@ -830,6 +841,10 @@ class AgentRuntimeTests(unittest.TestCase):
                 for item in agent._messages[1:]
             )
         )
+        sent_payload = str(agent.payloads[0]["messages"])
+        self.assertNotIn("launch_hint", sent_payload)
+        self.assertNotIn("Private chat - WhatsApp", sent_payload)
+        self.assertNotIn(r"C:\\Users\\private", sent_payload)
 
     def test_groq_learning_checkpoint_saves_reusable_verified_workflow(self):
         class LearningTools(FakeTools):
