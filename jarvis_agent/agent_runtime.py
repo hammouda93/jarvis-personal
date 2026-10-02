@@ -2661,6 +2661,8 @@ class GroqResponsesAgent:
                     and result.success
                     and name in {
                         "click_ui_element",
+                        "click_visual_target",
+                        "write_visual_target",
                         "write_ui_element",
                         "press_key",
                         "close_window",
