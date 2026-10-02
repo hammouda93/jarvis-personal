@@ -1,6 +1,10 @@
 import copy
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import patch
+
+from jarvis_agent.config import settings as real_settings
 
 from jarvis_agent.agent_runtime import (
     OllamaToolAgent,
@@ -570,6 +574,55 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("visible", result.text)
 
+    def test_groq_baseline_hides_new_learning_and_vision_tools(self):
+        tools = FakeTools()
+        tools.knowledge.context = {
+            "skills": [{"name": "should_not_be_injected"}],
+            "lessons": [{"rule": "should_not_be_injected"}],
+            "app_profiles": [{"display_name": "ShouldNotInject"}],
+        }
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Réponse baseline.",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+        )
+
+        definitions = {
+            item["function"]["name"]
+            for item in agent._tool_definitions()
+            if item.get("type") == "function"
+        }
+
+        self.assertNotIn("observe_screen", definitions)
+        self.assertNotIn("search_agent_knowledge", definitions)
+        self.assertNotIn("save_verified_skill", definitions)
+        self.assertNotIn("save_feedback_lesson", definitions)
+
+        result = agent.run("Ouvre le Bloc-notes.")
+
+        self.assertEqual(result.text, "Réponse baseline.")
+        self.assertFalse(
+            any(
+                item.get("role") == "system"
+                and "CONNAISSANCE_OPERATIONNELLE_LOCALE"
+                in str(item.get("content") or "")
+                for item in agent.payloads[0]["messages"]
+            )
+        )
+
     def test_verified_proof_requires_mutation_and_after_state(self):
         self.assertFalse(
             _actions_have_verified_proof(
@@ -614,6 +667,10 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(real_settings, operational_learning_enabled=True),
+    )
     def test_groq_blocks_skill_learning_without_verified_proof(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
@@ -665,6 +722,10 @@ class AgentRuntimeTests(unittest.TestCase):
             "skill_write_blocked_without_verified_proof",
         )
 
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(real_settings, operational_learning_enabled=True),
+    )
     def test_groq_allows_skill_learning_after_verified_ui_mutation(self):
         class VerifiedTools(FakeTools):
             def execute(self, name, arguments, *, approved=False):
@@ -739,6 +800,10 @@ class AgentRuntimeTests(unittest.TestCase):
             any(action.name == "save_verified_skill" for action in result.actions)
         )
 
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(real_settings, operational_learning_enabled=True),
+    )
     def test_groq_blocks_feedback_lesson_without_user_correction(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
@@ -780,6 +845,10 @@ class AgentRuntimeTests(unittest.TestCase):
             "lesson_write_blocked_without_clear_feedback",
         )
 
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(real_settings, operational_learning_enabled=True),
+    )
     def test_groq_injects_relevant_local_knowledge_ephemerally(self):
         tools = FakeTools()
         tools.knowledge.context = {
@@ -847,6 +916,10 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("Private chat - WhatsApp", sent_payload)
         self.assertNotIn(r"C:\\Users\\private", sent_payload)
 
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(real_settings, operational_learning_enabled=True),
+    )
     def test_groq_learning_checkpoint_saves_reusable_verified_workflow(self):
         class LearningTools(FakeTools):
             def execute(self, name, arguments, *, approved=False):
@@ -955,6 +1028,10 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("ajouté", result.text)
 
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(real_settings, operational_learning_enabled=True),
+    )
     def test_groq_feedback_checkpoint_saves_generic_lesson(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
