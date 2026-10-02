@@ -228,6 +228,35 @@ def _looks_like_action_promise(text: str) -> bool:
     return any(marker in lower for marker in markers)
 
 
+def _looks_like_pseudo_tool_syntax(text: str) -> bool:
+    """Detect model text that imitates tool calls instead of calling tools."""
+    lower = (text or "").lower()
+    if "{" not in lower or "}" not in lower:
+        return False
+    compact = lower.replace("_", "").replace("-", "")
+    tool_names = (
+        "inspectactivewindow",
+        "listwindows",
+        "activatewindow",
+        "clickuielement",
+        "writeuielement",
+        "presskey",
+        "openapplication",
+        "openfolder",
+        "openurl",
+        "searchweb",
+        "resetconversationcontext",
+    )
+    return any(
+        (
+            f'"type":"{name}' in compact
+            or f'"tool":"{name}' in compact
+            or f'"name":"{name}' in compact
+        )
+        for name in tool_names
+    )
+
+
 def _looks_like_unnecessary_followup(text: str) -> bool:
     lower = (text or "").lower()
     markers = (
@@ -1066,6 +1095,18 @@ class OpenAIResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if result.success and name in {
+                    "click_ui_element",
+                    "write_ui_element",
+                    "press_key",
+                }:
+                    ui_verification_required = True
+                elif result.success and name in {
+                    "inspect_active_window",
+                    "list_windows",
+                }:
+                    ui_verification_required = False
+
                 if name == "reset_conversation_context" and result.success:
                     if log:
                         log("[SESSION] semantic reset — contexte réinitialisé")
@@ -1563,6 +1604,9 @@ class GroqResponsesAgent:
             else None
         )
         msf_repair_attempted = False
+        pseudo_tool_repair_attempted = False
+        ui_verification_repair_attempted = False
+        ui_verification_required = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -1594,6 +1638,50 @@ class GroqResponsesAgent:
             calls = self._append_assistant_message(message)
 
             if not calls:
+                raw_text = str(getattr(message, "content", "") or "")
+
+                if (
+                    _looks_like_pseudo_tool_syntax(raw_text)
+                    and not pseudo_tool_repair_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Tu viens d'écrire une imitation JSON d'outil. "
+                                "N'écris jamais la syntaxe d'un outil dans la réponse. "
+                                "Si l'action est nécessaire, appelle réellement l'outil "
+                                "correspondant maintenant, puis observe son résultat."
+                            ),
+                        }
+                    )
+                    pseudo_tool_repair_attempted = True
+                    if log:
+                        log("[AGENT] repair=pseudo_tool_text_to_real_call")
+                    continue
+
+                if (
+                    ui_verification_required
+                    and not ui_verification_repair_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Une action vient de modifier l'interface. "
+                                "Avant de conclure, vérifie réellement l'état final "
+                                "avec inspect_active_window ou list_windows. "
+                                "N'affirme pas le résultat avant cette observation."
+                            ),
+                        }
+                    )
+                    ui_verification_repair_attempted = True
+                    if log:
+                        log("[AGENT] repair=ui_verification_required")
+                    continue
+
                 if (
                     ms_football_turn
                     and not actions
