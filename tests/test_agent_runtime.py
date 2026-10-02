@@ -802,6 +802,177 @@ class AgentRuntimeTests(unittest.TestCase):
             "close_window_blocked_for_tab_request",
         )
 
+    def test_groq_search_submission_reuses_current_ui_instead_of_reopening_site(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_wrong_open",
+                            "name": "open_url",
+                            "arguments": '{"url":"https://www.youtube.com"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"YouTube"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_search",
+                            "name": "click_ui_element",
+                            "arguments": '{"name":"Search"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_verify",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"YouTube"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "La recherche est lancée.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Lance la recherche.")
+
+        self.assertNotIn(
+            ("open_url", {"url": "https://www.youtube.com"}),
+            tools.calls,
+        )
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            [
+                "inspect_active_window",
+                "click_ui_element",
+                "inspect_active_window",
+            ],
+        )
+        self.assertEqual(
+            result.actions[0].detail,
+            "open_url_blocked_for_search_submission",
+        )
+
+    def test_groq_requires_reinspection_between_ui_mutations(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_accept",
+                            "name": "click_ui_element",
+                            "arguments": '{"ref":"e4"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_next_stale",
+                            "name": "click_ui_element",
+                            "arguments": '{"ref":"e6"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_refresh",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Installation Cursor"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_next_fresh",
+                            "name": "click_ui_element",
+                            "arguments": '{"ref":"e6"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_verify",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Installation Cursor"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Étape suivante ouverte.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Accepte l'option puis clique sur Suivant dans l'installation."
+        )
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            [
+                "click_ui_element",
+                "inspect_active_window",
+                "click_ui_element",
+                "inspect_active_window",
+            ],
+        )
+        self.assertTrue(
+            any(
+                action.detail == "ui_action_blocked_until_reinspection"
+                for action in result.actions
+            )
+        )
+
     def test_verified_proof_requires_mutation_and_after_state(self):
         self.assertFalse(
             _actions_have_verified_proof(
