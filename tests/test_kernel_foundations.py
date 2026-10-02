@@ -1727,6 +1727,72 @@ class KernelFoundationTests(unittest.TestCase):
                 1,
             )
 
+    def test_orchestrator_restores_queued_request_mapping_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            context_path = Path(tmp) / "contexts.sqlite3"
+            graph_path = Path(tmp) / "graphs.sqlite3"
+            request_path = Path(tmp) / "requests.sqlite3"
+
+            contexts1 = MissionContextStore(context_path)
+            graphs1 = TaskGraphStore(graph_path)
+            requests1 = KernelRequestStore(request_path)
+            kernel1 = JarvisKernel(request_store=requests1)
+            orchestrator1 = MissionOrchestrator(
+                kernel=kernel1,
+                context_store=contexts1,
+                graph_store=graphs1,
+            )
+            context = MissionContext(
+                mission_id="m_restart",
+                user_goal="Observe Chrome",
+                user_id="u1",
+                owner_agent_id="windows",
+            )
+            graph = MissionTaskGraph("m_restart")
+            graph.add(
+                TaskNode(
+                    task_id="observe",
+                    mission_id="m_restart",
+                    capability="computer.observe",
+                    agent_id="windows",
+                    payload={
+                        "tool_name": "inspect_active_window",
+                    },
+                )
+            )
+            orchestrator1.register(context, graph)
+            first = orchestrator1.dispatch_ready("m_restart")
+            request_id = first[0].request_id
+
+            contexts2 = MissionContextStore(context_path)
+            graphs2 = TaskGraphStore(graph_path)
+            requests2 = KernelRequestStore(request_path)
+            kernel2 = JarvisKernel(request_store=requests2)
+            orchestrator2 = MissionOrchestrator(
+                kernel=kernel2,
+                context_store=contexts2,
+                graph_store=graphs2,
+            )
+
+            recovery = orchestrator2.restore_runtime_state(
+                "m_restart"
+            )
+
+            self.assertEqual(
+                recovery["queued_restored"],
+                [request_id],
+            )
+            self.assertEqual(recovery["recovery_required"], [])
+            scheduled = kernel2.next_request()
+            self.assertEqual(
+                scheduled.request.request_id,
+                request_id,
+            )
+            self.assertEqual(
+                scheduled.request.step_id,
+                "observe",
+            )
+
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = ModelTelemetryStore(
