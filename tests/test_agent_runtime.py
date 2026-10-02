@@ -536,6 +536,14 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertNotIn("souhaitez-vous", result.text.lower())
         self.assertIn("cette conversation", result.text.lower())
+        self.assertNotIn(
+            "souhaitez-vous",
+            str(agent._messages[-1].get("content", "")).lower(),
+        )
+        self.assertEqual(
+            agent._messages[-1].get("content"),
+            result.text,
+        )
 
     def test_memory_write_requires_explicit_user_request(self):
         self.assertFalse(
