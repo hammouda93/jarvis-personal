@@ -1055,6 +1055,111 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_groq_resumes_deferred_ui_action_after_fresh_inspection(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_accept",
+                            "name": "click_ui_element",
+                            "arguments": '{"ref":"e4"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_stale_next",
+                            "name": "click_ui_element",
+                            "arguments": '{"ref":"e6"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_refresh",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Installation Cursor"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le bouton Suivant est maintenant actif.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_fresh_next",
+                            "name": "click_ui_element",
+                            "arguments": '{"name":"Suivant","control_type":"Button"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_verify",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Installation Cursor"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "L'installation est passée à l'étape suivante.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Accepte le contrat puis continue vers l'étape suivante."
+        )
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            [
+                "click_ui_element",
+                "inspect_active_window",
+                "click_ui_element",
+                "inspect_active_window",
+            ],
+        )
+        self.assertTrue(
+            any(
+                action.detail == "ui_action_blocked_until_reinspection"
+                for action in result.actions
+            )
+        )
+        self.assertIn("étape suivante", result.text)
+
     def test_verified_proof_requires_mutation_and_after_state(self):
         self.assertFalse(
             _actions_have_verified_proof(
