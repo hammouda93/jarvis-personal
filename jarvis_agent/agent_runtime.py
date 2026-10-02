@@ -781,7 +781,7 @@ def _filter_optional_ollama_tools(
         blocked.update({"observe_screen", "click_visual_target"})
     elif not settings.vision_actions_enabled:
         blocked.add("click_visual_target")
-    if settings.compatibility_baseline:
+    if not settings.focused_typing_fallback_enabled:
         blocked.add("type_text_active_window")
     if not blocked:
         return tools
@@ -810,7 +810,7 @@ def _filter_optional_openai_tools(
         blocked.update({"observe_screen", "click_visual_target"})
     elif not settings.vision_actions_enabled:
         blocked.add("click_visual_target")
-    if settings.compatibility_baseline:
+    if not settings.focused_typing_fallback_enabled:
         blocked.add("type_text_active_window")
     if not blocked:
         return tools
@@ -1709,6 +1709,13 @@ class GroqResponsesAgent:
                 if str((item.get("function") or {}).get("name") or "")
                 != "click_visual_target"
             ]
+        if not settings.focused_typing_fallback_enabled:
+            tools = [
+                item
+                for item in tools
+                if str((item.get("function") or {}).get("name") or "")
+                != "type_text_active_window"
+            ]
         if ms_football_only:
             allowed = set(msf_tool_names or ())
             allowed.update(
@@ -2453,6 +2460,7 @@ class GroqResponsesAgent:
                     ui_verification_required
                     and name in {
                         "click_ui_element",
+                        "click_visual_target",
                         "write_ui_element",
                         "press_key",
                         "close_window",
