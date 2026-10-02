@@ -50,7 +50,7 @@ class AgentKnowledgeStoreTests(unittest.TestCase):
 
         self.assertEqual(first.version, 1)
         self.assertEqual(second.version, 2)
-        self.assertIn("Locate the exact conversation.", second.procedure)
+        self.assertIn("Open the exact conversation.", second.procedure)
         self.assertIn("Locate the message composer.", second.procedure)
         self.assertEqual(self.store.stats()["skills"], 1)
 
