@@ -802,6 +802,88 @@ class AgentRuntimeTests(unittest.TestCase):
             "close_window_blocked_for_tab_request",
         )
 
+    def test_groq_blocked_close_triggers_dialog_inspection(self):
+        class BlockedCloseTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "close_window":
+                    return AgentActionResult(
+                        name=name,
+                        success=False,
+                        message="La fermeture est bloquée.",
+                        detail=(
+                            "Une boîte de dialogue ou un état non enregistré "
+                            "peut bloquer la fermeture."
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = BlockedCloseTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_close",
+                            "name": "close_window",
+                            "arguments": '{"title":"Installation Cursor"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je ne peux pas fermer.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect_dialog",
+                            "name": "inspect_active_window",
+                            "arguments": "{}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "La boîte de confirmation est visible.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ferme l'installation de Cursor.")
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            ["close_window", "inspect_active_window"],
+        )
+        self.assertIn("confirmation", result.text)
+
     def test_groq_search_submission_reuses_current_ui_instead_of_reopening_site(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
