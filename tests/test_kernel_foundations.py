@@ -36,6 +36,7 @@ from jarvis_agent.task_graph import (
     TaskNode,
     TaskStatus,
 )
+from jarvis_agent.supervisor_planner import SupervisorPlanner
 from jarvis_agent.connector_gateway import (
     ConnectorGateway,
     ConnectorResult,
@@ -873,6 +874,57 @@ class KernelFoundationTests(unittest.TestCase):
             [item.task_id for item in graph.ready()],
             ["verify"],
         )
+
+    def test_supervisor_planner_selects_regressions_and_keeps_user_scope(self):
+        planner = SupervisorPlanner()
+
+        app_assessment = FailureAssessment(
+            kind=FailureKind.APP_PROFILE,
+            summary="Cursor title resolution changed.",
+            confidence=0.9,
+            proposed_scope=KnowledgeScope.APP,
+            promotion_target=PromotionTarget.APP_PROFILE,
+            app_id="cursor",
+        )
+        app_candidate = candidate_from_assessment(
+            mission_id="m_app",
+            assessment=app_assessment,
+            agent_id="windows",
+        )
+        app_plan = planner.plan(
+            app_candidate,
+            changed_paths=["jarvis_agent/windows_perception.py"],
+        )
+        self.assertTrue(app_plan.requires_replay)
+        self.assertTrue(app_plan.requires_user_validation)
+        self.assertIn(
+            "TEST-WIN-BASELINE",
+            app_plan.selected_test_ids,
+        )
+        self.assertIn(
+            "TEST-VISION-LAYER",
+            app_plan.selected_test_ids,
+        )
+
+        user_assessment = FailureAssessment(
+            kind=FailureKind.USER_PREFERENCE,
+            summary="Prefer Chrome for this user.",
+            confidence=0.95,
+            proposed_scope=KnowledgeScope.USER,
+            promotion_target=PromotionTarget.USER_PREFERENCE,
+        )
+        user_candidate = candidate_from_assessment(
+            mission_id="m_user",
+            assessment=user_assessment,
+            user_id="u1",
+        )
+        user_plan = planner.plan(user_candidate)
+        self.assertFalse(user_plan.requires_replay)
+        self.assertEqual(
+            user_plan.destination,
+            "user_preference",
+        )
+        self.assertIn("keep_user_scoped", user_plan.notes)
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
