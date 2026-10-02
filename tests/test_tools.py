@@ -6,11 +6,17 @@ from pathlib import Path
 from unittest.mock import patch
 
 from jarvis_agent.tools import (
+    ToolIntent,
     _chrome_profile_directory,
     _find_named_app,
     _find_named_file,
     _open_application,
+    execute,
     route,
+)
+from jarvis_agent.windows_app_discovery import (
+    WindowsAppCandidate,
+    discover_start_apps,
 )
 
 
@@ -126,6 +132,58 @@ class ToolRouterTests(unittest.TestCase):
             self.assertEqual(path, newer)
             self.assertIn(newer, matches)
 
+    def test_start_apps_discovers_packaged_app_by_display_name(self):
+        payload = json.dumps(
+            [
+                {
+                    "Name": "WhatsApp",
+                    "AppID": "5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App",
+                },
+                {
+                    "Name": "Calculator",
+                    "AppID": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+                },
+            ]
+        )
+
+        def runner(_script, _timeout):
+            return payload
+
+        candidates = discover_start_apps("WhatsApp", runner=runner)
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0].name, "WhatsApp")
+        self.assertEqual(candidates[0].source, "start_apps")
+        self.assertEqual(candidates[0].score, 1.0)
+        self.assertTrue(candidates[0].app_id.endswith("!App"))
+
+    @patch("jarvis_agent.tools._find_named_app")
+    @patch("jarvis_agent.tools.launch_registered_app")
+    @patch("jarvis_agent.tools.resolve_registered_app")
+    def test_named_app_launches_registered_windows_app(
+        self,
+        resolve_mock,
+        launch_mock,
+        find_mock,
+    ):
+        candidate = WindowsAppCandidate(
+            name="WhatsApp",
+            source="start_apps",
+            score=1.0,
+            app_id="5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App",
+        )
+        resolve_mock.return_value = (candidate, (candidate,))
+        launch_mock.return_value = True
+
+        result = execute(
+            ToolIntent("app.open_named", {"query": "WhatsApp"})
+        )
+
+        self.assertTrue(result.success)
+        self.assertIn("WhatsApp", result.message)
+        launch_mock.assert_called_once_with(candidate)
+        find_mock.assert_not_called()
+
     @patch("jarvis_agent.tools._app_binary_roots")
     @patch("jarvis_agent.tools._app_search_roots")
     def test_named_app_does_not_match_short_exe_substring(
@@ -169,14 +227,20 @@ class ToolRouterTests(unittest.TestCase):
 
     @patch("jarvis_agent.tools.os.startfile")
     @patch("jarvis_agent.tools._find_named_app")
+    @patch("jarvis_agent.tools.launch_registered_app")
+    @patch("jarvis_agent.tools.resolve_registered_app")
     @patch("jarvis_agent.tools._spawn")
     def test_cursor_falls_back_to_dynamic_windows_discovery(
         self,
         spawn_mock,
+        resolve_mock,
+        launch_mock,
         find_mock,
         startfile_mock,
     ):
         spawn_mock.return_value = False
+        resolve_mock.return_value = (None, ())
+        launch_mock.return_value = False
         shortcut = Path(r"C:\Users\test\Desktop\Cursor.lnk")
         find_mock.return_value = (shortcut, [shortcut])
 
