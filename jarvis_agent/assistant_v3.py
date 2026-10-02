@@ -383,6 +383,8 @@ class AssistantWorker(QObject):
             f"[MODE] {mode} "
             f"learning={int(settings.operational_learning_enabled)} "
             f"vision={int(settings.vision_enabled)} "
+            f"visual_actions={int(settings.vision_actions_enabled)} "
+            f"focused_typing={int(settings.focused_typing_fallback_enabled)} "
             f"strict_proof={int(settings.strict_proof_enabled)}"
         )
         self._state(AssistantState.STARTING, "Initialisation de Jarvis…")
