@@ -39,6 +39,8 @@ from jarvis_agent.connector_registry import (
     ConnectorBackend,
     DEFAULT_CONNECTOR_REGISTRY,
 )
+from jarvis_agent.correction_store import CorrectionCandidateStore
+from jarvis_agent.kernel_service import JarvisKernel
 from jarvis_agent.dev_supervisor import (
     FailureAssessment,
     FailureKind,
@@ -691,6 +693,127 @@ class KernelFoundationTests(unittest.TestCase):
 
         self.assertEqual(received, ["tool.result"])
         self.assertEqual(errors, ["observer failed"])
+
+    def test_correction_candidate_requires_validation_before_promotion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = CorrectionCandidateStore(
+                Path(tmp) / "corrections.sqlite3"
+            )
+            assessment = FailureAssessment(
+                kind=FailureKind.USER_PREFERENCE,
+                summary="Use Chrome for this user.",
+                confidence=0.95,
+                proposed_scope=KnowledgeScope.USER,
+                promotion_target=PromotionTarget.USER_PREFERENCE,
+                evidence_event_ids=("e1",),
+                app_id="chrome",
+            )
+            candidate = candidate_from_assessment(
+                mission_id="m1",
+                assessment=assessment,
+                user_id="u1",
+                agent_id="windows",
+            )
+            store.put(candidate)
+
+            self.assertFalse(
+                store.mark_promoted(candidate.candidate_id)
+            )
+            self.assertEqual(
+                len(store.pending(mission_id="m1")),
+                1,
+            )
+            self.assertTrue(
+                store.validate(
+                    candidate.candidate_id,
+                    accepted=True,
+                )
+            )
+            self.assertTrue(
+                store.mark_promoted(candidate.candidate_id)
+            )
+            row = store.get(candidate.candidate_id)
+            self.assertTrue(row["validated"])
+            self.assertTrue(row["promoted"])
+
+    def test_passive_kernel_requires_approval_then_queues_exact_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            approvals = HumanApprovalManager(
+                Path(tmp) / "approvals.sqlite3"
+            )
+            journal = StructuredEventJournal(
+                Path(tmp) / "events.sqlite3"
+            )
+            mission_id = journal.create_mission(
+                mission_id="m_kernel",
+                goal_summary="Update MS Football",
+                user_id="u1",
+                owner_agent_id="ms_football",
+            )
+            bus = MissionEventBus()
+            observed = []
+            bus.subscribe(
+                None,
+                lambda event: observed.append(event.kind),
+            )
+            kernel = JarvisKernel(
+                approvals=approvals,
+                event_bus=bus,
+                journal=journal,
+            )
+            request = KernelRequest(
+                request_id="r_kernel",
+                mission_id=mission_id,
+                syscall_kind=SyscallKind.TOOL,
+                capability="msf.commit_mutation",
+                agent_id="ms_football",
+                payload={"tool_name": "msf_commit_mutation"},
+            )
+
+            submission = kernel.submit(
+                request,
+                approval_summary="Commit approved MSF change",
+            )
+
+            self.assertTrue(submission.accepted)
+            self.assertFalse(submission.queued)
+            self.assertTrue(submission.requires_approval)
+            self.assertIsNotNone(submission.approval_id)
+            self.assertIsNone(kernel.next_request())
+
+            resumed = kernel.resolve_approval(
+                submission.approval_id,
+                approved=True,
+            )
+            self.assertTrue(resumed.queued)
+
+            scheduled = kernel.next_request()
+            self.assertEqual(
+                scheduled.request.request_id,
+                "r_kernel",
+            )
+            response = kernel.complete(
+                "r_kernel",
+                success=True,
+                result={"verified": True},
+            )
+            self.assertTrue(response.success)
+            self.assertIn(
+                EventKind.APPROVAL_REQUESTED.value,
+                observed,
+            )
+            self.assertIn(
+                EventKind.APPROVAL_RESOLVED.value,
+                observed,
+            )
+            self.assertIn(
+                EventKind.SYSCALL_QUEUED.value,
+                observed,
+            )
+            self.assertIn(
+                EventKind.SYSCALL_COMPLETED.value,
+                observed,
+            )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
