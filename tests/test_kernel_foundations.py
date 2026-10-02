@@ -15,8 +15,10 @@ from jarvis_agent.agent_factory import (
     AgentLifecycle,
 )
 from jarvis_agent.execution_managers import (
+    ConnectorExecutionManager,
     ExecutionManagerRegistry,
     ManagerExecutionResult,
+    MemoryExecutionManager,
     ReplayExecutionManager,
     StorageExecutionManager,
     TestExecutionManager,
@@ -2259,6 +2261,138 @@ class KernelFoundationTests(unittest.TestCase):
                 scheduled.request.request_id,
                 "r_approval_restart",
             )
+
+    def test_kernel_policy_rejects_agent_supplied_internal_approval_marker(self):
+        decision = KernelPolicy().authorize(
+            KernelRequest(
+                request_id="r_spoof",
+                mission_id="m1",
+                syscall_kind=SyscallKind.CONNECTOR,
+                capability="communications.send",
+                agent_id="communications",
+                payload={
+                    "connector_id": "whatsapp",
+                    "_kernel_approved": True,
+                },
+            )
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(
+            decision.reason,
+            "reserved_kernel_payload",
+        )
+
+    def test_connector_execution_trusts_only_kernel_approval_marker(self):
+        class FakeAdapter:
+            connector_id = "whatsapp"
+            backend = ConnectorBackend.WINDOWS_UI
+
+            def execute(self, capability, arguments):
+                return ConnectorResult(
+                    connector_id=self.connector_id,
+                    capability=capability,
+                    success=True,
+                    message="sent",
+                )
+
+        gateway = ConnectorGateway()
+        gateway.register_adapter(FakeAdapter())
+        manager = ConnectorExecutionManager(gateway)
+
+        unapproved = manager.execute(
+            KernelRequest(
+                request_id="r_send_1",
+                mission_id="m1",
+                syscall_kind=SyscallKind.CONNECTOR,
+                capability="communications.send",
+                agent_id="communications",
+                payload={
+                    "connector_id": "whatsapp",
+                    "connector_capability": "send_message",
+                    "arguments": {"text": "hello"},
+                },
+            )
+        )
+        self.assertFalse(unapproved.success)
+        self.assertEqual(unapproved.error, "approval_required")
+
+        approved = manager.execute(
+            KernelRequest(
+                request_id="r_send_2",
+                mission_id="m1",
+                syscall_kind=SyscallKind.CONNECTOR,
+                capability="communications.send",
+                agent_id="communications",
+                payload={
+                    "connector_id": "whatsapp",
+                    "connector_capability": "send_message",
+                    "arguments": {"text": "hello"},
+                    "_kernel_approved": True,
+                    "_kernel_approval_id": "a1",
+                },
+            )
+        )
+        self.assertTrue(approved.success)
+
+    def test_memory_execution_manager_enforces_scoped_writes_and_blocks_core(self):
+        backend = InMemoryKnowledgeBackend()
+        broker = KnowledgeBroker(backend)
+        manager = MemoryExecutionManager(broker)
+
+        allowed = manager.execute(
+            KernelRequest(
+                request_id="r_mem_write",
+                mission_id="m1",
+                syscall_kind=SyscallKind.MEMORY,
+                capability="computer.observe",
+                agent_id="windows",
+                user_id="u1",
+                payload={
+                    "operation": "write",
+                    "record": {
+                        "knowledge_id": "k_user",
+                        "content": "Prefer Chrome.",
+                        "identity": {
+                            "scope": "user",
+                            "owner_user_id": "u1",
+                            "owner_agent_id": "windows",
+                            "sharing_policy": "private",
+                        },
+                        "relevance": 0.9,
+                    },
+                },
+            )
+        )
+        self.assertTrue(allowed.success)
+        self.assertIn("k_user", backend.records)
+
+        denied = manager.execute(
+            KernelRequest(
+                request_id="r_mem_core",
+                mission_id="m1",
+                syscall_kind=SyscallKind.MEMORY,
+                capability="computer.observe",
+                agent_id="windows",
+                user_id="u1",
+                payload={
+                    "operation": "write",
+                    "record": {
+                        "knowledge_id": "k_core",
+                        "content": "Global rule.",
+                        "identity": {
+                            "scope": "core",
+                            "sharing_policy": "public",
+                        },
+                    },
+                },
+            )
+        )
+        self.assertFalse(denied.success)
+        self.assertEqual(
+            denied.error,
+            "knowledge_write_denied",
+        )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
