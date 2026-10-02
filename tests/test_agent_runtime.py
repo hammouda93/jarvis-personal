@@ -8,6 +8,7 @@ from jarvis_agent.agent_runtime import (
     GroqResponsesAgent,
     CerebrasResponsesAgent,
     _looks_like_action_promise,
+    _looks_like_pseudo_tool_syntax,
     _looks_like_unnecessary_followup,
     _is_explicit_memory_write_request,
     _looks_like_memory_permission_prompt,
@@ -239,6 +240,141 @@ class FakeGroqAgent(GroqResponsesAgent):
 
 
 class AgentRuntimeTests(unittest.TestCase):
+
+    def test_pseudo_tool_syntax_is_detected(self):
+        self.assertTrue(
+            _looks_like_pseudo_tool_syntax(
+                'Je saisis le texte.{"type":"inspectactivewindow","title":"Bloc-notes"}'
+            )
+        )
+        self.assertFalse(
+            _looks_like_pseudo_tool_syntax(
+                "Le Bloc-notes est ouvert et prêt."
+            )
+        )
+
+    def test_groq_repairs_pseudo_tool_text_into_real_call(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": (
+                                        'Je le fais.{"type":"inspectactivewindow",'
+                                        '"title":"Bloc-notes"}'
+                                    ),
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect_real",
+                            "name": "inspect_active_window",
+                            "arguments": "{}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "La fenêtre a été inspectée réellement.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Inspecte réellement le Bloc-notes.")
+
+        self.assertIn(("inspect_active_window", {}), tools.calls)
+        self.assertNotIn('{"type"', result.text)
+        self.assertIn("réellement", result.text)
+
+    def test_groq_verifies_ui_after_write_before_concluding(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_write",
+                            "name": "write_ui_element",
+                            "arguments": (
+                                '{"ref":"e1","text":"bonjour Jarvis"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le texte est saisi.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_verify",
+                            "name": "inspect_active_window",
+                            "arguments": "{}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le texte est visible dans l'éditeur.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Écris bonjour Jarvis dans l'éditeur.")
+
+        self.assertEqual(
+            tools.calls[:2],
+            [
+                (
+                    "write_ui_element",
+                    {"ref": "e1", "text": "bonjour Jarvis"},
+                ),
+                ("inspect_active_window", {}),
+            ],
+        )
+        self.assertIn("visible", result.text)
 
     def test_groq_blocks_persistent_recall_for_current_session_question(self):
         tools = FakeTools()
