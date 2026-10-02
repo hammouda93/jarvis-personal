@@ -124,6 +124,15 @@ class AssistantWorker(QObject):
         ):
             return False
 
+        # "Open X" can refer to a downloaded file/installer rather than the
+        # installed application itself. Let the agent choose open_file when the
+        # utterance clearly carries file semantics.
+        if intent.name == "app.open" and (
+            re.search(r"\b(fichier|file|setup|installateur|installation)\b", text)
+            or re.search(r"\.(exe|msi|pdf|txt|docx?|xlsx?|zip)\b", text)
+        ):
+            return False
+
         # A search targeted at a visible field/page is UI interaction, not a
         # generic Google search. Let the agent inspect the current application
         # and operate the real control instead of hijacking the request through
