@@ -6,6 +6,10 @@ from pathlib import Path
 
 from jarvis_agent.agent_knowledge import AgentKnowledgeStore
 from jarvis_agent.agent_knowledge_adapter import LegacyAgentKnowledgeBackend
+from jarvis_agent.agent_router import (
+    AgentRoutingContext,
+    CapabilityAgentRouter,
+)
 from jarvis_agent.approval_manager import HumanApprovalManager
 from jarvis_agent.event_journal import StructuredEventJournal
 from jarvis_agent.execution_managers import (
@@ -517,6 +521,14 @@ class ArchitectureExtensionTests(unittest.TestCase):
                 ["windows", "windows", "windows"],
             )
             self.assertEqual(
+                context.observed_state["routing_reasons"],
+                [
+                    "application_context",
+                    "application_context",
+                    "application_context",
+                ],
+            )
+            self.assertEqual(
                 observer.stack.request_store.by_status(
                     SyscallStatus.QUEUED
                 ),
@@ -588,6 +600,10 @@ class ArchitectureExtensionTests(unittest.TestCase):
             self.assertEqual(
                 [node.agent_id for node in graph.nodes()],
                 ["windows", "browser"],
+            )
+            self.assertEqual(
+                context.observed_state["routing_reasons"],
+                ["exclusive_tool", "application_context"],
             )
             self.assertEqual(
                 observer.stack.request_store.by_status(
@@ -711,6 +727,176 @@ class ArchitectureExtensionTests(unittest.TestCase):
             self.assertEqual(
                 observer.stack.request_store.by_status(
                     SyscallStatus.QUEUED
+                ),
+                [],
+            )
+
+    def test_contextual_agent_router_uses_continuity_and_marks_real_ambiguity(self):
+        router = CapabilityAgentRouter()
+
+        continuity = router.route_contextual(
+            AgentRoutingContext(
+                user_goal="Continue la mission.",
+                current_tool="press_key",
+                previous_tool="inspect_active_window",
+                previous_agent="browser",
+                available_agents=(
+                    "browser",
+                    "windows",
+                    "ms_football",
+                    "interaction",
+                ),
+            ),
+            candidate_agents=("browser", "windows"),
+        )
+        self.assertEqual(continuity.agent_id, "browser")
+        self.assertEqual(continuity.reason, "mission_continuity")
+        self.assertFalse(continuity.needs_review)
+
+        ambiguous = router.route_contextual(
+            AgentRoutingContext(
+                user_goal="Continue.",
+                current_tool="press_key",
+                available_agents=(
+                    "browser",
+                    "windows",
+                    "ms_football",
+                    "interaction",
+                ),
+            ),
+            candidate_agents=("browser", "windows"),
+        )
+        self.assertEqual(ambiguous.agent_id, "interaction")
+        self.assertEqual(ambiguous.reason, "unresolved_ambiguity")
+        self.assertTrue(ambiguous.needs_review)
+
+    def test_kernel_shadow_routes_ms_football_by_explicit_domain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = replace(
+                real_settings,
+                kernel_shadow_enabled=True,
+                kernel_shadow_dir=str(Path(tmp) / "shadow"),
+                kernel_shadow_user_id="user-1",
+            )
+            observer = KernelShadowObserver(
+                base_dir=Path(tmp) / "shadow",
+                owner_user_id="user-1",
+                settings=configured,
+            )
+            turn = SimpleNamespace(
+                text="Données MS Football lues.",
+                actions=(
+                    SimpleNamespace(
+                        name="msf_query_records",
+                        success=True,
+                        message="ok",
+                        detail='{"records":2}',
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                ),
+            )
+
+            observation = observer.observe_agent_turn(
+                "Dans MS Football, affiche les abonnements actifs.",
+                turn,
+            )
+
+            self.assertTrue(observation.success)
+            self.assertFalse(observation.needs_review)
+            context, _version = observer.stack.mission_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(
+                context.observed_state["resolved_agents"],
+                ["ms_football"],
+            )
+            self.assertEqual(
+                context.observed_state["routing_reasons"],
+                ["explicit_domain"],
+            )
+            graph = observer.stack.graph_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(graph.nodes()[0].agent_id, "ms_football")
+            self.assertEqual(
+                graph.nodes()[0].payload["routing_context"]["domain"],
+                "ms_football",
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.QUEUED
+                ),
+                [],
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.RUNNING
+                ),
+                [],
+            )
+
+    def test_kernel_shadow_marks_true_shared_tool_ambiguity_for_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = replace(
+                real_settings,
+                kernel_shadow_enabled=True,
+                kernel_shadow_dir=str(Path(tmp) / "shadow"),
+                kernel_shadow_user_id="user-1",
+            )
+            observer = KernelShadowObserver(
+                base_dir=Path(tmp) / "shadow",
+                owner_user_id="user-1",
+                settings=configured,
+            )
+            turn = SimpleNamespace(
+                text="Entrée envoyée.",
+                actions=(
+                    SimpleNamespace(
+                        name="press_key",
+                        success=True,
+                        message="ok",
+                        detail='{"key":"enter"}',
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                ),
+            )
+
+            observation = observer.observe_agent_turn(
+                "Appuie sur Entrée.",
+                turn,
+            )
+
+            self.assertTrue(observation.success)
+            self.assertTrue(observation.needs_review)
+            context, _version = observer.stack.mission_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(
+                context.observed_state["resolved_agents"],
+                ["interaction"],
+            )
+            self.assertEqual(
+                context.observed_state["routing_reasons"],
+                ["unresolved_ambiguity"],
+            )
+            graph = observer.stack.graph_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(graph.nodes()[0].agent_id, "interaction")
+            self.assertTrue(
+                graph.nodes()[0].payload["routing_needs_review"]
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.QUEUED
+                ),
+                [],
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.RUNNING
                 ),
                 [],
             )
