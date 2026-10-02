@@ -244,7 +244,7 @@ class LegacyAgentKnowledgeBackend:
             rule = str(meta.get("rule") or record.content).strip()
             if not pattern:
                 pattern = rule[:160]
-            self.store.upsert_lesson(
+            self.store.record_lesson(
                 scope=str(meta.get("scope") or identity.scope.value),
                 pattern=pattern,
                 rule=rule,
