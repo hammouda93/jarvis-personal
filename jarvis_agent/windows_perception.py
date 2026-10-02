@@ -600,37 +600,60 @@ def inspect_active_window(
     # WinError 6 when a window disappears. Resolve the HWND with Win32, then
     # attach UIA directly to that stable handle instead of enumerating again.
     if window is None:
-        try:
-            native_item = _native_target_window(title)
-        except Exception as exc:
-            native_error = str(exc)
-            detail = f"UIA: {uia_error}; Win32: {native_error}" if uia_error else native_error
-            return UIActionResult(
-                False,
-                "Impossible d'inspecter la fenêtre.",
-                detail,
-            )
+        attach_errors: list[str] = []
+        for attempt in range(4):
+            try:
+                native_item = _native_target_window(title)
+            except Exception as exc:
+                native_error = str(exc)
+                detail = (
+                    f"UIA: {uia_error}; Win32: {native_error}"
+                    if uia_error
+                    else native_error
+                )
+                return UIActionResult(
+                    False,
+                    "Impossible d'inspecter la fenêtre.",
+                    detail,
+                )
 
-        if native_item is None:
-            if title:
-                detail = uia_error or title
-                return UIActionResult(False, f"Fenêtre introuvable: {title}.", detail)
-            return UIActionResult(
-                False,
-                "Aucune fenêtre active détectée.",
-                uia_error,
-            )
+            if native_item is not None:
+                try:
+                    window = _uia_window_from_handle(
+                        int(native_item["handle"])
+                    )
+                    break
+                except Exception as exc:
+                    attach_errors.append(str(exc))
 
-        try:
-            window = _uia_window_from_native_with_retry(native_item)
-        except Exception as exc:
-            attach_error = str(exc)
+            if attempt < 3:
+                time.sleep(0.15)
+
+        if window is None:
+            if native_item is None:
+                if title:
+                    detail = uia_error or title
+                    return UIActionResult(
+                        False,
+                        f"Fenêtre introuvable: {title}.",
+                        detail,
+                    )
+                return UIActionResult(
+                    False,
+                    "Aucune fenêtre active détectée.",
+                    uia_error,
+                )
+
+            attach_error = attach_errors[-1] if attach_errors else ""
             combined = (
                 f"{uia_error}; attach: {attach_error}"
                 if uia_error
                 else attach_error
             )
-            return _native_only_inspection(native_item, uia_error=combined)
+            return _native_only_inspection(
+                native_item,
+                uia_error=combined,
+            )
 
     try:
         descendants = window.descendants()
