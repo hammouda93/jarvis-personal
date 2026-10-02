@@ -1302,6 +1302,104 @@ class AgentRuntimeTests(unittest.TestCase):
             focused_typing_fallback_enabled=False,
         ),
     )
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(
+            real_settings,
+            compatibility_baseline=False,
+            vision_enabled=True,
+            vision_actions_enabled=True,
+            operational_learning_enabled=False,
+            strict_proof_enabled=False,
+            focused_typing_fallback_enabled=False,
+        ),
+    )
+    def test_groq_visual_write_satisfies_write_goal_after_verification(self):
+        class VisualWriteTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "write_visual_target":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="written",
+                        detail='{"verified":false,"confidence":0.94}',
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = VisualWriteTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_visual_write",
+                            "name": "write_visual_target",
+                            "arguments": (
+                                '{"target":"champ Nom du fichier",'
+                                '"text":"jarvis_test.txt",'
+                                '"title":"Enregistrer sous",'
+                                '"mode":"replace"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le nom a été saisi.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_verify_visual_write",
+                            "name": "inspect_active_window",
+                            "arguments": "{}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le nom est visible dans le dialogue.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Écris jarvis_test.txt dans le champ Nom du fichier."
+        )
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            ["write_visual_target", "inspect_active_window"],
+        )
+        self.assertIn("visible", result.text)
+
     def test_groq_visual_click_requires_after_state_verification(self):
         class VisualTools(FakeTools):
             def execute(self, name, arguments, *, approved=False):
