@@ -8,6 +8,8 @@ from .kernel_contracts import KernelRequest, SyscallKind
 from .knowledge_broker import KnowledgeBroker, KnowledgePrincipal
 from .tool_gateway import ScopedToolGateway
 from .workspace_storage import WorkspaceStorage
+from .regression_runner import RegressionRunner
+from .replay_sandbox import ReplayAction, ReplayPlan, ReplayRunner
 
 
 @dataclass(frozen=True)
@@ -217,6 +219,105 @@ class StorageExecutionManager:
             success=False,
             result={},
             error="unsupported_storage_operation",
+        )
+
+
+class TestExecutionManager:
+    syscall_kind = SyscallKind.TEST
+
+    def __init__(self, runner: RegressionRunner):
+        self.runner = runner
+
+    def execute(self, request: KernelRequest) -> ManagerExecutionResult:
+        payload = dict(request.payload or {})
+        test_ids = [
+            str(item)
+            for item in payload.get("test_ids") or ()
+            if str(item)
+        ]
+        if not test_ids:
+            return ManagerExecutionResult(
+                success=False,
+                result={},
+                error="test_ids_required",
+            )
+
+        results = self.runner.run_many(
+            test_ids,
+            stop_on_failure=bool(
+                payload.get("stop_on_failure", True)
+            ),
+        )
+        return ManagerExecutionResult(
+            success=bool(results) and all(item.success for item in results),
+            result={
+                "tests": [
+                    {
+                        "test_id": item.test_id,
+                        "success": item.success,
+                        "returncode": item.returncode,
+                        "duration_s": round(item.duration_s, 3),
+                        "stdout": item.stdout,
+                        "stderr": item.stderr,
+                        "error": item.error,
+                    }
+                    for item in results
+                ]
+            },
+            error=(
+                ""
+                if results and all(item.success for item in results)
+                else "regression_failed"
+            ),
+        )
+
+
+class ReplayExecutionManager:
+    syscall_kind = SyscallKind.REPLAY
+
+    def __init__(self, runner: ReplayRunner):
+        self.runner = runner
+
+    def execute(self, request: KernelRequest) -> ManagerExecutionResult:
+        payload = dict(request.payload or {})
+        replay_id = str(payload.get("replay_id") or "").strip()
+        environment_id = str(
+            payload.get("environment_id") or ""
+        ).strip()
+        if not replay_id or not environment_id:
+            return ManagerExecutionResult(
+                success=False,
+                result={},
+                error="replay_identity_required",
+            )
+
+        actions = [
+            ReplayAction(
+                action_type=str(item.get("action_type") or ""),
+                arguments=dict(item.get("arguments") or {}),
+            )
+            for item in payload.get("actions") or ()
+            if isinstance(item, dict)
+            and str(item.get("action_type") or "")
+        ]
+        plan = ReplayPlan(
+            replay_id=replay_id,
+            mission_id=request.mission_id,
+            environment_id=environment_id,
+            actions=actions,
+            expected_state=dict(payload.get("expected_state") or {}),
+            test_ids=[
+                str(item)
+                for item in payload.get("test_ids") or ()
+                if str(item)
+            ],
+            record_video=bool(payload.get("record_video")),
+        )
+        result = self.runner.run(plan)
+        return ManagerExecutionResult(
+            success=result.success,
+            result=result.as_dict(),
+            error=result.error,
         )
 
 
