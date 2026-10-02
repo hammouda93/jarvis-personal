@@ -416,6 +416,46 @@ def _native_visible_windows(*, limit: int = 20) -> list[dict[str, Any]]:
     return items
 
 
+def _native_process_name(hwnd: int) -> str:
+    """Best-effort executable name for a top-level HWND without extra deps."""
+    import ctypes
+    import os
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    pid = wintypes.DWORD(0)
+    user32.GetWindowThreadProcessId(
+        wintypes.HWND(int(hwnd)),
+        ctypes.byref(pid),
+    )
+    if not pid.value:
+        return ""
+
+    handle = kernel32.OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION,
+        False,
+        int(pid.value),
+    )
+    if not handle:
+        return ""
+    try:
+        size = wintypes.DWORD(32768)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        ok = kernel32.QueryFullProcessImageNameW(
+            handle,
+            0,
+            buffer,
+            ctypes.byref(size),
+        )
+        if not ok:
+            return ""
+        return os.path.basename(buffer.value or "").strip()
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _native_window_candidates(*, limit: int = 40) -> list[dict[str, Any]]:
     """Return visible top-level windows in Win32 z-order with stable handles."""
     import ctypes
@@ -471,6 +511,7 @@ def _native_window_candidates(*, limit: int = 40) -> list[dict[str, Any]]:
                 {
                     "handle": handle,
                     "title": title[:180],
+                    "process": _native_process_name(handle)[:120],
                     "bounds": bounds,
                 }
             )
@@ -520,6 +561,53 @@ def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
             tied = [
                 item
                 for score, item in identity_ranked
+                if abs(score - top) < 0.015
+            ]
+            if len(tied) == 1:
+                return tied[0]
+            try:
+                foreground = int(
+                    ctypes.windll.user32.GetForegroundWindow() or 0
+                )
+            except Exception:
+                foreground = 0
+            for item in tied:
+                if int(item.get("handle") or 0) == foreground:
+                    return item
+
+        process_ranked = sorted(
+            (
+                (
+                    max(
+                        _score_name(
+                            target,
+                            re.sub(
+                                r"(?i)\\.exe$",
+                                "",
+                                str(item.get("process") or ""),
+                            ),
+                        ),
+                        _window_identity_score(
+                            target,
+                            re.sub(
+                                r"(?i)\\.exe$",
+                                "",
+                                str(item.get("process") or ""),
+                            ),
+                        ),
+                    ),
+                    item,
+                )
+                for item in candidates
+                if item.get("process")
+            ),
+            key=lambda pair: -pair[0],
+        )
+        if process_ranked and process_ranked[0][0] >= 0.82:
+            top = process_ranked[0][0]
+            tied = [
+                item
+                for score, item in process_ranked
                 if abs(score - top) < 0.015
             ]
             if len(tied) == 1:
@@ -1700,6 +1788,15 @@ _ALLOWED_KEYS = {
     "end": "{END}",
     "altleft": "%{LEFT}",
     "altright": "%{RIGHT}",
+    "ctrls": "^s",
+    "ctrlshifts": "^+s",
+    "ctrlf": "^f",
+    "ctrll": "^l",
+    "ctrlc": "^c",
+    "ctrlv": "^v",
+    "ctrla": "^a",
+    "ctrlz": "^z",
+    "ctrly": "^y",
 }
 
 
