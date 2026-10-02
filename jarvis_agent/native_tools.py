@@ -10,7 +10,7 @@ from .agent_knowledge import AGENT_KNOWLEDGE
 from .config import settings
 from .memory import LOCAL_MEMORY
 from .ms_football_bridge import MS_FOOTBALL_BRIDGE
-from .screen_vision import observe_screen
+from .screen_vision import click_visual_target, observe_screen
 from .tools import ToolIntent, ToolResult, execute, normalize
 from .windows_perception import (
     activate_window,
@@ -155,6 +155,21 @@ class NativeToolRegistry:
                     },
                 },
                 [],
+            ),
+            self._ollama(
+                "click_visual_target",
+                "Fallback visuel local contrôlé: localise un élément clairement visible dans la fenêtre avec le modèle vision Ollama local puis clique son centre. Utiliser seulement lorsque UIA ne fournit pas une cible exploitable. Le résultat n'est jamais considéré comme vérifié: réinspecter ensuite.",
+                {
+                    "target": {
+                        "type": "string",
+                        "description": "Description précise de la cible visible, par ex. le champ Nom du fichier ou le bouton Enregistrer.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Titre optionnel de la fenêtre cible.",
+                    },
+                },
+                ["target"],
             ),
             self._ollama(
                 "activate_window",
@@ -738,6 +753,17 @@ class NativeToolRegistry:
             title = str(args.get("title", "")).strip() or None
             focus = str(args.get("focus", "")).strip()
             result = observe_screen(title=title, focus=focus)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "click_visual_target":
+            title = str(args.get("title", "")).strip() or None
+            target = str(args.get("target", "")).strip()
+            result = click_visual_target(target=target, title=title)
             return AgentActionResult(
                 name=name,
                 success=result.success,
