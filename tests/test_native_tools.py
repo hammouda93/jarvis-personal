@@ -62,6 +62,46 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertEqual(intent.args["app"], "notepad")
 
     @patch("jarvis_agent.native_tools.execute")
+    def test_open_file_uses_generic_file_discovery(self, execute_mock):
+        execute_mock.return_value = ToolResult(
+            True,
+            "ok",
+            r"C:\Users\test\Downloads\CursorUserSetup-x64.exe",
+        )
+
+        result = self.registry.execute(
+            "open_file",
+            {"name": "Cursor Setup", "within": "Téléchargements"},
+        )
+
+        self.assertTrue(result.success)
+        intent = execute_mock.call_args.args[0]
+        self.assertEqual(intent.name, "file.open_named")
+        self.assertEqual(intent.args["query"], "Cursor Setup")
+        self.assertEqual(intent.args["within"], "Téléchargements")
+
+    @patch("jarvis_agent.native_tools.execute")
+    def test_executable_name_is_not_fuzzy_opened_as_application(
+        self,
+        execute_mock,
+    ):
+        execute_mock.return_value = ToolResult(
+            True,
+            "ok",
+            r"C:\Users\test\Downloads\CursorUserSetup.exe",
+        )
+
+        result = self.registry.execute(
+            "open_application",
+            {"name": "cursor-setup.exe"},
+        )
+
+        self.assertTrue(result.success)
+        intent = execute_mock.call_args.args[0]
+        self.assertEqual(intent.name, "file.open_named")
+        self.assertEqual(intent.args["within"], "Téléchargements")
+
+    @patch("jarvis_agent.native_tools.execute")
     def test_named_folder_keeps_parent_scope(self, execute_mock):
         execute_mock.return_value = ToolResult(True, "ok", "media")
         result = self.registry.execute(
