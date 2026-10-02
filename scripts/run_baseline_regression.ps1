@@ -38,7 +38,9 @@ $tests = @(
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_resumes_deferred_ui_action_after_fresh_inspection",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_skips_extra_inspection_when_write_self_verifies",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_verifies_ui_after_write_before_concluding",
-    "tests.test_agent_runtime.AgentRuntimeTests.test_groq_repairs_pseudo_tool_text_into_real_call"
+    "tests.test_agent_runtime.AgentRuntimeTests.test_groq_repairs_pseudo_tool_text_into_real_call",
+    "tests.test_agent_runtime.AgentRuntimeTests.test_groq_blocks_visible_search_when_user_did_not_request_browser",
+    "tests.test_agent_runtime.AgentRuntimeTests.test_groq_can_research_in_background_after_recoverable_failure"
 )
 
 $command = "python -m unittest " + ($tests -join " ") + " -v 2>&1"
