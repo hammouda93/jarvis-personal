@@ -190,6 +190,7 @@ class NativeToolRegistryTests(unittest.TestCase):
             for item in self.registry.ollama_tools()
         }
         self.assertIn("observe_screen", names)
+        self.assertIn("click_visual_target", names)
         self.assertIn("search_agent_knowledge", names)
         self.assertIn("save_verified_skill", names)
         self.assertIn("save_feedback_lesson", names)
@@ -231,6 +232,31 @@ class NativeToolRegistryTests(unittest.TestCase):
         observe_mock.assert_called_once_with(
             title="YouTube",
             focus="Identify the first three regular videos.",
+        )
+
+    @patch("jarvis_agent.native_tools.click_visual_target")
+    def test_click_visual_target_routes_to_local_visual_action(
+        self,
+        click_mock,
+    ):
+        click_mock.return_value = SimpleNamespace(
+            success=True,
+            message="clicked",
+            detail='{"verified":false,"confidence":0.91}',
+        )
+
+        result = self.registry.execute(
+            "click_visual_target",
+            {
+                "title": "Enregistrer sous",
+                "target": "bouton Enregistrer",
+            },
+        )
+
+        self.assertTrue(result.success)
+        click_mock.assert_called_once_with(
+            target="bouton Enregistrer",
+            title="Enregistrer sous",
         )
 
     def test_verified_skill_tool_writes_to_injected_local_store(self):
