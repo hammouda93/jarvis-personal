@@ -856,7 +856,7 @@ class AgentRuntimeTests(unittest.TestCase):
                             "type": "function_call",
                             "call_id": "call_inspect_dialog",
                             "name": "inspect_active_window",
-                            "arguments": "{}",
+                            "arguments": '{"title":"Installation - Cursor (User)"}',
                         }
                     ]
                 },
@@ -879,8 +879,11 @@ class AgentRuntimeTests(unittest.TestCase):
         result = agent.run("Ferme l'installation de Cursor.")
 
         self.assertEqual(
-            [name for name, _args in tools.calls],
-            ["close_window", "inspect_active_window"],
+            tools.calls,
+            [
+                ("close_window", {"title": "Installation Cursor"}),
+                ("inspect_active_window", {}),
+            ],
         )
         self.assertIn("confirmation", result.text)
 
