@@ -117,6 +117,61 @@ def build_default_regression_registry() -> RegressionRegistry:
     )
     registry.register(
         RegressionSpec(
+            test_id="TEST-KERNEL-FOUNDATIONS",
+            command=(
+                "powershell -ExecutionPolicy Bypass "
+                "-File .\\scripts\\run_architecture_foundations_validation.ps1"
+            ),
+            tags=(
+                "kernel",
+                "scheduler",
+                "multi_agent",
+                "observability",
+                "permissions",
+                "connectors",
+                "replay",
+            ),
+            watched_paths=(
+                "jarvis_agent/kernel_contracts.py",
+                "jarvis_agent/kernel_service.py",
+                "jarvis_agent/kernel_policy.py",
+                "jarvis_agent/kernel_request_store.py",
+                "jarvis_agent/kernel_dispatcher.py",
+                "jarvis_agent/mission_scheduler.py",
+                "jarvis_agent/task_graph.py",
+                "jarvis_agent/task_graph_store.py",
+                "jarvis_agent/mission_orchestrator.py",
+                "jarvis_agent/event_bus.py",
+                "jarvis_agent/event_journal.py",
+                "jarvis_agent/mission_context_store.py",
+                "jarvis_agent/approval_manager.py",
+                "jarvis_agent/context_broker.py",
+                "jarvis_agent/context_injector.py",
+                "jarvis_agent/knowledge_policy.py",
+                "jarvis_agent/knowledge_broker.py",
+                "jarvis_agent/agent_knowledge_adapter.py",
+                "jarvis_agent/capability_registry.py",
+                "jarvis_agent/agent_router.py",
+                "jarvis_agent/agent_factory.py",
+                "jarvis_agent/tool_gateway.py",
+                "jarvis_agent/connector_registry.py",
+                "jarvis_agent/connector_gateway.py",
+                "jarvis_agent/execution_managers.py",
+                "jarvis_agent/model_router.py",
+                "jarvis_agent/llm_manager.py",
+                "jarvis_agent/replay_sandbox.py",
+                "jarvis_agent/replay_adapter.py",
+                "jarvis_agent/local_rpc_security.py",
+            ),
+            level="suite",
+            description=(
+                "AIOS-inspired Kernel, multi-agent, permissions, context and "
+                "replay foundations plus historical non-regression."
+            ),
+        )
+    )
+    registry.register(
+        RegressionSpec(
             test_id="TEST-MEMORY-KNOWLEDGE",
             command=(
                 "python -m unittest tests.test_agent_knowledge "
