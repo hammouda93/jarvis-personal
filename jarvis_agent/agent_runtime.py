@@ -1095,18 +1095,6 @@ class OpenAIResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
-                if result.success and name in {
-                    "click_ui_element",
-                    "write_ui_element",
-                    "press_key",
-                }:
-                    ui_verification_required = True
-                elif result.success and name in {
-                    "inspect_active_window",
-                    "list_windows",
-                }:
-                    ui_verification_required = False
-
                 if name == "reset_conversation_context" and result.success:
                     if log:
                         log("[SESSION] semantic reset — contexte réinitialisé")
@@ -1808,6 +1796,18 @@ class GroqResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if result.success and name in {
+                    "click_ui_element",
+                    "write_ui_element",
+                    "press_key",
+                }:
+                    ui_verification_required = True
+                elif result.success and name in {
+                    "inspect_active_window",
+                    "list_windows",
+                }:
+                    ui_verification_required = False
+
                 if name == "reset_conversation_context" and result.success:
                     if log:
                         log("[SESSION] semantic reset — contexte réinitialisé")
