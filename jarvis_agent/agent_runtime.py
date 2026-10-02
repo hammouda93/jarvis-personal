@@ -1356,6 +1356,10 @@ class GroqResponsesAgent:
         self._last_msf_grounding_at = 0.0
         self._active_domain = ""
         self._memory_write_allowed = False
+        self._skill_write_allowed = False
+        self._lesson_write_allowed = False
+        self._skill_write_allowed = False
+        self._lesson_write_allowed = False
 
     def reset(self) -> None:
         self._messages = [
@@ -1469,10 +1473,12 @@ class GroqResponsesAgent:
                     "reset_conversation_context",
                     "return_to_standby",
                     "search_agent_knowledge",
-                    "save_verified_skill",
-                    "save_feedback_lesson",
                 }
             )
+            if self._skill_write_allowed:
+                allowed.add("save_verified_skill")
+            if self._lesson_write_allowed:
+                allowed.add("save_feedback_lesson")
             if self._memory_write_allowed:
                 allowed.add("remember_information")
             tools = [
@@ -1496,6 +1502,20 @@ class GroqResponsesAgent:
                     for item in tools
                     if str((item.get("function") or {}).get("name") or "")
                     != "remember_information"
+                ]
+            if not self._skill_write_allowed:
+                tools = [
+                    item
+                    for item in tools
+                    if str((item.get("function") or {}).get("name") or "")
+                    != "save_verified_skill"
+                ]
+            if not self._lesson_write_allowed:
+                tools = [
+                    item
+                    for item in tools
+                    if str((item.get("function") or {}).get("name") or "")
+                    != "save_feedback_lesson"
                 ]
             if (
                 self.provider_name == "groq"
@@ -1700,6 +1720,10 @@ class GroqResponsesAgent:
         should_exit = False
         failed_results: dict[str, AgentActionResult] = {}
         self._memory_write_allowed = _is_explicit_memory_write_request(user_text)
+        self._skill_write_allowed = False
+        self._lesson_write_allowed = _looks_like_clear_operational_feedback(
+            user_text
+        )
 
         if self._pending_function_approval is not None:
             normalized = user_text.strip().lower().strip(" .!?")
@@ -2040,6 +2064,8 @@ class GroqResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if _actions_have_verified_proof(actions):
+                    self._skill_write_allowed = True
                 if result.success and name == "write_ui_element":
                     try:
                         write_detail = json.loads(result.detail or "{}")
