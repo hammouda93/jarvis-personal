@@ -158,7 +158,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "write_ui_element",
-                "Écrit du texte dans un contrôle réellement éditable observé (Edit, Document ou ComboBox) sans valider automatiquement. N'utilise jamais un Text, TabItem ou libellé statique comme cible d'écriture. Utilise ref après inspection pour les champs sans libellé.",
+                "Écrit dans un contrôle éditable observé (Edit, Document ou ComboBox). Choisis mode=replace pour remplacer tout le contenu, append pour conserver le contenu existant et ajouter à la fin, insert pour écrire à la position actuelle du curseur. N'utilise jamais un Text, TabItem ou libellé statique.",
                 {
                     "name": {
                         "type": "string",
@@ -171,6 +171,11 @@ class NativeToolRegistry:
                     "text": {
                         "type": "string",
                         "description": "Texte à saisir dans le champ.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["replace", "append", "insert"],
+                        "description": "replace=remplacer tout; append=ajouter en conservant l'existant; insert=insérer au curseur.",
                     },
                 },
                 ["text"],
@@ -587,7 +592,8 @@ class NativeToolRegistry:
             target = str(args.get("name", "")).strip()
             ref = str(args.get("ref", "")).strip()
             text = str(args.get("text", ""))
-            result = write_ui_element(target, text, ref=ref)
+            mode = str(args.get("mode", "replace")).strip() or "replace"
+            result = write_ui_element(target, text, ref=ref, mode=mode)
             return AgentActionResult(
                 name=name,
                 success=result.success,
