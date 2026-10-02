@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from jarvis_agent.native_tools import NativeToolRegistry
 from jarvis_agent.windows_perception import (
+    close_tab,
     inspect_active_window,
     type_text_active_window,
     write_ui_element,
@@ -12,6 +13,7 @@ from jarvis_agent.windows_perception import (
     _uia_window_from_native_with_retry,
     _score_name,
     _title_app_hint,
+    _window_identity_score,
 )
 
 
@@ -38,6 +40,49 @@ class _FakeWindow:
 
     def descendants(self):
         return []
+
+
+class _FakeTab:
+    element_info = SimpleNamespace(
+        name="",
+        control_type="TabItem",
+        automation_id="",
+    )
+
+    def __init__(self, name, selected=False):
+        self.name = name
+        self.selected = selected
+        self.clicked = False
+
+    def window_text(self):
+        return self.name
+
+    def is_visible(self):
+        return True
+
+    def is_selected(self):
+        return self.selected
+
+    def click_input(self):
+        self.clicked = True
+        self.selected = True
+
+
+class _FakeTabWindow:
+    element_info = SimpleNamespace(
+        name="Google Chrome",
+        control_type="Window",
+        automation_id="",
+    )
+
+    def __init__(self, tabs):
+        self.tabs = tabs
+
+    def window_text(self):
+        return "Google Chrome"
+
+    def descendants(self):
+        return list(self.tabs)
 
 
 class _FakeComboBox:
@@ -193,6 +238,48 @@ class _FakeClipboard:
 
 
 class WindowsPerceptionTests(unittest.TestCase):
+    def test_window_identity_matches_localized_setup_titles(self):
+        self.assertGreaterEqual(
+            _window_identity_score(
+                "Cursor Setup",
+                "Installation - Cursor (User)",
+            ),
+            0.90,
+        )
+        self.assertGreaterEqual(
+            _window_identity_score(
+                "Installation Cursor",
+                "Installation - Cursor (User)",
+            ),
+            0.90,
+        )
+        self.assertLess(
+            _window_identity_score("Search", "(5) YouTube - Google Chrome"),
+            0.82,
+        )
+
+    @patch("jarvis_agent.windows_perception.time.sleep")
+    @patch("jarvis_agent.windows_perception._send_keys")
+    @patch("jarvis_agent.windows_perception._active_window")
+    def test_close_named_tab_does_not_use_close_window(
+        self,
+        active_window_mock,
+        send_keys_mock,
+        sleep_mock,
+    ):
+        youtube = _FakeTab("(5) YouTube - Utilisation mémoire")
+        pointer = _FakeTab("Pointer GitHub puis tester")
+        before = _FakeTabWindow([pointer, youtube])
+        after = _FakeTabWindow([pointer])
+        active_window_mock.side_effect = [before, after]
+
+        result = close_tab("YouTube")
+
+        self.assertTrue(result.success)
+        self.assertTrue(youtube.clicked)
+        send_keys_mock.assert_called_once_with("^w")
+        self.assertIn('"verified":true', result.detail)
+
     @patch("jarvis_agent.windows_perception.time.sleep")
     @patch("jarvis_agent.windows_perception._send_keys")
     @patch("jarvis_agent.windows_perception.activate_window")
