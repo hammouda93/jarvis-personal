@@ -4,8 +4,18 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from .connector_gateway import ConnectorGateway
-from .kernel_contracts import KernelRequest, SyscallKind
-from .knowledge_broker import KnowledgeBroker, KnowledgePrincipal
+from .kernel_contracts import (
+    KernelRequest,
+    KnowledgeIdentity,
+    KnowledgeScope,
+    SharingPolicy,
+    SyscallKind,
+)
+from .knowledge_broker import (
+    KnowledgeBroker,
+    KnowledgePrincipal,
+    ScopedKnowledgeRecord,
+)
 from .tool_gateway import ScopedToolGateway
 from .workspace_storage import WorkspaceStorage
 from .regression_runner import RegressionRunner
@@ -128,6 +138,63 @@ class MemoryExecutionManager:
                     ]
                 },
             )
+
+        if operation == "write":
+            raw = dict(request.payload.get("record") or {})
+            identity_raw = dict(raw.get("identity") or {})
+            try:
+                identity = KnowledgeIdentity(
+                    scope=KnowledgeScope(
+                        str(identity_raw.get("scope") or "")
+                    ),
+                    owner_user_id=identity_raw.get("owner_user_id"),
+                    owner_agent_id=identity_raw.get("owner_agent_id"),
+                    organization_id=identity_raw.get("organization_id"),
+                    app_id=identity_raw.get("app_id"),
+                    domain=identity_raw.get("domain"),
+                    skill_id=identity_raw.get("skill_id"),
+                    sharing_policy=SharingPolicy(
+                        str(
+                            identity_raw.get("sharing_policy")
+                            or SharingPolicy.PRIVATE.value
+                        )
+                    ),
+                )
+            except (TypeError, ValueError) as exc:
+                return ManagerExecutionResult(
+                    success=False,
+                    result={},
+                    error=f"invalid_knowledge_identity:{exc}",
+                )
+
+            record = ScopedKnowledgeRecord(
+                knowledge_id=str(raw.get("knowledge_id") or ""),
+                identity=identity,
+                content=str(raw.get("content") or ""),
+                metadata=dict(raw.get("metadata") or {}),
+                relevance=float(raw.get("relevance") or 0.0),
+            )
+            if not record.knowledge_id or not record.content:
+                return ManagerExecutionResult(
+                    success=False,
+                    result={},
+                    error="knowledge_id_and_content_required",
+                )
+
+            written = self.broker.write(
+                record,
+                principal=self._principal(request),
+            )
+            return ManagerExecutionResult(
+                success=written,
+                result={
+                    "knowledge_id": record.knowledge_id,
+                    "written": bool(written),
+                    "scope": record.identity.scope.value,
+                },
+                error="" if written else "knowledge_write_denied",
+            )
+
         return ManagerExecutionResult(
             success=False,
             result={},
