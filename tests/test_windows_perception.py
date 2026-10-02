@@ -7,6 +7,7 @@ from jarvis_agent.windows_perception import (
     inspect_active_window,
     write_ui_element,
     _control_value,
+    _uia_window_from_native_with_retry,
     _score_name,
     _title_app_hint,
 )
@@ -161,6 +162,29 @@ class _FakeNoValuePatternDocument:
 
 
 class WindowsPerceptionTests(unittest.TestCase):
+    @patch("jarvis_agent.windows_perception.time.sleep")
+    @patch("jarvis_agent.windows_perception._uia_window_from_handle")
+    def test_uia_native_retry_recovers_after_transient_winerror(
+        self,
+        attach_mock,
+        sleep_mock,
+    ):
+        attach_mock.side_effect = [
+            OSError(6, "Descripteur non valide"),
+            OSError(6, "Descripteur non valide"),
+            _FakeWindow(),
+        ]
+
+        window = _uia_window_from_native_with_retry(
+            {"handle": 4242, "title": "Bloc-notes"},
+            attempts=4,
+            delay_s=0.01,
+        )
+
+        self.assertIsInstance(window, _FakeWindow)
+        self.assertEqual(attach_mock.call_count, 3)
+        self.assertEqual(sleep_mock.call_count, 2)
+
     def test_control_value_tolerates_missing_uia_value_pattern(self):
         wrapper = _FakeNoValuePatternDocument()
 
