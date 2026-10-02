@@ -213,6 +213,24 @@ class FakeTools:
             {
                 "type": "function",
                 "function": {
+                    "name": "write_visual_target",
+                    "description": "local visual target write",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target": {"type": "string"},
+                            "text": {"type": "string"},
+                            "title": {"type": "string"},
+                            "mode": {"type": "string"},
+                        },
+                        "required": ["target", "text"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "search_agent_knowledge",
                     "description": "search operational knowledge",
                     "parameters": {
@@ -667,6 +685,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertNotIn("observe_screen", definitions)
         self.assertNotIn("click_visual_target", definitions)
+        self.assertNotIn("write_visual_target", definitions)
         self.assertNotIn("type_text_active_window", definitions)
         self.assertNotIn("search_agent_knowledge", definitions)
         self.assertNotIn("save_verified_skill", definitions)
@@ -1180,6 +1199,72 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("étape suivante", result.text)
 
+    def test_compact_inspection_preserves_capability_refs(self):
+        controls = [
+            {
+                "ref": f"e{index}",
+                "type": "Button",
+                "enabled": True,
+                "name": f"Button {index}",
+                "bounds": [0, index * 10, 100, index * 10 + 8],
+            }
+            for index in range(1, 30)
+        ]
+        controls.append(
+            {
+                "ref": "e30",
+                "type": "Edit",
+                "enabled": True,
+                "writable": True,
+                "label": "Nom du fichier :",
+                "bounds": [100, 700, 800, 735],
+            }
+        )
+        payload = {
+            "window": {"title": "Enregistrer sous"},
+            "controls": controls,
+            "capabilities": {
+                "writable": [
+                    {"ref": "e30", "label": "Nom du fichier :"}
+                ],
+                "actionable": [
+                    {"ref": "e29", "label": "Enregistrer"}
+                ],
+            },
+            "snapshot": {
+                "total_interactive": 30,
+                "selected_interactive": 30,
+                "truncated": False,
+                "has_document_region": False,
+                "vision_recommended": False,
+            },
+        }
+        result = AgentActionResult(
+            name="inspect_active_window",
+            success=True,
+            message="ok",
+            detail=json.dumps(payload, ensure_ascii=False),
+        )
+
+        compact = json.loads(
+            GroqResponsesAgent._compact_tool_content(
+                "inspect_active_window",
+                result,
+            )
+        )
+        detail = json.loads(compact["detail"])
+
+        self.assertIn(
+            {"ref": "e30", "label": "Nom du fichier :"},
+            detail["capabilities"]["writable"],
+        )
+        self.assertTrue(
+            any(
+                item.get("ref") == "e30"
+                for item in detail["controls"]
+            )
+        )
+
     @patch(
         "jarvis_agent.agent_runtime.settings",
         replace(
@@ -1202,6 +1287,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("observe_screen", definitions)
         self.assertNotIn("click_visual_target", definitions)
+        self.assertNotIn("write_visual_target", definitions)
         self.assertNotIn("type_text_active_window", definitions)
 
     @patch(
