@@ -1964,6 +1964,51 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             )
         )
 
+    def _chat_via_groq_fallback(
+        self,
+        *,
+        tool_choice: Any,
+        ms_football_only: bool,
+        msf_tool_names: set[str] | None,
+    ):
+        if (
+            not settings.cerebras_fallback_to_groq
+            or not settings.groq_api_key
+        ):
+            raise AgentRuntimeUnavailable(
+                "Fallback Groq GPT-OSS non configuré."
+            )
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise AgentRuntimeUnavailable(
+                "Le client OpenAI compatible n'est pas installé."
+            ) from exc
+
+        client = OpenAI(
+            api_key=settings.groq_api_key,
+            base_url=settings.groq_base_url.rstrip("/"),
+            timeout=min(settings.ai_request_timeout_s, 15.0),
+        )
+        try:
+            return client.chat.completions.create(
+                model=settings.groq_agent_model,
+                messages=self._messages,
+                tools=self._tool_definitions(
+                    ms_football_only=ms_football_only,
+                    msf_tool_names=msf_tool_names,
+                ),
+                tool_choice=tool_choice,
+                parallel_tool_calls=False,
+                reasoning_effort=settings.groq_reasoning_effort,
+                temperature=0.1,
+                max_completion_tokens=256,
+            )
+        except Exception as exc:
+            raise AgentRuntimeUnavailable(
+                f"Fallback Groq GPT-OSS indisponible: {exc}"
+            ) from exc
+
     def _chat(
         self,
         *,
@@ -1978,33 +2023,52 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 msf_tool_names=msf_tool_names,
             )
         except AgentRuntimeUnavailable as primary_error:
-            if (
-                not settings.cerebras_secondary_api_key
-                or not self._should_try_secondary(primary_error)
-            ):
+            if not self._should_try_secondary(primary_error):
                 raise
 
-            print(
-                "[AGENT] Cerebras primary unavailable; "
-                "trying secondary Cerebras API."
-            )
-            primary_api_key = self.api_key
-            primary_base_url = self.base_url
-            primary_client = self._client
+            secondary_error = None
+            if settings.cerebras_secondary_api_key:
+                print(
+                    "[AGENT] Cerebras primary unavailable; "
+                    "trying secondary Cerebras API."
+                )
+                primary_api_key = self.api_key
+                primary_base_url = self.base_url
+                primary_client = self._client
 
-            self.api_key = settings.cerebras_secondary_api_key
-            self.base_url = settings.cerebras_secondary_base_url.rstrip("/")
-            self._client = None
-            try:
-                return super()._chat(
+                self.api_key = settings.cerebras_secondary_api_key
+                self.base_url = settings.cerebras_secondary_base_url.rstrip("/")
+                self._client = None
+                try:
+                    return super()._chat(
+                        tool_choice=tool_choice,
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    )
+                except AgentRuntimeUnavailable as exc:
+                    secondary_error = exc
+                finally:
+                    self.api_key = primary_api_key
+                    self.base_url = primary_base_url
+                    self._client = primary_client
+
+            if (
+                settings.cerebras_fallback_to_groq
+                and settings.groq_api_key
+            ):
+                print(
+                    "[AGENT] Cerebras stalled/unavailable; "
+                    "trying Groq GPT-OSS fallback."
+                )
+                return self._chat_via_groq_fallback(
                     tool_choice=tool_choice,
                     ms_football_only=ms_football_only,
                     msf_tool_names=msf_tool_names,
                 )
-            finally:
-                self.api_key = primary_api_key
-                self.base_url = primary_base_url
-                self._client = primary_client
+
+            if secondary_error is not None:
+                raise secondary_error
+            raise primary_error
 
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
