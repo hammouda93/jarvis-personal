@@ -32,6 +32,17 @@ class AssistantV3FastPathTests(unittest.TestCase):
             )
         )
 
+    def test_in_app_video_selection_stays_with_agent(self):
+        self.assertFalse(
+            AssistantWorker._is_simple_direct_action(
+                "Ouvre la première vidéo pertinente dans l'onglet YouTube.",
+                ToolIntent(
+                    "browser.open_url",
+                    {"url": "https://www.youtube.com"},
+                ),
+            )
+        )
+
     def test_installer_request_stays_with_agent(self):
         self.assertFalse(
             AssistantWorker._is_simple_direct_action(
