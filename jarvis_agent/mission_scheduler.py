@@ -33,12 +33,42 @@ class ScheduledRequest:
 class MissionScheduler:
     """Small priority/FIFO scheduler contract for future multi-agent execution."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        concurrency_limits: dict[str, int] | None = None,
+    ):
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._sequence = 0
         self._queue: list[_QueueItem] = []
         self._items: dict[str, ScheduledRequest] = {}
+        self._active_by_agent: dict[str, int] = {}
+        self._concurrency_limits = {
+            str(agent_id): max(1, int(limit))
+            for agent_id, limit in dict(
+                concurrency_limits or {}
+            ).items()
+        }
+
+    def set_concurrency_limit(
+        self,
+        agent_id: str,
+        limit: int,
+    ) -> None:
+        with self._condition:
+            self._concurrency_limits[str(agent_id)] = max(
+                1,
+                int(limit),
+            )
+            self._condition.notify_all()
+
+    def _agent_has_capacity(self, agent_id: str) -> bool:
+        key = str(agent_id)
+        limit = self._concurrency_limits.get(key)
+        if limit is None:
+            return True
+        return self._active_by_agent.get(key, 0) < limit
 
     def submit(self, request: KernelRequest) -> None:
         with self._condition:
@@ -92,6 +122,11 @@ class MissionScheduler:
                     ):
                         skipped.append(candidate)
                         continue
+                    if not self._agent_has_capacity(
+                        scheduled.request.agent_id
+                    ):
+                        skipped.append(candidate)
+                        continue
                     chosen = candidate
                     break
 
@@ -102,6 +137,10 @@ class MissionScheduler:
                     scheduled = self._items[chosen.request_id]
                     scheduled.status = SyscallStatus.RUNNING
                     scheduled.started_at = time.time()
+                    agent_id = scheduled.request.agent_id
+                    self._active_by_agent[agent_id] = (
+                        self._active_by_agent.get(agent_id, 0) + 1
+                    )
                     return scheduled
 
                 if deadline is not None:
@@ -123,8 +162,15 @@ class MissionScheduler:
                 SyscallStatus.CANCELLED,
             }:
                 return False
+            was_running = scheduled.status == SyscallStatus.RUNNING
             scheduled.status = SyscallStatus.CANCELLED
             scheduled.ended_at = time.time()
+            if was_running:
+                agent_id = scheduled.request.agent_id
+                self._active_by_agent[agent_id] = max(
+                    0,
+                    self._active_by_agent.get(agent_id, 0) - 1,
+                )
             self._condition.notify_all()
             return True
 
@@ -147,12 +193,19 @@ class MissionScheduler:
             if scheduled.started_at is None:
                 scheduled.started_at = now
             scheduled.ended_at = now
+            was_running = scheduled.status == SyscallStatus.RUNNING
             scheduled.status = (
                 SyscallStatus.SUCCEEDED
                 if success
                 else SyscallStatus.FAILED
             )
             scheduled.error = str(error or "")
+            if was_running:
+                agent_id = scheduled.request.agent_id
+                self._active_by_agent[agent_id] = max(
+                    0,
+                    self._active_by_agent.get(agent_id, 0) - 1,
+                )
             self._condition.notify_all()
 
             created = (
@@ -196,5 +249,8 @@ class MissionScheduler:
                 1
                 for item in self._items.values()
                 if item.status == SyscallStatus.QUEUED
+            )
+            counts["active_total"] = sum(
+                self._active_by_agent.values()
             )
             return counts
