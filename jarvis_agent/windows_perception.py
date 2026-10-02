@@ -1153,6 +1153,191 @@ def close_window(title: str | None = None) -> UIActionResult:
     )
 
 
+def _is_selected_tab(wrapper: Any) -> bool:
+    try:
+        selected = getattr(wrapper, "is_selected", None)
+        if callable(selected):
+            return bool(selected())
+    except Exception:
+        pass
+    try:
+        iface = getattr(wrapper, "iface_selection_item", None)
+        if iface is not None:
+            return bool(iface.CurrentIsSelected)
+    except Exception:
+        pass
+    return False
+
+
+def close_tab(name: str = "") -> UIActionResult:
+    """Close a tab inside the active application without closing its window."""
+    window = _active_window()
+    if window is None:
+        return UIActionResult(False, "Aucune fenêtre active détectée.")
+
+    try:
+        descendants = window.descendants()
+    except Exception as exc:
+        return UIActionResult(
+            False,
+            "Impossible de lire les onglets de la fenêtre active.",
+            str(exc),
+        )
+
+    tabs = [
+        wrapper
+        for wrapper in descendants
+        if _control_type(wrapper) == "TabItem" and _is_visible(wrapper)
+    ]
+    if not tabs:
+        return UIActionResult(
+            False,
+            "Aucun onglet contrôlable n'a été détecté dans la fenêtre active.",
+        )
+
+    target = (name or "").strip()
+    chosen = None
+    if target:
+        ranked = sorted(
+            (
+                (
+                    max(
+                        _score_name(target, _element_name(wrapper)),
+                        _window_identity_score(
+                            target,
+                            _element_name(wrapper),
+                        ),
+                    ),
+                    wrapper,
+                )
+                for wrapper in tabs
+            ),
+            key=lambda pair: -pair[0],
+        )
+        if ranked and ranked[0][0] >= 0.82:
+            if (
+                len(ranked) == 1
+                or ranked[0][0] - ranked[1][0] >= 0.035
+                or normalize(_element_name(ranked[0][1]))
+                == normalize(_element_name(ranked[1][1]))
+            ):
+                chosen = ranked[0][1]
+    else:
+        for wrapper in tabs:
+            if _is_selected_tab(wrapper):
+                chosen = wrapper
+                break
+
+    if chosen is None:
+        if target:
+            alternatives = [
+                _element_name(wrapper)
+                for wrapper in tabs[:8]
+                if _element_name(wrapper)
+            ]
+            return UIActionResult(
+                False,
+                "Onglet introuvable ou ambigu.",
+                _json({"target": target, "visible_tabs": alternatives}),
+            )
+        return UIActionResult(
+            False,
+            "Impossible d'identifier l'onglet actif.",
+        )
+
+    label = _element_name(chosen) or target or "onglet actif"
+
+    if target:
+        try:
+            chosen.click_input()
+            time.sleep(0.08)
+        except Exception:
+            try:
+                chosen.set_focus()
+            except Exception as exc:
+                return UIActionResult(
+                    False,
+                    f"Impossible d'activer l'onglet {label}.",
+                    str(exc),
+                )
+
+    try:
+        _send_keys("^w")
+    except Exception as exc:
+        return UIActionResult(
+            False,
+            f"Impossible de fermer l'onglet {label}.",
+            str(exc),
+        )
+
+    time.sleep(0.20)
+
+    try:
+        current = _active_window()
+        if current is None:
+            return UIActionResult(
+                True,
+                f"Onglet fermé: {label}.",
+                _json(
+                    {
+                        "target": label,
+                        "verified": True,
+                        "window_closed_as_last_tab": True,
+                    }
+                ),
+            )
+        remaining = [
+            wrapper
+            for wrapper in current.descendants()
+            if _control_type(wrapper) == "TabItem" and _is_visible(wrapper)
+        ]
+        if target:
+            still_present = any(
+                max(
+                    _score_name(target, _element_name(wrapper)),
+                    _window_identity_score(
+                        target,
+                        _element_name(wrapper),
+                    ),
+                )
+                >= 0.90
+                for wrapper in remaining
+            )
+            if still_present:
+                return UIActionResult(
+                    False,
+                    f"L'onglet {label} semble encore ouvert.",
+                    _json(
+                        {
+                            "target": label,
+                            "verified": False,
+                            "visible_tabs": [
+                                _element_name(wrapper)
+                                for wrapper in remaining[:8]
+                            ],
+                        }
+                    ),
+                )
+    except Exception:
+        return UIActionResult(
+            True,
+            f"Onglet fermé: {label}.",
+            _json(
+                {
+                    "target": label,
+                    "verified": False,
+                    "note": "Fermeture envoyée; vérification UIA indisponible.",
+                }
+            ),
+        )
+
+    return UIActionResult(
+        True,
+        f"Onglet fermé: {label}.",
+        _json({"target": label, "verified": True}),
+    )
+
+
 def _editable_target(wrapper: Any):
     if wrapper is None:
         return None
