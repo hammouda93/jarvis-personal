@@ -294,6 +294,24 @@ class JarvisKernel:
             )
         return scheduled
 
+    def restore_pending_approvals(self) -> list[str]:
+        """Rebuild approval_id -> request mapping from persistent stores."""
+        if self.request_store is None:
+            return []
+        restored: list[str] = []
+        for approval in self.approvals.pending():
+            row = self.request_store.get(approval.request_id)
+            if row is None:
+                continue
+            if row["status"] != SyscallStatus.WAITING_APPROVAL:
+                continue
+            request = row["request"]
+            self._pending_approval_requests[
+                approval.approval_id
+            ] = request
+            restored.append(approval.approval_id)
+        return restored
+
     def restore_queued_requests(self) -> list[str]:
         """Rehydrate only requests known to be safely QUEUED.
 
