@@ -448,6 +448,160 @@ class ArchitectureExtensionTests(unittest.TestCase):
                 observer.stack.kernel.next_request(timeout_s=0.0)
             )
 
+    def test_kernel_shadow_resolves_shared_windows_tools_from_mission_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = replace(
+                real_settings,
+                kernel_shadow_enabled=True,
+                kernel_shadow_dir=str(Path(tmp) / "shadow"),
+                kernel_shadow_user_id="user-1",
+            )
+            observer = KernelShadowObserver(
+                base_dir=Path(tmp) / "shadow",
+                owner_user_id="user-1",
+                settings=configured,
+            )
+            turn = SimpleNamespace(
+                text="Le Bloc-notes contient Bonjour Jarvis.",
+                actions=(
+                    SimpleNamespace(
+                        name="open_application",
+                        success=True,
+                        message="ok",
+                        detail="Application ouverte: notepad",
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                    SimpleNamespace(
+                        name="inspect_active_window",
+                        success=True,
+                        message="ok",
+                        detail='{"window":{"title":"Bloc-notes"}}',
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                    SimpleNamespace(
+                        name="write_ui_element",
+                        success=True,
+                        message="ok",
+                        detail='{"verified":true,"value":"Bonjour Jarvis"}',
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                ),
+            )
+
+            observation = observer.observe_agent_turn(
+                "Ouvre le Bloc-notes et écris Bonjour Jarvis.",
+                turn,
+            )
+
+            self.assertTrue(observation.success)
+            self.assertFalse(observation.needs_review)
+            context, _version = observer.stack.mission_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(
+                context.observed_state["mission_agent_hint"],
+                "windows",
+            )
+            self.assertEqual(
+                context.observed_state["resolved_agents"],
+                ["windows", "windows", "windows"],
+            )
+            graph = observer.stack.graph_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(
+                [node.agent_id for node in graph.nodes()],
+                ["windows", "windows", "windows"],
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.QUEUED
+                ),
+                [],
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.RUNNING
+                ),
+                [],
+            )
+
+    def test_kernel_shadow_resolves_shared_browser_tools_from_goal_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = replace(
+                real_settings,
+                kernel_shadow_enabled=True,
+                kernel_shadow_dir=str(Path(tmp) / "shadow"),
+                kernel_shadow_user_id="user-1",
+            )
+            observer = KernelShadowObserver(
+                base_dir=Path(tmp) / "shadow",
+                owner_user_id="user-1",
+                settings=configured,
+            )
+            turn = SimpleNamespace(
+                text="L'onglet YouTube a été fermé.",
+                actions=(
+                    SimpleNamespace(
+                        name="list_windows",
+                        success=True,
+                        message="ok",
+                        detail='[{"title":"YouTube - Google Chrome"}]',
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                    SimpleNamespace(
+                        name="close_tab",
+                        success=True,
+                        message="ok",
+                        detail='{"target":"YouTube","verified":true}',
+                        end_session=False,
+                        should_exit=False,
+                    ),
+                ),
+            )
+
+            observation = observer.observe_agent_turn(
+                "Ferme seulement l'onglet YouTube.",
+                turn,
+            )
+
+            self.assertTrue(observation.success)
+            self.assertFalse(observation.needs_review)
+            context, _version = observer.stack.mission_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(
+                context.observed_state["mission_agent_hint"],
+                "browser",
+            )
+            self.assertEqual(
+                context.observed_state["resolved_agents"],
+                ["windows", "browser"],
+            )
+            graph = observer.stack.graph_store.load(
+                observation.mission_id
+            )
+            self.assertEqual(
+                [node.agent_id for node in graph.nodes()],
+                ["windows", "browser"],
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.QUEUED
+                ),
+                [],
+            )
+            self.assertEqual(
+                observer.stack.request_store.by_status(
+                    SyscallStatus.RUNNING
+                ),
+                [],
+            )
+
     def test_kernel_shadow_keeps_recovered_agent_turn_completed(self):
         with tempfile.TemporaryDirectory() as tmp:
             configured = replace(
