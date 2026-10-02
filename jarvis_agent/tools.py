@@ -582,7 +582,11 @@ def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
             return
         if wanted == name:
             score = 1.0
-        elif len(wanted) >= 5 and (wanted in name or name in wanted):
+        elif (
+            len(wanted) >= 5
+            and len(name) >= 4
+            and (wanted in name or name in wanted)
+        ):
             score = 0.94
         else:
             score = difflib.SequenceMatcher(None, wanted, name).ratio()
@@ -674,6 +678,112 @@ def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
 
     if scored[0][0] >= 0.90:
         return scored[0][1], matches
+    return None, matches
+
+
+def _file_search_roots() -> list[Path]:
+    roots = [
+        Path.home() / "Downloads",
+        Path.home() / "Desktop",
+        Path.home() / "Documents",
+    ]
+    return [
+        root
+        for root in roots
+        if root.exists() and root.is_dir()
+    ]
+
+
+def _find_named_file(
+    query: str,
+    *,
+    within: str | None = None,
+) -> tuple[Path | None, list[Path]]:
+    wanted = _normalize_path_name(query)
+    tokens = [
+        token
+        for token in wanted.split()
+        if len(token) >= 3 and token not in {"file", "fichier"}
+    ]
+    if not wanted:
+        return None, []
+
+    roots = _file_search_roots()
+    if within:
+        within_key = normalize(within)
+        if within_key in {"downloads", "telechargements", "telechargement"}:
+            candidate = Path.home() / "Downloads"
+            roots = [candidate] if candidate.exists() else []
+        else:
+            parent, _ = _find_named_folder(within)
+            if parent is not None:
+                roots = [parent]
+
+    scored: list[tuple[float, float, Path]] = []
+    seen: set[str] = set()
+
+    for root in roots:
+        base_depth = len(root.parts)
+        visited = 0
+        try:
+            for current, dirs, files in os.walk(root):
+                current_path = Path(current)
+                depth = len(current_path.parts) - base_depth
+                if depth >= 3:
+                    dirs[:] = []
+                    continue
+                for filename in files:
+                    path = current_path / filename
+                    key = str(path).lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    candidate = _normalize_path_name(filename)
+                    candidate_stem = _normalize_path_name(path.stem)
+                    if wanted == candidate or wanted == candidate_stem:
+                        score = 1.0
+                    elif tokens and all(
+                        token in candidate for token in tokens
+                    ):
+                        score = 0.96
+                    else:
+                        score = max(
+                            difflib.SequenceMatcher(
+                                None,
+                                wanted,
+                                candidate,
+                            ).ratio(),
+                            difflib.SequenceMatcher(
+                                None,
+                                wanted,
+                                candidate_stem,
+                            ).ratio(),
+                        )
+                    if score < 0.72:
+                        continue
+                    try:
+                        modified = float(path.stat().st_mtime)
+                    except OSError:
+                        modified = 0.0
+                    scored.append((score, modified, path))
+                    visited += 1
+                    if visited >= 3000:
+                        dirs[:] = []
+                        break
+                if visited >= 3000:
+                    break
+        except OSError:
+            continue
+
+    scored.sort(key=lambda item: (-item[0], -item[1], len(str(item[2]))))
+    matches = [path for _score, _modified, path in scored[:8]]
+    if not scored:
+        return None, []
+
+    best_score = scored[0][0]
+    if best_score >= 0.90:
+        return scored[0][2], matches
     return None, matches
 
 
@@ -838,6 +948,37 @@ def execute(intent: ToolIntent) -> ToolResult:
             query,
         )
 
+
+    if intent.name == "file.open_named":
+        query = str(intent.args.get("query", "")).strip()
+        within = str(intent.args.get("within", "")).strip() or None
+        path, matches = _find_named_file(query, within=within)
+        if path is not None:
+            try:
+                os.startfile(str(path))
+                return ToolResult(
+                    True,
+                    f"J'ai ouvert {path.name}.",
+                    str(path),
+                )
+            except OSError as exc:
+                return ToolResult(
+                    False,
+                    f"Je n'ai pas pu ouvrir {path.name}.",
+                    str(exc),
+                )
+        if matches:
+            choices = " | ".join(str(item) for item in matches[:5])
+            return ToolResult(
+                False,
+                "Plusieurs fichiers correspondent. Précisez le fichier.",
+                choices,
+            )
+        return ToolResult(
+            False,
+            f"Je n'ai pas trouvé de fichier correspondant à {query}.",
+            query,
+        )
 
     if intent.name == "folder.open_prompt":
         return ToolResult(
