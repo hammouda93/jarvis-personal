@@ -38,7 +38,16 @@ class JarvisKernel:
         journal: StructuredEventJournal | None = None,
     ):
         self.policy = policy or KernelPolicy()
-        self.scheduler = scheduler or MissionScheduler()
+        if scheduler is None:
+            concurrency_limits = {
+                manifest.agent_id: manifest.max_concurrency
+                for manifest in self.policy.registry.agents()
+            }
+            self.scheduler = MissionScheduler(
+                concurrency_limits=concurrency_limits
+            )
+        else:
+            self.scheduler = scheduler
         self.approvals = approvals or HumanApprovalManager()
         self.event_bus = event_bus or MissionEventBus()
         self.journal = journal
