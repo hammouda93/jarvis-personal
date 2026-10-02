@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .windows_app_discovery import (
+    installed_start_app_names,
     launch_registered_app,
     resolve_registered_app,
 )
@@ -515,12 +516,19 @@ def _app_search_roots() -> list[Path]:
 
 @lru_cache(maxsize=1)
 def application_speech_hints(limit: int = 40) -> tuple[str, ...]:
-    """Return generic installed-app names to bias local speech recognition.
+    """Return generic installed-app names to bias speech recognition.
 
-    The list comes from Windows shortcuts rather than hard-coded voice commands.
+    Names come from Windows' registered Start-app inventory plus shortcuts,
+    never from a hard-coded application dictionary.
     """
     names: list[str] = []
     seen: set[str] = set()
+
+    for name in installed_start_app_names(limit=120):
+        key = normalize(name)
+        if name and key and key not in seen:
+            seen.add(key)
+            names.append(name)
 
     for root in _app_search_roots():
         base_depth = len(root.parts)
