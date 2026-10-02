@@ -1,3 +1,4 @@
+import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -5,6 +6,7 @@ from unittest.mock import patch
 from jarvis_agent.native_tools import NativeToolRegistry
 from jarvis_agent.windows_perception import (
     inspect_active_window,
+    type_text_active_window,
     write_ui_element,
     _control_value,
     _uia_window_from_native_with_retry,
@@ -161,7 +163,66 @@ class _FakeNoValuePatternDocument:
         return {}
 
 
+class _FakeClipboard:
+    CF_UNICODETEXT = 13
+    value = "previous"
+
+    @classmethod
+    def OpenClipboard(cls):
+        return None
+
+    @classmethod
+    def CloseClipboard(cls):
+        return None
+
+    @classmethod
+    def IsClipboardFormatAvailable(cls, _fmt):
+        return True
+
+    @classmethod
+    def GetClipboardData(cls, _fmt):
+        return cls.value
+
+    @classmethod
+    def EmptyClipboard(cls):
+        cls.value = ""
+
+    @classmethod
+    def SetClipboardText(cls, value, _fmt):
+        cls.value = value
+
+
 class WindowsPerceptionTests(unittest.TestCase):
+    @patch("jarvis_agent.windows_perception.time.sleep")
+    @patch("jarvis_agent.windows_perception._send_keys")
+    @patch("jarvis_agent.windows_perception.activate_window")
+    def test_focused_window_typing_fallback_pastes_text(
+        self,
+        activate_mock,
+        send_keys_mock,
+        sleep_mock,
+    ):
+        activate_mock.return_value = SimpleNamespace(
+            success=True,
+            message="ok",
+            detail="",
+        )
+        with patch.dict(sys.modules, {"win32clipboard": _FakeClipboard}):
+            result = type_text_active_window(
+                "Bonjour Jarvis",
+                title="Bloc-notes",
+                mode="replace",
+            )
+
+        self.assertTrue(result.success)
+        activate_mock.assert_called_once_with("Bloc-notes")
+        self.assertEqual(
+            [call.args[0] for call in send_keys_mock.call_args_list],
+            ["^a", "^v"],
+        )
+        self.assertIn('"verified":false', result.detail)
+        self.assertEqual(_FakeClipboard.value, "previous")
+
     @patch("jarvis_agent.windows_perception.time.sleep")
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     def test_uia_native_retry_recovers_after_transient_winerror(
