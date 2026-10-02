@@ -196,6 +196,22 @@ class Settings:
     ollama_model: str = (
         os.getenv("JARVIS_OLLAMA_MODEL") or "gemma3:latest"
     ).strip()
+    vision_enabled: bool = _bool("JARVIS_VISION_ENABLED", True)
+    vision_model: str = (
+        os.getenv("JARVIS_VISION_MODEL") or "gemma3:latest"
+    ).strip()
+    vision_timeout_s: float = _float("JARVIS_VISION_TIMEOUT_S", 20.0)
+    vision_max_width: int = _int("JARVIS_VISION_MAX_WIDTH", 1600)
+    vision_num_predict: int = _int("JARVIS_VISION_NUM_PREDICT", 420)
+    vision_local_only: bool = _bool("JARVIS_VISION_LOCAL_ONLY", True)
+    vision_save_evidence: bool = _bool(
+        "JARVIS_VISION_SAVE_EVIDENCE",
+        False,
+    )
+    vision_evidence_max_files: int = _int(
+        "JARVIS_VISION_EVIDENCE_MAX_FILES",
+        30,
+    )
     ai_request_timeout_s: float = _float("JARVIS_AI_REQUEST_TIMEOUT_S", 60.0)
     ai_history_messages: int = _int("JARVIS_AI_HISTORY_MESSAGES", 8)
 
