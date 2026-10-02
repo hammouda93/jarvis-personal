@@ -2376,6 +2376,15 @@ class GroqResponsesAgent:
                 except json.JSONDecodeError:
                     arguments = {}
 
+                if (
+                    close_recovery_required
+                    and name == "inspect_active_window"
+                ):
+                    # A blocked close usually created a modal confirmation.
+                    # Ignore any stale parent-window title supplied by the
+                    # model and inspect the real foreground window instead.
+                    arguments = {}
+
                 if log:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
                 if phase:
