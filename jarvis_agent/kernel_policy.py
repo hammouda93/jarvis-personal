@@ -50,6 +50,15 @@ class KernelPolicy:
         spec = registered.spec
         payload: dict[str, Any] = dict(request.payload or {})
 
+        if any(
+            str(key).startswith("_kernel_")
+            for key in payload
+        ):
+            return AuthorizationDecision(
+                False,
+                "reserved_kernel_payload",
+            )
+
         tool_name = str(payload.get("tool_name") or "").strip()
         if tool_name and tool_name not in set(manifest.allowed_tools):
             return AuthorizationDecision(
