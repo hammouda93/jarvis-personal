@@ -450,6 +450,180 @@ The passive scheduler now enforces per-agent concurrency limits. The passive
 This prevents a future specialized agent from running more simultaneous
 syscalls than its declared capacity while preserving priority + FIFO ordering.
 
+## 25. Explicit Agent Factory and child-agent lifecycle
+
+`jarvis_agent/agent_factory.py`
+
+Specialized agents are created only from trusted builders registered by Jarvis.
+A plugin manifest is never enough to import arbitrary Python code.
+
+Lifecycle:
+
+`created → running → suspended/resumed → completed/failed/terminated`
+
+The factory enforces the agent manifest concurrency limit and tracks parent
+process ids for future child agents.
+
+## 26. Scoped Tool Gateway and execution managers
+
+`jarvis_agent/tool_gateway.py`
+`jarvis_agent/execution_managers.py`
+
+The Tool Gateway is a hard permission boundary:
+
+`agent_id + tool_name → manifest permission check → executor`
+
+A model cannot gain a tool merely by asking for it in a prompt.
+
+Execution managers provide typed dispatch for Kernel syscalls:
+
+- TOOL
+- CONNECTOR
+- MEMORY
+- callback-based LLM/storage/test/replay adapters
+
+The current live NativeToolRegistry remains authoritative until the Kernel path
+is explicitly activated.
+
+## 27. Persistent mission orchestration
+
+`jarvis_agent/mission_orchestrator.py`
+`jarvis_agent/task_graph_store.py`
+`jarvis_agent/kernel_request_store.py`
+
+Mission context, task DAG and Kernel requests can all be persisted.
+
+Restart safety rule:
+
+- QUEUED requests may be safely restored.
+- RUNNING requests are never automatically replayed.
+- RUNNING requests become `recovery_required` for verification by the future
+  Dev Supervisor.
+- step ids allow the orchestrator to rebuild `request_id ↔ task_id` mappings.
+
+This avoids duplicate external side effects after a crash.
+
+## 28. Persistent scoped knowledge backend
+
+`jarvis_agent/scoped_knowledge_store.py`
+
+Provides an SQLite backend for the existing KnowledgeBroker contract while
+preserving:
+
+- user ownership
+- agent ownership
+- organization partition
+- APP/DOMAIN/SKILL/USER/etc. scope
+- private/shared policy
+- metadata and relevance
+
+The current operational knowledge database is not migrated yet.
+
+## 29. Cross-agent Context Injector
+
+`jarvis_agent/context_injector.py`
+
+Builds context for one agent using:
+
+mission context
++ scoped knowledge visible to the user/agent principal
++ agent-declared memory scopes
++ deterministic token budget
+
+A mission from another user is rejected. Knowledge remains filtered by the
+KnowledgeAccessPolicy before context selection.
+
+This is the Jarvis equivalent of the useful AIOS ContextInjector concept,
+without Mem0.
+
+## 30. Resource-aware scheduler
+
+`jarvis_agent/mission_scheduler.py`
+
+The scheduler now supports independent concurrency limits for:
+
+- agents
+- syscall/resource classes
+
+This allows future limits such as:
+
+- one expensive LLM request at a time
+- several safe reads
+- restricted concurrent external connectors
+- isolated test/replay workers
+
+Priority + FIFO remains unchanged.
+
+## 31. Passive routed LLM manager
+
+`jarvis_agent/llm_manager.py`
+
+Future Kernel LLM execution can use:
+
+- LightweightModelRouter
+- provider/model adapters
+- telemetry
+- temporary circuit breaker
+- retry/fallback
+- task tags
+- latency/cost/context constraints
+
+This is **not** connected to the live Cerebras → secondary Cerebras → Groq path
+during current testing.
+
+## 32. Incident Bundle for Dev Supervisor
+
+`jarvis_agent/incident_bundle.py`
+
+Builds a bounded failure evidence package from the Event Journal:
+
+- user inputs
+- intent/agent/model decision events
+- tool/syscall events
+- observations
+- proofs
+- user feedback
+- errors
+- relevant component ids
+- event ids
+
+It deliberately does not reconstruct or store hidden chain-of-thought.
+
+This is the evidence package required for cases such as:
+
+`"Open Chrome" → Edge opened → user says "No, wrong"`
+
+## 33. MCP and replay adapters
+
+`jarvis_agent/mcp_connector_adapter.py`
+`jarvis_agent/replay_adapter.py`
+
+MCP capabilities must be explicitly mapped; arbitrary remote tools are not
+auto-discovered into the agent permission set.
+
+The replay adapter is backend-neutral and can later talk to a localhost-only
+VM/MCP controller inspired by LiteCUA without importing AIOS code.
+
+## 34. Plugin and secret security
+
+`jarvis_agent/plugin_loader.py`
+`jarvis_agent/plugin_policy.py`
+`jarvis_agent/secret_provider.py`
+
+Plugin manifests are metadata-only until trusted Jarvis code registers an
+executable agent builder.
+
+Plugin policy enforces declared:
+
+- tools
+- connectors
+- network hosts
+- file roots
+
+Secrets can remain environment-backed for compatibility. An optional
+non-enumerating Windows Credential Manager provider can read one exact target
+without listing the Windows vault.
+
 ## What is deliberately NOT done yet
 
 - no AIOS dependency
