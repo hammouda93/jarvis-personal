@@ -329,7 +329,7 @@ def _completed_action_capabilities(
     for action in actions:
         if not action.success:
             continue
-        if action.name == "write_ui_element":
+        if action.name in {"write_ui_element", "write_visual_target"}:
             completed.add("write_ui")
         elif action.name == "type_text_active_window":
             try:
