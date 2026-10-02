@@ -51,7 +51,7 @@ class ArchitectureExtensionTests(unittest.TestCase):
                 app_scope="cursor",
                 confidence=0.9,
             )
-            store.upsert_lesson(
+            store.record_lesson(
                 scope="behavior",
                 pattern="c'est bon",
                 rule="Do not repeat the previous mutation.",
