@@ -176,6 +176,9 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertIn("open_file", tools)
         self.assertIn("close_tab", tools)
         self.assertIn("type_text_active_window", tools)
+        self.assertIn("research_web", tools)
+        self.assertIn("open_web_search", tools)
+        self.assertNotIn("search_web", tools)
         self.assertIn("mode", tools["write_ui_element"]["properties"])
         self.assertEqual(
             set(
@@ -196,6 +199,59 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertIn("save_verified_skill", names)
         self.assertIn("save_feedback_lesson", names)
         self.assertIn("agent_knowledge_stats", names)
+
+    @patch("jarvis_agent.native_tools.execute")
+    @patch("jarvis_agent.native_tools.BACKGROUND_WEB_RESEARCH")
+    def test_research_web_never_opens_visible_browser(
+        self,
+        research_mock,
+        execute_mock,
+    ):
+        research_mock.research.return_value = SimpleNamespace(
+            success=True,
+            as_dict=lambda: {
+                "success": True,
+                "provider": "groq_browser_search",
+                "query": "Windows MSIX launch AUMID",
+                "answer": "Use registered application identity.",
+                "evidence": [],
+                "error": "",
+                "visible_browser_opened": False,
+            },
+        )
+
+        result = self.registry.execute(
+            "research_web",
+            {"query": "Windows MSIX launch AUMID"},
+        )
+
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertFalse(payload["visible_browser_opened"])
+        self.assertEqual(payload["provider"], "groq_browser_search")
+        execute_mock.assert_not_called()
+
+    @patch("jarvis_agent.native_tools.execute")
+    def test_open_web_search_is_the_explicit_visible_browser_primitive(
+        self,
+        execute_mock,
+    ):
+        execute_mock.return_value = ToolResult(
+            True,
+            "search opened",
+            "https://www.google.com/search?q=Jarvis",
+        )
+
+        result = self.registry.execute(
+            "open_web_search",
+            {"query": "Jarvis"},
+        )
+
+        self.assertTrue(result.success)
+        intent = execute_mock.call_args.args[0]
+        self.assertEqual(intent.name, "browser.search")
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["visible_browser_opened"])
 
     @patch("jarvis_agent.native_tools.close_tab")
     def test_close_tab_routes_separately_from_close_window(self, close_tab_mock):
