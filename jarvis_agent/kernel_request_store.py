@@ -191,6 +191,38 @@ class KernelRequestStore:
     def recovery_required(self) -> list[KernelRequest]:
         return self.by_status(SyscallStatus.RUNNING)
 
+    def for_mission(
+        self,
+        mission_id: str,
+        *,
+        statuses: tuple[SyscallStatus, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [str(mission_id)]
+        where = "mission_id=?"
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            where += f" AND status IN ({placeholders})"
+            params.extend(status.value for status in statuses)
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM kernel_requests
+                WHERE {where}
+                ORDER BY created_at ASC
+                """,
+                tuple(params),
+            ).fetchall()
+        return [
+            {
+                "request": self._request(row),
+                "status": SyscallStatus(row["status"]),
+                "error": row["error"],
+                "updated_at": float(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
     def get(self, request_id: str) -> dict[str, Any] | None:
         with self._lock, self._connect() as conn:
             row = conn.execute(
