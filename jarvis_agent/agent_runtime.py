@@ -1677,6 +1677,8 @@ class GroqResponsesAgent:
             "Cet outil vient d échouer",
             "Tu viens d'écrire une imitation JSON d'outil",
             "Une action vient de modifier l'interface",
+            "CHECKPOINT_APPRENTISSAGE_SKILL",
+            "CHECKPOINT_APPRENTISSAGE_LESSON",
         )
         for item in self._messages[1:]:
             role = str(item.get("role") or "")
@@ -1825,6 +1827,8 @@ class GroqResponsesAgent:
         pseudo_tool_repair_attempted = False
         ui_verification_repair_attempted = False
         ui_verification_required = False
+        skill_learning_checkpoint_attempted = False
+        lesson_learning_checkpoint_attempted = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -1902,6 +1906,79 @@ class GroqResponsesAgent:
                     ui_verification_repair_attempted = True
                     if log:
                         log("[AGENT] repair=ui_verification_required")
+                    continue
+
+                reusable_actions = [
+                    action
+                    for action in actions
+                    if action.name not in {
+                        "search_agent_knowledge",
+                        "save_verified_skill",
+                        "save_feedback_lesson",
+                        "agent_knowledge_stats",
+                    }
+                ]
+                learned_skill_this_turn = any(
+                    action.name == "save_verified_skill" and action.success
+                    for action in actions
+                )
+                learned_lesson_this_turn = any(
+                    action.name == "save_feedback_lesson" and action.success
+                    for action in actions
+                )
+
+                if (
+                    _actions_have_verified_proof(actions)
+                    and len(reusable_actions) >= 2
+                    and not learned_skill_this_turn
+                    and not skill_learning_checkpoint_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    self._skill_write_allowed = True
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "CHECKPOINT_APPRENTISSAGE_SKILL: la mission vient "
+                                "d'être vérifiée. Si ce workflow est réellement "
+                                "réutilisable, enregistre UNE procédure abstraite avec "
+                                "save_verified_skill maintenant. N'inclus aucune donnée "
+                                "personnelle, contenu utilisateur, secret ou coordonnée "
+                                "fixe. S'il n'y a rien de réutilisable, réponds simplement "
+                                "à la demande sans enregistrer de skill."
+                            ),
+                        }
+                    )
+                    skill_learning_checkpoint_attempted = True
+                    if log:
+                        log("[KNOWLEDGE] checkpoint=verified_skill")
+                    continue
+
+                if (
+                    self._lesson_write_allowed
+                    and not learned_lesson_this_turn
+                    and not lesson_learning_checkpoint_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "CHECKPOINT_APPRENTISSAGE_LESSON: l'utilisateur vient "
+                                "de corriger clairement ton comportement. Si la correction "
+                                "est générale et réutilisable, enregistre UNE lesson avec "
+                                "save_feedback_lesson sans conserver la donnée privée qui "
+                                "a déclenché la correction. Sinon réponds simplement."
+                            ),
+                        }
+                    )
+                    lesson_learning_checkpoint_attempted = True
+                    if log:
+                        log("[KNOWLEDGE] checkpoint=feedback_lesson")
                     continue
 
                 if (
