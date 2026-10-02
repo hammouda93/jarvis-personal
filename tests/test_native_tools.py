@@ -1,11 +1,13 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from jarvis_agent.agent_knowledge import AgentKnowledgeStore
+from jarvis_agent.config import settings as real_settings
 from jarvis_agent.native_tools import NativeToolRegistry
 from jarvis_agent.tools import ToolResult
 
@@ -34,6 +36,10 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertEqual(intent.name, "app.open_named")
         self.assertEqual(intent.args["query"], "VLC Media Player")
 
+    @patch(
+        "jarvis_agent.native_tools.settings",
+        replace(real_settings, operational_learning_enabled=True),
+    )
     @patch("jarvis_agent.native_tools.os.startfile")
     @patch("jarvis_agent.native_tools.execute")
     def test_learned_app_profile_is_reused_before_rescanning_windows(
