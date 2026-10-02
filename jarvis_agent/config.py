@@ -167,6 +167,14 @@ class Settings:
     cerebras_reasoning_effort: str = (
         os.getenv("JARVIS_CEREBRAS_REASONING_EFFORT") or "low"
     ).strip()
+    cerebras_request_timeout_s: float = _float(
+        "JARVIS_CEREBRAS_REQUEST_TIMEOUT_S",
+        8.0,
+    )
+    cerebras_fallback_to_groq: bool = _bool(
+        "JARVIS_CEREBRAS_FALLBACK_TO_GROQ",
+        True,
+    )
 
     openai_api_key: str = (os.getenv("OPENAI_API_KEY") or "").strip()
     openai_base_url: str = (
