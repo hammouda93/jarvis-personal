@@ -351,6 +351,21 @@ class AssistantWorker(QObject):
             f"cerebras_model={settings.cerebras_agent_model} "
             f"openai_model={settings.openai_agent_model}"
         )
+        mode = (
+            "BASELINE"
+            if not (
+                settings.operational_learning_enabled
+                or settings.vision_enabled
+                or settings.strict_proof_enabled
+            )
+            else "EXTENDED"
+        )
+        self.log_line.emit(
+            f"[MODE] {mode} "
+            f"learning={int(settings.operational_learning_enabled)} "
+            f"vision={int(settings.vision_enabled)} "
+            f"strict_proof={int(settings.strict_proof_enabled)}"
+        )
         self._state(AssistantState.STARTING, "Initialisation de Jarvis…")
 
         try:
