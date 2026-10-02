@@ -693,6 +693,16 @@ class AgentKnowledgeStore:
             ],
         }
 
+    def clear_operational_knowledge(self) -> dict[str, int]:
+        """Clear only operational learning, never personal memory."""
+        before = self.stats()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM skill_runs")
+            conn.execute("DELETE FROM skills")
+            conn.execute("DELETE FROM lessons")
+            conn.execute("DELETE FROM app_profiles")
+        return before
+
     def stats(self) -> dict[str, int]:
         with self._connect() as conn:
             return {
