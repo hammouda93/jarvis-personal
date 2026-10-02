@@ -1,8 +1,10 @@
+import sys
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from jarvis_agent.capability_registry import (
     DEFAULT_CAPABILITY_REGISTRY,
@@ -105,6 +107,10 @@ from jarvis_agent.regression_registry import (
     DEFAULT_REGRESSION_REGISTRY,
 )
 from jarvis_agent.write_barrier import ScopedWriteBarrier
+from jarvis_agent.secret_provider import (
+    SecretRef,
+    WindowsCredentialSecretProvider,
+)
 
 
 class KernelFoundationTests(unittest.TestCase):
@@ -1878,6 +1884,39 @@ class KernelFoundationTests(unittest.TestCase):
         self.assertEqual(
             denied.error,
             "mcp_tool_mapping_missing",
+        )
+
+    def test_windows_credential_provider_reads_only_exact_target(self):
+        calls = []
+
+        class FakeWin32Cred:
+            CRED_TYPE_GENERIC = 1
+
+            @staticmethod
+            def CredRead(target, credential_type):
+                calls.append((target, credential_type))
+                return {
+                    "CredentialBlob": "secret-value".encode("utf-16-le")
+                }
+
+        provider = WindowsCredentialSecretProvider(
+            target_prefix="Jarvis"
+        )
+        with unittest.mock.patch.dict(
+            sys.modules,
+            {"win32cred": FakeWin32Cred},
+        ):
+            value = provider.get(
+                SecretRef(
+                    name="groq_api_key",
+                    namespace="jarvis",
+                )
+            )
+
+        self.assertEqual(value, "secret-value")
+        self.assertEqual(
+            calls,
+            [("Jarvis/jarvis/groq_api_key", 1)],
         )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
