@@ -18,6 +18,7 @@ from jarvis_agent.kernel_contracts import (
     SyscallKind,
 )
 from jarvis_agent.kernel_dispatcher import KernelDispatcher
+from jarvis_agent.kernel_stack import build_passive_kernel_stack
 from jarvis_agent.kernel_request_store import KernelRequestStore
 from jarvis_agent.kernel_service import JarvisKernel
 from jarvis_agent.knowledge_broker import KnowledgeBroker
@@ -304,6 +305,48 @@ class ArchitectureExtensionTests(unittest.TestCase):
         self.assertTrue(allowed.allowed)
         self.assertTrue(allowed.automatic_write_allowed)
         self.assertFalse(allowed.requires_dev_patch_pipeline)
+
+    def test_passive_kernel_stack_builds_without_touching_live_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = replace(
+                real_settings,
+                cerebras_api_key="",
+                groq_api_key="",
+                vision_enabled=False,
+                openai_api_key="",
+            )
+            stack = build_passive_kernel_stack(
+                base_dir=tmp,
+                owner_user_id="user-1",
+                settings=configured,
+            )
+
+            self.assertEqual(
+                stack.journal.stats()["missions"],
+                0,
+            )
+            self.assertEqual(
+                stack.telemetry.stats()["model_calls"],
+                0,
+            )
+            self.assertIsNotNone(
+                stack.registry.get_agent("windows")
+            )
+            self.assertIsNotNone(
+                stack.agent_router.route("computer.observe")
+            )
+            self.assertTrue(
+                stack.tool_gateway.registry.tool_allowed(
+                    "windows",
+                    "inspect_active_window",
+                )
+            )
+            self.assertTrue(
+                Path(tmp, "mission_events.sqlite3").exists()
+            )
+            self.assertTrue(
+                Path(tmp, "agent_knowledge.sqlite3").exists()
+            )
 
     def test_capability_token_cannot_authorize_undeclared_capability(self):
         authority = CapabilityTokenAuthority()
