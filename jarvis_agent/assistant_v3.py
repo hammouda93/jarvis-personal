@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
@@ -83,6 +84,38 @@ class AssistantWorker(QObject):
             self._state(AssistantState.THINKING, "Jarvis réfléchit…")
         elif phase == "acting":
             self._state(AssistantState.ACTING, "Jarvis agit…")
+        elif phase.startswith("researching:"):
+            raw_payload = phase.split(":", 1)[1]
+            try:
+                payload = json.loads(raw_payload)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            query = str(payload.get("query") or "").strip()
+            reason = str(payload.get("reason") or "").strip()
+            if reason == "local_failure":
+                prefix = (
+                    "Je n'ai pas pu résoudre ce point avec les méthodes "
+                    "locales disponibles. "
+                )
+            else:
+                prefix = (
+                    "Ce point nécessite une information externe que je "
+                    "n'ai pas localement. "
+                )
+            subject = (
+                f"Je vais lancer une recherche en arrière-plan pour vérifier : {query}."
+                if query
+                else "Je vais lancer une recherche en arrière-plan pour vérifier la solution."
+            )
+            self.log_line.emit(
+                f"[RESEARCH] announce reason={reason or 'unspecified'} "
+                f"query={query!r}"
+            )
+            self._speak(prefix + subject)
+            self._state(
+                AssistantState.THINKING,
+                "Recherche en arrière-plan…",
+            )
 
     @Slot()
     def stop(self) -> None:
