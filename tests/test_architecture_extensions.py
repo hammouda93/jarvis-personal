@@ -32,6 +32,12 @@ from jarvis_agent.knowledge_broker import KnowledgeBroker
 from jarvis_agent.knowledge_policy import KnowledgePrincipal
 from jarvis_agent.config import settings as real_settings
 from jarvis_agent.model_catalog import CurrentModelCatalog
+from jarvis_agent.mission_semantics import (
+    MissionContract,
+    MissionEntity,
+    MissionStep,
+    MissionStepState,
+)
 from jarvis_agent.promotion_gate import CorrectionPromotionGate
 from jarvis_agent.supervisor_validation import SupervisorValidationState
 from jarvis_agent.shadow_kernel_runtime import KernelShadowObserver
@@ -734,6 +740,81 @@ class ArchitectureExtensionTests(unittest.TestCase):
                 ),
                 [],
             )
+
+    def test_semantic_mission_contract_keeps_entities_steps_and_evidence_separate(self):
+        contract = MissionContract(
+            source_text=(
+                "Trouve la personne demandée, ouvre la conversation, "
+                "écris le message puis envoie-le."
+            ),
+            objective="Envoyer un message à la bonne personne.",
+            entities=(
+                MissionEntity(
+                    role="recipient",
+                    value="PERSON_A",
+                    source_text="personne demandée",
+                ),
+                MissionEntity(
+                    role="message_body",
+                    value="MESSAGE_A",
+                    source_text="le message",
+                ),
+            ),
+            steps=(
+                MissionStep(
+                    step_id="step_1",
+                    intent="locate_target",
+                    target_role="recipient",
+                    required_evidence=("target_visible",),
+                ),
+                MissionStep(
+                    step_id="step_2",
+                    intent="open_target",
+                    target_role="recipient",
+                    depends_on=("step_1",),
+                    required_evidence=("target_opened",),
+                ),
+                MissionStep(
+                    step_id="step_3",
+                    intent="compose_content",
+                    content_role="message_body",
+                    depends_on=("step_2",),
+                    required_evidence=("content_verified",),
+                ),
+                MissionStep(
+                    step_id="step_4",
+                    intent="commit_external_action",
+                    content_role="message_body",
+                    depends_on=("step_3",),
+                    required_evidence=("external_action_verified",),
+                    state=MissionStepState.PLANNED,
+                ),
+            ),
+            constraints=("do_not_skip_steps",),
+        )
+
+        contract.validate()
+
+        self.assertEqual(
+            contract.entity_map(),
+            {
+                "recipient": "PERSON_A",
+                "message_body": "MESSAGE_A",
+            },
+        )
+        self.assertEqual(
+            contract.completion_requirements(),
+            (
+                "target_visible",
+                "target_opened",
+                "content_verified",
+                "external_action_verified",
+            ),
+        )
+        self.assertEqual(
+            contract.steps[2].depends_on,
+            ("step_2",),
+        )
 
     def test_contextual_agent_router_general_behavior_matrix(self):
         router = CapabilityAgentRouter()
