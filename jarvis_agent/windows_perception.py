@@ -636,6 +636,7 @@ def inspect_active_window(
         descendants = window.descendants()
     except Exception as exc:
         first_desc_error = exc
+
         if native_item is None:
             try:
                 handle = int(getattr(window, "handle", 0) or 0)
@@ -651,6 +652,7 @@ def inspect_active_window(
             except Exception:
                 native_item = None
 
+        descendants = None
         if native_item is not None:
             try:
                 time.sleep(0.12)
@@ -662,19 +664,13 @@ def inspect_active_window(
                 descendants = window.descendants()
             except Exception:
                 descendants = None
-        else:
-            descendants = None
 
-        if descendants is not None:
-            pass
-        else:
-            exc = first_desc_error
-                # no usable UIA descendants.
+        if descendants is None:
             if native_item is not None:
                 combined = (
-                    f"{uia_error}; descendants: {exc}"
+                    f"{uia_error}; descendants: {first_desc_error}"
                     if uia_error
-                    else str(exc)
+                    else str(first_desc_error)
                 )
                 return _native_only_inspection(
                     native_item,
@@ -683,7 +679,7 @@ def inspect_active_window(
             return UIActionResult(
                 False,
                 "Impossible de lire les éléments de la fenêtre.",
-                str(exc),
+                str(first_desc_error),
             )
 
     interactive: list[Any] = []
