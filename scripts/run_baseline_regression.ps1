@@ -16,6 +16,7 @@ $tests = @(
     "tests.test_tools",
     "tests.test_native_tools",
     "tests.test_assistant_v3",
+    "tests.test_ui_logging",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_baseline_hides_new_learning_and_vision_tools",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_skips_extra_inspection_when_write_self_verifies",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_verifies_ui_after_write_before_concluding",
