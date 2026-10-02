@@ -105,6 +105,42 @@ class _FakeText:
         raise AssertionError("Text controls must never receive typed input")
 
 
+class _FakeDocument:
+    element_info = SimpleNamespace(
+        name="Bonjour Jarvis",
+        control_type="Document",
+        automation_id="TextEditor",
+    )
+
+    def __init__(self, value="Bonjour Jarvis"):
+        self.value = value
+        self.focused = False
+
+    def window_text(self):
+        return self.value
+
+    def get_value(self):
+        return self.value
+
+    def rectangle(self):
+        return _FakeRect()
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def descendants(self):
+        return []
+
+    def set_focus(self):
+        self.focused = True
+
+    def set_edit_text(self, value):
+        self.value = value
+
+
 class WindowsPerceptionTests(unittest.TestCase):
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._native_target_window")
@@ -220,6 +256,35 @@ class WindowsPerceptionTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         send_mock.assert_called_once_with("%{LEFT}")
+
+    @patch("jarvis_agent.windows_perception._snapshot_element")
+    def test_append_write_preserves_existing_document_text(
+        self,
+        snapshot_mock,
+    ):
+        document = _FakeDocument("Bonjour Jarvis")
+        snapshot_mock.return_value = document
+
+        result = write_ui_element(
+            "",
+            " Test après texte existant",
+            ref="e7",
+            mode="append",
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            document.value,
+            "Bonjour Jarvis Test après texte existant",
+        )
+        self.assertIn('"verified":true', result.detail)
+        self.assertIn('"mode":"append"', result.detail)
+
+    def test_title_app_hint_handles_windows_en_dash(self):
+        self.assertEqual(
+            _title_app_hint("*Bonjour Jarvis – Bloc-notes"),
+            "Bloc-notes",
+        )
 
     def test_exact_ui_label_scores_highest(self):
         self.assertEqual(_score_name("Paramètres", "Paramètres"), 1.0)
