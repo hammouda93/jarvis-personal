@@ -296,6 +296,7 @@ def _looks_like_pseudo_tool_syntax(text: str) -> bool:
         "activatewindow",
         "clickuielement",
         "writeuielement",
+        "typetextactivewindow",
         "presskey",
         "openapplication",
         "openfolder",
