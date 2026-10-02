@@ -749,7 +749,7 @@ def _query_matches_recent_user_context(
 
 def _blocked_contextual_web_search_result(query: str) -> AgentActionResult:
     return AgentActionResult(
-        name="search_web",
+        name="research_web",
         success=False,
         message=(
             "Ce sujet correspond à un élément déjà introduit dans la "
@@ -2700,8 +2700,23 @@ class GroqResponsesAgent:
                 ):
                     result = _blocked_persistent_recall_for_current_context()
                 elif (
-                    name == "search_web"
+                    name == "open_web_search"
                     and not _is_explicit_web_request(user_text)
+                ):
+                    result = _blocked_visible_web_search_result(
+                        str(arguments.get("query", ""))
+                    )
+                elif (
+                    name in {"research_web", "search_web"}
+                    and research_web_calls >= 2
+                ):
+                    result = _blocked_research_budget_result(
+                        str(arguments.get("query", ""))
+                    )
+                elif (
+                    name in {"research_web", "search_web"}
+                    and not _is_explicit_web_request(user_text)
+                    and not any(not action.success for action in actions)
                     and _query_matches_recent_user_context(
                         str(arguments.get("query", "")),
                         self._messages,
@@ -2712,6 +2727,8 @@ class GroqResponsesAgent:
                     )
                 else:
                     result = self.tools.execute(name, arguments)
+                    if name in {"research_web", "search_web"}:
+                        research_web_calls += 1
                 actions.append(result)
                 if (
                     settings.vision_enabled
