@@ -2113,7 +2113,8 @@ class GroqResponsesAgent:
                     return AgentTurnResult(
                         text=(
                             "Cette action va modifier les données MS Football. "
-                            "Dites oui pour confirmer ou non pour annuler."
+                            "J'ai besoin de votre confirmation explicite. "
+                            "Dites oui pour exécuter ou non pour annuler."
                         ),
                         actions=tuple(actions),
                         end_session=end_session,
