@@ -134,6 +134,7 @@ def build_default_regression_registry() -> RegressionRegistry:
             watched_paths=(
                 "jarvis_agent/kernel_contracts.py",
                 "jarvis_agent/kernel_service.py",
+                "jarvis_agent/kernel_stack.py",
                 "jarvis_agent/kernel_policy.py",
                 "jarvis_agent/kernel_request_store.py",
                 "jarvis_agent/kernel_dispatcher.py",
