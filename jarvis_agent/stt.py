@@ -20,6 +20,24 @@ class TranscriptResult:
     rejected_reason: str | None = None
 
 
+def _stt_grounding_prompt() -> str:
+    """Build one provider-neutral prompt grounded in the local Windows state."""
+    app_hints = application_speech_hints()
+    prompt_parts = [settings.stt_initial_prompt.strip()]
+    if app_hints:
+        prompt_parts.append(
+            "Noms d'applications installées susceptibles d'être prononcés : "
+            + ", ".join(app_hints)
+            + "."
+        )
+    prompt_parts.append(
+        "Contexte : assistant Windows. L'utilisateur peut demander d'ouvrir "
+        "une application, une fenêtre ou un dossier, cliquer, écrire, fermer "
+        "une fenêtre ou rechercher sur Internet."
+    )
+    return " ".join(part for part in prompt_parts if part)
+
+
 class LocalWhisperSTT:
     """Lazy-loaded local STT provider using faster-whisper."""
 
@@ -92,20 +110,7 @@ class LocalWhisperSTT:
     def _decode(self, path, *, language: str | None) -> TranscriptResult:
         model = self._get_model()
 
-        app_hints = application_speech_hints()
-        prompt_parts = [settings.stt_initial_prompt.strip()]
-        if app_hints:
-            prompt_parts.append(
-                "Noms d'applications installées susceptibles d'être prononcés : "
-                + ", ".join(app_hints)
-                + "."
-            )
-        prompt_parts.append(
-            "Contexte : assistant Windows. L'utilisateur peut demander d'ouvrir "
-            "une application, une fenêtre ou un dossier, cliquer, écrire, fermer "
-            "une fenêtre ou rechercher sur Internet."
-        )
-        initial_prompt = " ".join(part for part in prompt_parts if part)
+        initial_prompt = _stt_grounding_prompt()
 
         segments, info = model.transcribe(
             str(path),
@@ -254,7 +259,7 @@ class GroqWhisperSTT:
                         model=settings.groq_stt_model,
                         file=(path.name, audio_file),
                         language=effective_language,
-                        prompt=settings.stt_initial_prompt or None,
+                        prompt=_stt_grounding_prompt() or None,
                         response_format="verbose_json",
                         temperature=0,
                     )
