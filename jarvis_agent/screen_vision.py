@@ -487,6 +487,7 @@ def write_visual_target(
     clicked = click_visual_target(target=target, title=title)
     if not clicked.success:
         return clicked
+    time.sleep(0.08)
 
     try:
         import win32clipboard
