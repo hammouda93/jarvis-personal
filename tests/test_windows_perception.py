@@ -73,6 +73,38 @@ class _FakeComboBox:
         self.typed.append(value)
 
 
+class _FakeText:
+    element_info = SimpleNamespace(
+        name="Sans titre",
+        control_type="Text",
+        automation_id="",
+    )
+
+    def window_text(self):
+        return "Sans titre"
+
+    def rectangle(self):
+        return _FakeRect()
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def descendants(self):
+        return []
+
+    def set_focus(self):
+        pass
+
+    def click_input(self):
+        pass
+
+    def type_keys(self, *_args, **_kwargs):
+        raise AssertionError("Text controls must never receive typed input")
+
+
 class WindowsPerceptionTests(unittest.TestCase):
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._native_target_window")
@@ -157,6 +189,37 @@ class WindowsPerceptionTests(unittest.TestCase):
             combo.typed[-1],
             "Sports et intelligence artificielle",
         )
+
+    @patch("jarvis_agent.windows_perception._snapshot_element")
+    def test_write_ui_element_rejects_plain_text_label(
+        self,
+        snapshot_mock,
+    ):
+        snapshot_mock.return_value = _FakeText()
+
+        result = write_ui_element(
+            "",
+            "bonjour Jarvis",
+            ref="e7",
+        )
+
+        self.assertFalse(result.success)
+        self.assertIn("Text", result.detail)
+
+    def test_window_score_ignores_hyphen_typography(self):
+        self.assertGreaterEqual(
+            _score_name("Bloc‑notes", "Sans titre – Bloc-notes"),
+            0.94,
+        )
+
+    @patch("jarvis_agent.windows_perception._send_keys")
+    def test_press_key_allows_safe_browser_back_navigation(self, send_mock):
+        from jarvis_agent.windows_perception import press_key
+
+        result = press_key("Alt+Left")
+
+        self.assertTrue(result.success)
+        send_mock.assert_called_once_with("%{LEFT}")
 
     def test_exact_ui_label_scores_highest(self):
         self.assertEqual(_score_name("Paramètres", "Paramètres"), 1.0)
