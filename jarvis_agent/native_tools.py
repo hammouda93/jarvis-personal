@@ -10,7 +10,11 @@ from .agent_knowledge import AGENT_KNOWLEDGE
 from .config import settings
 from .memory import LOCAL_MEMORY
 from .ms_football_bridge import MS_FOOTBALL_BRIDGE
-from .screen_vision import click_visual_target, observe_screen
+from .screen_vision import (
+    click_visual_target,
+    observe_screen,
+    write_visual_target,
+)
 from .tools import ToolIntent, ToolResult, execute, normalize
 from .windows_perception import (
     activate_window,
@@ -170,6 +174,30 @@ class NativeToolRegistry:
                     },
                 },
                 ["target"],
+            ),
+            self._ollama(
+                "write_visual_target",
+                "Fallback visuel local contrôlé pour écrire: localise un champ clairement visible, clique ce champ puis saisit le texte. Utiliser seulement si UIA ne fournit aucun contrôle writable exploitable. Toujours réinspecter après.",
+                {
+                    "target": {
+                        "type": "string",
+                        "description": "Description précise du champ visible, par ex. champ Nom du fichier.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Texte à saisir dans cette cible.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Titre optionnel de la fenêtre cible.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["replace", "append", "insert"],
+                        "description": "replace=remplacer; append=ajouter à la fin; insert=insérer au curseur.",
+                    },
+                },
+                ["target", "text"],
             ),
             self._ollama(
                 "activate_window",
@@ -764,6 +792,24 @@ class NativeToolRegistry:
             title = str(args.get("title", "")).strip() or None
             target = str(args.get("target", "")).strip()
             result = click_visual_target(target=target, title=title)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "write_visual_target":
+            title = str(args.get("title", "")).strip() or None
+            target = str(args.get("target", "")).strip()
+            text_value = str(args.get("text", ""))
+            mode = str(args.get("mode", "replace")).strip() or "replace"
+            result = write_visual_target(
+                target=target,
+                text=text_value,
+                title=title,
+                mode=mode,
+            )
             return AgentActionResult(
                 name=name,
                 success=result.success,
