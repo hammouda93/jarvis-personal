@@ -23,10 +23,12 @@ Write-Host "Python syntax preflight OK."
 Write-Host ""
 
 Write-Host "1/2 Historical baseline regression..."
-powershell -ExecutionPolicy Bypass -File .\scripts\run_baseline_regression.ps1
-if ($LASTEXITCODE -ne 0) {
+$baselineOutput = & powershell -ExecutionPolicy Bypass -File .\scripts\run_baseline_regression.ps1 2>&1
+$baselineExit = $LASTEXITCODE
+$baselineOutput | ForEach-Object { Write-Host $_ }
+if ($baselineExit -ne 0) {
     Write-Host "Baseline regression FAILED. Vision tests not started."
-    exit $LASTEXITCODE
+    exit $baselineExit
 }
 
 Write-Host ""
@@ -41,7 +43,7 @@ $env:JARVIS_STRICT_PROOF_ENABLED = "0"
 
 $tests = @(
     "tests.test_screen_vision",
-    "tests.test_windows_perception.WindowsPerceptionTests.test_dialog_snapshot_keeps_lower_writable_field_and_save_button",
+    "tests.test_dialog_capabilities.DialogCapabilityTests.test_dialog_snapshot_keeps_lower_writable_field_and_save_button",
     "tests.test_native_tools.NativeToolRegistryTests.test_click_visual_target_routes_to_local_visual_action",
     "tests.test_native_tools.NativeToolRegistryTests.test_write_visual_target_routes_to_local_visual_action",
     "tests.test_agent_runtime.AgentRuntimeTests.test_compact_inspection_preserves_capability_refs",
