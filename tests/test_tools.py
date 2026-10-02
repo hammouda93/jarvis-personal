@@ -8,6 +8,7 @@ from unittest.mock import patch
 from jarvis_agent.tools import (
     _chrome_profile_directory,
     _find_named_app,
+    _find_named_file,
     _open_application,
     route,
 )
@@ -104,6 +105,45 @@ class ToolRouterTests(unittest.TestCase):
         self.assertEqual(intent.name, "folder.open_named")
         self.assertEqual(intent.args["query"], "media")
         self.assertEqual(intent.args["within"], "baristas")
+
+    @patch("jarvis_agent.tools._file_search_roots")
+    def test_named_file_finds_recent_downloaded_installer(
+        self,
+        roots_mock,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            older = root / "OtherSetup.exe"
+            newer = root / "CursorUserSetup-x64-3.22.12.exe"
+            older.write_bytes(b"")
+            newer.write_bytes(b"")
+            os.utime(older, (1, 1))
+            os.utime(newer, (2, 2))
+            roots_mock.return_value = [root]
+
+            path, matches = _find_named_file("Cursor Setup")
+
+            self.assertEqual(path, newer)
+            self.assertIn(newer, matches)
+
+    @patch("jarvis_agent.tools._app_binary_roots")
+    @patch("jarvis_agent.tools._app_search_roots")
+    def test_named_app_does_not_match_short_exe_substring(
+        self,
+        shortcut_roots_mock,
+        binary_roots_mock,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrong = root / "ex.exe"
+            wrong.write_bytes(b"")
+            shortcut_roots_mock.return_value = []
+            binary_roots_mock.return_value = [root]
+
+            path, matches = _find_named_app("cursor-setup.exe")
+
+            self.assertIsNone(path)
+            self.assertNotIn(wrong, matches)
 
     @patch("jarvis_agent.tools._app_binary_roots")
     @patch("jarvis_agent.tools._app_search_roots")
