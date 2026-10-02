@@ -5,6 +5,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from jarvis_agent.capability_registry import (
     DEFAULT_CAPABILITY_REGISTRY,
@@ -1902,7 +1903,7 @@ class KernelFoundationTests(unittest.TestCase):
         provider = WindowsCredentialSecretProvider(
             target_prefix="Jarvis"
         )
-        with unittest.mock.patch.dict(
+        with patch.dict(
             sys.modules,
             {"win32cred": FakeWin32Cred},
         ):
