@@ -50,7 +50,8 @@ class NativeToolRegistry:
     as VLC, Baristas or a future application/folder remain arguments.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, knowledge=None) -> None:
+        self.knowledge = knowledge or AGENT_KNOWLEDGE
         self._last_app_hint = ""
 
     def ollama_tools(self) -> list[dict[str, Any]]:
@@ -834,7 +835,7 @@ class NativeToolRegistry:
             query = str(args.get("query", "")).strip()
             if len(query) < 3:
                 return self._error(name, "La recherche de connaissance est trop vague.")
-            payload = AGENT_KNOWLEDGE.relevant_context(
+            payload = self.knowledge.relevant_context(
                 query,
                 limit=int(args.get("limit") or 4),
             )
@@ -847,7 +848,7 @@ class NativeToolRegistry:
 
         if name == "save_verified_skill":
             try:
-                item = AGENT_KNOWLEDGE.upsert_skill(
+                item = self.knowledge.upsert_skill(
                     name=str(args.get("name", "")).strip(),
                     goal=str(args.get("goal", "")).strip(),
                     app_scope=str(args.get("app_scope", "")).strip(),
@@ -875,7 +876,7 @@ class NativeToolRegistry:
 
         if name == "save_feedback_lesson":
             try:
-                item = AGENT_KNOWLEDGE.record_lesson(
+                item = self.knowledge.record_lesson(
                     scope=str(args.get("scope", "global")).strip() or "global",
                     pattern=str(args.get("pattern", "")).strip(),
                     rule=str(args.get("rule", "")).strip(),
@@ -903,7 +904,7 @@ class NativeToolRegistry:
                 success=True,
                 message="Statistiques de connaissance locale.",
                 detail=json.dumps(
-                    AGENT_KNOWLEDGE.stats(),
+                    self.knowledge.stats(),
                     ensure_ascii=False,
                 ),
             )
@@ -967,7 +968,7 @@ class NativeToolRegistry:
 
     def _record_app_launch(self, target: str, result: ToolResult) -> None:
         try:
-            AGENT_KNOWLEDGE.upsert_app_profile(
+            self.knowledge.upsert_app_profile(
                 display_name=target,
                 aliases=[target],
                 launch_hint=result.detail if result.success else "",
@@ -1002,7 +1003,7 @@ class NativeToolRegistry:
                     if str(item.get("type") or "").strip()
                 }
             )[:20]
-            AGENT_KNOWLEDGE.upsert_app_profile(
+            self.knowledge.upsert_app_profile(
                 display_name=display,
                 aliases=[display],
                 window_title_patterns=[title],
