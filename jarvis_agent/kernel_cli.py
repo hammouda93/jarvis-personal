@@ -12,6 +12,8 @@ from .event_journal import StructuredEventJournal
 from .incident_bundle import IncidentBundleBuilder
 from .kernel_request_store import KernelRequestStore
 from .mission_context_store import MissionContextStore
+from .config import settings
+from .model_catalog import CurrentModelCatalog
 from .model_telemetry import ModelTelemetryStore
 from .regression_registry import DEFAULT_REGRESSION_REGISTRY
 
@@ -34,6 +36,7 @@ def _parser() -> argparse.ArgumentParser:
         "recovery",
         help="List kernel requests that require post-crash recovery.",
     )
+    sub.add_parser("model-catalog", help="List current model candidates without changing live routing.")
     sub.add_parser("stats", help="Show passive architecture store counters.")
 
     incident = sub.add_parser(
@@ -136,6 +139,18 @@ def main() -> int:
             "event_ids": list(bundle.event_ids),
             "summary": dict(bundle.summary),
         }
+    elif args.command == "model-catalog":
+        value = [
+            {
+                "provider": item.candidate.provider,
+                "model": item.candidate.model,
+                "task_tags": list(item.candidate.task_tags),
+                "local": item.candidate.local,
+                "configured": item.configured,
+                "purpose": item.purpose,
+            }
+            for item in CurrentModelCatalog(settings).entries()
+        ]
     elif args.command == "stats":
         value = {
             "events": StructuredEventJournal().stats(),
