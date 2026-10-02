@@ -110,8 +110,9 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
 - quand l'inspection fournit value sur un champ/document, traite cette valeur
   comme l'état réel visible. Ne reconstruis jamais le contenu depuis la mémoire
   de conversation si l'interface fournit une valeur actuelle;
-- press_key est réservé à la navigation simple, jamais à des raccourcis
-  destructifs ou à l'exécution de commandes arbitraires;
+- press_key sert à la navigation et aux raccourcis clavier sûrs explicitement
+  pris en charge (par ex. Ctrl+S pour enregistrer). N'utilise jamais de
+  combinaison système dangereuse ou de raccourci non déclaré;
 - distingue toujours un onglet d'une fenêtre: si l'utilisateur demande de
   fermer un onglet/tab, utilise close_tab; close_window ferme la fenêtre
   top-level entière et ne doit jamais être utilisé comme substitut;
@@ -2058,6 +2059,8 @@ class GroqResponsesAgent:
         goal_completion_repair_attempted = False
         close_recovery_required = False
         close_recovery_attempted = False
+        pending_ui_action: dict[str, Any] | None = None
+        pending_ui_action_repair_attempted = False
         skill_learning_checkpoint_attempted = False
         lesson_learning_checkpoint_attempted = False
 
@@ -2175,6 +2178,34 @@ class GroqResponsesAgent:
                     close_recovery_attempted = True
                     if log:
                         log("[AGENT] repair=blocked_close_inspect_dialog")
+                    continue
+
+                if (
+                    pending_ui_action is not None
+                    and not ui_verification_required
+                    and not pending_ui_action_repair_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Une action UI demandée a été différée parce que "
+                                "l'interface avait changé. Tu viens maintenant de "
+                                "réinspecter l'état frais. Reprends la mission déjà "
+                                "demandée: réévalue la cible à partir de la nouvelle "
+                                "inspection et exécute l'action appropriée si elle est "
+                                "toujours sûre. N'utilise pas aveuglément l'ancienne ref "
+                                "UIA et ne demande pas à l'utilisateur de répéter une "
+                                "étape déjà demandée."
+                            ),
+                        }
+                    )
+                    pending_ui_action_repair_attempted = True
+                    if log:
+                        log("[AGENT] repair=resume_deferred_ui_action")
                     continue
 
                 if (
@@ -2399,6 +2430,11 @@ class GroqResponsesAgent:
                         "close_tab",
                     }
                 ):
+                    pending_ui_action = {
+                        "name": name,
+                        "arguments": dict(arguments),
+                    }
+                    pending_ui_action_repair_attempted = False
                     result = AgentActionResult(
                         name=name,
                         success=False,
@@ -2483,6 +2519,19 @@ class GroqResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if (
+                    pending_ui_action is not None
+                    and result.success
+                    and name in {
+                        "click_ui_element",
+                        "write_ui_element",
+                        "press_key",
+                        "close_window",
+                        "close_tab",
+                    }
+                ):
+                    pending_ui_action = None
+                    pending_ui_action_repair_attempted = False
                 if name == "close_window" and not result.success:
                     close_recovery_required = True
                 if (
