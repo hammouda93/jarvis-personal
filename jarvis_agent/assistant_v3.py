@@ -133,6 +133,25 @@ class AssistantWorker(QObject):
         ):
             return False
 
+        # Opening/navigating inside an already visible UI (a result, video,
+        # tab, item, button...) is not the same as opening the site/application
+        # itself. Keep these requests in the agent loop so it can inspect the
+        # real interface instead of reducing them to browser.open_url/app.open.
+        if intent.name in {"browser.open_url", "app.open"} and (
+            re.search(
+                r"\b(premier|premiere|première|deuxieme|deuxième|troisieme|"
+                r"troisième|resultat|résultat|video|vidéo|onglet|tab|bouton|"
+                r"element|élément|lien|link|short|story)\b",
+                text,
+            )
+            or re.search(
+                r"\b(dans|inside|within|sur)\b.{0,55}"
+                r"\b(onglet|tab|page|fenetre|fenêtre|interface)\b",
+                text,
+            )
+        ):
+            return False
+
         # A search targeted at a visible field/page is UI interaction, not a
         # generic Google search. Let the agent inspect the current application
         # and operate the real control instead of hijacking the request through
