@@ -205,10 +205,13 @@ Extensions expérimentales optionnelles:
   indique si l'observation UIA est tronquée ou si vision_recommended=true;
 - si UIA est ambigu, incomplet, ne montre pas la cible demandée ou ne permet
   pas de distinguer un ordre visuel, utilise observe_screen comme second capteur;
-- si click_visual_target est disponible, utilise-le seulement lorsque UIA ne
-  fournit pas de cible exploitable et que la cible visuelle est précise. Ce clic
-  n'est jamais une preuve de succès: réinspecte toujours après;
-- ne remplace jamais un contrôle UIA fiable par un clic visuel approximatif.
+- si click_visual_target ou write_visual_target est disponible, utilise-le
+  seulement lorsque UIA ne fournit pas de cible exploitable et que la cible
+  visuelle est précise. Ces actions ne sont jamais une preuve de succès:
+  réinspecte toujours après;
+- pour écrire, préfère toujours write_ui_element sur un contrôle writable UIA;
+  write_visual_target n'est qu'un fallback visuel local;
+- ne remplace jamais un contrôle UIA fiable par une action visuelle approximative.
 """
 
 
@@ -381,6 +384,7 @@ def _looks_like_pseudo_tool_syntax(text: str) -> bool:
         "activatewindow",
         "clickuielement",
         "clickvisualtarget",
+        "writevisualtarget",
         "closetab",
         "writeuielement",
         "typetextactivewindow",
@@ -476,6 +480,7 @@ def _actions_have_verified_proof(
     mutation_names = {
         "click_ui_element",
         "click_visual_target",
+        "write_visual_target",
         "write_ui_element",
         "press_key",
         "close_window",
@@ -778,9 +783,13 @@ def _filter_optional_ollama_tools(
             }
         )
     if not settings.vision_enabled:
-        blocked.update({"observe_screen", "click_visual_target"})
+        blocked.update({
+            "observe_screen",
+            "click_visual_target",
+            "write_visual_target",
+        })
     elif not settings.vision_actions_enabled:
-        blocked.add("click_visual_target")
+        blocked.update({"click_visual_target", "write_visual_target"})
     if not settings.focused_typing_fallback_enabled:
         blocked.add("type_text_active_window")
     if not blocked:
@@ -807,9 +816,13 @@ def _filter_optional_openai_tools(
             }
         )
     if not settings.vision_enabled:
-        blocked.update({"observe_screen", "click_visual_target"})
+        blocked.update({
+            "observe_screen",
+            "click_visual_target",
+            "write_visual_target",
+        })
     elif not settings.vision_actions_enabled:
-        blocked.add("click_visual_target")
+        blocked.update({"click_visual_target", "write_visual_target"})
     if not settings.focused_typing_fallback_enabled:
         blocked.add("type_text_active_window")
     if not blocked:
@@ -1700,14 +1713,18 @@ class GroqResponsesAgent:
                 item
                 for item in tools
                 if str((item.get("function") or {}).get("name") or "")
-                not in {"observe_screen", "click_visual_target"}
+                not in {
+                    "observe_screen",
+                    "click_visual_target",
+                    "write_visual_target",
+                }
             ]
         elif not settings.vision_actions_enabled:
             tools = [
                 item
                 for item in tools
                 if str((item.get("function") or {}).get("name") or "")
-                != "click_visual_target"
+                not in {"click_visual_target", "write_visual_target"}
             ]
         if not settings.focused_typing_fallback_enabled:
             tools = [
@@ -2518,6 +2535,7 @@ class GroqResponsesAgent:
                     and name in {
                         "click_ui_element",
                         "click_visual_target",
+                        "write_visual_target",
                         "write_ui_element",
                         "press_key",
                         "close_window",
@@ -2677,6 +2695,7 @@ class GroqResponsesAgent:
                 elif result.success and name in {
                     "click_ui_element",
                     "click_visual_target",
+                    "write_visual_target",
                     "press_key",
                 }:
                     ui_verification_required = True
