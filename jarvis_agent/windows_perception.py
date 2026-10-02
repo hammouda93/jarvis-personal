@@ -137,7 +137,16 @@ _GENERIC_WINDOW_ROLE_WORDS = {
 
 def _window_identity_tokens(value: str) -> set[str]:
     """Return app-identity tokens while ignoring generic window-role words."""
-    normalized = normalize(value)
+    raw = str(value or "")
+    # Preserve product identity inside names such as CursorUserSetup,
+    # GitHubDesktopSetup or SomeAppInstaller before normalize() lowercases it.
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", raw)
+    expanded = re.sub(
+        r"(?i)(setup|installer|installation|updater|update|user)",
+        r" \1 ",
+        expanded,
+    )
+    normalized = normalize(expanded)
     tokens = {
         token
         for token in re.findall(r"[a-z0-9][a-z0-9._+-]*", normalized)
@@ -234,6 +243,19 @@ def _active_window():
     )
     if windows and not _is_assistant_window(windows[0]):
         return windows[0]
+
+    try:
+        native_item = _native_target_window(None)
+        if native_item is not None:
+            native_wrapper = _uia_window_from_handle(
+                int(native_item.get("handle") or 0)
+            )
+            if native_wrapper is not None and not _is_assistant_window(
+                native_wrapper
+            ):
+                return native_wrapper
+    except Exception:
+        pass
 
     candidates = _desktop().windows(
         visible_only=True,
@@ -1184,10 +1206,16 @@ def close_tab(name: str = "") -> UIActionResult:
             str(exc),
         )
 
+    window_bounds = _rect_tuple(window)
+    top_limit = window_bounds[1] + 120
     tabs = [
         wrapper
         for wrapper in descendants
-        if _control_type(wrapper) == "TabItem" and _is_visible(wrapper)
+        if (
+            _control_type(wrapper) == "TabItem"
+            and _is_visible(wrapper)
+            and _rect_tuple(wrapper)[1] <= top_limit
+        )
     ]
     if not tabs:
         return UIActionResult(
@@ -1286,10 +1314,16 @@ def close_tab(name: str = "") -> UIActionResult:
                     }
                 ),
             )
+        current_bounds = _rect_tuple(current)
+        current_top_limit = current_bounds[1] + 120
         remaining = [
             wrapper
             for wrapper in current.descendants()
-            if _control_type(wrapper) == "TabItem" and _is_visible(wrapper)
+            if (
+                _control_type(wrapper) == "TabItem"
+                and _is_visible(wrapper)
+                and _rect_tuple(wrapper)[1] <= current_top_limit
+            )
         ]
         if target:
             still_present = any(
