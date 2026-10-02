@@ -103,6 +103,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   demande seulement d'écrire/saisir dans un champ, arrête-toi après l'écriture
   vérifiée. N'appuie sur Enter et ne clique sur un bouton de validation/recherche
   que si cette validation fait explicitement partie de la demande;
+- pour une commande de continuation comme lancer/valider une recherche déjà
+  préparée, conserve la fenêtre et l'onglet existants: inspecte l'interface
+  actuelle et active le contrôle de recherche. Ne rouvre pas le site avec
+  open_url sauf si l'interface cible est réellement absente;
 - quand l'inspection fournit value sur un champ/document, traite cette valeur
   comme l'état réel visible. Ne reconstruis jamais le contenu depuis la mémoire
   de conversation si l'interface fournit une valeur actuelle;
@@ -341,6 +345,20 @@ def _missing_requested_action_capabilities(
 
 def _requests_tab_close(text: str) -> bool:
     return "close_tab" in _requested_action_capabilities(text)
+
+
+def _requests_search_submission(text: str) -> bool:
+    """Detect submitting an already prepared search, not opening a website."""
+    normalized = normalize(text)
+    has_search = bool(re.search(r"\b(recherche|search)\b", normalized))
+    has_submit = bool(
+        re.search(
+            r"\b(lance|lancer|execute|executer|valide|valider|soumet|soumettre|"
+            r"appuie|appuyer|clique|cliquer|submit|run)\b",
+            normalized,
+        )
+    )
+    return has_search and has_submit
 
 
 def _looks_like_pseudo_tool_syntax(text: str) -> bool:
@@ -2038,6 +2056,8 @@ class GroqResponsesAgent:
         ui_verification_repair_attempted = False
         ui_verification_required = False
         goal_completion_repair_attempted = False
+        close_recovery_required = False
+        close_recovery_attempted = False
         skill_learning_checkpoint_attempted = False
         lesson_learning_checkpoint_attempted = False
 
@@ -2127,6 +2147,34 @@ class GroqResponsesAgent:
                             "[AGENT] repair=missing_requested_capability "
                             + ",".join(sorted(missing_capabilities))
                         )
+                    continue
+
+                if (
+                    close_recovery_required
+                    and not close_recovery_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "La fermeture a été bloquée par l'interface. "
+                                "Inspecte maintenant la fenêtre active ou la boîte "
+                                "de dialogue apparue et lis son texte ainsi que ses "
+                                "boutons avant de décider. Si la confirmation "
+                                "correspond directement à la fermeture demandée et "
+                                "n'implique pas de perte de données non demandée, "
+                                "poursuis. Si elle demande d'abandonner des données "
+                                "non enregistrées ou une autre action irréversible "
+                                "ambiguë, demande confirmation à l'utilisateur."
+                            ),
+                        }
+                    )
+                    close_recovery_attempted = True
+                    if log:
+                        log("[AGENT] repair=blocked_close_inspect_dialog")
                     continue
 
                 if (
@@ -2342,6 +2390,39 @@ class GroqResponsesAgent:
                 ):
                     result = _blocked_memory_write_result()
                 elif (
+                    ui_verification_required
+                    and name in {
+                        "click_ui_element",
+                        "write_ui_element",
+                        "press_key",
+                        "close_window",
+                        "close_tab",
+                    }
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "L'interface a changé depuis la dernière observation. "
+                            "Réinspectez avant une nouvelle action UI."
+                        ),
+                        detail="ui_action_blocked_until_reinspection",
+                    )
+                elif (
+                    name == "open_url"
+                    and _requests_search_submission(user_text)
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La demande consiste à lancer une recherche déjà "
+                            "préparée. Inspectez l'interface courante et activez "
+                            "son contrôle de recherche au lieu de rouvrir le site."
+                        ),
+                        detail="open_url_blocked_for_search_submission",
+                    )
+                elif (
                     name == "close_window"
                     and _requests_tab_close(user_text)
                 ):
@@ -2402,6 +2483,8 @@ class GroqResponsesAgent:
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
+                if name == "close_window" and not result.success:
+                    close_recovery_required = True
                 if (
                     settings.operational_learning_enabled
                     and _actions_have_verified_proof(actions)
