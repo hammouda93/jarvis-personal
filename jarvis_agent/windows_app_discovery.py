@@ -157,6 +157,24 @@ def _start_apps(
     return value
 
 
+def installed_start_app_names(
+    *,
+    runner: Callable[[str, float], str] | None = None,
+    limit: int = 120,
+) -> tuple[str, ...]:
+    names = {
+        name.strip()
+        for name, _app_id in _start_apps(runner=runner)
+        if name.strip()
+    }
+    return tuple(
+        sorted(
+            names,
+            key=lambda value: (len(value), value.casefold()),
+        )[: max(1, min(int(limit), 300))]
+    )
+
+
 def discover_start_apps(
     query: str,
     *,
