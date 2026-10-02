@@ -30,6 +30,7 @@ $tests = @(
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_blocked_close_triggers_dialog_inspection",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_search_submission_reuses_current_ui_instead_of_reopening_site",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_requires_reinspection_between_ui_mutations",
+    "tests.test_agent_runtime.AgentRuntimeTests.test_groq_resumes_deferred_ui_action_after_fresh_inspection",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_skips_extra_inspection_when_write_self_verifies",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_verifies_ui_after_write_before_concluding",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_repairs_pseudo_tool_text_into_real_call"
