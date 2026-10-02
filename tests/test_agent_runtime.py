@@ -831,6 +831,172 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_groq_learning_checkpoint_saves_reusable_verified_workflow(self):
+        class LearningTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "write_ui_element":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="ok",
+                        detail='{"verified":true,"mode":"append"}',
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = LearningTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_open",
+                            "name": "open_application",
+                            "arguments": '{"name":"Notepad"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Bloc-notes"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_write",
+                            "name": "write_ui_element",
+                            "arguments": (
+                                '{"ref":"e7","text":" test","mode":"append"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le texte est ajouté.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_learn",
+                            "name": "save_verified_skill",
+                            "arguments": (
+                                '{"name":"edit_existing_document",'
+                                '"goal":"Edit an existing text document safely",'
+                                '"procedure":["inspect editor","choose writable document",'
+                                '"append without deleting existing content"],'
+                                '"success_checks":["old and new text are visible"]}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le texte a été ajouté.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Ouvre le Bloc-notes et ajoute du texte au document existant."
+        )
+
+        self.assertTrue(
+            any(name == "save_verified_skill" for name, _ in tools.calls)
+        )
+        self.assertIn("ajouté", result.text)
+
+    def test_groq_feedback_checkpoint_saves_generic_lesson(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Compris.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_feedback_lesson",
+                            "name": "save_feedback_lesson",
+                            "arguments": (
+                                '{"scope":"messaging",'
+                                '"pattern":"contact search confused with message composer",'
+                                '"rule":"Open and verify the conversation before typing the message."}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Compris, je corrigerai ce comportement.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Non, tu as juste écrit dans la recherche de contacts, "
+            "tu n'as pas écrit dans le champ message."
+        )
+
+        self.assertTrue(
+            any(name == "save_feedback_lesson" for name, _ in tools.calls)
+        )
+        self.assertIn("corrigerai", result.text)
+
     def test_groq_blocks_persistent_recall_for_current_session_question(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
