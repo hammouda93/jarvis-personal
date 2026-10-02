@@ -654,6 +654,24 @@ class AgentRuntimeTests(unittest.TestCase):
                 ]
             )
         )
+        self.assertFalse(
+            _actions_have_verified_proof(
+                [
+                    AgentActionResult(
+                        "write_ui_element",
+                        True,
+                        "ok",
+                        '{"verified":true}',
+                    ),
+                    AgentActionResult(
+                        "observe_screen",
+                        False,
+                        "timeout",
+                        "timed out",
+                    ),
+                ]
+            )
+        )
 
     def test_clear_operational_feedback_detector(self):
         self.assertTrue(
