@@ -26,6 +26,7 @@ $tests = @(
     "tests.test_ui_logging",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_baseline_hides_new_learning_and_vision_tools",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_repairs_write_goal_after_only_opening_application",
+    "tests.test_agent_runtime.AgentRuntimeTests.test_groq_unverified_write_does_not_satisfy_write_goal",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_repairs_write_goal_for_stt_ecrivain_variant",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_blocks_window_close_when_user_requested_tab",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_blocks_window_close_for_stt_anglais_variant",
