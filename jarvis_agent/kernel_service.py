@@ -239,6 +239,9 @@ class JarvisKernel:
         if not self.approvals.consume(approval_id):
             return None
 
+        request.payload["_kernel_approved"] = True
+        request.payload["_kernel_approval_id"] = str(approval_id)
+
         self.scheduler.submit(request)
         if self.request_store is not None:
             self.request_store.put(
