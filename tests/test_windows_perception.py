@@ -10,6 +10,7 @@ from jarvis_agent.windows_perception import (
     type_text_active_window,
     write_ui_element,
     _control_value,
+    _native_target_window,
     _uia_window_from_native_with_retry,
     _score_name,
     _title_app_hint,
