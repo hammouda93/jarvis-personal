@@ -5,7 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from jarvis_agent.tools import _chrome_profile_directory, _open_application, route
+from jarvis_agent.tools import (
+    _chrome_profile_directory,
+    _find_named_app,
+    _open_application,
+    route,
+)
 
 
 class ToolRouterTests(unittest.TestCase):
@@ -99,6 +104,28 @@ class ToolRouterTests(unittest.TestCase):
         self.assertEqual(intent.name, "folder.open_named")
         self.assertEqual(intent.args["query"], "media")
         self.assertEqual(intent.args["within"], "baristas")
+
+    @patch("jarvis_agent.tools._app_binary_roots")
+    @patch("jarvis_agent.tools._app_search_roots")
+    def test_named_app_discovers_matching_executable(
+        self,
+        shortcut_roots_mock,
+        binary_roots_mock,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "Programs"
+            cursor_dir = root / "Cursor"
+            cursor_dir.mkdir(parents=True)
+            executable = cursor_dir / "Cursor.exe"
+            executable.write_bytes(b"")
+
+            shortcut_roots_mock.return_value = []
+            binary_roots_mock.return_value = [root]
+
+            path, matches = _find_named_app("Cursor")
+
+            self.assertEqual(path, executable)
+            self.assertIn(executable, matches)
 
     @patch("jarvis_agent.tools.os.startfile")
     @patch("jarvis_agent.tools._find_named_app")
