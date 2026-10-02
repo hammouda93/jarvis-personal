@@ -744,7 +744,23 @@ class NativeToolRegistry:
                 execute(ToolIntent("browser.open_url", {"url": url})),
             )
 
-        if name == "search_web":
+        if name in {"research_web", "search_web"}:
+            query = str(args.get("query", "")).strip()
+            if len(query) < 2:
+                return self._error(name, "La recherche est vide.")
+            result = BACKGROUND_WEB_RESEARCH.research(query)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=(
+                    "Recherche web en arrière-plan terminée."
+                    if result.success
+                    else "La recherche web en arrière-plan a échoué."
+                ),
+                detail=json.dumps(result.as_dict(), ensure_ascii=False),
+            )
+
+        if name == "open_web_search":
             query = str(args.get("query", "")).strip()
             if len(query) < 2:
                 return self._error(name, "La recherche est vide.")
@@ -753,8 +769,7 @@ class NativeToolRegistry:
                 name=name,
                 success=base.success,
                 message=(
-                    "La page de recherche a été ouverte dans le navigateur. "
-                    "Les résultats n'ont pas été lus."
+                    "La page de recherche a été ouverte dans le navigateur."
                     if base.success
                     else base.message
                 ),
@@ -764,6 +779,7 @@ class NativeToolRegistry:
                         "query": query,
                         "results_read": False,
                         "factual_evidence": False,
+                        "visible_browser_opened": bool(base.success),
                     },
                     ensure_ascii=False,
                 ),
