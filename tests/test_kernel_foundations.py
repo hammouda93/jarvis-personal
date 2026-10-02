@@ -79,6 +79,7 @@ from jarvis_agent.dev_supervisor import (
     validation_destination,
 )
 from jarvis_agent.event_journal import StructuredEventJournal
+from jarvis_agent.incident_bundle import IncidentBundleBuilder
 from jarvis_agent.kernel_contracts import (
     EventKind,
     KernelRequest,
@@ -1460,6 +1461,114 @@ class KernelFoundationTests(unittest.TestCase):
             self.assertEqual(
                 store.get("r_lifecycle")["status"],
                 SyscallStatus.SUCCEEDED,
+            )
+
+    def test_scheduler_enforces_resource_class_limit_independently_of_agent(self):
+        scheduler = MissionScheduler(
+            resource_limits={SyscallKind.LLM: 1}
+        )
+        for request_id, agent_id in (
+            ("llm1", "windows"),
+            ("llm2", "browser"),
+        ):
+            scheduler.submit(
+                KernelRequest(
+                    request_id=request_id,
+                    mission_id="m_resource",
+                    syscall_kind=SyscallKind.LLM,
+                    capability=(
+                        "computer.observe"
+                        if agent_id == "windows"
+                        else "browser.search"
+                    ),
+                    agent_id=agent_id,
+                    priority=10,
+                )
+            )
+
+        first = scheduler.next_request()
+        self.assertEqual(first.request.request_id, "llm1")
+        self.assertIsNone(
+            scheduler.next_request(timeout_s=0.01)
+        )
+
+        scheduler.complete(
+            "llm1",
+            success=True,
+            result={},
+        )
+        second = scheduler.next_request(timeout_s=0.01)
+        self.assertIsNotNone(second)
+        self.assertEqual(second.request.request_id, "llm2")
+
+    def test_incident_bundle_collects_feedback_tools_and_code_surface(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = StructuredEventJournal(
+                Path(tmp) / "incident.sqlite3"
+            )
+            mission_id = journal.create_mission(
+                mission_id="m_incident",
+                goal_summary="Open Chrome",
+                user_id="u1",
+                owner_agent_id="windows",
+            )
+            journal.append_event(
+                mission_id=mission_id,
+                kind=EventKind.USER_INPUT,
+                agent_id="windows",
+                component="agent_runtime",
+                payload={"text": "Ouvre Chrome"},
+            )
+            journal.append_event(
+                mission_id=mission_id,
+                kind=EventKind.TOOL_REQUESTED,
+                agent_id="windows",
+                component="windows_perception",
+                payload={
+                    "tool_name": "open_application",
+                    "arguments": {"name": "Edge"},
+                },
+            )
+            journal.append_event(
+                mission_id=mission_id,
+                kind=EventKind.OBSERVATION,
+                agent_id="windows",
+                component="windows_perception",
+                success=True,
+                payload={"window_title": "Microsoft Edge"},
+            )
+            journal.append_event(
+                mission_id=mission_id,
+                kind=EventKind.USER_FEEDBACK,
+                agent_id="windows",
+                component="agent_runtime",
+                success=False,
+                payload={"summary": "Wrong browser opened"},
+            )
+
+            bundle = IncidentBundleBuilder(journal).build(
+                mission_id,
+                changed_paths=[
+                    "jarvis_agent/windows_perception.py",
+                ],
+            )
+
+            self.assertEqual(
+                bundle.summary["event_count"],
+                5,
+            )
+            self.assertTrue(bundle.summary["has_user_feedback"])
+            self.assertIn(
+                "windows_perception",
+                bundle.component_ids,
+            )
+            self.assertEqual(
+                bundle.user_inputs[0]["payload"]["text"],
+                "Ouvre Chrome",
+            )
+            self.assertEqual(
+                bundle.observations[0]["payload"]["window_title"],
+                "Microsoft Edge",
             )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
