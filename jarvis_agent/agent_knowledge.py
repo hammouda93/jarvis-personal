@@ -579,6 +579,15 @@ class AgentKnowledgeStore:
             )
             run_id = int(cursor.lastrowid)
 
+            conn.execute(
+                """
+                DELETE FROM skill_runs
+                WHERE id NOT IN (
+                    SELECT id FROM skill_runs ORDER BY id DESC LIMIT 1000
+                )
+                """
+            )
+
             if skill_name:
                 key = _normalize(skill_name).replace(" ", "_")
                 column = "success_count" if normalized_status == "verified" else "failure_count"
