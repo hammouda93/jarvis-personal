@@ -119,12 +119,23 @@ class NativeToolRegistry:
                 ["url"],
             ),
             self._ollama(
-                "search_web",
-                "Ouvre une page de recherche web visible dans le navigateur de l'utilisateur. Cet outil ne lit pas les résultats et ne fournit aucune preuve factuelle à lui seul.",
+                "research_web",
+                "Recherche et lit le web en arrière-plan sans ouvrir le navigateur de l'utilisateur. À utiliser pour obtenir des informations actuelles, vérifier une solution, consulter de la documentation ou résoudre un échec quand les preuves locales ne suffisent pas.",
                 {
                     "query": {
                         "type": "string",
-                        "description": "Requête de recherche.",
+                        "description": "Question de recherche précise avec le contexte utile.",
+                    }
+                },
+                ["query"],
+            ),
+            self._ollama(
+                "open_web_search",
+                "Ouvre une page de résultats web visible. À utiliser uniquement si l'utilisateur demande explicitement d'ouvrir ou de voir la recherche dans le navigateur.",
+                {
+                    "query": {
+                        "type": "string",
+                        "description": "Requête à afficher dans le navigateur.",
                     }
                 },
                 ["query"],
