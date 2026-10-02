@@ -15,6 +15,7 @@ from .tools import ToolIntent, ToolResult, execute, normalize
 from .windows_perception import (
     activate_window,
     click_ui_element,
+    close_tab,
     close_window,
     inspect_active_window,
     list_windows,
@@ -192,6 +193,17 @@ class NativeToolRegistry:
                     "title": {
                         "type": "string",
                         "description": "Titre optionnel de la fenêtre à fermer.",
+                    }
+                },
+                [],
+            ),
+            self._ollama(
+                "close_tab",
+                "Ferme un onglet dans l'application active sans fermer volontairement toute la fenêtre. Utilise cet outil quand l'utilisateur parle d'un onglet/tab, pas close_window.",
+                {
+                    "name": {
+                        "type": "string",
+                        "description": "Nom ou partie distinctive de l'onglet à fermer. Laisser vide seulement si l'onglet actif est clairement la cible.",
                     }
                 },
                 [],
@@ -762,6 +774,16 @@ class NativeToolRegistry:
         if name == "close_window":
             title = str(args.get("title", "")).strip() or None
             result = close_window(title)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
+        if name == "close_tab":
+            target = str(args.get("name", "")).strip()
+            result = close_tab(target)
             return AgentActionResult(
                 name=name,
                 success=result.success,
