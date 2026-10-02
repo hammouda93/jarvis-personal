@@ -184,11 +184,14 @@ def _compact_window(wrapper: Any) -> dict[str, Any]:
 
 
 def _compact_control(ref: str, wrapper: Any) -> dict[str, Any]:
+    control_type = _control_type(wrapper)
     item: dict[str, Any] = {
         "ref": ref,
-        "type": _control_type(wrapper),
+        "type": control_type,
         "enabled": _is_enabled(wrapper),
     }
+    if control_type in {"Edit", "Document", "ComboBox"}:
+        item["writable"] = True
     name = _element_name(wrapper)
     automation_id = _automation_id(wrapper)
     if name:
@@ -575,6 +578,7 @@ def inspect_active_window(
         )
 
     interactive: list[Any] = []
+    documents: list[Any] = []
     informative: list[Any] = []
     document_rects: list[tuple[int, int, int, int]] = []
     seen: set[tuple[str, str, str, tuple[int, int, int, int]]] = set()
@@ -598,12 +602,13 @@ def inspect_active_window(
 
         if ctype == "Document":
             document_rects.append(rect)
+            documents.append(wrapper)
 
         if ctype in _INTERACTIVE_TYPES:
             # Keep unlabeled interactive controls: their ref + type + position
             # can still let the agent operate them safely after inspection.
             interactive.append(wrapper)
-        elif ctype in _TEXT_TYPES and name:
+        elif ctype == "Text" and name:
             informative.append(wrapper)
 
     # Browser accessibility trees contain lots of Chrome toolbar/bookmark
@@ -637,6 +642,9 @@ def inspect_active_window(
     remaining = max_items - len(selected)
     if remaining > 0:
         selected.extend(chrome_controls[: min(remaining, 6)])
+    remaining = max_items - len(selected)
+    if remaining > 0:
+        selected.extend(documents[: min(remaining, 2)])
     remaining = max_items - len(selected)
     if remaining > 0:
         selected.extend(informative[: min(remaining, 4)])
@@ -675,7 +683,28 @@ def _score_name(query: str, candidate: str) -> float:
         return 1.0
     if wanted in name or name in wanted:
         return 0.94
-    return difflib.SequenceMatcher(None, wanted, name).ratio()
+
+    # Window titles vary in punctuation/typography across locales
+    # (Bloc-notes, Bloc‑notes, en/em dashes, etc.). Compare a compact form too.
+    compact_wanted = re.sub(r"[^a-z0-9]+", "", wanted)
+    compact_name = re.sub(r"[^a-z0-9]+", "", name)
+    if compact_wanted and compact_name:
+        if compact_wanted == compact_name:
+            return 0.99
+        if compact_wanted in compact_name or compact_name in compact_wanted:
+            return 0.95
+        compact_score = difflib.SequenceMatcher(
+            None,
+            compact_wanted,
+            compact_name,
+        ).ratio()
+    else:
+        compact_score = 0.0
+
+    return max(
+        difflib.SequenceMatcher(None, wanted, name).ratio(),
+        compact_score,
+    )
 
 
 def _rank_wrappers(
@@ -900,7 +929,10 @@ def _editable_target(wrapper: Any):
 
 
 def _type_text_into_focused_control(wrapper: Any, value: str) -> bool:
-    """Fallback for accessible controls such as web ComboBox/search fields."""
+    """Fallback only for controls that can reasonably accept text input."""
+    if _control_type(wrapper) not in {"Edit", "Document", "ComboBox"}:
+        return False
+
     try:
         wrapper.set_focus()
     except Exception:
@@ -1025,6 +1057,8 @@ _ALLOWED_KEYS = {
     "pagedown": "{PGDN}",
     "home": "{HOME}",
     "end": "{END}",
+    "altleft": "%{LEFT}",
+    "altright": "%{RIGHT}",
 }
 
 
