@@ -9,6 +9,7 @@ from typing import Any
 from .kernel_contracts import (
     KernelRequest,
     KernelResponse,
+    SyscallKind,
     SyscallStatus,
 )
 
@@ -37,6 +38,7 @@ class MissionScheduler:
         self,
         *,
         concurrency_limits: dict[str, int] | None = None,
+        resource_limits: dict[SyscallKind | str, int] | None = None,
     ):
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
@@ -44,11 +46,20 @@ class MissionScheduler:
         self._queue: list[_QueueItem] = []
         self._items: dict[str, ScheduledRequest] = {}
         self._active_by_agent: dict[str, int] = {}
+        self._active_by_kind: dict[str, int] = {}
         self._concurrency_limits = {
             str(agent_id): max(1, int(limit))
             for agent_id, limit in dict(
                 concurrency_limits or {}
             ).items()
+        }
+        self._resource_limits = {
+            (
+                kind.value
+                if isinstance(kind, SyscallKind)
+                else str(kind)
+            ): max(1, int(limit))
+            for kind, limit in dict(resource_limits or {}).items()
         }
 
     def set_concurrency_limit(
@@ -62,6 +73,23 @@ class MissionScheduler:
                 int(limit),
             )
             self._condition.notify_all()
+
+    def set_resource_limit(
+        self,
+        kind: SyscallKind | str,
+        limit: int,
+    ) -> None:
+        key = kind.value if isinstance(kind, SyscallKind) else str(kind)
+        with self._condition:
+            self._resource_limits[key] = max(1, int(limit))
+            self._condition.notify_all()
+
+    def _resource_has_capacity(self, kind: SyscallKind) -> bool:
+        key = kind.value
+        limit = self._resource_limits.get(key)
+        if limit is None:
+            return True
+        return self._active_by_kind.get(key, 0) < limit
 
     def _agent_has_capacity(self, agent_id: str) -> bool:
         key = str(agent_id)
@@ -127,6 +155,11 @@ class MissionScheduler:
                     ):
                         skipped.append(candidate)
                         continue
+                    if not self._resource_has_capacity(
+                        scheduled.request.syscall_kind
+                    ):
+                        skipped.append(candidate)
+                        continue
                     chosen = candidate
                     break
 
@@ -140,6 +173,10 @@ class MissionScheduler:
                     agent_id = scheduled.request.agent_id
                     self._active_by_agent[agent_id] = (
                         self._active_by_agent.get(agent_id, 0) + 1
+                    )
+                    kind_key = scheduled.request.syscall_kind.value
+                    self._active_by_kind[kind_key] = (
+                        self._active_by_kind.get(kind_key, 0) + 1
                     )
                     return scheduled
 
@@ -170,6 +207,11 @@ class MissionScheduler:
                 self._active_by_agent[agent_id] = max(
                     0,
                     self._active_by_agent.get(agent_id, 0) - 1,
+                )
+                kind_key = scheduled.request.syscall_kind.value
+                self._active_by_kind[kind_key] = max(
+                    0,
+                    self._active_by_kind.get(kind_key, 0) - 1,
                 )
             self._condition.notify_all()
             return True
@@ -205,6 +247,11 @@ class MissionScheduler:
                 self._active_by_agent[agent_id] = max(
                     0,
                     self._active_by_agent.get(agent_id, 0) - 1,
+                )
+                kind_key = scheduled.request.syscall_kind.value
+                self._active_by_kind[kind_key] = max(
+                    0,
+                    self._active_by_kind.get(kind_key, 0) - 1,
                 )
             self._condition.notify_all()
 
@@ -253,4 +300,6 @@ class MissionScheduler:
             counts["active_total"] = sum(
                 self._active_by_agent.values()
             )
+            for kind, active in self._active_by_kind.items():
+                counts[f"active_{kind}"] = int(active)
             return counts
