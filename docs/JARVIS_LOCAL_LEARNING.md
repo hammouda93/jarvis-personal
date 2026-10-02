@@ -123,3 +123,19 @@ debugging. Prefer the anonymized JSON export plus the Jarvis runtime log.
 
 A raw export can be created deliberately with `--raw`, but it should stay
 private.
+
+## One-command diagnostics
+
+From the project root:
+
+```powershell
+.\scripts\run_learning_diagnostics.ps1
+```
+
+This creates a timestamped `jarvis_diagnostics_...` folder containing the
+current Git commit, knowledge counters, anonymized knowledge export, Ollama
+model list and unit-test log. The generated `SHARE_THESE_FILES.txt` lists the
+safe files to share.
+
+Do not share `.env`, raw SQLite databases or raw evidence screenshots by
+default.
