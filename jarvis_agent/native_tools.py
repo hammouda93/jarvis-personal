@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,6 +59,21 @@ class NativeToolRegistry:
                         "type": "string",
                         "description": "Nom de l'application, par ex. VLC Media Player, Chrome, Cursor.",
                     }
+                },
+                ["name"],
+            ),
+            self._ollama(
+                "open_file",
+                "Trouve et ouvre un fichier réel par son nom dans les emplacements utilisateur (Téléchargements, Bureau, Documents). À utiliser pour un fichier téléchargé, un installateur, un document ou un exécutable précis; ne pas détourner open_application.",
+                {
+                    "name": {
+                        "type": "string",
+                        "description": "Nom complet ou mots distinctifs du fichier, par ex. CursorUserSetup ou rapport.pdf.",
+                    },
+                    "within": {
+                        "type": "string",
+                        "description": "Dossier optionnel dans lequel chercher, par ex. Téléchargements.",
+                    },
                 },
                 ["name"],
             ),
@@ -454,6 +470,15 @@ class NativeToolRegistry:
 
         if name == "open_application":
             target = str(args.get("name", "")).strip()
+            suffix = Path(target).suffix.lower()
+            if suffix in {".exe", ".msi", ".bat", ".cmd", ".ps1"}:
+                result = execute(
+                    ToolIntent(
+                        "file.open_named",
+                        {"query": target, "within": "Téléchargements"},
+                    )
+                )
+                return self._convert(name, result)
             if not self._safe_target(target):
                 return self._error(name, "Le nom de l'application est trop vague.")
 
@@ -482,6 +507,19 @@ class NativeToolRegistry:
             else:
                 result = execute(ToolIntent("app.open_named", {"query": target}))
             return self._convert(name, result)
+
+        if name == "open_file":
+            target = str(args.get("name", "")).strip()
+            within = str(args.get("within", "")).strip()
+            if not self._safe_target(target):
+                return self._error(name, "Le nom du fichier est trop vague.")
+            payload: dict[str, Any] = {"query": target}
+            if within and self._safe_target(within):
+                payload["within"] = within
+            return self._convert(
+                name,
+                execute(ToolIntent("file.open_named", payload)),
+            )
 
         if name == "open_folder":
             target = str(args.get("name", "")).strip()
