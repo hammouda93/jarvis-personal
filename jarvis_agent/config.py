@@ -143,6 +143,10 @@ class Settings:
         if compatibility_baseline
         else _bool("JARVIS_STRICT_PROOF_ENABLED", False)
     )
+    focused_typing_fallback_enabled: bool = _bool(
+        "JARVIS_FOCUSED_TYPING_FALLBACK_ENABLED",
+        False,
+    )
     ms_football_bridge_url: str = (
         os.getenv("JARVIS_MS_FOOTBALL_BRIDGE_URL")
         or "http://127.0.0.1:8765"
