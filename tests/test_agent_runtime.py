@@ -802,6 +802,137 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("écrit", result.text)
 
+    def test_groq_unverified_write_does_not_satisfy_write_goal(self):
+        class EventuallyVerifiedTools(FakeTools):
+            def __init__(self):
+                super().__init__()
+                self.write_count = 0
+
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "write_ui_element":
+                    self.write_count += 1
+                    if self.write_count == 1:
+                        return AgentActionResult(
+                            name=name,
+                            success=True,
+                            message="typed but not verified",
+                            detail=(
+                                '{"verified":false,'
+                                '"before":"Rechercher",'
+                                '"value":"Rechercher"}'
+                            ),
+                        )
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="verified",
+                        detail=(
+                            '{"verified":true,'
+                            '"before":"",'
+                            '"value":"Bonjour"}'
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = EventuallyVerifiedTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect_first",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Application"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_write_wrong",
+                            "name": "write_ui_element",
+                            "arguments": (
+                                '{"ref":"e17","text":"Bonjour",'
+                                '"mode":"replace"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le texte a été saisi.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect_retry",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Application"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_write_correct",
+                            "name": "write_ui_element",
+                            "arguments": (
+                                '{"ref":"e18","text":"Bonjour",'
+                                '"mode":"replace"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le texte a été saisi et vérifié.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Écris Bonjour dans le champ message.")
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            [
+                "inspect_active_window",
+                "write_ui_element",
+                "inspect_active_window",
+                "write_ui_element",
+            ],
+        )
+        self.assertEqual(tools.write_count, 2)
+        self.assertIn("vérifié", result.text)
+
     def test_groq_repairs_write_goal_for_stt_ecrivain_variant(self):
         class VerifiedRepairTools(FakeTools):
             def execute(self, name, arguments, *, approved=False):
