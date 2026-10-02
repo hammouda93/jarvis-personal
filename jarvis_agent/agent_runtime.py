@@ -1929,7 +1929,7 @@ class GroqResponsesAgent:
 
                 if (
                     _actions_have_verified_proof(actions)
-                    and len(reusable_actions) >= 2
+                    and len(reusable_actions) >= 3
                     and not learned_skill_this_turn
                     and not skill_learning_checkpoint_attempted
                     and round_index < settings.agent_max_tool_rounds
