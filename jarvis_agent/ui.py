@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+import sys
 from collections import deque
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer
@@ -11,6 +12,25 @@ from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 from .assistant_v3 import AssistantWorker
 from .config import settings
 from .states import AssistantState, STATE_LABELS
+
+
+def _safe_console_log(value: object) -> None:
+    """Write logs without letting Windows console encoding crash Jarvis."""
+    text = str(value).replace("\u202f", " ").replace("\u00a0", " ")
+    stream = sys.stdout
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    safe = text.encode(
+        encoding,
+        errors="backslashreplace",
+    ).decode(
+        encoding,
+        errors="strict",
+    )
+    stream.write(safe + "\n")
+    try:
+        stream.flush()
+    except Exception:
+        pass
 
 
 STATE_COLORS: dict[str, QColor] = {
@@ -314,7 +334,7 @@ class JarvisWindow(QWidget):
         self._worker.transcript_changed.connect(self._on_transcript)
         self._worker.detail_changed.connect(self.detail_label.setText)
         self._worker.audio_level_changed.connect(self.orb.set_audio_level)
-        self._worker.log_line.connect(print)
+        self._worker.log_line.connect(_safe_console_log)
 
         self._thread.start()
 
