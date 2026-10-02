@@ -15,6 +15,16 @@ def main() -> int:
 
     sub.add_parser("stats", help="Show local knowledge counters.")
 
+    reset = sub.add_parser(
+        "reset-operational",
+        help="Clear skills, lessons, app profiles and proof runs only.",
+    )
+    reset.add_argument(
+        "--yes",
+        action="store_true",
+        help="Required confirmation. Personal memory is never touched.",
+    )
+
     export = sub.add_parser(
         "export",
         help="Create an anonymized JSON snapshot for debugging/sharing.",
@@ -36,6 +46,27 @@ def main() -> int:
         print(
             json.dumps(
                 AGENT_KNOWLEDGE.stats(),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "reset-operational":
+        if not args.yes:
+            print(
+                "Refusé: ajoutez --yes pour effacer uniquement "
+                "la mémoire opérationnelle."
+            )
+            return 2
+        before = AGENT_KNOWLEDGE.clear_operational_knowledge()
+        print(
+            json.dumps(
+                {
+                    "cleared": before,
+                    "after": AGENT_KNOWLEDGE.stats(),
+                    "personal_memory_touched": False,
+                },
                 ensure_ascii=False,
                 indent=2,
             )
