@@ -17,7 +17,9 @@ from jarvis_agent.agent_factory import (
 from jarvis_agent.execution_managers import (
     ExecutionManagerRegistry,
     ManagerExecutionResult,
+    ReplayExecutionManager,
     StorageExecutionManager,
+    TestExecutionManager,
     ToolExecutionManager,
 )
 from jarvis_agent.mission_orchestrator import MissionOrchestrator
@@ -108,6 +110,10 @@ from jarvis_agent.kernel_contracts import (
 from jarvis_agent.model_telemetry import ModelTelemetryStore
 from jarvis_agent.regression_registry import (
     DEFAULT_REGRESSION_REGISTRY,
+)
+from jarvis_agent.regression_runner import (
+    RegressionRunResult,
+    RegressionRunner,
 )
 from jarvis_agent.write_barrier import ScopedWriteBarrier
 from jarvis_agent.secret_provider import (
@@ -1981,6 +1987,94 @@ class KernelFoundationTests(unittest.TestCase):
                 "workspace_path_escape",
                 escape.error,
             )
+
+    def test_regression_runner_refuses_unknown_test_id_without_subprocess(self):
+        runner = RegressionRunner(
+            registry=DEFAULT_REGRESSION_REGISTRY,
+            project_root=".",
+        )
+        result = runner.run("TEST-NOT-REGISTERED")
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, "unknown_regression_test")
+
+    def test_test_execution_manager_uses_allowlisted_runner_contract(self):
+        class FakeRunner:
+            def run_many(self, test_ids, stop_on_failure=True):
+                return [
+                    RegressionRunResult(
+                        test_id=test_ids[0],
+                        success=True,
+                        returncode=0,
+                        duration_s=0.01,
+                        stdout="ok",
+                        stderr="",
+                    )
+                ]
+
+        manager = TestExecutionManager(FakeRunner())
+        result = manager.execute(
+            KernelRequest(
+                request_id="r_test",
+                mission_id="m_test",
+                syscall_kind=SyscallKind.TEST,
+                capability="developer.test",
+                agent_id="developer",
+                payload={"test_ids": ["TEST-WIN-BASELINE"]},
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            result.result["tests"][0]["test_id"],
+            "TEST-WIN-BASELINE",
+        )
+
+    def test_replay_execution_manager_translates_kernel_payload_to_plan(self):
+        class FakeReplayRunner:
+            def __init__(self):
+                self.plan = None
+
+            def run(self, plan):
+                self.plan = plan
+                return SimpleNamespace(
+                    success=True,
+                    error="",
+                    as_dict=lambda: {
+                        "replay_id": plan.replay_id,
+                        "success": True,
+                    },
+                )
+
+        fake = FakeReplayRunner()
+        manager = ReplayExecutionManager(fake)
+        result = manager.execute(
+            KernelRequest(
+                request_id="r_replay",
+                mission_id="m_replay",
+                syscall_kind=SyscallKind.REPLAY,
+                capability="developer.replay",
+                agent_id="developer",
+                payload={
+                    "replay_id": "rp1",
+                    "environment_id": "vm1",
+                    "actions": [
+                        {
+                            "action_type": "open_application",
+                            "arguments": {"name": "Chrome"},
+                        }
+                    ],
+                    "expected_state": {"window": "Chrome"},
+                },
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(fake.plan.replay_id, "rp1")
+        self.assertEqual(
+            fake.plan.actions[0].action_type,
+            "open_application",
+        )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
