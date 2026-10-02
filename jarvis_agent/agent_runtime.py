@@ -201,8 +201,14 @@ Extensions expérimentales optionnelles:
   une règle générale avec save_feedback_lesson si cet outil est disponible;
 - une simple confirmation utilisateur ("oui c'est bon", "maintenant ça marche")
   confirme l'état précédent et ne demande jamais de répéter la mutation;
-- si observe_screen est disponible, utilise-le seulement comme fallback quand
-  UIA est ambigu ou incomplet. UIA reste prioritaire.
+- inspect_active_window reste la perception prioritaire. Son champ snapshot
+  indique si l'observation UIA est tronquée ou si vision_recommended=true;
+- si UIA est ambigu, incomplet, ne montre pas la cible demandée ou ne permet
+  pas de distinguer un ordre visuel, utilise observe_screen comme second capteur;
+- si click_visual_target est disponible, utilise-le seulement lorsque UIA ne
+  fournit pas de cible exploitable et que la cible visuelle est précise. Ce clic
+  n'est jamais une preuve de succès: réinspecte toujours après;
+- ne remplace jamais un contrôle UIA fiable par un clic visuel approximatif.
 """
 
 
@@ -374,6 +380,7 @@ def _looks_like_pseudo_tool_syntax(text: str) -> bool:
         "listwindows",
         "activatewindow",
         "clickuielement",
+        "clickvisualtarget",
         "closetab",
         "writeuielement",
         "typetextactivewindow",
@@ -468,9 +475,11 @@ def _actions_have_verified_proof(
 
     mutation_names = {
         "click_ui_element",
+        "click_visual_target",
         "write_ui_element",
         "press_key",
         "close_window",
+        "close_tab",
         "msf_commit_mutation",
     }
     authoritative_mutations = {
@@ -769,7 +778,9 @@ def _filter_optional_ollama_tools(
             }
         )
     if not settings.vision_enabled:
-        blocked.add("observe_screen")
+        blocked.update({"observe_screen", "click_visual_target"})
+    elif not settings.vision_actions_enabled:
+        blocked.add("click_visual_target")
     if settings.compatibility_baseline:
         blocked.add("type_text_active_window")
     if not blocked:
@@ -796,7 +807,9 @@ def _filter_optional_openai_tools(
             }
         )
     if not settings.vision_enabled:
-        blocked.add("observe_screen")
+        blocked.update({"observe_screen", "click_visual_target"})
+    elif not settings.vision_actions_enabled:
+        blocked.add("click_visual_target")
     if settings.compatibility_baseline:
         blocked.add("type_text_active_window")
     if not blocked:
@@ -1687,7 +1700,14 @@ class GroqResponsesAgent:
                 item
                 for item in tools
                 if str((item.get("function") or {}).get("name") or "")
-                != "observe_screen"
+                not in {"observe_screen", "click_visual_target"}
+            ]
+        elif not settings.vision_actions_enabled:
+            tools = [
+                item
+                for item in tools
+                if str((item.get("function") or {}).get("name") or "")
+                != "click_visual_target"
             ]
         if ms_football_only:
             allowed = set(msf_tool_names or ())
@@ -2529,6 +2549,31 @@ class GroqResponsesAgent:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
                 if (
+                    settings.vision_enabled
+                    and name == "inspect_active_window"
+                    and result.success
+                ):
+                    try:
+                        inspection_payload = json.loads(result.detail or "{}")
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        inspection_payload = {}
+                    snapshot_meta = dict(
+                        inspection_payload.get("snapshot") or {}
+                    )
+                    if snapshot_meta.get("vision_recommended") is True:
+                        self._messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Le snapshot UIA indique qu'il peut être "
+                                    "incomplet ou tronqué. Si la cible demandée "
+                                    "n'est pas clairement exploitable dans les "
+                                    "contrôles présents, utilise observe_screen "
+                                    "avant de conclure à un échec."
+                                ),
+                            }
+                        )
+                if (
                     pending_ui_action is not None
                     and result.success
                     and name in {
@@ -2566,6 +2611,7 @@ class GroqResponsesAgent:
                     )
                 elif result.success and name in {
                     "click_ui_element",
+                    "click_visual_target",
                     "press_key",
                 }:
                     ui_verification_required = True
@@ -2632,15 +2678,26 @@ class GroqResponsesAgent:
                     }
                 )
                 if not result.success:
+                    if result.detail == "open_url_blocked_for_search_submission":
+                        recovery = (
+                            "Le site est déjà ouvert et la demande concerne la "
+                            "recherche préparée dans l'interface actuelle. "
+                            "N'abandonne pas: utilise inspect_active_window puis "
+                            "le contrôle Search/Recherche visible. Si les résultats "
+                            "sont visuellement ambigus et la vision est disponible, "
+                            "utilise observe_screen."
+                        )
+                    else:
+                        recovery = (
+                            "Cet outil vient d échouer. Ne répète pas le même "
+                            "appel avec les mêmes arguments. Utilise une autre "
+                            "capacité si elle existe, sinon explique simplement "
+                            "l échec à l utilisateur."
+                        )
                     self._messages.append(
                         {
                             "role": "user",
-                            "content": (
-                                "Cet outil vient d échouer. Ne répète pas le "
-                                "même appel avec les mêmes arguments. Utilise "
-                                "une autre capacité si elle existe, sinon explique "
-                                "simplement l échec à l utilisateur."
-                            ),
+                            "content": recovery,
                         }
                     )
 
