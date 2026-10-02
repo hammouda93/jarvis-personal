@@ -448,10 +448,11 @@ def _record_operational_run(
             ],
         }
         store = knowledge or AGENT_KNOWLEDGE
+        action_names = [action.name for action in actions]
         store.record_run(
             status=status,
-            goal=user_text,
-            actions=[action.name for action in actions],
+            goal="workflow:" + ">".join(action_names),
+            actions=action_names,
             proof=proof,
             error="; ".join(
                 action.message
