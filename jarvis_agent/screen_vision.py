@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import settings
-from .windows_perception import _native_target_window
+from .windows_perception import _native_target_window, _send_keys
 
 
 @dataclass(frozen=True)
@@ -455,4 +455,109 @@ def click_visual_target(
         True,
         "Clic visuel local envoyé.",
         json.dumps(result, ensure_ascii=False),
+    )
+
+
+
+def write_visual_target(
+    *,
+    target: str,
+    text: str,
+    title: str | None = None,
+    mode: str = "replace",
+) -> ScreenObservation:
+    """Visually focus one field and type into that exact target."""
+    value = str(text or "")
+    if not value:
+        return ScreenObservation(False, "Le texte à saisir est vide.")
+    if len(value) > 4000:
+        return ScreenObservation(
+            False,
+            "Le texte est trop long pour une saisie visuelle directe.",
+        )
+
+    normalized_mode = str(mode or "replace").strip().lower()
+    if normalized_mode not in {"replace", "append", "insert"}:
+        return ScreenObservation(
+            False,
+            "Mode d'écriture visuelle invalide.",
+            normalized_mode,
+        )
+
+    clicked = click_visual_target(target=target, title=title)
+    if not clicked.success:
+        return clicked
+
+    try:
+        import win32clipboard
+
+        previous_text: str | None = None
+        try:
+            win32clipboard.OpenClipboard()
+            try:
+                if win32clipboard.IsClipboardFormatAvailable(
+                    win32clipboard.CF_UNICODETEXT
+                ):
+                    previous_text = win32clipboard.GetClipboardData(
+                        win32clipboard.CF_UNICODETEXT
+                    )
+            except Exception:
+                previous_text = None
+            finally:
+                win32clipboard.CloseClipboard()
+
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(
+                value,
+                win32clipboard.CF_UNICODETEXT,
+            )
+        finally:
+            win32clipboard.CloseClipboard()
+
+        if normalized_mode == "replace":
+            _send_keys("^a")
+        elif normalized_mode == "append":
+            _send_keys("^{END}")
+        _send_keys("^v")
+
+        if previous_text is not None:
+            try:
+                win32clipboard.OpenClipboard()
+                try:
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardText(
+                        previous_text,
+                        win32clipboard.CF_UNICODETEXT,
+                    )
+                finally:
+                    win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+    except Exception as exc:
+        return ScreenObservation(
+            False,
+            "La saisie dans la cible visuelle a échoué.",
+            str(exc),
+        )
+
+    try:
+        click_detail = json.loads(clicked.detail or "{}")
+    except json.JSONDecodeError:
+        click_detail = {}
+    detail = {
+        **click_detail,
+        "mode": normalized_mode,
+        "text_length": len(value),
+        "verified": False,
+        "note": (
+            "Texte saisi dans une cible localisée visuellement. "
+            "Réinspecter ou observer l'écran avant d'affirmer le résultat."
+        ),
+    }
+    return ScreenObservation(
+        True,
+        "Texte saisi dans la cible visuelle.",
+        json.dumps(detail, ensure_ascii=False),
     )
