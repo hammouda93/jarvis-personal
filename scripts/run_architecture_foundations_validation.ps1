@@ -13,7 +13,7 @@ Write-Host "=== Jarvis architecture foundations validation ==="
 Write-Host ""
 
 Write-Host "1/3 Python syntax preflight..."
-$compile = "python -m py_compile jarvis_agent\kernel_contracts.py jarvis_agent\event_journal.py jarvis_agent\event_bus.py jarvis_agent\write_barrier.py jarvis_agent\mission_context_store.py jarvis_agent\knowledge_policy.py jarvis_agent\capability_registry.py jarvis_agent\plugin_manifest.py jarvis_agent\connector_registry.py jarvis_agent\connector_gateway.py jarvis_agent\approval_manager.py jarvis_agent\kernel_policy.py jarvis_agent\mission_scheduler.py jarvis_agent\kernel_service.py jarvis_agent\context_broker.py jarvis_agent\dev_supervisor.py jarvis_agent\correction_store.py jarvis_agent\regression_registry.py jarvis_agent\replay_sandbox.py jarvis_agent\model_telemetry.py jarvis_agent\model_router.py jarvis_agent\kernel_cli.py"
+$compile = "python -m py_compile jarvis_agent\kernel_contracts.py jarvis_agent\event_journal.py jarvis_agent\event_bus.py jarvis_agent\write_barrier.py jarvis_agent\mission_context_store.py jarvis_agent\knowledge_policy.py jarvis_agent\capability_registry.py jarvis_agent\plugin_manifest.py jarvis_agent\connector_registry.py jarvis_agent\connector_gateway.py jarvis_agent\approval_manager.py jarvis_agent\kernel_policy.py jarvis_agent\mission_scheduler.py jarvis_agent\task_graph.py jarvis_agent\kernel_service.py jarvis_agent\context_broker.py jarvis_agent\dev_supervisor.py jarvis_agent\supervisor_planner.py jarvis_agent\correction_store.py jarvis_agent\regression_registry.py jarvis_agent\replay_sandbox.py jarvis_agent\model_telemetry.py jarvis_agent\model_router.py jarvis_agent\kernel_cli.py"
 cmd.exe /d /s /c $compile
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Foundation syntax preflight FAILED."
