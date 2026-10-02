@@ -11,6 +11,24 @@ from .kernel_stack import PassiveKernelStack, build_passive_kernel_stack
 from .task_graph import MissionTaskGraph, TaskNode, TaskStatus
 
 
+_SHADOW_AGENT_HINTS: dict[str, tuple[str, ...]] = {
+    "app.open": ("windows",),
+    "folder.open": ("windows",),
+    "folder.open_named": ("windows",),
+    "folder.open_prompt": ("windows",),
+    "browser.open_url": ("browser",),
+    "browser.search": ("browser",),
+    "browser.search_prompt": ("browser",),
+    "search_web": ("browser",),
+    "open_folder": ("windows",),
+    "system.time": ("interaction",),
+    "get_current_time": ("interaction",),
+    "assistant.stop": ("interaction",),
+    "assistant.sleep": ("interaction",),
+    "return_to_standby": ("interaction",),
+}
+
+
 def _default_shadow_dir() -> Path:
     root = Path(
         os.getenv("LOCALAPPDATA")
@@ -86,8 +104,14 @@ class KernelShadowObserver:
         )
 
     def _candidate_agents(self, tool_names: Iterable[str]) -> tuple[str, ...]:
-        names = {str(name or "").strip() for name in tool_names if str(name or "").strip()}
+        names = {
+            str(name or "").strip()
+            for name in tool_names
+            if str(name or "").strip()
+        }
         candidates: list[str] = []
+        for name in sorted(names):
+            candidates.extend(_SHADOW_AGENT_HINTS.get(name, ()))
         for manifest in self.stack.registry.agents():
             if names.intersection(set(manifest.allowed_tools)):
                 candidates.append(manifest.agent_id)
