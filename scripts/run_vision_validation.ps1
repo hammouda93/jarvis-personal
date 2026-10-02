@@ -36,6 +36,7 @@ $tests = @(
     "tests.test_native_tools.NativeToolRegistryTests.test_write_visual_target_routes_to_local_visual_action",
     "tests.test_agent_runtime.AgentRuntimeTests.test_compact_inspection_preserves_capability_refs",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_vision_mode_exposes_observation_but_not_visual_click",
+    "tests.test_agent_runtime.AgentRuntimeTests.test_groq_visual_write_satisfies_write_goal_after_verification",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_visual_click_requires_after_state_verification",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_search_submission_reuses_current_ui_instead_of_reopening_site"
 )
