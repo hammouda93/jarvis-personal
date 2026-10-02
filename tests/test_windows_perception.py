@@ -498,6 +498,34 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertTrue(result.success)
         send_mock.assert_called_once_with("%{LEFT}")
 
+    @patch("jarvis_agent.windows_perception._send_keys")
+    def test_press_key_allows_safe_save_shortcut(self, send_mock):
+        from jarvis_agent.windows_perception import press_key
+
+        result = press_key("Ctrl+S")
+
+        self.assertTrue(result.success)
+        send_mock.assert_called_once_with("^s")
+
+    @patch("jarvis_agent.windows_perception._native_window_candidates")
+    def test_native_target_matches_localized_title_by_process_identity(
+        self,
+        candidates_mock,
+    ):
+        candidates_mock.return_value = [
+            {
+                "handle": 42,
+                "title": "Sans titre – Bloc-notes",
+                "process": "Notepad.exe",
+                "bounds": (10, 10, 800, 600),
+            }
+        ]
+
+        item = _native_target_window("Notepad")
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item["handle"], 42)
+
     @patch("jarvis_agent.windows_perception._snapshot_element")
     def test_append_write_preserves_existing_document_text(
         self,
