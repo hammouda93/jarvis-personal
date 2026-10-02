@@ -3,7 +3,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from .kernel_contracts import KernelRequest, MissionContext, MissionStatus, SyscallKind
+from .kernel_contracts import (
+    KernelRequest,
+    MissionContext,
+    MissionStatus,
+    SyscallKind,
+    SyscallStatus,
+)
 from .kernel_service import JarvisKernel, KernelSubmission
 from .mission_context_store import MissionContextStore
 from .task_graph import MissionTaskGraph, TaskNode, TaskStatus
@@ -242,6 +248,66 @@ class MissionOrchestrator:
         self.context_store.save(context, expected_version=version)
         self.graph_store.save(graph)
         return response
+
+    def restore_runtime_state(self, mission_id: str) -> dict[str, list[str]]:
+        """Rebuild in-memory request/task links after a process restart.
+
+        QUEUED requests can be safely rehydrated by the Kernel. RUNNING
+        requests are only reported for recovery; they are never auto-replayed.
+        """
+        graph = self.graph(mission_id)
+        if graph is None:
+            raise KeyError("mission_graph_not_registered")
+
+        store = self.kernel.request_store
+        if store is None:
+            return {
+                "queued_restored": [],
+                "recovery_required": [],
+                "waiting_approval": [],
+            }
+
+        rows = store.for_mission(
+            mission_id,
+            statuses=(
+                SyscallStatus.QUEUED,
+                SyscallStatus.RUNNING,
+                SyscallStatus.WAITING_APPROVAL,
+            ),
+        )
+        recovery_required: list[str] = []
+        waiting_approval: list[str] = []
+
+        for row in rows:
+            request = row["request"]
+            status = row["status"]
+            task_id = str(request.step_id or "")
+            if task_id:
+                self._request_to_task[request.request_id] = (
+                    str(mission_id),
+                    task_id,
+                )
+                self._submitted_tasks.add(
+                    (str(mission_id), task_id)
+                )
+            if status == SyscallStatus.RUNNING:
+                recovery_required.append(request.request_id)
+            elif status == SyscallStatus.WAITING_APPROVAL:
+                waiting_approval.append(request.request_id)
+
+        queued_restored = self.kernel.restore_queued_requests()
+        return {
+            "queued_restored": [
+                request_id
+                for request_id in queued_restored
+                if any(
+                    row["request"].request_id == request_id
+                    for row in rows
+                )
+            ],
+            "recovery_required": recovery_required,
+            "waiting_approval": waiting_approval,
+        }
 
     def resumable(self, *, user_id: str | None = None) -> list[dict]:
         return self.context_store.list_resumable(user_id=user_id)
