@@ -6,9 +6,15 @@ from typing import Any
 from .approval_manager import HumanApprovalManager
 from .event_bus import BusEvent, MissionEventBus
 from .event_journal import StructuredEventJournal
-from .kernel_contracts import EventKind, KernelRequest, KernelResponse
+from .kernel_contracts import (
+    EventKind,
+    KernelRequest,
+    KernelResponse,
+    SyscallStatus,
+)
 from .kernel_policy import AuthorizationDecision, KernelPolicy
 from .mission_scheduler import MissionScheduler
+from .kernel_request_store import KernelRequestStore
 
 
 @dataclass(frozen=True)
@@ -36,6 +42,7 @@ class JarvisKernel:
         approvals: HumanApprovalManager | None = None,
         event_bus: MissionEventBus | None = None,
         journal: StructuredEventJournal | None = None,
+        request_store: KernelRequestStore | None = None,
     ):
         self.policy = policy or KernelPolicy()
         if scheduler is None:
@@ -51,6 +58,7 @@ class JarvisKernel:
         self.approvals = approvals or HumanApprovalManager()
         self.event_bus = event_bus or MissionEventBus()
         self.journal = journal
+        self.request_store = request_store
         self._pending_approval_requests: dict[str, KernelRequest] = {}
 
     def _emit(
@@ -92,6 +100,12 @@ class JarvisKernel:
     ) -> KernelSubmission:
         decision: AuthorizationDecision = self.policy.authorize(request)
         if not decision.allowed:
+            if self.request_store is not None:
+                self.request_store.put(
+                    request,
+                    status=SyscallStatus.FAILED,
+                    error=decision.reason,
+                )
             self._emit(
                 request,
                 EventKind.SYSCALL_COMPLETED,
@@ -126,6 +140,11 @@ class JarvisKernel:
             self._pending_approval_requests[
                 approval.approval_id
             ] = request
+            if self.request_store is not None:
+                self.request_store.put(
+                    request,
+                    status=SyscallStatus.WAITING_APPROVAL,
+                )
             self._emit(
                 request,
                 EventKind.APPROVAL_REQUESTED,
@@ -146,6 +165,11 @@ class JarvisKernel:
             )
 
         self.scheduler.submit(request)
+        if self.request_store is not None:
+            self.request_store.put(
+                request,
+                status=SyscallStatus.QUEUED,
+            )
         self._emit(
             request,
             EventKind.SYSCALL_QUEUED,
@@ -193,6 +217,12 @@ class JarvisKernel:
         )
 
         if not approved:
+            if self.request_store is not None:
+                self.request_store.mark(
+                    request.request_id,
+                    SyscallStatus.CANCELLED,
+                    error="user_denied",
+                )
             self._pending_approval_requests.pop(
                 str(approval_id),
                 None,
@@ -210,6 +240,11 @@ class JarvisKernel:
             return None
 
         self.scheduler.submit(request)
+        if self.request_store is not None:
+            self.request_store.put(
+                request,
+                status=SyscallStatus.QUEUED,
+            )
         self._pending_approval_requests.pop(
             str(approval_id),
             None,
@@ -244,6 +279,11 @@ class JarvisKernel:
             allowed_agents=allowed_agents,
         )
         if scheduled is not None:
+            if self.request_store is not None:
+                self.request_store.mark(
+                    scheduled.request.request_id,
+                    SyscallStatus.RUNNING,
+                )
             self._emit(
                 scheduled.request,
                 EventKind.SYSCALL_STARTED,
@@ -253,6 +293,29 @@ class JarvisKernel:
                 },
             )
         return scheduled
+
+    def restore_queued_requests(self) -> list[str]:
+        """Rehydrate only requests known to be safely QUEUED.
+
+        RUNNING requests are deliberately excluded because their external
+        side effects may already have happened before a crash.
+        """
+        if self.request_store is None:
+            return []
+        restored: list[str] = []
+        for request in self.request_store.by_status(
+            SyscallStatus.QUEUED
+        ):
+            if self.scheduler.get(request.request_id) is not None:
+                continue
+            self.scheduler.submit(request)
+            restored.append(request.request_id)
+        return restored
+
+    def recovery_required_requests(self) -> list[KernelRequest]:
+        if self.request_store is None:
+            return []
+        return self.request_store.recovery_required()
 
     def complete(
         self,
@@ -272,6 +335,12 @@ class JarvisKernel:
             result=result,
             error=error,
         )
+        if self.request_store is not None:
+            self.request_store.mark(
+                request_id,
+                response.status,
+                error=error,
+            )
         self._emit(
             scheduled.request,
             EventKind.SYSCALL_COMPLETED,
