@@ -1480,6 +1480,8 @@ class GroqResponsesAgent:
         internal_prefixes = (
             "Réponds à la demande précédente uniquement",
             "Cet outil vient d échouer",
+            "Tu viens d'écrire une imitation JSON d'outil",
+            "Une action vient de modifier l'interface",
         )
         for item in self._messages[1:]:
             role = str(item.get("role") or "")
@@ -1641,6 +1643,8 @@ class GroqResponsesAgent:
                     and not pseudo_tool_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
                     self._messages.append(
                         {
                             "role": "user",
@@ -1662,6 +1666,8 @@ class GroqResponsesAgent:
                     and not ui_verification_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
                     self._messages.append(
                         {
                             "role": "user",
@@ -1723,6 +1729,9 @@ class GroqResponsesAgent:
                         "D'accord. Je garde cette information uniquement dans "
                         "le contexte de cette conversation."
                     )
+
+                if self._messages and self._messages[-1].get("role") == "assistant":
+                    self._messages[-1]["content"] = text
                 self._trim_history()
                 return AgentTurnResult(
                     text=text,
