@@ -26,6 +26,26 @@ class ShadowObservation:
     success: bool
     action_count: int
     candidate_agents: tuple[str, ...]
+    needs_review: bool = False
+    recovered_after_failure: bool = False
+
+
+@dataclass(frozen=True)
+class ShadowSupervisorAssessment:
+    needs_review: bool
+    recovered_after_failure: bool
+    failed_tools: tuple[str, ...]
+    unmapped_tools: tuple[str, ...]
+    ambiguous_tools: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "needs_review": self.needs_review,
+            "recovered_after_failure": self.recovered_after_failure,
+            "failed_tools": list(self.failed_tools),
+            "unmapped_tools": list(self.unmapped_tools),
+            "ambiguous_tools": list(self.ambiguous_tools),
+        }
 
 
 class KernelShadowObserver:
@@ -72,6 +92,41 @@ class KernelShadowObserver:
             if names.intersection(set(manifest.allowed_tools)):
                 candidates.append(manifest.agent_id)
         return tuple(dict.fromkeys(candidates))
+
+    def _supervisor_assessment(
+        self,
+        payloads: Sequence[dict[str, Any]],
+        *,
+        turn_success: bool,
+    ) -> ShadowSupervisorAssessment:
+        failed_tools: list[str] = []
+        unmapped_tools: list[str] = []
+        ambiguous_tools: list[str] = []
+
+        for payload in payloads:
+            tool_name = str(payload.get("tool_name") or "")
+            if not bool(payload.get("success")):
+                failed_tools.append(tool_name)
+            candidates = self._candidate_agents([tool_name])
+            if not candidates:
+                unmapped_tools.append(tool_name)
+            elif len(candidates) > 1:
+                ambiguous_tools.append(tool_name)
+
+        recovered_after_failure = bool(failed_tools) and bool(turn_success)
+        needs_review = bool(
+            failed_tools
+            or unmapped_tools
+            or ambiguous_tools
+            or not turn_success
+        )
+        return ShadowSupervisorAssessment(
+            needs_review=needs_review,
+            recovered_after_failure=recovered_after_failure,
+            failed_tools=tuple(failed_tools),
+            unmapped_tools=tuple(unmapped_tools),
+            ambiguous_tools=tuple(ambiguous_tools),
+        )
 
     @staticmethod
     def _action_payload(
@@ -228,6 +283,10 @@ class KernelShadowObserver:
             if turn_success
             else MissionStatus.FAILED
         )
+        supervisor = self._supervisor_assessment(
+            payloads,
+            turn_success=turn_success,
+        )
 
         observed_state = {
             "shadow": True,
@@ -239,6 +298,7 @@ class KernelShadowObserver:
             "candidate_agents": list(candidate_agents),
             "shadow_task_count": len(payloads),
             "shadow_task_graph_persisted": bool(payloads),
+            "supervisor": supervisor.as_dict(),
         }
         context = MissionContext(
             mission_id=mission_id,
@@ -262,6 +322,18 @@ class KernelShadowObserver:
                 "response_text": str(response_text or "")[:2400],
             },
         )
+        self.stack.journal.append_event(
+            mission_id=mission_id,
+            kind=EventKind.OBSERVATION,
+            agent_id="supervisor",
+            component="shadow_supervisor",
+            success=turn_success,
+            payload={
+                "mode": "shadow",
+                "authoritative": False,
+                **supervisor.as_dict(),
+            },
+        )
         self.stack.journal.finish_mission(
             mission_id,
             success=turn_success,
@@ -274,6 +346,10 @@ class KernelShadowObserver:
             success=turn_success,
             action_count=len(payloads),
             candidate_agents=candidate_agents,
+            needs_review=supervisor.needs_review,
+            recovered_after_failure=(
+                supervisor.recovered_after_failure
+            ),
         )
 
     def observe_agent_turn(
