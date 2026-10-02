@@ -735,6 +735,267 @@ class ArchitectureExtensionTests(unittest.TestCase):
                 [],
             )
 
+    def test_contextual_agent_router_general_behavior_matrix(self):
+        router = CapabilityAgentRouter()
+        available = (
+            "browser",
+            "windows",
+            "ms_football",
+            "communications",
+            "developer",
+            "interaction",
+        )
+        cases = (
+            {
+                "name": "notepad_shared_inspection",
+                "context": AgentRoutingContext(
+                    user_goal="Inspecte le Bloc-notes.",
+                    current_tool="inspect_active_window",
+                    current_application="notepad",
+                    observed_window=(
+                        '{"controls":[{"type":"TabItem"},'
+                        '{"name":"Ajouter un nouvel onglet"}]}'
+                    ),
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "windows",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "cursor_desktop",
+                "context": AgentRoutingContext(
+                    user_goal="Continue dans Cursor.",
+                    current_tool="press_key",
+                    current_application="cursor",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "windows",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "vscode_desktop",
+                "context": AgentRoutingContext(
+                    user_goal="Écris dans VS Code.",
+                    current_tool="write_ui_element",
+                    current_application="vscode",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "windows",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "explorer_desktop",
+                "context": AgentRoutingContext(
+                    user_goal="Inspecte l'Explorateur.",
+                    current_tool="inspect_active_window",
+                    current_application="explorer",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "windows",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "installer_desktop",
+                "context": AgentRoutingContext(
+                    user_goal="Continue l'installation.",
+                    current_tool="click_ui_element",
+                    current_application="installation",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "windows",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "chrome_browser",
+                "context": AgentRoutingContext(
+                    user_goal="Inspecte Chrome.",
+                    current_tool="inspect_active_window",
+                    current_application="chrome",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "browser",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "youtube_browser",
+                "context": AgentRoutingContext(
+                    user_goal="Ferme seulement l'onglet YouTube.",
+                    current_tool="close_tab",
+                    current_application="youtube",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "browser",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "edge_browser",
+                "context": AgentRoutingContext(
+                    user_goal="Continue dans Edge.",
+                    current_tool="press_key",
+                    current_application="edge",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "browser",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "firefox_browser",
+                "context": AgentRoutingContext(
+                    user_goal="Inspecte Firefox.",
+                    current_tool="inspect_active_window",
+                    current_application="firefox",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "browser",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "goal_tab_context_without_app",
+                "context": AgentRoutingContext(
+                    user_goal="Ferme cet onglet du navigateur.",
+                    current_tool="close_tab",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "browser",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "browser_observation_without_app",
+                "context": AgentRoutingContext(
+                    user_goal="Continue.",
+                    current_tool="inspect_active_window",
+                    observed_window="https://example.com/page",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "browser",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "current_app_beats_conflicting_goal_words",
+                "context": AgentRoutingContext(
+                    user_goal="Copie une URL Chrome dans le Bloc-notes.",
+                    current_tool="inspect_active_window",
+                    current_application="notepad",
+                    observed_window="Ajouter un nouvel onglet",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "windows",
+                "reason": "application_context",
+                "review": False,
+            },
+            {
+                "name": "windows_continuity",
+                "context": AgentRoutingContext(
+                    user_goal="Continue.",
+                    current_tool="press_key",
+                    previous_tool="inspect_active_window",
+                    previous_agent="windows",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "windows",
+                "reason": "mission_continuity",
+                "review": False,
+            },
+            {
+                "name": "browser_continuity",
+                "context": AgentRoutingContext(
+                    user_goal="Continue.",
+                    current_tool="press_key",
+                    previous_tool="inspect_active_window",
+                    previous_agent="browser",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "browser",
+                "reason": "mission_continuity",
+                "review": False,
+            },
+            {
+                "name": "exclusive_windows_tool",
+                "context": AgentRoutingContext(
+                    user_goal="Liste les fenêtres pendant la mission YouTube.",
+                    current_tool="list_windows",
+                    current_application="youtube",
+                    available_agents=available,
+                ),
+                "candidates": ("windows",),
+                "agent": "windows",
+                "reason": "exclusive_tool",
+                "review": False,
+            },
+            {
+                "name": "explicit_ms_football_domain",
+                "context": AgentRoutingContext(
+                    user_goal="Lis les abonnements MS Football.",
+                    current_tool="msf_query_records",
+                    domain="ms_football",
+                    available_agents=available,
+                ),
+                "candidates": ("ms_football",),
+                "agent": "ms_football",
+                "reason": "explicit_domain",
+                "review": False,
+            },
+            {
+                "name": "true_shared_tool_ambiguity",
+                "context": AgentRoutingContext(
+                    user_goal="Appuie sur Entrée.",
+                    current_tool="press_key",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "interaction",
+                "reason": "unresolved_ambiguity",
+                "review": True,
+            },
+            {
+                "name": "substring_collision_does_not_fake_edge",
+                "context": AgentRoutingContext(
+                    user_goal="Inspecte le ledger.",
+                    current_tool="inspect_active_window",
+                    available_agents=available,
+                ),
+                "candidates": ("browser", "windows"),
+                "agent": "interaction",
+                "reason": "unresolved_ambiguity",
+                "review": True,
+            },
+        )
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                decision = router.route_contextual(
+                    case["context"],
+                    candidate_agents=case["candidates"],
+                )
+                self.assertEqual(decision.agent_id, case["agent"])
+                self.assertEqual(decision.reason, case["reason"])
+                self.assertEqual(decision.needs_review, case["review"])
+
     def test_contextual_agent_router_uses_continuity_and_marks_real_ambiguity(self):
         router = CapabilityAgentRouter()
 
