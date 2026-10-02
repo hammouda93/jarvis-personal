@@ -1247,6 +1247,118 @@ def write_ui_element(
     )
 
 
+def type_text_active_window(
+    text: str,
+    *,
+    title: str = "",
+    mode: str = "insert",
+) -> UIActionResult:
+    """Fallback typing when UIA cannot expose an editable control.
+
+    This sends text only to the currently focused control in the requested
+    foreground window. It is intentionally generic and should be used only
+    after UIA inspection failed or returned no writable controls.
+    """
+    value = str(text or "")
+    if not value:
+        return UIActionResult(False, "Le texte à saisir est vide.")
+    if len(value) > 4000:
+        return UIActionResult(False, "Le texte est trop long pour une saisie directe.")
+
+    normalized_mode = normalize(mode or "insert")
+    if normalized_mode not in {"replace", "append", "insert"}:
+        return UIActionResult(
+            False,
+            "Mode d'écriture invalide. Utilisez replace, append ou insert.",
+            normalized_mode,
+        )
+
+    target = (title or _SNAPSHOT_WINDOW_TITLE or "").strip()
+    if target:
+        activation = activate_window(target)
+        if not activation.success:
+            return UIActionResult(
+                False,
+                "Impossible d'activer la fenêtre avant la saisie.",
+                activation.detail or target,
+            )
+        time.sleep(0.08)
+
+    try:
+        import win32clipboard
+
+        previous_text: str | None = None
+        try:
+            win32clipboard.OpenClipboard()
+            try:
+                if win32clipboard.IsClipboardFormatAvailable(
+                    win32clipboard.CF_UNICODETEXT
+                ):
+                    previous_text = win32clipboard.GetClipboardData(
+                        win32clipboard.CF_UNICODETEXT
+                    )
+            except Exception:
+                previous_text = None
+            finally:
+                win32clipboard.CloseClipboard()
+        except Exception:
+            previous_text = None
+
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(
+                value,
+                win32clipboard.CF_UNICODETEXT,
+            )
+        finally:
+            win32clipboard.CloseClipboard()
+
+        if normalized_mode == "replace":
+            _send_keys("^a")
+        elif normalized_mode == "append":
+            _send_keys("^{END}")
+
+        _send_keys("^v")
+        time.sleep(0.08)
+
+        if previous_text is not None:
+            try:
+                win32clipboard.OpenClipboard()
+                try:
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardText(
+                        previous_text,
+                        win32clipboard.CF_UNICODETEXT,
+                    )
+                finally:
+                    win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+    except Exception as exc:
+        return UIActionResult(
+            False,
+            "Impossible de saisir le texte dans la fenêtre active.",
+            str(exc),
+        )
+
+    return UIActionResult(
+        True,
+        "Texte saisi dans le contrôle actuellement au focus.",
+        _json(
+            {
+                "mode": normalized_mode,
+                "target_window": target,
+                "verified": False,
+                "note": (
+                    "Saisie clavier de secours effectuée. "
+                    "Réinspecter si une preuve du contenu est nécessaire."
+                ),
+            }
+        ),
+    )
+
+
 _ALLOWED_KEYS = {
     "enter": "{ENTER}",
     "return": "{ENTER}",
