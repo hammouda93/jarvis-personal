@@ -739,6 +739,12 @@ class AgentKnowledgeStore:
         }
         if anonymize:
             payload = self._sanitize_json(payload)
+            for run in payload.get("recent_runs", []):
+                run["goal"] = "<user-goal-omitted>"
+            for profile in payload.get("app_profiles", []):
+                hint = str(profile.get("launch_hint") or "")
+                if hint:
+                    profile["launch_hint"] = "<local-launch-hint-omitted>"
 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
