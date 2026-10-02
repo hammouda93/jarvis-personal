@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -34,6 +35,87 @@ def _is_local_endpoint(url: str) -> bool:
     except ValueError:
         return False
     return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _extract_json_object(content: str) -> dict[str, Any]:
+    """Parse a JSON object from a local vision response, including fenced JSON."""
+    text = str(content or "").strip()
+    if not text:
+        return {}
+    if text.startswith("```"):
+        text = re.sub(r"^\s*```(?:json)?\s*", "", text, flags=re.I)
+        text = re.sub(r"\s*```\s*$", "", text)
+    try:
+        value = json.loads(text)
+        return value if isinstance(value, dict) else {}
+    except json.JSONDecodeError:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            value = json.loads(text[start : end + 1])
+            return value if isinstance(value, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _call_local_vision(
+    image_bytes: bytes,
+    *,
+    prompt: str,
+) -> tuple[str, float]:
+    endpoint = _vision_endpoint()
+    payload = {
+        "model": settings.vision_model,
+        "stream": False,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+                "images": [base64.b64encode(image_bytes).decode("ascii")],
+            }
+        ],
+        "options": {
+            "temperature": 0,
+            "num_predict": max(128, int(settings.vision_num_predict)),
+        },
+    }
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    started = time.perf_counter()
+    with urllib.request.urlopen(
+        request,
+        timeout=float(settings.vision_timeout_s),
+    ) as response:
+        body = json.loads(
+            response.read().decode("utf-8", errors="replace")
+        )
+    content = str(
+        ((body.get("message") or {}).get("content"))
+        or body.get("response")
+        or ""
+    ).strip()
+    return content, time.perf_counter() - started
+
+
+def _normalized_box(value: Any) -> list[int] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        box = [int(round(float(item))) for item in value]
+    except (TypeError, ValueError):
+        return None
+    x1, y1, x2, y2 = box
+    if not (0 <= x1 < x2 <= 1000 and 0 <= y1 < y2 <= 1000):
+        return None
+    return box
 
 
 def _capture_window_bytes(
@@ -141,60 +223,28 @@ def observe_screen(
     question = (focus or "").strip()
     prompt = (
         "Tu es le capteur visuel local de Jarvis. Analyse uniquement ce qui est "
-        "réellement visible dans cette capture Windows. Ne déduis pas des éléments "
-        "cachés. Réponds brièvement en JSON avec les clés: summary, visible_text, "
-        "important_regions, candidate_actions, ambiguities. Pour candidate_actions, "
-        "décris les éléments par leur texte et position relative (haut gauche, centre, "
-        "etc.), jamais par des coordonnées absolues."
+        "réellement visible dans cette capture Windows. Ne déduis jamais un élément "
+        "caché. Réponds uniquement en JSON avec les clés: summary, visible_text, "
+        "important_regions, candidate_actions, targets, ambiguities. "
+        "targets doit contenir uniquement les contrôles clairement visibles et utiles, "
+        "chaque cible avec label, role, box_1000=[x1,y1,x2,y2] dans un repère normalisé "
+        "0..1000 relatif à la capture, et confidence entre 0 et 1. "
+        "N'invente pas de boîte si la cible n'est pas clairement localisable."
     )
     if question:
         prompt += f"\nObjectif précis à observer: {question[:700]}"
 
-    payload = {
-        "model": settings.vision_model,
-        "stream": False,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-                "images": [
-                    base64.b64encode(image_bytes).decode("ascii")
-                ],
-            }
-        ],
-        "options": {
-            "temperature": 0,
-            "num_predict": max(128, int(settings.vision_num_predict)),
-        },
-    }
-    request = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    started = time.perf_counter()
     try:
-        with urllib.request.urlopen(
-            request,
-            timeout=float(settings.vision_timeout_s),
-        ) as response:
-            body = json.loads(
-                response.read().decode("utf-8", errors="replace")
-            )
+        content, elapsed = _call_local_vision(
+            image_bytes,
+            prompt=prompt,
+        )
     except Exception as exc:
         return ScreenObservation(
             False,
             "Le capteur visuel local n'est pas disponible.",
             str(exc),
         )
-
-    content = str(
-        ((body.get("message") or {}).get("content"))
-        or body.get("response")
-        or ""
-    ).strip()
     if not content:
         return ScreenObservation(
             False,
@@ -212,8 +262,9 @@ def observe_screen(
     detail = {
         **metadata,
         "model": settings.vision_model,
-        "seconds": round(time.perf_counter() - started, 3),
+        "seconds": round(elapsed, 3),
         "observation": content[:8000],
+        "observation_json": _extract_json_object(content),
         "evidence_saved": bool(saved_path),
     }
     if saved_path:
@@ -223,4 +274,185 @@ def observe_screen(
         True,
         "Observation visuelle locale terminée.",
         json.dumps(detail, ensure_ascii=False),
+    )
+
+
+
+def locate_visual_target(
+    *,
+    target: str,
+    title: str | None = None,
+) -> ScreenObservation:
+    """Locate one clearly visible UI target using the local vision model."""
+    if not settings.vision_enabled:
+        return ScreenObservation(
+            False,
+            "La perception visuelle locale est désactivée.",
+            "vision_disabled",
+        )
+    endpoint = _vision_endpoint()
+    if settings.vision_local_only and not _is_local_endpoint(endpoint):
+        return ScreenObservation(
+            False,
+            "La perception visuelle refuse un endpoint distant.",
+            "vision_local_only",
+        )
+
+    description = str(target or "").strip()
+    if len(description) < 2:
+        return ScreenObservation(False, "La cible visuelle est trop vague.")
+
+    try:
+        image_bytes, metadata = _capture_window_bytes(title)
+    except Exception as exc:
+        return ScreenObservation(
+            False,
+            "Impossible de capturer la fenêtre.",
+            str(exc),
+        )
+
+    prompt = (
+        "Tu localises UNE cible visible dans une capture Windows pour Jarvis. "
+        f"Cible demandée: {description[:500]!r}. "
+        "Réponds uniquement en JSON: "
+        '{"found":true|false,"label":"...","role":"...",'
+        '"box_1000":[x1,y1,x2,y2],"confidence":0.0,"reason":"..."}. '
+        "box_1000 utilise 0..1000 pour toute la largeur/hauteur de la capture. "
+        "Ne retourne found=true que si la cible est clairement identifiable. "
+        "En cas de plusieurs candidats ambigus, retourne found=false."
+    )
+    try:
+        content, elapsed = _call_local_vision(
+            image_bytes,
+            prompt=prompt,
+        )
+    except Exception as exc:
+        return ScreenObservation(
+            False,
+            "Le capteur visuel local n'est pas disponible.",
+            str(exc),
+        )
+
+    parsed = _extract_json_object(content)
+    box = _normalized_box(parsed.get("box_1000"))
+    try:
+        confidence = float(parsed.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    found = bool(parsed.get("found")) and box is not None
+    if not found:
+        return ScreenObservation(
+            False,
+            "La cible visuelle n'a pas été localisée de façon fiable.",
+            json.dumps(
+                {
+                    **metadata,
+                    "target": description,
+                    "seconds": round(elapsed, 3),
+                    "vision": parsed or content[:1200],
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+    detail = {
+        **metadata,
+        "target": description,
+        "label": str(parsed.get("label") or "")[:200],
+        "role": str(parsed.get("role") or "")[:120],
+        "box_1000": box,
+        "confidence": max(0.0, min(confidence, 1.0)),
+        "reason": str(parsed.get("reason") or "")[:500],
+        "model": settings.vision_model,
+        "seconds": round(elapsed, 3),
+    }
+    return ScreenObservation(
+        True,
+        "Cible visuelle locale localisée.",
+        json.dumps(detail, ensure_ascii=False),
+    )
+
+
+def click_visual_target(
+    *,
+    target: str,
+    title: str | None = None,
+) -> ScreenObservation:
+    """Locate and click a visible target locally; always requires after-state verification."""
+    if not settings.vision_actions_enabled:
+        return ScreenObservation(
+            False,
+            "Les actions visuelles locales sont désactivées.",
+            "vision_actions_disabled",
+        )
+
+    located = locate_visual_target(target=target, title=title)
+    if not located.success:
+        return located
+
+    try:
+        detail = json.loads(located.detail or "{}")
+    except json.JSONDecodeError:
+        detail = {}
+    confidence = float(detail.get("confidence") or 0.0)
+    threshold = max(0.0, min(float(settings.vision_min_confidence), 1.0))
+    if confidence < threshold:
+        return ScreenObservation(
+            False,
+            "La confiance visuelle est insuffisante pour cliquer.",
+            json.dumps(
+                {
+                    **detail,
+                    "required_confidence": threshold,
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+    box = _normalized_box(detail.get("box_1000"))
+    bounds = list(detail.get("bounds") or [])
+    if box is None or len(bounds) != 4:
+        return ScreenObservation(
+            False,
+            "La cible visuelle ne contient pas une géométrie valide.",
+            located.detail,
+        )
+
+    left, top, right, bottom = [int(value) for value in bounds]
+    x1, y1, x2, y2 = box
+    width = right - left
+    height = bottom - top
+    x = left + int(round(((x1 + x2) / 2.0) / 1000.0 * width))
+    y = top + int(round(((y1 + y2) / 2.0) / 1000.0 * height))
+    if not (left <= x <= right and top <= y <= bottom):
+        return ScreenObservation(
+            False,
+            "Le point visuel calculé est hors de la fenêtre cible.",
+            located.detail,
+        )
+
+    try:
+        from pywinauto import mouse
+
+        mouse.click(button="left", coords=(x, y))
+    except Exception as exc:
+        return ScreenObservation(
+            False,
+            "Le clic visuel local a échoué.",
+            str(exc),
+        )
+
+    result = {
+        **detail,
+        "clicked_screen_point": [x, y],
+        "verified": False,
+        "note": (
+            "Clic visuel envoyé. Réinspecter l'interface ou refaire une "
+            "observation visuelle avant d'affirmer le résultat."
+        ),
+    }
+    return ScreenObservation(
+        True,
+        "Clic visuel local envoyé.",
+        json.dumps(result, ensure_ascii=False),
     )
