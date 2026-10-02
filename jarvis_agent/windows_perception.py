@@ -789,6 +789,41 @@ def list_windows(*, limit: int = 20) -> UIActionResult:
     )
 
 
+def _nearest_text_label(
+    wrapper: Any,
+    informative: list[Any],
+) -> str:
+    """Best-effort visual label for an editable/control using nearby Text UIA."""
+    left, top, right, bottom = _rect_tuple(wrapper)
+    cy = (top + bottom) / 2
+    candidates: list[tuple[float, str]] = []
+    for label in informative:
+        name = _element_name(label).strip()
+        if not name:
+            continue
+        l, t, r, b = _rect_tuple(label)
+        label_cy = (t + b) / 2
+
+        # Prefer a label horizontally to the left on the same row.
+        same_row = abs(label_cy - cy) <= max(24, (bottom - top) * 1.2)
+        left_of = r <= right and r <= left + 40
+        if same_row and left_of:
+            gap = max(0, left - r)
+            vertical = abs(label_cy - cy)
+            candidates.append((gap + vertical * 1.5, name))
+
+        # Also allow a label immediately above the control.
+        above = b <= top and (top - b) <= 48
+        horizontally_overlaps = not (r < left or l > right)
+        if above and horizontally_overlaps:
+            candidates.append(((top - b) + 20.0, name))
+
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1][:160]
+
+
 def inspect_active_window(
     *,
     title: str | None = None,
@@ -986,32 +1021,120 @@ def inspect_active_window(
     content_controls.sort(key=visual_order)
     chrome_controls.sort(key=visual_order)
     documents.sort(key=visual_order)
+    informative.sort(key=visual_order)
 
     max_items = max(8, min(int(limit), 40))
     selected: list[Any] = []
-    selected.extend(content_controls[: max_items - 6])
-    remaining = max_items - len(selected)
-    if remaining > 0:
-        selected.extend(chrome_controls[: min(remaining, 6)])
+
+    if content_rect is None:
+        # Native dialogs (Save As/Open/confirmation windows) generally do not
+        # expose a large Document control. Treat the whole dialog as content
+        # instead of keeping only six "chrome" controls. Prioritize writable
+        # fields and actionable buttons, then fill in visual order.
+        priority_types = {"Edit", "ComboBox", "Button", "CheckBox", "RadioButton"}
+        priority = [
+            item
+            for item in interactive
+            if _control_type(item) in priority_types
+        ]
+        priority.sort(key=visual_order)
+        for item in priority + sorted(interactive, key=visual_order):
+            if item not in selected:
+                selected.append(item)
+            if len(selected) >= max_items:
+                break
+    else:
+        selected.extend(content_controls[: max_items - 6])
+        remaining = max_items - len(selected)
+        if remaining > 0:
+            selected.extend(chrome_controls[: min(remaining, 6)])
+
     remaining = max_items - len(selected)
     if remaining > 0:
         selected.extend(documents[: min(remaining, 2)])
     remaining = max_items - len(selected)
     if remaining > 0:
-        selected.extend(informative[: min(remaining, 4)])
+        selected.extend(informative[: min(remaining, 6)])
 
     _SNAPSHOT_ELEMENTS = {}
     _SNAPSHOT_WINDOW_TITLE = _element_name(window)
 
     controls: list[dict[str, Any]] = []
+    writable_refs: list[dict[str, str]] = []
+    actionable_refs: list[dict[str, str]] = []
     for index, wrapper in enumerate(selected, start=1):
         ref = f"e{index}"
         _SNAPSHOT_ELEMENTS[ref] = wrapper
-        controls.append(_compact_control(ref, wrapper))
+        compact = _compact_control(ref, wrapper)
+        if compact.get("writable"):
+            label_hint = _nearest_text_label(wrapper, informative)
+            if label_hint and not compact.get("name"):
+                compact["label"] = label_hint
+            elif label_hint:
+                compact["label_hint"] = label_hint
+            writable_refs.append(
+                {
+                    "ref": ref,
+                    "label": str(
+                        compact.get("label")
+                        or compact.get("label_hint")
+                        or compact.get("name")
+                        or compact.get("id")
+                        or compact.get("type")
+                        or ""
+                    )[:120],
+                }
+            )
+        if compact.get("type") in {
+            "Button",
+            "CheckBox",
+            "Hyperlink",
+            "MenuItem",
+            "RadioButton",
+            "TabItem",
+            "TreeItem",
+        }:
+            actionable_refs.append(
+                {
+                    "ref": ref,
+                    "label": str(
+                        compact.get("name")
+                        or compact.get("id")
+                        or compact.get("type")
+                        or ""
+                    )[:120],
+                }
+            )
+        controls.append(compact)
 
     payload = {
         "window": _compact_window(window),
         "controls": controls,
+        "capabilities": {
+            "writable": writable_refs[:16],
+            "actionable": actionable_refs[:24],
+        },
+        "snapshot": {
+            "total_interactive": len(interactive),
+            "selected_interactive": sum(
+                1 for item in selected if item in interactive
+            ),
+            "truncated": len(interactive) > sum(
+                1 for item in selected if item in interactive
+            ),
+            "has_document_region": content_rect is not None,
+            "vision_recommended": (
+                len(interactive) > len(selected)
+                or (
+                    not writable_refs
+                    and any(
+                        "nom du fichier" in normalize(_element_name(item))
+                        or "file name" in normalize(_element_name(item))
+                        for item in informative
+                    )
+                )
+            ),
+        },
         "fallback": "win32_handle_to_uia" if native_item is not None else None,
         "note": (
             "Utiliser ref pour un contrôle sans nom. "
