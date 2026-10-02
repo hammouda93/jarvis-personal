@@ -37,7 +37,13 @@ if (-not $SkipTests) {
         "tests.test_assistant_v3",
         "tests.test_agent_runtime"
     )
-    python -m unittest $testNames -v 2>&1 | Tee-Object -FilePath $testsPath
+    # unittest -v writes its progress to stderr. Windows PowerShell 5.1
+    # can convert that normal stderr stream into NativeCommandError when the
+    # script uses ErrorActionPreference=Stop. Merge stderr inside cmd.exe
+    # before PowerShell sees the stream so successful tests remain ordinary
+    # text while preserving Python's real exit code.
+    $testCommand = "python -m unittest " + ($testNames -join " ") + " -v 2>&1"
+    cmd.exe /d /s /c $testCommand | Tee-Object -FilePath $testsPath
     $testExit = $LASTEXITCODE
 }
 
