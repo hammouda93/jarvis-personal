@@ -377,10 +377,15 @@ def _actions_have_verified_proof(
         "open_url",
         "msf_commit_mutation",
     }
+    authoritative_mutations = {
+        "msf_commit_mutation",
+    }
     last_mutation = -1
     for index, action in enumerate(actions):
         if action.name in mutation_names and action.success:
             last_mutation = index
+            if action.name in authoritative_mutations:
+                return True
         payload = _action_detail_dict(action)
         if action.success and payload.get("verified") is True:
             return True
@@ -1865,7 +1870,7 @@ class GroqResponsesAgent:
                             "content": (
                                 "Une action vient de modifier l'interface. "
                                 "Avant de conclure, vérifie réellement l'état final "
-                                "avec inspect_active_window ou list_windows. "
+                                "avec inspect_active_window, observe_screen ou list_windows. "
                                 "N'affirme pas le résultat avant cette observation."
                             ),
                         }
@@ -2046,8 +2051,15 @@ class GroqResponsesAgent:
                 elif result.success and name in {
                     "click_ui_element",
                     "press_key",
+                    "open_application",
+                    "open_file",
+                    "open_url",
                 }:
                     ui_verification_required = True
+                elif result.success and name == "close_window":
+                    ui_verification_required = (
+                        "vérifiée" not in (result.detail or "").lower()
+                    )
                 elif result.success and name in {
                     "inspect_active_window",
                     "observe_screen",
