@@ -33,6 +33,8 @@ $tests = @(
     "tests.test_screen_vision",
     "tests.test_windows_perception.WindowsPerceptionTests.test_dialog_snapshot_keeps_lower_writable_field_and_save_button",
     "tests.test_native_tools.NativeToolRegistryTests.test_click_visual_target_routes_to_local_visual_action",
+    "tests.test_native_tools.NativeToolRegistryTests.test_write_visual_target_routes_to_local_visual_action",
+    "tests.test_agent_runtime.AgentRuntimeTests.test_compact_inspection_preserves_capability_refs",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_vision_mode_exposes_observation_but_not_visual_click",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_visual_click_requires_after_state_verification",
     "tests.test_agent_runtime.AgentRuntimeTests.test_groq_search_submission_reuses_current_ui_instead_of_reopening_site"
