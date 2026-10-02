@@ -29,6 +29,10 @@ from jarvis_agent.approval_manager import (
     HumanApprovalManager,
 )
 from jarvis_agent.context_broker import ContextBroker, ContextItem
+from jarvis_agent.context_injector import (
+    AgentContextInjector,
+    AgentContextRequest,
+)
 from jarvis_agent.component_registry import DEFAULT_COMPONENT_REGISTRY
 from jarvis_agent.event_bus import BusEvent, MissionEventBus
 from jarvis_agent.kernel_policy import KernelPolicy
@@ -48,6 +52,7 @@ from jarvis_agent.model_router import (
     ModelCandidate,
     RouteRequest,
 )
+from jarvis_agent.llm_manager import RoutedLLMExecutionManager
 from jarvis_agent.plugin_manifest import PluginManifest
 from jarvis_agent.replay_sandbox import (
     ReplayAction,
@@ -1569,6 +1574,157 @@ class KernelFoundationTests(unittest.TestCase):
             self.assertEqual(
                 bundle.observations[0]["payload"]["window_title"],
                 "Microsoft Edge",
+            )
+
+    def test_context_injector_respects_user_partition_agent_scopes_and_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mission_store = MissionContextStore(
+                Path(tmp) / "mission.sqlite3"
+            )
+            mission_store.save(
+                MissionContext(
+                    mission_id="m_context",
+                    user_goal="Work in Windows",
+                    status=MissionStatus.RUNNING,
+                    user_id="u1",
+                    owner_agent_id="windows",
+                )
+            )
+            backend = InMemoryKnowledgeBackend()
+            broker = KnowledgeBroker(backend)
+            owner = KnowledgePrincipal(
+                user_id="u1",
+                agent_id="windows",
+            )
+            broker.write(
+                ScopedKnowledgeRecord(
+                    knowledge_id="k_app",
+                    identity=KnowledgeIdentity(
+                        scope=KnowledgeScope.APP,
+                        owner_user_id="u1",
+                        owner_agent_id="windows",
+                        app_id="chrome",
+                        sharing_policy=SharingPolicy.PRIVATE,
+                    ),
+                    content="Chrome window title can include profile text.",
+                    relevance=0.9,
+                ),
+                principal=owner,
+            )
+            injector = AgentContextInjector(
+                mission_store=mission_store,
+                knowledge=broker,
+            )
+
+            result = injector.build(
+                AgentContextRequest(
+                    mission_id="m_context",
+                    agent_id="windows",
+                    user_id="u1",
+                    query="Chrome window",
+                    token_budget=400,
+                )
+            )
+            ids = [item.item_id for item in result.selection.items]
+
+            self.assertIn("mission:m_context", ids)
+            self.assertIn("knowledge:k_app", ids)
+
+            with self.assertRaisesRegex(
+                PermissionError,
+                "mission_user_mismatch",
+            ):
+                injector.build(
+                    AgentContextRequest(
+                        mission_id="m_context",
+                        agent_id="windows",
+                        user_id="u2",
+                        query="Chrome",
+                    )
+                )
+
+    def test_passive_llm_manager_falls_back_after_adapter_failure(self):
+        class Adapter:
+            def __init__(self, provider, model, fail=False):
+                self.provider = provider
+                self.model = model
+                self.fail = fail
+
+            def generate(self, payload):
+                if self.fail:
+                    raise RuntimeError("429 rate limit")
+                return {
+                    "text": "ok",
+                    "input_tokens": 10,
+                    "output_tokens": 2,
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            telemetry = ModelTelemetryStore(
+                Path(tmp) / "llm.sqlite3"
+            )
+            router = LightweightModelRouter(
+                [
+                    ModelCandidate(
+                        provider="cerebras",
+                        model="gpt-oss-120b",
+                        task_tags=("windows",),
+                    ),
+                    ModelCandidate(
+                        provider="groq",
+                        model="gpt-oss-120b",
+                        task_tags=("windows",),
+                    ),
+                ],
+                telemetry=telemetry,
+            )
+            manager = RoutedLLMExecutionManager(
+                router=router,
+                telemetry=telemetry,
+            )
+            manager.register_adapter(
+                Adapter("cerebras", "gpt-oss-120b", fail=True)
+            )
+            manager.register_adapter(
+                Adapter("groq", "gpt-oss-120b", fail=False)
+            )
+
+            result = manager.execute(
+                KernelRequest(
+                    request_id="r_llm",
+                    mission_id="m_llm",
+                    syscall_kind=SyscallKind.LLM,
+                    capability="computer.observe",
+                    agent_id="windows",
+                    payload={
+                        "task_class": "windows",
+                        "required_tags": ["windows"],
+                        "max_attempts": 2,
+                    },
+                )
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.result["provider"], "groq")
+            self.assertEqual(
+                [item["success"] for item in result.result["attempts"]],
+                [False, True],
+            )
+            summaries = telemetry.summary(
+                task_class="windows",
+                since_hours=1,
+            )
+            by_provider = {
+                item["provider"]: item
+                for item in summaries
+            }
+            self.assertEqual(
+                by_provider["cerebras"]["rate_limits"],
+                1,
+            )
+            self.assertEqual(
+                by_provider["groq"]["successes"],
+                1,
             )
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
