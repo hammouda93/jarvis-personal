@@ -75,6 +75,7 @@ from jarvis_agent.task_graph import (
 )
 from jarvis_agent.task_graph_store import TaskGraphStore
 from jarvis_agent.supervisor_planner import SupervisorPlanner
+from jarvis_agent.supervisor_validation import SupervisorValidationGate
 from jarvis_agent.connector_gateway import (
     ConnectorGateway,
     ConnectorResult,
@@ -2075,6 +2076,54 @@ class KernelFoundationTests(unittest.TestCase):
             fake.plan.actions[0].action_type,
             "open_application",
         )
+
+    def test_supervisor_validation_gate_requires_all_evidence_before_user_validation(self):
+        planner = SupervisorPlanner()
+        candidate = candidate_from_assessment(
+            mission_id="m_validate",
+            assessment=FailureAssessment(
+                kind=FailureKind.APP_PROFILE,
+                summary="Cursor title resolution fix.",
+                confidence=0.95,
+                proposed_scope=KnowledgeScope.APP,
+                promotion_target=PromotionTarget.APP_PROFILE,
+                app_id="cursor",
+            ),
+            agent_id="windows",
+            test_ids=["TEST-WIN-BASELINE"],
+            evidence={"trace": "e1"},
+        )
+        plan = planner.plan(
+            candidate,
+            changed_paths=["jarvis_agent/windows_perception.py"],
+        )
+        gate = SupervisorValidationGate()
+
+        blocked = gate.evaluate(
+            candidate,
+            plan,
+            test_results={
+                test_id: True
+                for test_id in plan.selected_test_ids
+            },
+            replay_success=False,
+            proof_refs=["proof1"],
+        )
+        self.assertFalse(blocked.ready_for_user_validation)
+        self.assertIn("replay_not_green", blocked.blockers)
+
+        ready = gate.evaluate(
+            candidate,
+            plan,
+            test_results={
+                test_id: True
+                for test_id in plan.selected_test_ids
+            },
+            replay_success=True,
+            proof_refs=["proof1"],
+        )
+        self.assertTrue(ready.ready_for_user_validation)
+        self.assertEqual(ready.blockers, ())
 
     def test_model_telemetry_summarizes_provider_health_passively(self):
         with tempfile.TemporaryDirectory() as tmp:
