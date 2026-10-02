@@ -6,8 +6,11 @@ import json
 from .approval_manager import HumanApprovalManager
 from .capability_registry import DEFAULT_CAPABILITY_REGISTRY
 from .connector_registry import DEFAULT_CONNECTOR_REGISTRY
+from .component_registry import DEFAULT_COMPONENT_REGISTRY
 from .correction_store import CorrectionCandidateStore
 from .event_journal import StructuredEventJournal
+from .incident_bundle import IncidentBundleBuilder
+from .kernel_request_store import KernelRequestStore
 from .mission_context_store import MissionContextStore
 from .model_telemetry import ModelTelemetryStore
 from .regression_registry import DEFAULT_REGRESSION_REGISTRY
@@ -26,7 +29,18 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("missions", help="List resumable mission contexts.")
     sub.add_parser("corrections", help="List pending correction candidates.")
     sub.add_parser("approvals", help="List pending human approvals.")
+    sub.add_parser("components", help="List known Jarvis code components.")
+    sub.add_parser(
+        "recovery",
+        help="List kernel requests that require post-crash recovery.",
+    )
     sub.add_parser("stats", help="Show passive architecture store counters.")
+
+    incident = sub.add_parser(
+        "incident",
+        help="Build a Dev Supervisor incident bundle for one mission.",
+    )
+    incident.add_argument("mission_id")
 
     trace = sub.add_parser("trace", help="Show one structured mission trace.")
     trace.add_argument("mission_id")
@@ -87,6 +101,41 @@ def main() -> int:
             }
             for item in HumanApprovalManager().pending()
         ]
+    elif args.command == "components":
+        value = [
+            {
+                "component_id": item.component_id,
+                "description": item.description,
+                "watched_paths": list(item.watched_paths),
+                "tags": list(item.tags),
+                "capabilities": list(item.capabilities),
+                "default_test_ids": list(item.default_test_ids),
+            }
+            for item in DEFAULT_COMPONENT_REGISTRY.all()
+        ]
+    elif args.command == "recovery":
+        value = [
+            item.as_dict()
+            for item in KernelRequestStore().recovery_required()
+        ]
+    elif args.command == "incident":
+        journal = StructuredEventJournal()
+        bundle = IncidentBundleBuilder(journal).build(
+            args.mission_id
+        )
+        value = {
+            "mission_id": bundle.mission_id,
+            "user_inputs": list(bundle.user_inputs),
+            "decisions": list(bundle.decisions),
+            "tool_events": list(bundle.tool_events),
+            "observations": list(bundle.observations),
+            "proofs": list(bundle.proofs),
+            "feedback": list(bundle.feedback),
+            "errors": list(bundle.errors),
+            "component_ids": list(bundle.component_ids),
+            "event_ids": list(bundle.event_ids),
+            "summary": dict(bundle.summary),
+        }
     elif args.command == "stats":
         value = {
             "events": StructuredEventJournal().stats(),
@@ -107,6 +156,9 @@ def main() -> int:
             ),
             "pending_approvals": len(
                 HumanApprovalManager().pending()
+            ),
+            "recovery_required_requests": len(
+                KernelRequestStore().recovery_required()
             ),
         }
     elif args.command == "trace":
