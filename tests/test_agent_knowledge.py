@@ -149,6 +149,48 @@ class AgentKnowledgeStoreTests(unittest.TestCase):
         self.assertIn("<email>", payload)
         self.assertIn("%USERPROFILE%", payload)
 
+    def test_clear_operational_knowledge_keeps_store_usable(self):
+        self.store.upsert_skill(
+            name="temporary_skill",
+            goal="Temporary generic workflow",
+            procedure=["do one thing"],
+            success_checks=["result visible"],
+        )
+        self.store.record_lesson(
+            scope="ui",
+            pattern="temporary correction",
+            rule="Use the corrected behavior next time.",
+        )
+        self.store.upsert_app_profile(
+            display_name="Temporary App",
+            success=True,
+        )
+        self.store.record_run(
+            status="verified",
+            goal="workflow:test",
+            actions=["write_ui_element"],
+            proof={"verified": True},
+        )
+
+        before = self.store.clear_operational_knowledge()
+
+        self.assertEqual(before["skills"], 1)
+        self.assertEqual(
+            self.store.stats(),
+            {
+                "skills": 0,
+                "lessons": 0,
+                "app_profiles": 0,
+                "skill_runs": 0,
+            },
+        )
+        self.store.record_lesson(
+            scope="ui",
+            pattern="new correction",
+            rule="The store remains usable after reset.",
+        )
+        self.assertEqual(self.store.stats()["lessons"], 1)
+
     def test_export_is_valid_json(self):
         path = Path(self.tmp.name) / "export.json"
         self.store.export_snapshot(path)
