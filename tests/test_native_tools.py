@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from jarvis_agent.agent_knowledge import AgentKnowledgeStore
@@ -154,10 +155,33 @@ class NativeToolRegistryTests(unittest.TestCase):
             item["function"]["name"]
             for item in self.registry.ollama_tools()
         }
+        self.assertIn("observe_screen", names)
         self.assertIn("search_agent_knowledge", names)
         self.assertIn("save_verified_skill", names)
         self.assertIn("save_feedback_lesson", names)
         self.assertIn("agent_knowledge_stats", names)
+
+    @patch("jarvis_agent.native_tools.observe_screen")
+    def test_observe_screen_routes_to_local_visual_sensor(self, observe_mock):
+        observe_mock.return_value = SimpleNamespace(
+            success=True,
+            message="observed",
+            detail='{"observation":"three results visible"}',
+        )
+
+        result = self.registry.execute(
+            "observe_screen",
+            {
+                "title": "YouTube",
+                "focus": "Identify the first three regular videos.",
+            },
+        )
+
+        self.assertTrue(result.success)
+        observe_mock.assert_called_once_with(
+            title="YouTube",
+            focus="Identify the first three regular videos.",
+        )
 
     def test_verified_skill_tool_writes_to_injected_local_store(self):
         result = self.registry.execute(
