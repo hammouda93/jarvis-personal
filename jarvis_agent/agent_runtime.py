@@ -370,6 +370,21 @@ def _actions_have_verified_proof(
     if not actions:
         return False
 
+    operational_actions = [
+        action
+        for action in actions
+        if action.name not in {
+            "search_agent_knowledge",
+            "save_verified_skill",
+            "save_feedback_lesson",
+            "agent_knowledge_stats",
+        }
+    ]
+    if not operational_actions or any(
+        not action.success for action in operational_actions
+    ):
+        return False
+
     mutation_names = {
         "click_ui_element",
         "write_ui_element",
