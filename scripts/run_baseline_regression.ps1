@@ -2,6 +2,13 @@ param()
 
 $ErrorActionPreference = "Stop"
 
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
+
 $env:JARVIS_COMPATIBILITY_BASELINE = "1"
 $env:JARVIS_OPERATIONAL_LEARNING_ENABLED = "0"
 $env:JARVIS_VISION_ENABLED = "0"
