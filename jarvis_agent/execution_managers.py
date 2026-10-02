@@ -7,6 +7,7 @@ from .connector_gateway import ConnectorGateway
 from .kernel_contracts import KernelRequest, SyscallKind
 from .knowledge_broker import KnowledgeBroker, KnowledgePrincipal
 from .tool_gateway import ScopedToolGateway
+from .workspace_storage import WorkspaceStorage
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,96 @@ class MemoryExecutionManager:
             success=False,
             result={},
             error="unsupported_memory_operation",
+        )
+
+
+class StorageExecutionManager:
+    syscall_kind = SyscallKind.STORAGE
+
+    def __init__(self, storage: WorkspaceStorage):
+        self.storage = storage
+
+    def execute(self, request: KernelRequest) -> ManagerExecutionResult:
+        payload = dict(request.payload or {})
+        operation = str(payload.get("operation") or "").strip()
+        workspace_id = str(payload.get("workspace_id") or "").strip()
+        if not workspace_id:
+            return ManagerExecutionResult(
+                success=False,
+                result={},
+                error="workspace_id_required",
+            )
+
+        try:
+            if operation == "write_text":
+                artifact = self.storage.write_text(
+                    workspace_id,
+                    str(payload.get("path") or ""),
+                    str(payload.get("content") or ""),
+                )
+                return ManagerExecutionResult(
+                    success=True,
+                    result={
+                        "workspace_id": artifact.workspace_id,
+                        "path": artifact.relative_path,
+                        "size": artifact.size,
+                    },
+                )
+
+            if operation == "read_text":
+                text = self.storage.read_text(
+                    workspace_id,
+                    str(payload.get("path") or ""),
+                    max_chars=int(payload.get("max_chars") or 200000),
+                )
+                return ManagerExecutionResult(
+                    success=True,
+                    result={
+                        "workspace_id": workspace_id,
+                        "path": str(payload.get("path") or ""),
+                        "content": text,
+                    },
+                )
+
+            if operation == "list_files":
+                items = self.storage.list_files(
+                    workspace_id,
+                    limit=int(payload.get("limit") or 500),
+                )
+                return ManagerExecutionResult(
+                    success=True,
+                    result={
+                        "workspace_id": workspace_id,
+                        "files": [
+                            {
+                                "path": item.relative_path,
+                                "size": item.size,
+                            }
+                            for item in items
+                        ],
+                    },
+                )
+
+            if operation == "reset":
+                self.storage.reset(workspace_id)
+                return ManagerExecutionResult(
+                    success=True,
+                    result={
+                        "workspace_id": workspace_id,
+                        "reset": True,
+                    },
+                )
+        except Exception as exc:
+            return ManagerExecutionResult(
+                success=False,
+                result={},
+                error=str(exc)[:1200],
+            )
+
+        return ManagerExecutionResult(
+            success=False,
+            result={},
+            error="unsupported_storage_operation",
         )
 
 
