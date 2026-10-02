@@ -802,6 +802,104 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("écrit", result.text)
 
+    def test_groq_repairs_write_goal_for_stt_ecrivain_variant(self):
+        class VerifiedRepairTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "write_ui_element":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="ok",
+                        detail='{"verified":true,"value":"Bonjour Jarvis"}',
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = VerifiedRepairTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_open_notepad_stt",
+                            "name": "open_application",
+                            "arguments": '{"name":"Notepad"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "C'est fait.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect_notepad_stt",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Bloc-notes"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_write_notepad_stt",
+                            "name": "write_ui_element",
+                            "arguments": (
+                                '{"ref":"e7","text":"Bonjour Jarvis",'
+                                '"mode":"replace"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le texte a été écrit.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Ouvre bloc-notes et écrivain « Bonjour Jarvis »."
+        )
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            [
+                "open_application",
+                "inspect_active_window",
+                "write_ui_element",
+            ],
+        )
+        self.assertIn("écrit", result.text)
+
     def test_groq_blocks_window_close_when_user_requested_tab(self):
         class VerifiedTabTools(FakeTools):
             def execute(self, name, arguments, *, approved=False):
@@ -863,6 +961,79 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
         result = agent.run("Ferme seulement l'onglet YouTube.")
+
+        self.assertNotIn(
+            ("close_window", {"title": "YouTube"}),
+            tools.calls,
+        )
+        self.assertIn(
+            ("close_tab", {"name": "YouTube"}),
+            tools.calls,
+        )
+        self.assertEqual(
+            result.actions[0].detail,
+            "close_window_blocked_for_tab_request",
+        )
+
+    def test_groq_blocks_window_close_for_stt_anglais_variant(self):
+        class VerifiedTabTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "close_tab":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="ok",
+                        detail='{"target":"YouTube","verified":true}',
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = VerifiedTabTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_wrong_close_stt",
+                            "name": "close_window",
+                            "arguments": '{"title":"YouTube"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_close_tab_stt",
+                            "name": "close_tab",
+                            "arguments": '{"name":"YouTube"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "L'onglet YouTube est fermé.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ferme seulement l'anglais YouTube.")
 
         self.assertNotIn(
             ("close_window", {"title": "YouTube"}),
