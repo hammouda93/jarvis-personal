@@ -107,7 +107,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   de conversation si l'interface fournit une valeur actuelle;
 - press_key est réservé à la navigation simple, jamais à des raccourcis
   destructifs ou à l'exécution de commandes arbitraires;
-- après click_ui_element, write_ui_element, press_key, close_window ou toute
+- distingue toujours un onglet d'une fenêtre: si l'utilisateur demande de
+  fermer un onglet/tab, utilise close_tab; close_window ferme la fenêtre
+  top-level entière et ne doit jamais être utilisé comme substitut;
+- après click_ui_element, write_ui_element, press_key, close_window, close_tab ou toute
   action qui peut modifier l'écran, n'affirme jamais que l'interface a changé
   comme prévu sans l'avoir vérifié avec inspect_active_window ou list_windows
   lorsque le résultat final compte;
@@ -283,6 +286,62 @@ def _looks_like_action_promise(text: str) -> bool:
     return any(marker in lower for marker in markers)
 
 
+def _requested_action_capabilities(text: str) -> set[str]:
+    """Infer only broad UI action contracts, never app-specific workflows."""
+    normalized = normalize(text)
+    required: set[str] = set()
+
+    if re.search(
+        r"\b(?:ecris|ecrire|saisis|saisir|tape|taper|ajoute|ajouter|"
+        r"insere|inserer|remplace|remplacer|write|type|append|insert|replace)\b",
+        normalized,
+    ):
+        required.add("write_ui")
+
+    if (
+        re.search(r"\b(?:ferme|fermer|close|fermez)\b", normalized)
+        and re.search(r"\b(?:onglet|onglets|tab|tabs)\b", normalized)
+    ):
+        required.add("close_tab")
+
+    return required
+
+
+def _completed_action_capabilities(
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> set[str]:
+    completed: set[str] = set()
+    for action in actions:
+        if not action.success:
+            continue
+        if action.name == "write_ui_element":
+            completed.add("write_ui")
+        elif action.name == "type_text_active_window":
+            try:
+                payload = json.loads(action.detail or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            if payload.get("verified") is True:
+                completed.add("write_ui")
+        elif action.name == "close_tab":
+            completed.add("close_tab")
+    return completed
+
+
+def _missing_requested_action_capabilities(
+    user_text: str,
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> set[str]:
+    return (
+        _requested_action_capabilities(user_text)
+        - _completed_action_capabilities(actions)
+    )
+
+
+def _requests_tab_close(text: str) -> bool:
+    return "close_tab" in _requested_action_capabilities(text)
+
+
 def _looks_like_pseudo_tool_syntax(text: str) -> bool:
     """Detect model text that imitates tool calls instead of calling tools."""
     lower = (text or "").lower()
@@ -295,6 +354,7 @@ def _looks_like_pseudo_tool_syntax(text: str) -> bool:
         "listwindows",
         "activatewindow",
         "clickuielement",
+        "closetab",
         "writeuielement",
         "typetextactivewindow",
         "presskey",
@@ -1972,6 +2032,7 @@ class GroqResponsesAgent:
         pseudo_tool_repair_attempted = False
         ui_verification_repair_attempted = False
         ui_verification_required = False
+        goal_completion_repair_attempted = False
         skill_learning_checkpoint_attempted = False
         lesson_learning_checkpoint_attempted = False
 
@@ -2028,6 +2089,39 @@ class GroqResponsesAgent:
                     pseudo_tool_repair_attempted = True
                     if log:
                         log("[AGENT] repair=pseudo_tool_text_to_real_call")
+                    continue
+
+                missing_capabilities = (
+                    _missing_requested_action_capabilities(
+                        user_text,
+                        actions,
+                    )
+                )
+                if (
+                    missing_capabilities
+                    and not goal_completion_repair_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "La mission n'est pas terminée. Il manque encore "
+                                "l'exécution réelle de ces capacités demandées: "
+                                + ", ".join(sorted(missing_capabilities))
+                                + ". N'affirme pas le succès. Observe l'interface "
+                                "réelle et appelle le ou les outils nécessaires."
+                            ),
+                        }
+                    )
+                    goal_completion_repair_attempted = True
+                    if log:
+                        log(
+                            "[AGENT] repair=missing_requested_capability "
+                            + ",".join(sorted(missing_capabilities))
+                        )
                     continue
 
                 if (
@@ -2243,6 +2337,19 @@ class GroqResponsesAgent:
                 ):
                     result = _blocked_memory_write_result()
                 elif (
+                    name == "close_window"
+                    and _requests_tab_close(user_text)
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La demande concerne un onglet, pas la fenêtre entière. "
+                            "Utilisez close_tab."
+                        ),
+                        detail="close_window_blocked_for_tab_request",
+                    )
+                elif (
                     name == "save_verified_skill"
                     and not _actions_have_verified_proof(actions)
                 ):
@@ -2295,7 +2402,15 @@ class GroqResponsesAgent:
                     and _actions_have_verified_proof(actions)
                 ):
                     self._skill_write_allowed = True
-                if result.success and name == "write_ui_element":
+                if result.success and name == "close_tab":
+                    try:
+                        close_tab_detail = json.loads(result.detail or "{}")
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        close_tab_detail = {}
+                    ui_verification_required = not bool(
+                        close_tab_detail.get("verified")
+                    )
+                elif result.success and name == "write_ui_element":
                     try:
                         write_detail = json.loads(result.detail or "{}")
                     except (TypeError, ValueError, json.JSONDecodeError):
