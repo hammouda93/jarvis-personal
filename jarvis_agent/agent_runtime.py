@@ -2592,8 +2592,30 @@ class GroqResponsesAgent:
 
                 if log:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
+                autonomous_research = (
+                    name in {"research_web", "search_web"}
+                    and not _is_explicit_web_request(user_text)
+                )
                 if phase:
-                    phase("acting")
+                    if autonomous_research:
+                        query = str(arguments.get("query", "")).strip()
+                        reason = (
+                            "local_failure"
+                            if any(not action.success for action in actions)
+                            else "external_knowledge_required"
+                        )
+                        phase(
+                            "researching:"
+                            + json.dumps(
+                                {
+                                    "query": query,
+                                    "reason": reason,
+                                },
+                                ensure_ascii=False,
+                            )
+                        )
+                    else:
+                        phase("acting")
 
                 if self.tools.requires_confirmation(name):
                     self._pending_function_approval = {
