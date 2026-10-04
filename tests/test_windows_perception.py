@@ -52,6 +52,8 @@ class _FakeBoundedWindow:
 
     def iter_descendants(self, **kwargs):
         self.calls.append(dict(kwargs))
+        if "cache_enable" in kwargs:
+            raise TypeError("cache_enable must not reach legacy pywinauto traversal")
         for index in range(self.count):
             yield f"node-{index}"
 
@@ -413,7 +415,7 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertTrue(meta["truncated"])
         self.assertEqual(meta["visited_nodes"], 12)
         self.assertEqual(window.calls[0]["depth"], 5)
-        self.assertTrue(window.calls[0]["cache_enable"])
+        self.assertNotIn("cache_enable", window.calls[0])
 
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._window_by_title")
