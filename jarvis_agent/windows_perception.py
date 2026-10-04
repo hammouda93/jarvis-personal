@@ -1300,7 +1300,13 @@ def _cua_snapshot_payload(
         },
         "snapshot": {
             "provider": "cua_driver",
-            "semantic_coverage": "usable" if controls else "insufficient",
+            "backend_snapshot_id": snapshot.snapshot_id or None,
+            "capture_id": snapshot.capture_id or None,
+            "semantic_coverage": (
+                "usable"
+                if snapshot.has_meaningful_content
+                else "insufficient"
+            ),
             "total_interactive": sum(
                 1 for item in elements if item.actionable or item.writable
             ),
@@ -1315,7 +1321,7 @@ def _cua_snapshot_payload(
             "total_element_count": snapshot.total_element_count,
             "returned_element_count": snapshot.returned_element_count,
             "degraded_reason": snapshot.degraded_reason or None,
-            "vision_recommended": not bool(controls),
+            "vision_recommended": not snapshot.has_meaningful_content,
         },
         "fallback": "cua_driver",
         "note": (
@@ -1338,9 +1344,15 @@ def _try_cua_inspection(
             title,
             max_elements=max(80, min(int(limit) * 6, 320)),
             max_depth=8,
-            timeout_ms=2500,
+            timeout_ms=1400,
         )
     except Exception:
+        return None
+
+    # A Cua tree containing only Minimize/Maximize/Close is still
+    # insufficient. Preserve pywinauto's truthful sparse snapshot rather than
+    # replacing it with another title-bar-only observation.
+    if not snapshot.has_meaningful_content:
         return None
 
     payload = _cua_snapshot_payload(snapshot, limit=limit)
