@@ -2838,6 +2838,20 @@ class AgentRuntimeTests(unittest.TestCase):
             ),
         )
 
+    def test_compound_open_and_search_requires_site_search_completion(self):
+        self.assertIn(
+            "site_search",
+            _requested_action_capabilities(
+                "Ouvre YouTube et recherche Messi."
+            ),
+        )
+        self.assertIn(
+            "site_search",
+            _requested_action_capabilities(
+                "Vas y recherche Messi."
+            ),
+        )
+
     def test_insufficient_structured_inspection_requests_visual_fallback(self):
         action = AgentActionResult(
             name="inspect_active_window",
