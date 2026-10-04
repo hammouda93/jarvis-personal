@@ -335,9 +335,23 @@ def _launch_chrome(*, url: str | None = None) -> bool:
         executable,
         "--force-renderer-accessibility=complete",
     ]
-    profile_directory = _chrome_profile_directory()
-    if profile_directory:
-        args.append(f"--profile-directory={profile_directory}")
+    browser_enabled = (os.getenv("JARVIS_BROWSER_ENABLED") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    browser_profile = (os.getenv("JARVIS_BROWSER_PROFILE_DIR") or "").strip()
+    browser_port = (os.getenv("JARVIS_BROWSER_CDP_PORT") or "9222").strip()
+    if browser_enabled and browser_profile:
+        Path(browser_profile).mkdir(parents=True, exist_ok=True)
+        args.extend(
+            [
+                f"--remote-debugging-port={browser_port}",
+                f"--user-data-dir={browser_profile}",
+            ]
+        )
+    else:
+        profile_directory = _chrome_profile_directory()
+        if profile_directory:
+            args.append(f"--profile-directory={profile_directory}")
     if url:
         args.append(url)
 
