@@ -373,7 +373,7 @@ def _requested_action_capabilities(text: str) -> set[str]:
             normalized,
         )
     )
-    if site_search:
+    if site_search and not _requests_search_submission(text):
         required.add("site_search")
 
     close_requested = re.search(
