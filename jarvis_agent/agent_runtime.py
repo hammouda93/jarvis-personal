@@ -383,6 +383,13 @@ def _requested_action_capabilities(text: str) -> set[str]:
             normalized,
         )
     )
+    explicit_append_write = bool(
+        re.search(
+            r"\b(?:ajoute|ajoutes|ajouter)\b.{0,80}\b(?:a la fin|en fin)\b"
+            r"|\b(?:a la fin|en fin)\b.{0,80}\b(?:ajoute|ajoutes|ajouter)\b",
+            normalized,
+        )
+    )
     # French STT can turn imperative "écris" into the noun "écrivain".
     # Accept it only at the start of an instruction or after a sequencing word
     # so ordinary mentions such as "un écrivain français" stay conversational.
@@ -390,7 +397,7 @@ def _requested_action_capabilities(text: str) -> set[str]:
         r"(?:^|\b(?:et|puis|ensuite)\s+)ecrivain\b",
         normalized,
     )
-    if explicit_write or contextual_add_write or stt_write:
+    if explicit_write or contextual_add_write or explicit_append_write or stt_write:
         required.add("write_ui")
 
     close_requested = re.search(
@@ -565,6 +572,12 @@ def _computer_use_goal_completed(action: AgentActionResult) -> bool:
     payload = _action_detail_dict(action)
     if payload.get("goal_completed") is True:
         return True
+    if payload.get("single_native_proven") is True:
+        verification = payload.get("ui_verification")
+        return bool(
+            isinstance(verification, dict)
+            and verification.get("status") == "passed"
+        )
     mission = payload.get("mission_state")
     return bool(
         isinstance(mission, dict)

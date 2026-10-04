@@ -2830,6 +2830,12 @@ class AgentRuntimeTests(unittest.TestCase):
             ),
         )
 
+    def test_append_at_end_is_recognized_as_explicit_ui_write(self):
+        self.assertEqual(
+            _requested_action_capabilities("Ajoutes à la fin comment cv"),
+            {"write_ui"},
+        )
+
     def test_adding_text_still_requires_ui_write(self):
         self.assertIn(
             "write_ui",

@@ -671,6 +671,58 @@ class ControllerTests(unittest.TestCase):
                 envelope=json.loads(message["content"])
                 json.loads(envelope["detail"])
 
+    def test_simple_native_write_finishes_without_cosmetic_model_round(self):
+        from jarvis_agent.agent_runtime import CerebrasResponsesAgent
+        registry = self.registry
+        responses = [
+            ("inspect_active_window", {}),
+            (
+                "write_ui_element",
+                {
+                    "ref": "doc1:e1",
+                    "text": " comment cv",
+                    "mode": "append",
+                },
+            ),
+        ]
+
+        class Planner(CerebrasResponsesAgent):
+            calls = 0
+
+            def _chat(inner, **kwargs):
+                inner.calls += 1
+                name, args = responses.pop(0)
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="",
+                                tool_calls=[
+                                    SimpleNamespace(
+                                        id="call" + str(inner.calls),
+                                        function=SimpleNamespace(
+                                            name=name,
+                                            arguments=json.dumps(args),
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    ]
+                )
+
+        self.fixture.value = "bonjour jarvis"
+        planner = Planner(registry)
+        planner.api_key = "test-only"
+        result = ComputerUseRuntime(planner, registry).run(
+            "Ajoutes à la fin comment cv"
+        )
+
+        self.assertTrue(result.goal_completed)
+        self.assertEqual(planner.calls, 2)
+        self.assertEqual(self.fixture.value, "bonjour jarvis comment cv")
+        self.assertIn("vérifiée", result.text)
+
     def test_verified_goal_finishes_without_cosmetic_extra_model_round(self):
         from jarvis_agent.agent_runtime import CerebrasResponsesAgent
         registry = NativeToolRegistry()
@@ -853,6 +905,31 @@ class ObservedLogRegressionTests(unittest.TestCase):
                 self.assertEqual(result.detail, "GOAL_NOT_DEFINED")
         self.assertEqual(self.fixture.deliveries, [])
         self.assertEqual(self.fixture.value, "")
+
+    def test_single_native_append_uses_exact_readback_without_goal_repair(self):
+        self.fixture.value = "bonjour jarvis"
+        self.controller.begin("Ajoutes à la fin comment cv")
+        self.registry.execute("inspect_active_window", {})
+
+        result = self.registry.execute(
+            "write_ui_element",
+            {
+                "ref": self.fixture.ref,
+                "text": " comment cv",
+                "mode": "append",
+            },
+        )
+
+        self.assertTrue(result.success)
+        detail = json.loads(result.detail)
+        self.assertTrue(detail["verified"])
+        self.assertTrue(detail["single_native_proven"])
+        self.assertEqual(self.fixture.value, "bonjour jarvis comment cv")
+        self.assertEqual(
+            [name for name, _args in self.fixture.deliveries],
+            ["write_ui_element"],
+        )
+        self.vision.assert_not_called()
 
     def test_frozen_native_value_goal_reuses_readback_without_extra_perception(self):
         self.controller.begin("Ouvre un éditeur et écris Bonjour é — مرحبا.")

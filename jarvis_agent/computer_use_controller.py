@@ -799,6 +799,14 @@ class ComputerUseController:
                                           "NATIVE_POSTCONDITION_VERIFIED")
             self.pending = PendingVerification(action_id, before, (), name, False, verdict=verdict)
             payload["ui_verification"] = verdict.as_dict()
+            if (
+                not self.goal
+                and single_native_request(
+                    self.context.user_goal if self.context else "",
+                    name,
+                )
+            ):
+                payload["single_native_proven"] = True
             self._emit("proof", verification=verdict.as_dict())
             # Keep exact UIA/Cua readback authoritative for a frozen value goal.
             # It certifies this control, not unrelated controls or window text.
