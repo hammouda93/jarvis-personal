@@ -2790,31 +2790,6 @@ class GroqResponsesAgent:
                         research_web_calls += 1
                 actions.append(result)
                 if (
-                    settings.vision_enabled
-                    and name == "inspect_active_window"
-                    and result.success
-                ):
-                    try:
-                        inspection_payload = json.loads(result.detail or "{}")
-                    except (TypeError, ValueError, json.JSONDecodeError):
-                        inspection_payload = {}
-                    snapshot_meta = dict(
-                        inspection_payload.get("snapshot") or {}
-                    )
-                    if snapshot_meta.get("vision_recommended") is True:
-                        self._messages.append(
-                            {
-                                "role": "user",
-                                "content": (
-                                    "Le snapshot UIA indique qu'il peut être "
-                                    "incomplet ou tronqué. Si la cible demandée "
-                                    "n'est pas clairement exploitable dans les "
-                                    "contrôles présents, utilise observe_screen "
-                                    "avant de conclure à un échec."
-                                ),
-                            }
-                        )
-                if (
                     pending_ui_action is not None
                     and result.success
                     and name in {
