@@ -143,6 +143,11 @@ class Settings:
         if compatibility_baseline
         else _bool("JARVIS_STRICT_PROOF_ENABLED", False)
     )
+    browser_enabled: bool = _bool("JARVIS_BROWSER_ENABLED", False)
+    browser_cdp_url: str = (
+        os.getenv("JARVIS_BROWSER_CDP_URL") or "http://127.0.0.1:9222"
+    ).strip()
+    browser_timeout_s: float = _float("JARVIS_BROWSER_TIMEOUT_S", 12.0)
     focused_typing_fallback_enabled: bool = _bool(
         "JARVIS_FOCUSED_TYPING_FALLBACK_ENABLED",
         False,
