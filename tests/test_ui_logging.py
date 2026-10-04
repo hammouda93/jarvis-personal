@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from jarvis_agent.ui import _safe_console_log
+from jarvis_agent.ui import _safe_console_log, _tool_visual_node
 
 
 class _CP1252Stream:
@@ -28,6 +28,18 @@ class SafeConsoleLogTests(unittest.TestCase):
 
         self.assertIn("Bonjour Jarvis", stream.buffer)
         self.assertIn("\\u", stream.buffer)
+
+
+    def test_visual_route_maps_tools_without_changing_tool_behavior(self):
+        self.assertEqual(_tool_visual_node("research_web"), "internet")
+        self.assertEqual(_tool_visual_node("open_web_search"), "browser")
+        self.assertEqual(_tool_visual_node("open_application"), "windows")
+        self.assertEqual(_tool_visual_node("inspect_active_window"), "windows")
+        self.assertEqual(_tool_visual_node("msf_query_records"), "ms_football")
+        self.assertEqual(_tool_visual_node("recall_information"), "memory")
+
+    def test_unknown_tool_stays_in_reasoning_visual_node(self):
+        self.assertEqual(_tool_visual_node("future_generic_tool"), "think")
 
 
 if __name__ == "__main__":
