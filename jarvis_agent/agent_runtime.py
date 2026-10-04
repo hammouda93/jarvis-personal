@@ -272,6 +272,17 @@ class AgentRuntime(Protocol):
     ) -> AgentTurnResult:
         ...
 
+    def record_external_turn(
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        action_name: str = "",
+        action_detail: str = "",
+        success: bool = True,
+    ) -> None:
+        ...
+
     def reset(self) -> None:
         ...
 
@@ -1008,6 +1019,27 @@ class OllamaToolAgent:
         self._messages = [
             {"role": "system", "content": _effective_system_instructions()}
         ]
+
+    def record_external_turn(
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        action_name: str = "",
+        action_detail: str = "",
+        success: bool = True,
+    ) -> None:
+        self._messages.append({"role": "user", "content": str(user_text or "")})
+        context = str(assistant_text or "").strip()
+        if action_name:
+            context += (
+                f"\n[LOCAL_ACTION] {action_name} "
+                f"success={1 if success else 0}"
+            )
+        if action_detail:
+            context += f"\n[LOCAL_RESULT] {str(action_detail)[:1200]}"
+        self._messages.append({"role": "assistant", "content": context.strip()})
+        self._trim_history()
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         # Prime the same system prompt + tool schema used by real turns. This
@@ -1773,6 +1805,32 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+
+    def record_external_turn(
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        action_name: str = "",
+        action_detail: str = "",
+        success: bool = True,
+    ) -> None:
+        """Keep deterministic local actions in model conversation without an API call."""
+        self._messages.append(
+            {"role": "user", "content": str(user_text or "").strip()}
+        )
+        context = str(assistant_text or "").strip()
+        if action_name:
+            context += (
+                f"\n[LOCAL_ACTION] {action_name} "
+                f"success={1 if success else 0}"
+            )
+        if action_detail:
+            context += f"\n[LOCAL_RESULT] {str(action_detail)[:1200]}"
+        self._messages.append(
+            {"role": "assistant", "content": context.strip()}
+        )
+        self._trim_history()
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         return
