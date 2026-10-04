@@ -3888,6 +3888,77 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_result_selection_blocks_blind_enter_until_real_inspection(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_enter",
+                            "name": "press_key",
+                            "arguments": '{"key":"Enter"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"YouTube"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_click",
+                            "name": "click_ui_element",
+                            "arguments": '{"ref":"e26"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_verify",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"YouTube"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "La première vidéo est ouverte.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ouvre la première vidéo.")
+
+        self.assertNotIn(("press_key", {"key": "Enter"}), tools.calls)
+        self.assertIn(
+            ("inspect_active_window", {"title": "YouTube"}),
+            tools.calls,
+        )
+        self.assertIn(("click_ui_element", {"ref": "e26"}), tools.calls)
+        self.assertIn("ouverte", result.text)
+
     def test_direct_local_browser_action_is_recorded_without_model_call(self):
         agent = GroqResponsesAgent(FakeTools())
         before = len(agent._messages)
