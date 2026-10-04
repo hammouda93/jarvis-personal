@@ -1244,15 +1244,21 @@ def inspect_active_window(
         "snapshot": {
             "traversal": traversal_meta,
             "total_interactive": len(interactive),
+            "observed_interactive": len(interactive),
             "selected_interactive": sum(
                 1 for item in selected if item in interactive
             ),
-            "truncated": len(interactive) > sum(
-                1 for item in selected if item in interactive
+            "tree_complete": not bool(traversal_meta.get("truncated")),
+            "truncated": (
+                bool(traversal_meta.get("truncated"))
+                or len(interactive) > sum(
+                    1 for item in selected if item in interactive
+                )
             ),
             "has_document_region": content_rect is not None,
             "vision_recommended": (
-                len(interactive) > len(selected)
+                bool(traversal_meta.get("truncated"))
+                or len(interactive) > len(selected)
                 or (
                     not writable_refs
                     and any(
