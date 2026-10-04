@@ -673,25 +673,33 @@ class ControllerTests(unittest.TestCase):
 
     def test_simple_native_write_finishes_without_cosmetic_model_round(self):
         from jarvis_agent.agent_runtime import CerebrasResponsesAgent
-        registry = self.registry
-        responses = [
-            ("inspect_active_window", {}),
-            (
-                "write_ui_element",
-                {
-                    "ref": "doc1:e1",
-                    "text": " comment cv",
-                    "mode": "append",
-                },
-            ),
-        ]
+
+        fixture = NativeDocumentFixture("bonjour jarvis")
+        manager = PerceptionManager(structured=fixture.observe)
+        controller = ComputerUseController(perception=manager)
+        registry = NativeToolRegistry()
+        registry._computer_use = controller
 
         class Planner(CerebrasResponsesAgent):
             calls = 0
 
             def _chat(inner, **kwargs):
                 inner.calls += 1
-                name, args = responses.pop(0)
+                if inner.calls == 1:
+                    name, args = "inspect_active_window", {}
+                elif inner.calls == 2:
+                    name, args = (
+                        "write_ui_element",
+                        {
+                            "ref": fixture.ref,
+                            "text": " comment cv",
+                            "mode": "append",
+                        },
+                    )
+                else:
+                    raise AssertionError(
+                        "A verified native append must not trigger a cosmetic model round"
+                    )
                 return SimpleNamespace(
                     choices=[
                         SimpleNamespace(
@@ -711,16 +719,20 @@ class ControllerTests(unittest.TestCase):
                     ]
                 )
 
-        self.fixture.value = "bonjour jarvis"
         planner = Planner(registry)
         planner.api_key = "test-only"
-        result = ComputerUseRuntime(planner, registry).run(
-            "Ajoutes à la fin comment cv"
-        )
+        with patch.object(
+            registry,
+            "_execute_legacy",
+            side_effect=fixture.execute,
+        ):
+            result = ComputerUseRuntime(planner, registry).run(
+                "Ajoutes à la fin comment cv"
+            )
 
         self.assertTrue(result.goal_completed)
         self.assertEqual(planner.calls, 2)
-        self.assertEqual(self.fixture.value, "bonjour jarvis comment cv")
+        self.assertEqual(fixture.value, "bonjour jarvis comment cv")
         self.assertIn("vérifiée", result.text)
 
     def test_verified_goal_finishes_without_cosmetic_extra_model_round(self):
@@ -868,9 +880,10 @@ class NativeDocumentFixture:
         if name != "write_ui_element" or args["ref"] != self.ref:
             return AgentActionResult(name, False, "Ref périmée.", "stale_ref")
         before = self.value
-        self.value = args["text"]
+        mode = str(args.get("mode") or "replace")
+        self.value = before + args["text"] if mode == "append" else args["text"]
         return AgentActionResult(name, True, "Valeur relue exactement.", json.dumps({
-            "verified": True, "mode": "replace", "before": before,
+            "verified": True, "mode": mode, "before": before,
             "value": self.value, "value_length": len(self.value)}, ensure_ascii=False))
 
 
