@@ -67,8 +67,13 @@ def invalidate_ui_snapshot(*, preserve_window_title: bool = True) -> None:
 
 
 def _observation_matches(observation_id: str) -> bool:
+    """Refs are valid only inside the exact observation that minted them."""
     requested = (observation_id or "").strip()
-    return not requested or (bool(_SNAPSHOT_ID) and requested == _SNAPSHOT_ID)
+    return bool(
+        requested
+        and _SNAPSHOT_ID
+        and requested == _SNAPSHOT_ID
+    )
 
 
 @dataclass(frozen=True)
