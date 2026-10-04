@@ -1656,8 +1656,8 @@ class AgentRuntimeTests(unittest.TestCase):
                             '{"window":{"title":"Custom App"},'
                             '"controls":[],'
                             '"capabilities":{"writable":[],"actionable":[]},'
-                            '"snapshot":{"semantic_coverage":"insufficient",'
-                            '"vision_recommended":true}}'
+                            '"snapshot":{"semantic_coverage":"usable",'
+                            '"vision_recommended":false}}'
                         ),
                     )
                 return AgentActionResult(
