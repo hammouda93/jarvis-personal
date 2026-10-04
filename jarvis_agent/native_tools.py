@@ -16,13 +16,14 @@ from .screen_vision import (
     observe_screen,
     write_visual_target,
 )
-from .perception_router import inspect_window_hybrid as inspect_active_window
 from .tools import ToolIntent, ToolResult, execute, normalize
 from .windows_perception import (
     activate_window,
     click_ui_element,
     close_tab,
     close_window,
+    inspect_active_window,
+    invalidate_ui_snapshot,
     list_windows,
     press_key,
     type_text_active_window,
@@ -63,16 +64,21 @@ class NativeToolRegistry:
     def __init__(self, knowledge=None) -> None:
         self.knowledge = knowledge or AGENT_KNOWLEDGE
         self._last_app_hint = ""
+        self._last_observed_window_title = ""
 
     def ollama_tools(self) -> list[dict[str, Any]]:
         return [
             self._ollama(
                 "open_application",
-                "Trouve et ouvre une application de bureau installée sur Windows par son nom. Ne pas utiliser pour ouvrir un site ou service web: utiliser open_url directement.",
+                "Trouve et ouvre une application de bureau installée sur Windows par son nom. Ne pas utiliser comme substitut à un contrôle déjà observé dans une application ouverte: si inspect_active_window montre la cible, agir sur sa ref. Ne pas utiliser pour ouvrir un site web: utiliser open_url.",
                 {
                     "name": {
                         "type": "string",
                         "description": "Nom de l'application, par ex. VLC Media Player, Chrome, Cursor.",
+                    },
+                    "new_instance": {
+                        "type": "boolean",
+                        "description": "Mettre true uniquement si l'utilisateur demande explicitement une nouvelle instance. Sinon une fenêtre déjà ouverte est réutilisée.",
                     }
                 },
                 ["name"],
@@ -148,7 +154,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "inspect_active_window",
-                "Observe la fenêtre de travail active ou une fenêtre nommée et retourne une vue compacte et bornée de ses contrôles. Les contrôles ont des refs e1, e2... réutilisables immédiatement. Si minimized=true / win32_window_minimized, appeler activate_window puis réinspecter. Si snapshot.semantic_coverage=insufficient ou vision_recommended=true, cela signifie que UIA ne voit pas assez le contenu: ne pas conclure que la fonction n'existe pas et ne pas improviser des raccourcis clavier; utiliser un autre capteur local disponible (observe_screen) ou s'arrêter avec une limitation explicite.",
+                "Observe la fenêtre active ou nommée et retourne observation_id + contrôles e1/e2... Les refs appartiennent uniquement à cette observation. Préférer une ref observée à un raccourci clavier ou à la réouverture de l'application. Après toute action qui peut modifier l'interface, refaire une inspection avant de réutiliser une ref.",
                 {
                     "title": {
                         "type": "string",
@@ -224,7 +230,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "click_ui_element",
-                "Clique/active un contrôle observé. Utilise ref après inspect_active_window si le contrôle est sans nom ou si la cible est ambiguë.",
+                "Clique/active un contrôle observé. Préférer ref + observation_id issus de la dernière inspection à un raccourci clavier. Toute action invalide les anciennes refs: réinspecter avant l'action suivante.",
                 {
                     "name": {
                         "type": "string",
@@ -233,6 +239,15 @@ class NativeToolRegistry:
                     "ref": {
                         "type": "string",
                         "description": "Référence e1, e2... fournie par la dernière inspection.",
+                    },
+                    "observation_id": {
+                        "type": "string",
+                        "description": "OBLIGATOIRE lorsque ref est fourni: observation_id exact qui a produit cette ref. Une ref sans cet identifiant ou provenant d’une ancienne observation est refusée.",
+                    },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "description": "Laisser background par défaut. Utiliser foreground uniquement si un essai background a explicitement signalé qu'il ne pouvait pas agir.",
                     },
                     "control_type": {
                         "type": "string",
@@ -275,6 +290,10 @@ class NativeToolRegistry:
                         "type": "string",
                         "description": "Référence e1, e2... fournie par la dernière inspection.",
                     },
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Identifiant observation_id qui a produit ref.",
+                    },
                     "text": {
                         "type": "string",
                         "description": "Texte à saisir dans le champ.",
@@ -283,6 +302,11 @@ class NativeToolRegistry:
                         "type": "string",
                         "enum": ["replace", "append", "insert"],
                         "description": "replace=remplacer tout; append=ajouter en conservant l'existant; insert=insérer au curseur.",
+                    },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "description": "Laisser background par défaut. Utiliser foreground uniquement après un refus explicite du mode background.",
                     },
                 },
                 ["text"],
@@ -309,7 +333,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "press_key",
-                "Envoie une touche ou un raccourci clavier sûr à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End, Alt+Left/Alt+Right, Ctrl+S, Ctrl+Shift+S, Ctrl+F, Ctrl+L, Ctrl+C/V/A/Z/Y. N'utilise pas un raccourci comme substitut à une perception insuffisante sauf si sa sémantique est réellement connue pour l'application ou explicitement demandée. Réinspecter ensuite si le raccourci peut modifier l'interface.",
+                "Envoie une touche ou un raccourci clavier sûr à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End, Alt+Left/Alt+Right, Ctrl+S, Ctrl+Shift+S, Ctrl+F, Ctrl+L, Ctrl+C/V/A/Z/Y. Réinspecter ensuite si le raccourci peut modifier l'interface.",
                 {
                     "key": {
                         "type": "string",
@@ -663,6 +687,46 @@ class NativeToolRegistry:
 
         if name == "open_application":
             target = str(args.get("name", "")).strip()
+            new_instance = bool(args.get("new_instance", False))
+
+            observed_title = self._last_observed_window_title
+            if (
+                not new_instance
+                and observed_title
+                and self._safe_target(target)
+                and (
+                    normalize(target) in normalize(observed_title)
+                    or normalize(observed_title) in normalize(target)
+                    or (
+                        self._last_app_hint
+                        and (
+                            normalize(target)
+                            == normalize(self._last_app_hint)
+                            or normalize(target)
+                            in normalize(self._last_app_hint)
+                            or normalize(self._last_app_hint)
+                            in normalize(target)
+                        )
+                    )
+                )
+            ):
+                existing = activate_window(observed_title)
+                if existing.success:
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message=f"Application déjà ouverte; fenêtre réutilisée: {observed_title}.",
+                        detail=json.dumps(
+                            {
+                                "reused_existing_window": True,
+                                "target": target,
+                                "window": observed_title,
+                                "activation": existing.detail,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+
             learned = self._open_from_learned_profile(target)
             if learned is not None:
                 return self._convert(name, learned)
@@ -704,7 +768,10 @@ class NativeToolRegistry:
             else:
                 result = execute(ToolIntent("app.open_named", {"query": target}))
             self._record_app_launch(target, result)
-            return self._convert(name, result)
+            converted = self._convert(name, result)
+            if converted.success:
+                invalidate_ui_snapshot()
+            return converted
 
         if name == "open_file":
             target = str(args.get("name", "")).strip()
@@ -714,10 +781,13 @@ class NativeToolRegistry:
             payload: dict[str, Any] = {"query": target}
             if within and self._safe_target(within):
                 payload["within"] = within
-            return self._convert(
+            converted = self._convert(
                 name,
                 execute(ToolIntent("file.open_named", payload)),
             )
+            if converted.success:
+                invalidate_ui_snapshot()
+            return converted
 
         if name == "open_folder":
             target = str(args.get("name", "")).strip()
@@ -733,16 +803,22 @@ class NativeToolRegistry:
                 if within and self._safe_target(within):
                     payload["within"] = within
                 result = execute(ToolIntent("folder.open_named", payload))
-            return self._convert(name, result)
+            converted = self._convert(name, result)
+            if converted.success:
+                invalidate_ui_snapshot()
+            return converted
 
         if name == "open_url":
             url = str(args.get("url", "")).strip()
             if not url.startswith(("https://", "http://")):
                 return self._error(name, "URL non autorisée ou invalide.")
-            return self._convert(
+            converted = self._convert(
                 name,
                 execute(ToolIntent("browser.open_url", {"url": url})),
             )
+            if converted.success:
+                invalidate_ui_snapshot()
+            return converted
 
         if name in {"research_web", "search_web"}:
             query = str(args.get("query", "")).strip()
@@ -863,6 +939,10 @@ class NativeToolRegistry:
                 target,
                 ref=ref,
                 control_type=control_type,
+                observation_id=str(args.get("observation_id", "")).strip(),
+                delivery_mode=str(
+                    args.get("delivery_mode", "background")
+                ).strip() or "background",
             )
             return AgentActionResult(
                 name=name,
@@ -896,7 +976,16 @@ class NativeToolRegistry:
             ref = str(args.get("ref", "")).strip()
             text = str(args.get("text", ""))
             mode = str(args.get("mode", "replace")).strip() or "replace"
-            result = write_ui_element(target, text, ref=ref, mode=mode)
+            result = write_ui_element(
+                target,
+                text,
+                ref=ref,
+                mode=mode,
+                observation_id=str(args.get("observation_id", "")).strip(),
+                delivery_mode=str(
+                    args.get("delivery_mode", "background")
+                ).strip() or "background",
+            )
             return AgentActionResult(
                 name=name,
                 success=result.success,
@@ -1192,6 +1281,12 @@ class NativeToolRegistry:
         return None
 
     def _record_app_launch(self, target: str, result: ToolResult) -> None:
+        # Session-local grounding is not persistent learning. Keep the app
+        # identity even in baseline mode so a later request does not relaunch
+        # an application whose observed window is already available.
+        if result.success:
+            self._last_app_hint = target
+
         if not settings.operational_learning_enabled:
             return
         try:
@@ -1202,14 +1297,10 @@ class NativeToolRegistry:
                 success=result.success,
                 observed_capabilities=["launch"],
             )
-            if result.success:
-                self._last_app_hint = target
         except Exception:
             pass
 
     def _record_inspected_app(self, result) -> None:
-        if not settings.operational_learning_enabled:
-            return
         if not result.success:
             return
         try:
@@ -1217,6 +1308,9 @@ class NativeToolRegistry:
             window = dict(payload.get("window") or {})
             title = str(window.get("title") or "").strip()
             if not title:
+                return
+            self._last_observed_window_title = title
+            if not settings.operational_learning_enabled:
                 return
             parts = [
                 part.strip()
