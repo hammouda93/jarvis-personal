@@ -2217,38 +2217,65 @@ def _is_selected_tab(wrapper: Any) -> bool:
 
 
 def close_tab(name: str = "") -> UIActionResult:
-    """Close a tab inside the active application without closing its window."""
+    """Close one browser/app tab without assuming Jarvis itself is foreground."""
+    target = (name or "").strip()
+
+    def visible_top_tabs(candidate: Any) -> list[Any]:
+        if candidate is None:
+            return []
+        try:
+            descendants = candidate.descendants()
+        except Exception:
+            return []
+        bounds = _rect_tuple(candidate)
+        top_limit = bounds[1] + 120
+        return [
+            wrapper
+            for wrapper in descendants
+            if (
+                _control_type(wrapper) == "TabItem"
+                and _is_visible(wrapper)
+                and _rect_tuple(wrapper)[1] <= top_limit
+            )
+        ]
+
     window = _active_window()
+    tabs = visible_top_tabs(window)
+
+    # Typed commands naturally leave Personal Jarvis in the foreground.
+    # If the requested tab is not present there, resolve the real top-level
+    # window by the tab/site name and operate that window instead.
+    if target:
+        has_target = any(
+            max(
+                _score_name(target, _element_name(wrapper)),
+                _window_identity_score(target, _element_name(wrapper)),
+            )
+            >= 0.82
+            for wrapper in tabs
+        )
+        if not has_target:
+            candidate = _window_by_title(target)
+            if candidate is not None:
+                try:
+                    candidate.restore()
+                except Exception:
+                    pass
+                try:
+                    candidate.set_focus()
+                except Exception:
+                    pass
+                window = candidate
+                tabs = visible_top_tabs(candidate)
+
     if window is None:
         return UIActionResult(False, "Aucune fenêtre active détectée.")
-
-    try:
-        descendants = window.descendants()
-    except Exception as exc:
-        return UIActionResult(
-            False,
-            "Impossible de lire les onglets de la fenêtre active.",
-            str(exc),
-        )
-
-    window_bounds = _rect_tuple(window)
-    top_limit = window_bounds[1] + 120
-    tabs = [
-        wrapper
-        for wrapper in descendants
-        if (
-            _control_type(wrapper) == "TabItem"
-            and _is_visible(wrapper)
-            and _rect_tuple(wrapper)[1] <= top_limit
-        )
-    ]
     if not tabs:
         return UIActionResult(
             False,
-            "Aucun onglet contrôlable n'a été détecté dans la fenêtre active.",
+            "Aucun onglet contrôlable n'a été détecté dans la fenêtre cible.",
         )
 
-    target = (name or "").strip()
     chosen = None
     if target:
         ranked = sorted(
