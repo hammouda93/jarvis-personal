@@ -2400,7 +2400,11 @@ def close_tab(
     time.sleep(0.20)
 
     try:
-        current = _active_window()
+        current = (
+            _window_by_title(requested_window)
+            if requested_window
+            else _active_window()
+        )
         if current is None:
             return UIActionResult(
                 True,
