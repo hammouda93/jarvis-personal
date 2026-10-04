@@ -399,6 +399,62 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertTrue(result.success)
         close_tab_mock.assert_called_once_with("YouTube")
 
+    @patch("jarvis_agent.native_tools.inspect_active_window")
+    @patch("jarvis_agent.native_tools.execute")
+    def test_web_open_disambiguates_whatsapp_web_from_desktop(
+        self,
+        execute_mock,
+        inspect_mock,
+    ):
+        execute_mock.return_value = ToolResult(
+            True,
+            "opened",
+            "https://web.whatsapp.com",
+        )
+        inspect_mock.return_value = SimpleNamespace(
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "window": {
+                        "title": "WhatsApp - Google Chrome",
+                    },
+                    "controls": [],
+                }
+            ),
+        )
+
+        opened = self.registry.execute(
+            "open_url",
+            {"url": "https://web.whatsapp.com"},
+        )
+        observed = self.registry.execute(
+            "inspect_active_window",
+            {"title": "WhatsApp"},
+        )
+
+        self.assertTrue(opened.success)
+        self.assertTrue(observed.success)
+        inspect_mock.assert_called_once_with(
+            title="WhatsApp - Google Chrome"
+        )
+
+    @patch("jarvis_agent.native_tools.execute")
+    def test_opening_desktop_app_clears_web_surface_hint(self, execute_mock):
+        self.registry._last_web_title_hint = "WhatsApp - Google Chrome"
+        execute_mock.return_value = ToolResult(
+            True,
+            "opened",
+            "desktop",
+        )
+
+        self.registry.execute(
+            "open_application",
+            {"name": "WhatsApp"},
+        )
+
+        self.assertEqual(self.registry._last_web_title_hint, "")
+
     @patch("jarvis_agent.native_tools.observe_screen")
     def test_observe_screen_routes_to_local_visual_sensor(self, observe_mock):
         observe_mock.return_value = SimpleNamespace(
