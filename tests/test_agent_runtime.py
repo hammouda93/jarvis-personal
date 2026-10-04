@@ -2596,6 +2596,22 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(result.actions), 1)
         self.assertTrue(result.actions[0].success)
 
+    def test_conceptual_addition_does_not_require_ui_write(self):
+        self.assertNotIn(
+            "write_ui",
+            _requested_action_capabilities(
+                "Je veux aussi ajouter des paiements au projet Atlas."
+            ),
+        )
+
+    def test_adding_text_still_requires_ui_write(self):
+        self.assertIn(
+            "write_ui",
+            _requested_action_capabilities(
+                "Ajoute du texte dans le document."
+            ),
+        )
+
     def test_action_promise_is_detected(self):
         self.assertTrue(
             _looks_like_action_promise(
