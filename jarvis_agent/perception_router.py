@@ -25,8 +25,8 @@ def _uia_needs_visual_fallback(payload: dict[str, Any]) -> bool:
 
     if semantic_coverage == "insufficient":
         return True
-    if snapshot.get("vision_recommended") is True:
-        return True
+    if semantic_coverage == "usable":
+        return False
 
     capabilities = dict(payload.get("capabilities") or {})
     writable = list(capabilities.get("writable") or [])
