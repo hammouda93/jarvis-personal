@@ -149,7 +149,7 @@ class Settings:
     )
     cua_driver_enabled: bool = _bool(
         "JARVIS_CUA_DRIVER_ENABLED",
-        True,
+        False,
     )
     cua_driver_binary: str = (
         os.getenv("JARVIS_CUA_DRIVER_BINARY") or ""
