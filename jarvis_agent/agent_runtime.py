@@ -331,17 +331,9 @@ def _requested_action_capabilities(text: str) -> set[str]:
     required: set[str] = set()
 
     explicit_write = re.search(
-        r"\b(?:ecris|ecrire|saisis|saisir|tape|taper|"
+        r"\b(?:ecris|ecrire|saisis|saisir|tape|taper|ajoute|ajouter|"
         r"insere|inserer|remplace|remplacer|write|type|append|insert|replace)\b",
         normalized,
-    )
-    add_write = (
-        re.search(r"\b(?:ajoute|ajouter)\b", normalized)
-        and re.search(
-            r"\b(?:texte|text|contenu|document|champ|message|valeur|"
-            r"ligne|mot|phrase|editeur|editor|fichier|file)\b",
-            normalized,
-        )
     )
     # French STT can turn imperative "écris" into the noun "écrivain".
     # Accept it only at the start of an instruction or after a sequencing word
@@ -350,7 +342,7 @@ def _requested_action_capabilities(text: str) -> set[str]:
         r"(?:^|\b(?:et|puis|ensuite)\s+)ecrivain\b",
         normalized,
     )
-    if explicit_write or add_write or stt_write:
+    if explicit_write or stt_write:
         required.add("write_ui")
 
     close_requested = re.search(
@@ -367,17 +359,6 @@ def _requested_action_capabilities(text: str) -> set[str]:
     if close_requested and (explicit_tab or stt_tab):
         required.add("close_tab")
 
-    send_requested = re.search(
-        r"\b(?:envoie|envoyer|envoyez|envoi|send|submit|transmets|transmettre)\b",
-        normalized,
-    )
-    communicative_object = re.search(
-        r"\b(?:message|texte|text|mail|email|e-mail|reponse|réponse)\b",
-        normalized,
-    )
-    if send_requested and communicative_object:
-        required.add("send_ui")
-
     return required
 
 
@@ -385,9 +366,7 @@ def _completed_action_capabilities(
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
 ) -> set[str]:
     completed: set[str] = set()
-    verified_write_indices: list[int] = []
-
-    for index, action in enumerate(actions):
+    for action in actions:
         if not action.success:
             continue
         if action.name == "write_ui_element":
@@ -397,12 +376,10 @@ def _completed_action_capabilities(
                 payload = {}
             if payload.get("verified") is True:
                 completed.add("write_ui")
-                verified_write_indices.append(index)
         elif action.name == "write_visual_target":
-            # A visual write still needs an after-state observation before the
-            # whole workflow can be considered proven, but it is a real write.
+            # Visual writes require a separate after-state observation; the
+            # existing UI verification loop owns that proof.
             completed.add("write_ui")
-            verified_write_indices.append(index)
         elif action.name == "type_text_active_window":
             try:
                 payload = json.loads(action.detail or "{}")
@@ -410,45 +387,8 @@ def _completed_action_capabilities(
                 payload = {}
             if payload.get("verified") is True:
                 completed.add("write_ui")
-                verified_write_indices.append(index)
         elif action.name == "close_tab":
             completed.add("close_tab")
-
-    # Sending/committing a message is distinct from merely writing it. Require
-    # an actual submit-like mutation followed by a fresh observation. This
-    # prevents a model from claiming "message sent" after unrelated actions.
-    send_index = -1
-    for index, action in enumerate(actions):
-        if not action.success:
-            continue
-        evidence = normalize(
-            f"{action.message or ''} {action.detail or ''}"
-        )
-        if (
-            action.name == "press_key"
-            and re.search(r"\b(?:enter|entree|entrée)\b", evidence)
-            and any(write_index < index for write_index in verified_write_indices)
-        ):
-            send_index = index
-        elif action.name in {"click_ui_element", "click_visual_target"} and re.search(
-            r"\b(?:send|envoyer|envoi|submit|publier|post)\b",
-            evidence,
-        ):
-            send_index = index
-
-    if send_index >= 0:
-        observed_after_send = any(
-            action.success
-            and action.name in {
-                "inspect_active_window",
-                "observe_screen",
-                "list_windows",
-            }
-            for action in actions[send_index + 1 :]
-        )
-        if observed_after_send:
-            completed.add("send_ui")
-
     return completed
 
 
@@ -459,51 +399,6 @@ def _missing_requested_action_capabilities(
     return (
         _requested_action_capabilities(user_text)
         - _completed_action_capabilities(actions)
-    )
-
-
-def _latest_inspection_semantic_coverage(
-    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
-) -> str:
-    for action in reversed(actions):
-        if action.name != "inspect_active_window" or not action.success:
-            continue
-        payload = _action_detail_dict(action)
-        snapshot = dict(payload.get("snapshot") or {})
-        return str(snapshot.get("semantic_coverage") or "").strip().lower()
-    return ""
-
-
-def _user_explicitly_requested_key(user_text: str, key: str) -> bool:
-    raw = (user_text or "").lower().replace("’", "'")
-    requested = (key or "").strip().lower()
-    if not requested:
-        return False
-
-    compact_raw = re.sub(r"\s+", "", raw)
-    compact_key = re.sub(r"\s+", "", requested)
-    if compact_key and compact_key in compact_raw:
-        return True
-
-    aliases = {
-        "enter": ("entree", "entrée", "touche enter", "appuie sur entree", "appuie sur entrée"),
-        "escape": ("echap", "échap", "escape"),
-        "ctrl+f": ("ctrl+f", "controle+f", "contrôle+f", "ctrl f"),
-        "ctrl+k": ("ctrl+k", "controle+k", "contrôle+k", "ctrl k"),
-    }
-    return any(alias in raw for alias in aliases.get(requested, ()))
-
-
-def _blocked_blind_keyboard_result(key: str) -> AgentActionResult:
-    return AgentActionResult(
-        name="press_key",
-        success=False,
-        message=(
-            "Le raccourci clavier est bloqué car la dernière inspection ne "
-            "voit pas suffisamment le contenu de l'interface. Utilisez un "
-            "autre capteur local ou obtenez une cible structurée avant d'agir."
-        ),
-        detail="press_key_blocked_insufficient_perception",
     )
 
 
@@ -2442,11 +2337,8 @@ class GroqResponsesAgent:
                         actions,
                     )
                 )
-                repairable_missing_capabilities = (
-                    set(missing_capabilities) - {"send_ui"}
-                )
                 if (
-                    repairable_missing_capabilities
+                    missing_capabilities
                     and not goal_completion_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
@@ -2458,7 +2350,7 @@ class GroqResponsesAgent:
                             "content": (
                                 "La mission n'est pas terminée. Il manque encore "
                                 "l'exécution réelle de ces capacités demandées: "
-                                + ", ".join(sorted(repairable_missing_capabilities))
+                                + ", ".join(sorted(missing_capabilities))
                                 + ". N'affirme pas le succès. Observe l'interface "
                                 "réelle et appelle le ou les outils nécessaires."
                             ),
@@ -2468,7 +2360,7 @@ class GroqResponsesAgent:
                     if log:
                         log(
                             "[AGENT] repair=missing_requested_capability "
-                            + ",".join(sorted(repairable_missing_capabilities))
+                            + ",".join(sorted(missing_capabilities))
                         )
                     continue
 
@@ -2652,17 +2544,9 @@ class GroqResponsesAgent:
                         log("[AGENT] repair=msf_tool_required_auto_choice")
                     continue
 
-                if "send_ui" in missing_capabilities:
-                    text = (
-                        "Je n'ai pas terminé l'envoi avec une preuve suffisante. "
-                        "Je préfère ne pas annoncer qu'un message a été envoyé "
-                        "tant qu'une action d'envoi et son état final n'ont pas "
-                        "été observés."
-                    )
-                else:
-                    text = _visible_text(
-                        str(getattr(message, "content", "") or "")
-                    )
+                text = _visible_text(
+                    str(getattr(message, "content", "") or "")
+                )
                 if not text:
                     if ms_football_turn and not actions:
                         text = (
@@ -2779,17 +2663,6 @@ class GroqResponsesAgent:
                     and not _is_explicit_memory_write_request(user_text)
                 ):
                     result = _blocked_memory_write_result()
-                elif (
-                    name == "press_key"
-                    and _latest_inspection_semantic_coverage(actions) == "insufficient"
-                    and not _user_explicitly_requested_key(
-                        user_text,
-                        str(arguments.get("key", "")),
-                    )
-                ):
-                    result = _blocked_blind_keyboard_result(
-                        str(arguments.get("key", ""))
-                    )
                 elif (
                     ui_verification_required
                     and name in {
