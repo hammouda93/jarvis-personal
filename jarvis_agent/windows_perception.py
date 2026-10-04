@@ -1421,7 +1421,11 @@ def _cua_snapshot_payload(
         },
         "snapshot": {
             "provider": "cua_driver",
-            "semantic_coverage": "usable" if controls else "insufficient",
+            "semantic_coverage": (
+                "usable"
+                if snapshot.has_meaningful_content
+                else "insufficient"
+            ),
             "total_interactive": sum(
                 1 for item in elements if item.actionable or item.writable
             ),
@@ -1436,7 +1440,7 @@ def _cua_snapshot_payload(
             "total_element_count": snapshot.total_element_count,
             "returned_element_count": snapshot.returned_element_count,
             "degraded_reason": snapshot.degraded_reason or None,
-            "vision_recommended": not bool(controls),
+            "vision_recommended": not snapshot.has_meaningful_content,
         },
         "fallback": "cua_driver",
         "note": (

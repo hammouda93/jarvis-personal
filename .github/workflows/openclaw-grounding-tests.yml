@@ -5,6 +5,7 @@ on:
     branches:
       - feature/personal-jarvis-ui-v2-openclaw-grounding
       - feature/personal-jarvis-ui-v2-computer-use-recovery-v1
+      - feature/visual-perception-fallback-v1
 
 jobs:
   focused-windows-tests:
@@ -29,4 +30,4 @@ jobs:
         env:
           JARVIS_CUA_DRIVER_ENABLED: "0"
         run: |
-          python -m unittest tests.test_cua_driver_bridge tests.test_windows_perception tests.test_native_tools tests.test_agent_runtime -v
+          python -m unittest tests.test_cua_driver_bridge tests.test_windows_perception tests.test_native_tools tests.test_agent_runtime tests.test_screen_vision -v

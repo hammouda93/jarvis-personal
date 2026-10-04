@@ -187,7 +187,9 @@ class NativeToolRegistryTests(unittest.TestCase):
             )
 
         self.assertTrue(result.success)
-        startfile_mock.assert_called_once_with(str(shortcut))
+        startfile_mock.assert_called_once()
+        launched_path = Path(startfile_mock.call_args.args[0]).resolve()
+        self.assertEqual(launched_path, shortcut.resolve())
         execute_mock.assert_not_called()
 
     @patch("jarvis_agent.native_tools.execute")

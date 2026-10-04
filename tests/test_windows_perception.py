@@ -1144,6 +1144,88 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertTrue(payload["stale_ref"])
         self.assertEqual(payload["current_observation_id"], "obs100")
 
+    def test_cua_chrome_only_snapshot_recommends_vision(self):
+        snapshot = CuaWindowSnapshot(
+            pid=100,
+            window_id=200,
+            title="Opaque App",
+            app_name="Opaque App",
+            bounds=(100, 100, 1200, 800),
+            elements=(
+                CuaElement(
+                    token="min",
+                    pid=100,
+                    window_id=200,
+                    role="button",
+                    label="Minimize",
+                    frame=(1000, 100, 1050, 140),
+                ),
+                CuaElement(
+                    token="max",
+                    pid=100,
+                    window_id=200,
+                    role="button",
+                    label="Maximize",
+                    frame=(1050, 100, 1100, 140),
+                ),
+                CuaElement(
+                    token="close",
+                    pid=100,
+                    window_id=200,
+                    role="button",
+                    label="Close",
+                    frame=(1100, 100, 1150, 140),
+                ),
+                CuaElement(
+                    token="system",
+                    pid=100,
+                    window_id=200,
+                    role="menu item",
+                    label="Système",
+                    frame=(110, 105, 150, 140),
+                ),
+            ),
+            truncated=False,
+            total_element_count=4,
+            returned_element_count=4,
+        )
+
+        payload = wp._cua_snapshot_payload(snapshot, limit=36)
+
+        self.assertEqual(
+            payload["snapshot"]["semantic_coverage"],
+            "insufficient",
+        )
+        self.assertTrue(payload["snapshot"]["vision_recommended"])
+
+    def test_cua_content_snapshot_keeps_structured_path_usable(self):
+        snapshot = CuaWindowSnapshot(
+            pid=100,
+            window_id=200,
+            title="Editor",
+            app_name="Editor",
+            bounds=(100, 100, 1200, 800),
+            elements=(
+                CuaElement(
+                    token="editor",
+                    pid=100,
+                    window_id=200,
+                    role="text field",
+                    label="Message",
+                    actions=("set_value",),
+                    frame=(200, 600, 1000, 680),
+                ),
+            ),
+            truncated=False,
+            total_element_count=1,
+            returned_element_count=1,
+        )
+
+        payload = wp._cua_snapshot_payload(snapshot, limit=36)
+
+        self.assertEqual(payload["snapshot"]["semantic_coverage"], "usable")
+        self.assertFalse(payload["snapshot"]["vision_recommended"])
+
     @patch("jarvis_agent.windows_perception.CUA_DRIVER")
     def test_cua_fallback_projects_fresh_grounded_refs(self, cua_mock):
         cua_mock.available.return_value = True
