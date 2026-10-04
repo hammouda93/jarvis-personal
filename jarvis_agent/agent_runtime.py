@@ -1272,23 +1272,6 @@ class OllamaToolAgent:
 
                 tool_started = time.perf_counter()
                 if (
-                    name == "press_key"
-                    and str(arguments.get("key", "")).strip().casefold()
-                    in {"enter", "return"}
-                    and _requests_result_selection(user_text)
-                    and not structured_inspection_seen
-                ):
-                    result = AgentActionResult(
-                        name=name,
-                        success=False,
-                        message=(
-                            "La demande vise un résultat visible. Inspectez d'abord "
-                            "l'interface réelle et sélectionnez une cible observée "
-                            "avant d'envoyer Entrée."
-                        ),
-                        detail="result_selection_requires_inspection",
-                    )
-                elif (
                     name == "remember_information"
                     and not _is_explicit_memory_write_request(user_text)
                 ):
@@ -2850,6 +2833,23 @@ class GroqResponsesAgent:
 
                 tool_started = time.perf_counter()
                 if (
+                    name == "press_key"
+                    and str(arguments.get("key", "")).strip().casefold()
+                    in {"enter", "return"}
+                    and _requests_result_selection(user_text)
+                    and not structured_inspection_seen
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La demande vise un résultat visible. Inspectez d'abord "
+                            "l'interface réelle et sélectionnez une cible observée "
+                            "avant d'envoyer Entrée."
+                        ),
+                        detail="result_selection_requires_inspection",
+                    )
+                elif (
                     name == "remember_information"
                     and not _is_explicit_memory_write_request(user_text)
                 ):
