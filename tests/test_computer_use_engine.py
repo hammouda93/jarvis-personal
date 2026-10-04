@@ -553,6 +553,80 @@ class ControllerTests(unittest.TestCase):
                 envelope=json.loads(message["content"])
                 json.loads(envelope["detail"])
 
+    def test_verified_goal_finishes_without_cosmetic_extra_model_round(self):
+        from jarvis_agent.agent_runtime import CerebrasResponsesAgent
+        registry = NativeToolRegistry()
+        registry._computer_use = self.controller
+        responses = [
+            ("observe_ui", {}),
+            (
+                "define_ui_goal",
+                {
+                    "conditions": [
+                        {
+                            "kind": "value_equals",
+                            "role": "search_input",
+                            "value": "Salah",
+                        }
+                    ]
+                },
+            ),
+            (
+                "act_ui",
+                {
+                    "operation": "write",
+                    "target": {"role": "search_input"},
+                    "text": "Salah",
+                    "expected": [
+                        {
+                            "kind": "value_equals",
+                            "role": "search_input",
+                            "value": "Salah",
+                        }
+                    ],
+                },
+            ),
+        ]
+
+        class Planner(CerebrasResponsesAgent):
+            calls = 0
+
+            def _chat(inner, **kwargs):
+                inner.calls += 1
+                name, args = responses.pop(0)
+                calls = [
+                    SimpleNamespace(
+                        id="call" + str(inner.calls),
+                        function=SimpleNamespace(
+                            name=name,
+                            arguments=json.dumps(args),
+                        ),
+                    )
+                ]
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="",
+                                tool_calls=calls,
+                            )
+                        )
+                    ]
+                )
+
+        planner = Planner(registry)
+        planner.api_key = "test-only"
+        with patch.object(
+            registry,
+            "_execute_legacy",
+            side_effect=lambda name, args, **kw: self.fixture.execute(name, args),
+        ):
+            result = ComputerUseRuntime(planner, registry).run("Écris Salah dans la recherche.")
+
+        self.assertTrue(result.goal_completed)
+        self.assertEqual(planner.calls, 3)
+        self.assertIn("vérifiée", result.text)
+
     def test_verified_goal_blocks_further_mutations(self):
         self.fixture.opened=True
         self.start()
@@ -719,30 +793,35 @@ class ObservedLogRegressionTests(unittest.TestCase):
             if message.get("role") == "tool":
                 json.loads(json.loads(message["content"])["detail"])
 
-    def test_read_only_mission_recovers_missing_goal_without_mutation_or_vision(self):
+    def test_read_only_mission_does_not_spawn_second_planner_loop(self):
         from jarvis_agent.agent_runtime import AgentTurnResult
         self.fixture.value = "Référence Tunis-42-é"
         registry, controller = self.registry, self.controller
+
         class Planner:
             calls = 0
+
             def run(self, text, **kwargs):
                 self.calls += 1
-                if self.calls == 1:
-                    actions = (registry.execute("inspect_active_window", {}),)
-                else:
-                    observed_value = controller.state.current.entities[0].value
-                    actions = (registry.execute("define_ui_goal", {"conditions": [
-                        {"kind": "value_equals", "role": "Document", "value": observed_value}]}),
-                        registry.execute("verify_ui_goal", {}))
-                return AgentTurnResult(controller.state.current.entities[0].value, actions)
+                actions = (registry.execute("inspect_active_window", {}),)
+                return AgentTurnResult(
+                    controller.state.current.entities[0].value,
+                    actions,
+                )
+
         planner, logs = Planner(), []
-        result = ComputerUseRuntime(planner, registry).run("Relis le contenu du document ouvert.", log=logs.append)
-        self.assertTrue(result.goal_completed)
+        result = ComputerUseRuntime(planner, registry).run(
+            "Relis le contenu du document ouvert.",
+            log=logs.append,
+        )
+
+        self.assertIsNone(result.goal_completed)
+        self.assertEqual(result.mission_status, "observed")
         self.assertEqual(result.text, "Référence Tunis-42-é")
-        self.assertEqual(planner.calls, 2)
+        self.assertEqual(planner.calls, 1)
         self.assertEqual(self.fixture.deliveries, [])
         self.vision.assert_not_called()
-        self.assertTrue(any("GOAL_NOT_DEFINED" in x for x in logs))
+        self.assertFalse(any("UI_ENGINE_REPAIR" in x for x in logs))
 
     def test_missing_goal_repair_is_bounded_and_never_delivers_a_compound_write(self):
         from jarvis_agent.agent_runtime import AgentTurnResult
@@ -757,9 +836,46 @@ class ObservedLogRegressionTests(unittest.TestCase):
         planner = Planner()
         result = ComputerUseRuntime(planner, registry).run("Ouvre un éditeur et écris bonjour.")
         self.assertFalse(result.goal_completed)
-        self.assertLessEqual(planner.calls, 3)
+        self.assertEqual(planner.calls, 1)
+        self.assertEqual(result.mission_status, "inconclusive")
         self.assertEqual(self.fixture.deliveries, [])
         self.assertEqual(self.fixture.value, "")
+
+    def test_successful_launch_does_not_spawn_goal_repair_loop(self):
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        registry = self.registry
+
+        class Planner:
+            calls = 0
+
+            def run(inner, text, **kwargs):
+                inner.calls += 1
+                opened = registry.execute(
+                    "open_file",
+                    {"name": "CursorUserSetup", "within": "Téléchargements"},
+                )
+                return AgentTurnResult("Installateur ouvert.", (opened,))
+
+        planner = Planner()
+        self.stack.enter_context(
+            patch.object(
+                self.registry,
+                "_execute_legacy",
+                return_value=AgentActionResult(
+                    "open_file",
+                    True,
+                    "Fichier ouvert.",
+                    r"C:\Users\salah\Downloads\CursorUserSetup-x64.exe",
+                ),
+            )
+        )
+        result = ComputerUseRuntime(planner, registry).run(
+            "Ouvre Cursor Setup dans Téléchargements."
+        )
+
+        self.assertEqual(planner.calls, 1)
+        self.assertIsNone(result.goal_completed)
+        self.assertEqual(result.mission_status, "delivered")
 
     def test_failed_launch_keeps_original_diagnostic(self):
         self.controller.begin("Copie les deux documents ouverts.")
@@ -775,7 +891,11 @@ class ObservedLogRegressionTests(unittest.TestCase):
         feedback = json.loads(GroqResponsesAgent._compact_tool_content(result.name, result))
         detail = json.loads(feedback["detail"])
         self.assertTrue(detail["verified"])
-        self.assertEqual(detail["value"], original["value"])
+        self.assertLessEqual(len(feedback["detail"]), 3501)
+        self.assertTrue(
+            detail.get("planner_payload_reduced")
+            or len(str(detail.get("value") or "")) < len(original["value"])
+        )
 
     def test_partial_tree_hint_does_not_override_fused_readable_structure(self):
         from jarvis_agent.agent_runtime import _inspection_requests_visual_fallback

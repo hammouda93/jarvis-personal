@@ -7,6 +7,7 @@ on:
       - feature/personal-jarvis-ui-v2-computer-use-recovery-v1
       - feature/visual-perception-fallback-v1
       - feature/computer-use-fusion-v2
+      - fix/computer-use-v2-efficiency-recovery-v1
 
 jobs:
   focused-windows-tests:

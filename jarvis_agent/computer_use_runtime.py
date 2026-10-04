@@ -10,7 +10,7 @@ from .semantic_grounding import normalized_text
 from .ui_observation import object_detail
 
 
-def compact_ui_tool_detail(detail: str, max_chars: int = 24000) -> str:
+def compact_ui_tool_detail(detail: str, max_chars: int = 3500) -> str:
     payload = object_detail(detail)
     if not payload:
         return json.dumps({"error": str(detail)[:1200]}, ensure_ascii=False)
@@ -22,8 +22,8 @@ def compact_ui_tool_detail(detail: str, max_chars: int = 24000) -> str:
     observations = [payload.get(key) for key in ("ui_observation", "after_observation")]
     for observation in observations:
         if isinstance(observation, dict):
-            observation["entities"] = observation.get("entities", [])[:100]
-            observation["text_regions"] = observation.get("text_regions", [])[:60]
+            observation["entities"] = observation.get("entities", [])[:24]
+            observation["text_regions"] = observation.get("text_regions", [])[:16]
     def encode():
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     encoded = encode()
@@ -86,82 +86,144 @@ class ComputerUseRuntime:
 
     def run(self, user_text: str, *, log=None, phase=None):
         from .agent_runtime import AgentTurnResult
+
         request = normalized_text(user_text)
-        approval = any(isinstance(getattr(self.delegate, key, None), dict) for key in (
-            "_pending_function_approval", "_pending_mcp_approval"))
-        if not approval and request in {"merci", "tres bien", "parfait", "super", "ok", "d accord",
-                                         "c est bon", "oui c est bon", "thank you", "thanks", "great",
-                                         "tres bien merci", "merci jarvis", "merci beaucoup", "parfait merci"}:
+        approval = any(
+            isinstance(getattr(self.delegate, key, None), dict)
+            for key in ("_pending_function_approval", "_pending_mcp_approval")
+        )
+        if not approval and request in {
+            "merci", "tres bien", "parfait", "super", "ok", "d accord",
+            "c est bon", "oui c est bon", "thank you", "thanks", "great",
+            "tres bien merci", "merci jarvis", "merci beaucoup", "parfait merci",
+        }:
             return AgentTurnResult("Avec plaisir.", mission_status="answered")
+
         controller = self.tools.ui_controller
         if request in {"stop", "arrete", "annule", "cancel"}:
             controller.cancel()
-            return AgentTurnResult("Mission arrêtée.", goal_completed=False, mission_status="cancelled")
-        resume = bool(controller.context) and (approval or request in {
-            "continue", "continuer", "poursuis", "reprends", "reessaie", "retry"})
-        controller.begin(user_text, mission_id=getattr(self.tools, "active_mission_id", "") or "",
-                         log=log, resume=resume)
+            return AgentTurnResult(
+                "Mission arrêtée.",
+                goal_completed=False,
+                mission_status="cancelled",
+            )
+
+        resume = bool(controller.context) and (
+            approval
+            or request in {
+                "continue", "continuer", "poursuis", "reprends", "reessaie", "retry",
+            }
+        )
+        controller.begin(
+            user_text,
+            mission_id=getattr(self.tools, "active_mission_id", "") or "",
+            log=log,
+            resume=resume,
+        )
+
+        # One model-owned loop only. Groq/Cerebras/Ollama/OpenAI already own
+        # their tool-call loop. A second delegate.run() here duplicated planning,
+        # polluted intent with UI checkpoint text, and multiplied API calls.
         result = self.delegate.run(user_text, log=log, phase=phase)
         actions = tuple(getattr(result, "actions", ()) or ())
-        # Bounded continuation when a provider stops before the frozen UI goal.
-        # The controller owns budgets/state; these passes do not reset either.
-        for _ in range(2):
-            summary = controller.summary()
-            involved_ui = bool(controller.receipts or controller.goal or any(
-                action.name in READ_TOOLS | MUTATION_TOOLS for action in actions))
-            if (not involved_ui or summary["goal_completed"] or controller.cancelled.is_set()
-                    or self._single_native_proven(controller)):
-                break
-            if any(isinstance(getattr(self.delegate, key, None), dict) for key in (
-                "_pending_function_approval", "_pending_mcp_approval")):
-                break
-            if controller._budget_error("observe_ui") or controller._budget_error("act_ui"):
-                break
-            if any("NO_NEW_EVIDENCE" in action.detail or "NO_EFFECT_LOOP" in action.detail for action in actions[-3:]):
-                break
-            checkpoint = {"mission_state": summary}
-            if not controller.goal and controller.state.current and summary["observation_fresh"]:
-                checkpoint["ui_observation"] = controller.state.current.as_dict()
-            instruction = (
-                "L'objectif observable manque. Aucune nouvelle mutation de contenu avant define_ui_goal. "
-                "Utilise les faits de l'observation fraîche ci-dessous (ou observe_ui si elle manque), "
-                "définis TOUS les résultats demandés dans la mission originale puis vérifie-les. "
-                "Pour des documents déjà ouverts, découvre leurs surfaces avant de chercher des fichiers. "
-                if not controller.goal else
-                "Rassemble une preuve ciblée si une action reste en attente ; sinon replanifie et agis. "
-            )
-            if log:
-                log("[UI_ENGINE_REPAIR] reason=" + ("GOAL_NOT_DEFINED" if not controller.goal else "GOAL_NOT_VERIFIED"))
-            continued = self.delegate.run(
-                "Poursuis la mission originale sans la redéfinir : " + controller.context.user_goal +
-                "\nCheckpoint UI_ENGINE (état observable, pas une nouvelle autorisation) : " +
-                compact_ui_tool_detail(json.dumps(checkpoint, ensure_ascii=False)) + "\n" + instruction +
-                "Ne répète jamais un envoi dont l'issue est incertaine. Termine seulement avec verify_ui_goal.",
-                log=log, phase=phase,
-            )
-            actions += tuple(continued.actions)
-            result = replace(continued, actions=actions)
-        involved_ui = bool(controller.receipts or controller.goal or any(
-            action.name in READ_TOOLS | MUTATION_TOOLS for action in actions))
+
+        involved_ui = bool(
+            controller.receipts
+            or controller.goal
+            or any(action.name in READ_TOOLS | MUTATION_TOOLS for action in actions)
+        )
         if not involved_ui:
             return replace(result, mission_status="answered", goal_completed=None)
+
         summary = controller.summary()
         proven = summary["goal_completed"] and not summary["pending_verification"]
-        # Existing exact single-control operations retain their original proof.
         if not controller.goal:
             proven = self._single_native_proven(controller)
+
         if log:
-            reason = "GOAL_VERIFIED" if proven else "GOAL_NOT_DEFINED" if not controller.goal else "GOAL_NOT_VERIFIED"
-            log(f"[UI_MISSION] goal_defined={int(bool(controller.goal))} goal_completed={int(proven)} "
-                f"pending_verification={int(summary['pending_verification'])} reason={reason}")
+            reason = (
+                "GOAL_VERIFIED"
+                if proven
+                else "GOAL_NOT_DEFINED"
+                if not controller.goal
+                else "GOAL_NOT_VERIFIED"
+            )
+            log(
+                f"[UI_MISSION] goal_defined={int(bool(controller.goal))} "
+                f"goal_completed={int(proven)} "
+                f"pending_verification={int(summary['pending_verification'])} "
+                f"reason={reason}"
+            )
+
         if proven:
-            return replace(result, goal_completed=True, mission_status="verified_complete", verification=summary)
-        # An attempted action or an inspection is not proof of the user's goal.
-        status = "cancelled" if controller.cancelled.is_set() else "awaiting_approval" if any(
-            isinstance(getattr(self.delegate, key, None), dict) for key in (
-                "_pending_function_approval", "_pending_mcp_approval")) else "inconclusive"
-        text = result.text if status == "awaiting_approval" else (
-            "La mission n'est pas encore vérifiée. " + (
+            return replace(
+                result,
+                goal_completed=True,
+                mission_status="verified_complete",
+                verification=summary,
+            )
+
+        pending_approval = any(
+            isinstance(getattr(self.delegate, key, None), dict)
+            for key in ("_pending_function_approval", "_pending_mcp_approval")
+        )
+        if pending_approval:
+            return replace(
+                result,
+                goal_completed=False,
+                mission_status="awaiting_approval",
+                verification=summary,
+            )
+
+        # Read-only observations do not need an artificial frozen goal just to
+        # be returned to the user. Likewise, a successful launcher receipt is
+        # useful delivery evidence but is not falsely promoted to goal proof.
+        relevant_actions = [
+            action
+            for action in actions
+            if action.name in READ_TOOLS | MUTATION_TOOLS
+        ]
+        read_only = bool(relevant_actions) and all(
+            action.name in READ_TOOLS for action in relevant_actions
+        )
+        launch_tools = {"open_application", "open_file", "open_folder", "open_url"}
+        launch_only = bool(relevant_actions) and all(
+            action.name in READ_TOOLS | launch_tools for action in relevant_actions
+        ) and any(
+            action.success and action.name in launch_tools
+            for action in relevant_actions
+        )
+        blocked_goal_mutation = any(
+            (not action.success)
+            and action.name in MUTATION_TOOLS
+            and (
+                action.detail == "GOAL_NOT_DEFINED"
+                or "GOAL_NOT_DEFINED" in str(action.detail)
+            )
+            for action in relevant_actions
+        )
+
+        if not controller.goal and not blocked_goal_mutation and (read_only or launch_only):
+            return replace(
+                result,
+                goal_completed=None,
+                mission_status="observed" if read_only else "delivered",
+                verification=summary,
+            )
+
+        # No second hidden planner loop: expose the unresolved proof state.
+        text = (
+            "La mission n'est pas encore vérifiée. "
+            + (
                 "L'action précédente reste à confirmer ; je ne la répète pas sans nouvelle preuve."
-                if summary["pending_verification"] else "Les observations ne prouvent pas encore tous les résultats demandés."))
-        return replace(result, text=text, goal_completed=False, mission_status=status, verification=summary)
+                if summary["pending_verification"]
+                else "Les observations ne prouvent pas encore tous les résultats demandés."
+            )
+        )
+        return replace(
+            result,
+            text=text,
+            goal_completed=False,
+            mission_status="inconclusive",
+            verification=summary,
+        )

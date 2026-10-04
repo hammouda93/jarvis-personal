@@ -560,6 +560,34 @@ def _action_detail_dict(action: AgentActionResult) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _computer_use_goal_completed(action: AgentActionResult) -> bool:
+    """Detect controller proof without asking the model for a cosmetic final turn."""
+    payload = _action_detail_dict(action)
+    if payload.get("goal_completed") is True:
+        return True
+    mission = payload.get("mission_state")
+    return bool(
+        isinstance(mission, dict)
+        and mission.get("goal_completed") is True
+        and mission.get("pending_verification") is not True
+    )
+
+
+def _verified_completion_text(
+    action: AgentActionResult,
+    arguments: dict[str, Any],
+) -> str:
+    payload = _action_detail_dict(action)
+    operation = str(payload.get("operation") or "")
+    execution = payload.get("execution")
+    if operation == "write" and isinstance(execution, dict):
+        value = execution.get("value")
+        if isinstance(value, str) and value:
+            preview = value if len(value) <= 180 else value[:177] + "…"
+            return f"Action terminée et vérifiée : {preview}"
+    return "Mission terminée et vérifiée."
+
+
 def _inspection_requests_visual_fallback(
     action: AgentActionResult,
 ) -> bool:
@@ -2158,7 +2186,7 @@ class GroqResponsesAgent:
             "define_ui_goal", "ui_engine_status", "list_browser_pages", "list_ui_surfaces", "bind_ui_surface", "switch_ui_surface",
             "write_ui_element", "close_tab", "close_window", "open_application", "open_file", "open_folder", "open_url"
         }:
-            max_detail = 24000
+            max_detail = 3500
             from .computer_use_runtime import compact_ui_tool_detail
             detail_text = compact_ui_tool_detail(detail_text, max_chars=max_detail)
         if len(detail_text) > max_detail:
@@ -3041,6 +3069,30 @@ class GroqResponsesAgent:
                         "content": self._compact_tool_content(name, result),
                     }
                 )
+                if (
+                    getattr(settings, "computer_use_enabled", False) is True
+                    and result.success
+                    and _computer_use_goal_completed(result)
+                ):
+                    if log:
+                        log("[UI_MISSION] local_finalize=verified_goal no_extra_model_round=1")
+                    if settings.operational_learning_enabled:
+                        _record_operational_run(
+                            user_text,
+                            actions,
+                            self.knowledge,
+                        )
+                    self._trim_history()
+                    return AgentTurnResult(
+                        text=_verified_completion_text(result, arguments),
+                        actions=tuple(actions),
+                        end_session=end_session,
+                        should_exit=should_exit,
+                        goal_completed=True,
+                        mission_status="verified_complete",
+                        verification=_action_detail_dict(result).get("mission_state")
+                        or _action_detail_dict(result).get("ui_verification"),
+                    )
                 if not result.success:
                     if result.detail == "GOAL_NOT_DEFINED":
                         recovery = (
