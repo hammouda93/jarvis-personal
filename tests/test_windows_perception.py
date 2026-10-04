@@ -58,6 +58,17 @@ class _FakeBoundedWindow:
             yield f"node-{index}"
 
 
+class _FakeLegacyDescWindow:
+    def __init__(self):
+        self.calls = []
+
+    def descendants(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        if "cache_enable" in kwargs:
+            raise TypeError("cache_enable unsupported")
+        return ["legacy-node-1", "legacy-node-2"]
+
+
 
 class _FakeTab:
     element_info = SimpleNamespace(
@@ -415,6 +426,22 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertTrue(meta["truncated"])
         self.assertEqual(meta["visited_nodes"], 12)
         self.assertEqual(window.calls[0]["depth"], 5)
+        self.assertNotIn("cache_enable", window.calls[0])
+
+
+    def test_bounded_descendants_legacy_fallback_avoids_cache_keyword(self):
+        window = _FakeLegacyDescWindow()
+
+        items, meta = _bounded_descendants(
+            window,
+            max_depth=4,
+            max_nodes=12,
+            time_budget_s=10.0,
+        )
+
+        self.assertEqual(items, ["legacy-node-1", "legacy-node-2"])
+        self.assertEqual(meta["strategy"], "descendants_depth")
+        self.assertEqual(window.calls[0]["depth"], 4)
         self.assertNotIn("cache_enable", window.calls[0])
 
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
