@@ -42,6 +42,33 @@ class AssistantV3FastPathTests(unittest.TestCase):
             )
         )
 
+    def test_compound_youtube_search_uses_direct_site_search(self):
+        self.assertTrue(
+            AssistantWorker._is_simple_direct_action(
+                "Ouvre YouTube et recherche Messi.",
+                ToolIntent(
+                    "browser.search_site",
+                    {"site": "youtube", "query": "messi"},
+                ),
+            )
+        )
+
+    def test_close_tab_uses_direct_browser_primitive(self):
+        self.assertTrue(
+            AssistantWorker._is_simple_direct_action(
+                "Ferme l'onglet YouTube uniquement.",
+                ToolIntent("browser.close_tab", {"name": "youtube"}),
+            )
+        )
+
+    def test_browser_back_uses_direct_browser_primitive(self):
+        self.assertTrue(
+            AssistantWorker._is_simple_direct_action(
+                "Retour en arrière.",
+                ToolIntent("browser.back"),
+            )
+        )
+
     def test_in_app_search_stays_with_agent(self):
         self.assertFalse(
             AssistantWorker._is_simple_direct_action(
