@@ -156,7 +156,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "inspect_active_window",
-                "Observe la fenêtre active ou nommée et retourne observation_id + contrôles e1/e2... Les refs appartiennent uniquement à cette observation. Préférer une ref observée à un raccourci clavier ou à la réouverture de l'application. Après toute action qui peut modifier l'interface, refaire une inspection avant de réutiliser une ref.",
+                "Observe la fenêtre active ou nommée et retourne des contrôles avec une ref opaque complète (par ex. obs3:e7). Pour agir, copie uniquement cette ref exactement telle quelle; observation_id est une métadonnée de diagnostic, pas un argument d’action. Après toute mutation, une ancienne ref expire.",
                 {
                     "title": {
                         "type": "string",
