@@ -579,6 +579,142 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertTrue(payload["auto_reinspection"])
         self.assertEqual(payload["recovered_ref"], "obs4:e7")
 
+    @patch("jarvis_agent.native_tools.inspect_active_window")
+    @patch("jarvis_agent.native_tools.click_ui_element")
+    def test_click_attaches_fresh_post_observation_without_model_round(
+        self,
+        click_mock,
+        inspect_mock,
+    ):
+        click_mock.return_value = SimpleNamespace(
+            success=True,
+            message="clicked",
+            detail=json.dumps(
+                {
+                    "activated": "Suivant",
+                    "source_observation_id": "obs1",
+                    "refs_invalidated": True,
+                    "requires_fresh_inspection": True,
+                }
+            ),
+        )
+        inspect_mock.return_value = SimpleNamespace(
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "observation_id": "obs2",
+                    "window": {"title": "Installation - Cursor (User)"},
+                    "controls": [
+                        {
+                            "ref": "obs2:e7",
+                            "type": "Button",
+                            "name": "Suivant",
+                            "enabled": True,
+                        }
+                    ],
+                    "snapshot": {"semantic_coverage": "usable"},
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        result = self.registry.execute(
+            "click_ui_element",
+            {"ref": "obs1:e4"},
+        )
+
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["auto_reinspection"])
+        self.assertFalse(payload["requires_fresh_inspection"])
+        self.assertEqual(
+            payload["post_observation"]["observation_id"],
+            "obs2",
+        )
+        inspect_mock.assert_called_once_with(title=None)
+
+    @patch("jarvis_agent.native_tools.observe_screen")
+    @patch("jarvis_agent.native_tools.inspect_active_window")
+    def test_inspect_interface_keeps_structured_path_when_usable(
+        self,
+        inspect_mock,
+        vision_mock,
+    ):
+        inspect_mock.return_value = SimpleNamespace(
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "observation_id": "obs1",
+                    "window": {"title": "Installation - Cursor (User)"},
+                    "controls": [
+                        {
+                            "ref": "obs1:e4",
+                            "type": "RadioButton",
+                            "name": "J'accepte",
+                        }
+                    ],
+                    "snapshot": {
+                        "semantic_coverage": "usable",
+                        "vision_recommended": False,
+                    },
+                }
+            ),
+        )
+
+        result = self.registry.execute(
+            "inspect_interface",
+            {"title": "Cursor", "focus": "Poursuivre l'installation"},
+        )
+
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertFalse(payload["perception"]["vision_attempted"])
+        vision_mock.assert_not_called()
+
+    @patch("jarvis_agent.native_tools.observe_screen")
+    @patch("jarvis_agent.native_tools.inspect_active_window")
+    def test_inspect_interface_escalates_to_vision_once_when_structure_is_opaque(
+        self,
+        inspect_mock,
+        vision_mock,
+    ):
+        inspect_mock.return_value = SimpleNamespace(
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "observation_id": "obs1",
+                    "window": {"title": "Opaque App"},
+                    "controls": [
+                        {"ref": "obs1:e1", "type": "Button", "name": "Close"}
+                    ],
+                    "snapshot": {
+                        "semantic_coverage": "insufficient",
+                        "vision_recommended": True,
+                    },
+                }
+            ),
+        )
+        vision_mock.return_value = SimpleNamespace(
+            success=False,
+            message="vision timeout",
+            detail="timed out",
+        )
+
+        result = self.registry.execute(
+            "inspect_interface",
+            {"title": "Opaque App", "focus": "Find the search field"},
+        )
+
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["perception"]["vision_attempted"])
+        self.assertFalse(payload["perception"]["vision_success"])
+        self.assertEqual(payload["perception"]["vision_error"], "timed out")
+        vision_mock.assert_called_once()
+
     def test_verified_skill_tool_writes_to_injected_local_store(self):
         result = self.registry.execute(
             "save_verified_skill",
