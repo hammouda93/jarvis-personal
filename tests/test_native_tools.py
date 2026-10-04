@@ -164,7 +164,7 @@ class NativeToolRegistryTests(unittest.TestCase):
         "jarvis_agent.native_tools.settings",
         replace(real_settings, operational_learning_enabled=True),
     )
-    @patch("jarvis_agent.native_tools.os.startfile")
+    @patch("jarvis_agent.native_tools.os.startfile", create=True)
     @patch("jarvis_agent.native_tools.execute")
     def test_learned_app_profile_is_reused_before_rescanning_windows(
         self,

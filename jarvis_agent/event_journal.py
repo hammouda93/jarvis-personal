@@ -218,8 +218,9 @@ class StructuredEventJournal:
         success: bool,
         summary: str = "",
         agent_id: str | None = None,
+        final_status: MissionStatus | None = None,
     ) -> str:
-        status = (
+        status = final_status or (
             MissionStatus.COMPLETED
             if success
             else MissionStatus.FAILED
@@ -230,6 +231,7 @@ class StructuredEventJournal:
             kind=(
                 EventKind.MISSION_COMPLETED
                 if success
+                else EventKind.MISSION_BLOCKED if status in {MissionStatus.BLOCKED, MissionStatus.WAITING_USER}
                 else EventKind.MISSION_FAILED
             ),
             agent_id=agent_id,

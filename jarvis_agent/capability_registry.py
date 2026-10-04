@@ -92,6 +92,8 @@ def build_default_registry() -> CapabilityRegistry:
             allowed_tools=(
                 "list_windows",
                 "inspect_active_window",
+                "observe_ui", "act_ui", "define_ui_goal", "verify_ui_goal", "ui_engine_status",
+                "list_ui_surfaces", "bind_ui_surface", "switch_ui_surface",
                 "open_application",
                 "open_file",
                 "click_ui_element",
@@ -149,6 +151,8 @@ def build_default_registry() -> CapabilityRegistry:
             allowed_tools=(
                 "open_url",
                 "inspect_active_window",
+                "observe_ui", "act_ui", "define_ui_goal", "verify_ui_goal", "ui_engine_status", "list_browser_pages",
+                "list_ui_surfaces", "bind_ui_surface", "switch_ui_surface",
                 "click_ui_element",
                 "write_ui_element",
                 "press_key",

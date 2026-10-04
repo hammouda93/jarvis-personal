@@ -1,7 +1,32 @@
 import unittest
+import threading
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from jarvis_agent.assistant_v3 import AssistantWorker, TextTurnInbox
 from jarvis_agent.tools import ToolIntent
+from jarvis_agent.agent_runtime import AgentTurnResult
+from jarvis_agent.states import AssistantState
+
+
+class CompletionDisplayTests(unittest.TestCase):
+    def test_unverified_goal_is_not_displayed_as_success_in_voice_or_text(self):
+        for source in ("voice","text"):
+            worker=SimpleNamespace(_conversation_language="fr",_pending_direct_follow_up="",
+                conversation_message=Mock(),log_line=Mock(),detail_changed=Mock(),
+                _handle_lifecycle=Mock(return_value=(False,True)),_handle_simple_direct_action=Mock(return_value=False),
+                _state=Mock(),_agent_phase=Mock(),_shadow_observe=Mock(),_deliver_reply=Mock(),_level=Mock(),
+                _agent=Mock(),_stop=threading.Event())
+            worker._agent.run.return_value=AgentTurnResult("Résultat non confirmé",goal_completed=False,mission_status="inconclusive")
+            self.assertTrue(AssistantWorker._process_user_text(worker,"Cherche une cible",source=source,legacy_intent=ToolIntent("unknown",{})))
+            worker._state.assert_called_with(AssistantState.ERROR,"Mission non vérifiée")
+            self.assertIs(worker._shadow_observe.call_args.kwargs["success"],False)
+
+    def test_stop_interrupts_the_computer_use_controller(self):
+        worker=SimpleNamespace(_stop=threading.Event(),_agent=Mock())
+        AssistantWorker.stop(worker)
+        self.assertTrue(worker._stop.is_set())
+        worker._agent.cancel.assert_called_once()
 
 
 class TextTurnInboxTests(unittest.TestCase):

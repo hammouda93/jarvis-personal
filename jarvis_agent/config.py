@@ -143,6 +143,17 @@ class Settings:
         if compatibility_baseline
         else _bool("JARVIS_STRICT_PROOF_ENABLED", False)
     )
+    computer_use_enabled: bool = (
+        False if compatibility_baseline else _bool("JARVIS_COMPUTER_USE_ENABLED", False)
+    )
+    ui_max_actions: int = _int("JARVIS_UI_MAX_ACTIONS", 24)
+    ui_max_observations: int = _int("JARVIS_UI_MAX_OBSERVATIONS", 36)
+    ui_mission_timeout_s: float = _float("JARVIS_UI_MISSION_TIMEOUT_S", 240.0)
+    ui_target_max_age_s: float = _float("JARVIS_UI_TARGET_MAX_AGE_S", 30.0)
+    browser_cdp_url: str = (os.getenv("JARVIS_BROWSER_CDP_URL") or "").strip()
+    browser_enabled: bool = _bool("JARVIS_BROWSER_ENABLED", False)
+    vision_schema_enabled: bool = _bool("JARVIS_VISION_SCHEMA_ENABLED", False)
+    vision_grounding_enabled: bool = _bool("JARVIS_VISION_GROUNDING_ENABLED", False)
     focused_typing_fallback_enabled: bool = _bool(
         "JARVIS_FOCUSED_TYPING_FALLBACK_ENABLED",
         False,
@@ -259,6 +270,7 @@ class Settings:
     vision_model: str = (
         os.getenv("JARVIS_VISION_MODEL") or "gemma3:latest"
     ).strip()
+    vision_grounding_model: str = (os.getenv("JARVIS_VISION_GROUNDING_MODEL") or vision_model).strip()
     vision_timeout_s: float = _float("JARVIS_VISION_TIMEOUT_S", 20.0)
     vision_max_width: int = _int("JARVIS_VISION_MAX_WIDTH", 1600)
     vision_num_predict: int = _int("JARVIS_VISION_NUM_PREDICT", 420)

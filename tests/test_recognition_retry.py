@@ -1,9 +1,11 @@
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 import numpy as np
 
 from jarvis_agent.recognition import recognize_command
+from jarvis_agent.config import settings
 from jarvis_agent.stt import TranscriptResult
 
 
@@ -34,7 +36,7 @@ class RecognitionRetryTests(unittest.TestCase):
             no_speech_probability=0.02,
         )
         fake = FakeSTT([primary, retry])
-        with patch("jarvis_agent.recognition.settings.stt_language", "fr"):
+        with patch("jarvis_agent.recognition.settings", replace(settings, stt_language="fr")):
             transcript, intent = recognize_command(
                 fake,
                 np.zeros(10, dtype=np.float32),

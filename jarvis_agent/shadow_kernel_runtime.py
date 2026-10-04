@@ -593,11 +593,9 @@ class KernelShadowObserver:
             source=source,
             actions=tuple(getattr(turn, "actions", ()) or ()),
             response_text=str(getattr(turn, "text", "") or ""),
-            # A returned AgentTurnResult means the live turn itself completed.
-            # Individual tool failures stay visible in the shadow graph/events
-            # and can later be assessed by the Supervisor without rewriting
-            # the authoritative live outcome.
-            success=True,
+            # Experimental UI turns carry an explicit goal verdict. Preserve
+            # historical mirroring when that field is absent/unknown.
+            success=getattr(turn, "goal_completed", None) if getattr(turn, "goal_completed", None) is not None else True,
         )
 
     def observe_direct_turn(

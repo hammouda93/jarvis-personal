@@ -2076,7 +2076,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 ]
             )
         )
-        self.assertTrue(
+        self.assertFalse(
             _actions_have_verified_proof(
                 [
                     AgentActionResult(

@@ -226,7 +226,7 @@ class ToolRouterTests(unittest.TestCase):
             self.assertEqual(path, executable)
             self.assertIn(executable, matches)
 
-    @patch("jarvis_agent.tools.os.startfile")
+    @patch("jarvis_agent.tools.os.startfile", create=True)
     @patch("jarvis_agent.tools._find_named_app")
     @patch("jarvis_agent.tools.launch_registered_app")
     @patch("jarvis_agent.tools.resolve_registered_app")
