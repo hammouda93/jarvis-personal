@@ -331,9 +331,17 @@ def _requested_action_capabilities(text: str) -> set[str]:
     required: set[str] = set()
 
     explicit_write = re.search(
-        r"\b(?:ecris|ecrire|saisis|saisir|tape|taper|ajoute|ajouter|"
+        r"\b(?:ecris|ecrire|saisis|saisir|tape|taper|"
         r"insere|inserer|remplace|remplacer|write|type|append|insert|replace)\b",
         normalized,
+    )
+    add_write = (
+        re.search(r"\b(?:ajoute|ajouter)\b", normalized)
+        and re.search(
+            r"\b(?:texte|text|contenu|document|champ|message|valeur|"
+            r"ligne|mot|phrase|editeur|editor|fichier|file)\b",
+            normalized,
+        )
     )
     # French STT can turn imperative "écris" into the noun "écrivain".
     # Accept it only at the start of an instruction or after a sequencing word
@@ -342,7 +350,7 @@ def _requested_action_capabilities(text: str) -> set[str]:
         r"(?:^|\b(?:et|puis|ensuite)\s+)ecrivain\b",
         normalized,
     )
-    if explicit_write or stt_write:
+    if explicit_write or add_write or stt_write:
         required.add("write_ui")
 
     close_requested = re.search(
@@ -2434,8 +2442,11 @@ class GroqResponsesAgent:
                         actions,
                     )
                 )
+                repairable_missing_capabilities = (
+                    set(missing_capabilities) - {"send_ui"}
+                )
                 if (
-                    missing_capabilities
+                    repairable_missing_capabilities
                     and not goal_completion_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
@@ -2447,7 +2458,7 @@ class GroqResponsesAgent:
                             "content": (
                                 "La mission n'est pas terminée. Il manque encore "
                                 "l'exécution réelle de ces capacités demandées: "
-                                + ", ".join(sorted(missing_capabilities))
+                                + ", ".join(sorted(repairable_missing_capabilities))
                                 + ". N'affirme pas le succès. Observe l'interface "
                                 "réelle et appelle le ou les outils nécessaires."
                             ),
@@ -2457,7 +2468,7 @@ class GroqResponsesAgent:
                     if log:
                         log(
                             "[AGENT] repair=missing_requested_capability "
-                            + ",".join(sorted(missing_capabilities))
+                            + ",".join(sorted(repairable_missing_capabilities))
                         )
                     continue
 
@@ -2641,12 +2652,12 @@ class GroqResponsesAgent:
                         log("[AGENT] repair=msf_tool_required_auto_choice")
                     continue
 
-                if missing_capabilities and goal_completion_repair_attempted:
+                if "send_ui" in missing_capabilities:
                     text = (
-                        "Je n'ai pas terminé la mission avec une preuve suffisante. "
-                        "Il manque encore l'exécution vérifiée de: "
-                        + ", ".join(sorted(missing_capabilities))
-                        + ". Je préfère ne pas annoncer un succès non prouvé."
+                        "Je n'ai pas terminé l'envoi avec une preuve suffisante. "
+                        "Je préfère ne pas annoncer qu'un message a été envoyé "
+                        "tant qu'une action d'envoi et son état final n'ont pas "
+                        "été observés."
                     )
                 else:
                     text = _visible_text(
