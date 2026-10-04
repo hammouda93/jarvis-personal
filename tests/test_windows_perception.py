@@ -5,12 +5,16 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from jarvis_agent.native_tools import NativeToolRegistry
+from jarvis_agent.cua_driver_bridge import CuaActionResult, CuaElement, CuaWindowSnapshot
+import jarvis_agent.windows_perception as wp
 from jarvis_agent.windows_perception import (
+    click_ui_element,
     close_tab,
     inspect_active_window,
     type_text_active_window,
     write_ui_element,
     _bounded_descendants,
+    _try_cua_inspection,
     _control_value,
     _probe_child_uia_fragments,
     _system_chrome_only,
@@ -329,6 +333,16 @@ class _FakeClipboard:
 
 
 class WindowsPerceptionTests(unittest.TestCase):
+    def setUp(self):
+        self._cua_available_patcher = patch(
+            "jarvis_agent.windows_perception.CUA_DRIVER.available",
+            return_value=False,
+        )
+        self._cua_available_patcher.start()
+
+    def tearDown(self):
+        self._cua_available_patcher.stop()
+
     def test_window_identity_matches_localized_setup_titles(self):
         self.assertGreaterEqual(
             _window_identity_score(
@@ -660,6 +674,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             )
         )
         self.assertFalse(payload["snapshot"]["vision_recommended"])
+        self.assertTrue(payload["observation_id"].startswith("obs"))
 
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._window_by_title")
@@ -942,9 +957,235 @@ class WindowsPerceptionTests(unittest.TestCase):
             tools["click_ui_element"]["properties"],
         )
         self.assertIn(
+            "observation_id",
+            tools["click_ui_element"]["properties"],
+        )
+        self.assertIn(
+            "delivery_mode",
+            tools["click_ui_element"]["properties"],
+        )
+        self.assertIn(
             "ref",
             tools["write_ui_element"]["properties"],
         )
+        self.assertIn(
+            "observation_id",
+            tools["write_ui_element"]["properties"],
+        )
+        self.assertIn(
+            "delivery_mode",
+            tools["write_ui_element"]["properties"],
+        )
+
+    def test_click_ref_expires_after_mutating_action(self):
+        class Clickable:
+            element_info = SimpleNamespace(
+                name="Ajouter un nouvel onglet",
+                control_type="Button",
+                automation_id="AddButton",
+            )
+
+            def window_text(self):
+                return "Ajouter un nouvel onglet"
+
+            def set_focus(self):
+                return None
+
+            def invoke(self):
+                return None
+
+        wp._SNAPSHOT_ELEMENTS = {"e6": Clickable()}
+        wp._SNAPSHOT_ID = "obs42"
+        wp._SNAPSHOT_WINDOW_TITLE = "Bloc-notes"
+
+        result = click_ui_element(
+            ref="e6",
+            observation_id="obs42",
+        )
+        self.assertTrue(result.success)
+        detail = json.loads(result.detail)
+        self.assertTrue(detail["refs_invalidated"])
+
+        stale = click_ui_element(
+            ref="e6",
+            observation_id="obs42",
+        )
+        self.assertFalse(stale.success)
+        stale_detail = json.loads(stale.detail)
+        self.assertTrue(stale_detail["stale_ref"])
+
+    def test_click_rejects_ref_without_observation_id(self):
+        class Clickable:
+            element_info = SimpleNamespace(
+                name="Button",
+                control_type="Button",
+                automation_id="",
+            )
+
+            def window_text(self):
+                return "Button"
+
+        wp._SNAPSHOT_ELEMENTS = {"e1": Clickable()}
+        wp._SNAPSHOT_ID = "obs100"
+
+        result = click_ui_element(ref="e1")
+
+        self.assertFalse(result.success)
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["stale_ref"])
+        self.assertEqual(payload["current_observation_id"], "obs100")
+
+    def test_click_rejects_ref_from_different_observation(self):
+        class Clickable:
+            element_info = SimpleNamespace(
+                name="Button",
+                control_type="Button",
+                automation_id="",
+            )
+
+            def window_text(self):
+                return "Button"
+
+        wp._SNAPSHOT_ELEMENTS = {"e1": Clickable()}
+        wp._SNAPSHOT_ID = "obs100"
+
+        result = click_ui_element(
+            ref="e1",
+            observation_id="obs99",
+        )
+        self.assertFalse(result.success)
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["stale_ref"])
+        self.assertEqual(payload["current_observation_id"], "obs100")
+
+    @patch("jarvis_agent.windows_perception.CUA_DRIVER")
+    def test_cua_fallback_projects_fresh_grounded_refs(self, cua_mock):
+        cua_mock.available.return_value = True
+        cua_mock.inspect_window.return_value = CuaWindowSnapshot(
+            pid=777,
+            window_id=888,
+            title="WhatsApp",
+            app_name="WhatsApp",
+            bounds=(100, 100, 1200, 900),
+            elements=(
+                CuaElement(
+                    token="s0000002a:14",
+                    pid=777,
+                    window_id=888,
+                    role="text field",
+                    label="Search",
+                    actions=("set_value",),
+                    frame=(130, 180, 500, 225),
+                ),
+                CuaElement(
+                    token="s0000002a:15",
+                    pid=777,
+                    window_id=888,
+                    role="button",
+                    label="New chat",
+                    actions=("invoke",),
+                    frame=(1040, 170, 1100, 225),
+                ),
+            ),
+            truncated=False,
+            total_element_count=2,
+            returned_element_count=2,
+        )
+
+        result = _try_cua_inspection(title="WhatsApp", limit=36)
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertEqual(payload["fallback"], "cua_driver")
+        self.assertEqual(payload["snapshot"]["provider"], "cua_driver")
+        self.assertTrue(payload["observation_id"].startswith("obs"))
+        self.assertTrue(payload["capabilities"]["writable"])
+        self.assertTrue(payload["capabilities"]["actionable"])
+        self.assertNotIn("element_token", result.detail)
+
+    @patch("jarvis_agent.windows_perception.CUA_DRIVER")
+    def test_cua_click_uses_snapshot_token_and_invalidates_ref(self, cua_mock):
+        element = CuaElement(
+            token="s0000002a:14",
+            pid=777,
+            window_id=888,
+            role="button",
+            label="Ajouter un nouvel onglet",
+            actions=("invoke",),
+        )
+        wp._SNAPSHOT_ELEMENTS = {"e6": element}
+        wp._SNAPSHOT_ID = "obs77"
+        wp._SNAPSHOT_WINDOW_TITLE = "Bloc-notes"
+        cua_mock.click_element.return_value = CuaActionResult(
+            True,
+            "ok",
+            {
+                "provider": "cua_driver",
+                "effect": "confirmed",
+                "route": "accessibility",
+                "requires_fresh_inspection": True,
+            },
+        )
+
+        result = click_ui_element(
+            ref="e6",
+            observation_id="obs77",
+            delivery_mode="background",
+        )
+
+        self.assertTrue(result.success)
+        cua_mock.click_element.assert_called_once_with(
+            element,
+            delivery_mode="background",
+        )
+        detail = json.loads(result.detail)
+        self.assertEqual(detail["source_observation_id"], "obs77")
+        self.assertTrue(detail["refs_invalidated"])
+        self.assertEqual(wp._SNAPSHOT_ELEMENTS, {})
+
+    @patch("jarvis_agent.windows_perception.CUA_DRIVER")
+    def test_cua_write_preserves_background_first_policy(self, cua_mock):
+        element = CuaElement(
+            token="s0000002a:20",
+            pid=777,
+            window_id=888,
+            role="text field",
+            label="Search contacts",
+            value="",
+            actions=("set_value",),
+        )
+        wp._SNAPSHOT_ELEMENTS = {"e1": element}
+        wp._SNAPSHOT_ID = "obs78"
+        wp._SNAPSHOT_WINDOW_TITLE = "WhatsApp"
+        cua_mock.write_element.return_value = CuaActionResult(
+            True,
+            "ok",
+            {
+                "provider": "cua_driver",
+                "effect": "confirmed",
+                "route": "accessibility",
+                "requires_fresh_inspection": True,
+            },
+        )
+
+        result = write_ui_element(
+            "",
+            "Bouguera",
+            ref="e1",
+            observation_id="obs78",
+            mode="replace",
+            delivery_mode="background",
+        )
+
+        self.assertTrue(result.success)
+        cua_mock.write_element.assert_called_once_with(
+            element,
+            "Bouguera",
+            mode="replace",
+            delivery_mode="background",
+        )
+        self.assertEqual(wp._SNAPSHOT_ELEMENTS, {})
 
     @patch("jarvis_agent.native_tools.inspect_active_window")
     def test_inspection_result_reaches_model(self, inspect_mock):
