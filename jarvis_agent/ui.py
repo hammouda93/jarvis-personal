@@ -426,7 +426,7 @@ class PersonalJarvisCanvas(QWidget):
 
         painter.setPen(QColor(226, 252, 255, 245))
         font = QFont("Segoe UI", max(11, int(radius * 0.16)))
-        font.setWeight(QFont.DemiBold)
+        font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         painter.drawText(
             QRectF(
@@ -441,7 +441,7 @@ class PersonalJarvisCanvas(QWidget):
 
         painter.setPen(QColor(99, 231, 255, 230))
         font = QFont("Segoe UI", max(8, int(radius * 0.095)))
-        font.setLetterSpacing(QFont.AbsoluteSpacing, 2.0)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.0)
         painter.setFont(font)
         painter.drawText(
             QRectF(
@@ -562,7 +562,7 @@ class PersonalJarvisCanvas(QWidget):
             else QColor(170, 209, 223, 210)
         )
         badge_font = QFont("Segoe UI", max(7, int(radius * 0.20)))
-        badge_font.setWeight(QFont.Bold)
+        badge_font.setWeight(QFont.Weight.Bold)
         painter.setFont(badge_font)
         painter.drawText(
             QRectF(
@@ -576,7 +576,7 @@ class PersonalJarvisCanvas(QWidget):
         )
 
         title_font = QFont("Segoe UI", max(8, int(radius * 0.25)))
-        title_font.setWeight(QFont.DemiBold)
+        title_font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(title_font)
         painter.drawText(
             QRectF(
