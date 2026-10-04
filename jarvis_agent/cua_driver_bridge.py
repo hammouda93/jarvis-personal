@@ -693,7 +693,9 @@ class CuaDriverBridge:
             degraded_reason=str(state.get("degraded_reason") or "")[:500],
             snapshot_id=str(state.get("snapshot_id") or "")[:160],
             capture_id=str(state.get("capture_id") or "")[:160],
-        )        if not snapshot.has_meaningful_content:
+        )
+
+        if not snapshot.has_meaningful_content:
             # OpenClaw/Cua Driver's Windows workflow retries one fresh window
             # snapshot when the accessibility surface is sparse. A second
             # sparse snapshot is preserved as truthful evidence; we do not
