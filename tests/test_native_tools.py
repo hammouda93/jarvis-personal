@@ -683,7 +683,6 @@ class NativeToolRegistryTests(unittest.TestCase):
         self,
         inspect_mock,
         vision_mock,
-        _settings_mock,
     ):
         inspect_mock.return_value = SimpleNamespace(
             success=True,
