@@ -981,6 +981,28 @@ class WindowsPerceptionTests(unittest.TestCase):
         stale_detail = json.loads(stale.detail)
         self.assertTrue(stale_detail["stale_ref"])
 
+    def test_click_rejects_ref_without_observation_id(self):
+        class Clickable:
+            element_info = SimpleNamespace(
+                name="Button",
+                control_type="Button",
+                automation_id="",
+            )
+
+            def window_text(self):
+                return "Button"
+
+        wp._SNAPSHOT_ELEMENTS = {"e1": Clickable()}
+        wp._SNAPSHOT_ID = "obs100"
+
+        result = click_ui_element(ref="e1")
+
+        self.assertFalse(result.success)
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["stale_ref"])
+        self.assertIsNone(payload["requested_observation_id"])
+        self.assertEqual(payload["current_observation_id"], "obs100")
+
     def test_click_rejects_ref_from_different_observation(self):
         class Clickable:
             element_info = SimpleNamespace(
