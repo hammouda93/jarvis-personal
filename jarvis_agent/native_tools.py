@@ -64,6 +64,7 @@ class NativeToolRegistry:
     def __init__(self, knowledge=None) -> None:
         self.knowledge = knowledge or AGENT_KNOWLEDGE
         self._last_app_hint = ""
+        self._last_observed_window_title = ""
 
     def ollama_tools(self) -> list[dict[str, Any]]:
         return [
@@ -678,17 +679,27 @@ class NativeToolRegistry:
             target = str(args.get("name", "")).strip()
             new_instance = bool(args.get("new_instance", False))
 
-            if not new_instance and self._safe_target(target):
-                existing = activate_window(target)
+            observed_title = self._last_observed_window_title
+            if (
+                not new_instance
+                and observed_title
+                and self._safe_target(target)
+                and (
+                    normalize(target) in normalize(observed_title)
+                    or normalize(observed_title) in normalize(target)
+                )
+            ):
+                existing = activate_window(observed_title)
                 if existing.success:
                     return AgentActionResult(
                         name=name,
                         success=True,
-                        message=f"Application déjà ouverte; fenêtre réutilisée: {target}.",
+                        message=f"Application déjà ouverte; fenêtre réutilisée: {observed_title}.",
                         detail=json.dumps(
                             {
                                 "reused_existing_window": True,
                                 "target": target,
+                                "window": observed_title,
                                 "activation": existing.detail,
                             },
                             ensure_ascii=False,
@@ -1259,8 +1270,6 @@ class NativeToolRegistry:
             pass
 
     def _record_inspected_app(self, result) -> None:
-        if not settings.operational_learning_enabled:
-            return
         if not result.success:
             return
         try:
@@ -1268,6 +1277,9 @@ class NativeToolRegistry:
             window = dict(payload.get("window") or {})
             title = str(window.get("title") or "").strip()
             if not title:
+                return
+            self._last_observed_window_title = title
+            if not settings.operational_learning_enabled:
                 return
             parts = [
                 part.strip()
