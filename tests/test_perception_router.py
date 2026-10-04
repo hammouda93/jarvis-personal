@@ -1,10 +1,11 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from jarvis_agent.perception_router import (
     _uia_needs_visual_fallback,
+    PerceptionManager,
     inspect_window_hybrid,
 )
 from jarvis_agent.screen_vision import ScreenObservation
@@ -112,6 +113,131 @@ class HybridPerceptionTests(unittest.TestCase):
         self.assertEqual(
             detail["visual_observation"]["observation"]["targets"][0]["label"],
             "Recherche",
+        )
+
+    def test_visual_fallback_pins_and_activates_exact_structured_hwnd(self):
+        uia_payload = {
+            "window": {
+                "title": "Opaque App",
+                "hwnd": 4242,
+                "pid": 99,
+                "process_start": "stable-process",
+                "bounds": [100, 100, 1100, 800],
+            },
+            "controls": [
+                {"ref": "e1", "type": "Button", "name": "Close"},
+            ],
+            "snapshot": {"semantic_coverage": "insufficient"},
+        }
+        vision_payload = {
+            "title": "Opaque App",
+            "hwnd": 4242,
+            "pid": 99,
+            "process_start": "stable-process",
+            "bounds": [100, 100, 1100, 800],
+            "captured_width": 1000,
+            "captured_height": 700,
+            "observation_json": {
+                "targets": [
+                    {
+                        "role": "search_input",
+                        "label": "Search",
+                        "box_1000": [20, 40, 400, 100],
+                        "confidence": 0.96,
+                    }
+                ]
+            },
+        }
+        manager = PerceptionManager(
+            structured=Mock(
+                return_value=UIActionResult(
+                    True,
+                    "structured",
+                    json.dumps(uia_payload),
+                )
+            ),
+            vision=Mock(
+                return_value=ScreenObservation(
+                    True,
+                    "vision",
+                    json.dumps(vision_payload),
+                )
+            ),
+        )
+
+        with patch(
+            "jarvis_agent.windows_perception.activate_bound_window",
+            return_value=UIActionResult(
+                True,
+                "focused",
+                '{"verified":true}',
+            ),
+        ) as activate_mock, patch(
+            "jarvis_agent.perception_router.settings",
+            SimpleNamespace(vision_enabled=True),
+        ):
+            result = manager.perceive(title="Opaque App")
+
+        self.assertTrue(result.success)
+        activate_mock.assert_called_once()
+        self.assertEqual(
+            manager.vision.call_args.kwargs["window_id"],
+            "4242",
+        )
+
+    def test_failed_visual_capture_is_not_repeated_without_new_generation(self):
+        uia_payload = {
+            "window": {
+                "title": "Opaque App",
+                "hwnd": 4242,
+                "pid": 99,
+                "process_start": "stable-process",
+                "bounds": [100, 100, 1100, 800],
+            },
+            "controls": [
+                {"ref": "e1", "type": "Button", "name": "Close"},
+            ],
+            "snapshot": {"semantic_coverage": "insufficient"},
+        }
+        vision = Mock(
+            return_value=ScreenObservation(
+                False,
+                "timeout",
+                "timed out",
+            )
+        )
+        manager = PerceptionManager(
+            structured=Mock(
+                return_value=UIActionResult(
+                    True,
+                    "structured",
+                    json.dumps(uia_payload),
+                )
+            ),
+            vision=vision,
+        )
+
+        with patch(
+            "jarvis_agent.windows_perception.activate_bound_window",
+            return_value=UIActionResult(
+                True,
+                "focused",
+                '{"verified":true}',
+            ),
+        ), patch(
+            "jarvis_agent.perception_router.settings",
+            SimpleNamespace(vision_enabled=True),
+        ):
+            first = manager.perceive(title="Opaque App")
+            second = manager.perceive(title="Opaque App")
+
+        self.assertTrue(first.success)
+        self.assertTrue(second.success)
+        self.assertEqual(vision.call_count, 1)
+        detail = json.loads(second.detail)
+        self.assertEqual(
+            detail["perception"]["vision_error"],
+            "VISION_RETRY_BUDGET_EXHAUSTED",
         )
 
     def test_baseline_or_disabled_vision_preserves_uia_only(self):
