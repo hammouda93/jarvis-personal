@@ -23,10 +23,7 @@ class TextInputModeV3Tests(unittest.TestCase):
             )
         )
         self.agent = Mock()
-        self.agent.run.return_value = AgentTurnResult(
-            "Bonjour.",
-            mission_status="answered",
-        )
+        self.agent.run.return_value = AgentTurnResult("Bonjour.")
         self.tts = Mock()
         self.stack.enter_context(
             patch(
@@ -82,10 +79,7 @@ class TextInputModeV3Tests(unittest.TestCase):
 
         def finish(*args, **kwargs):
             self.worker.stop()
-            return AgentTurnResult(
-                "Bonjour.",
-                mission_status="answered",
-            )
+            return AgentTurnResult("Bonjour.")
 
         self.agent.run.side_effect = finish
 
