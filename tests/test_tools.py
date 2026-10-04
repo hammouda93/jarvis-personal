@@ -8,6 +8,7 @@ from unittest.mock import patch
 from jarvis_agent.tools import (
     ToolIntent,
     _chrome_profile_directory,
+    _contextual_site_search_url,
     _launch_chrome,
     _find_named_app,
     _find_named_file,
@@ -54,6 +55,72 @@ class ToolRouterTests(unittest.TestCase):
         intent = route("Recherche sur Internet à propos des agents IA")
         self.assertEqual(intent.name, "browser.search")
         self.assertEqual(intent.args["query"], "agents ia")
+
+    def test_compound_youtube_search_routes_as_one_deterministic_site_search(self):
+        intent = route("ouvre youtube et recherche messi")
+        self.assertEqual(intent.name, "browser.search_site")
+        self.assertEqual(intent.args["site"], "youtube")
+        self.assertEqual(intent.args["query"], "messi")
+
+    def test_close_named_tab_routes_as_browser_primitive(self):
+        intent = route("fermes l'onglet youtube uniquement")
+        self.assertEqual(intent.name, "browser.close_tab")
+        self.assertEqual(intent.args["name"], "youtube")
+
+    def test_browser_back_routes_as_browser_primitive(self):
+        intent = route("retour en arrière")
+        self.assertEqual(intent.name, "browser.back")
+
+    def test_youtube_context_builds_youtube_search_url(self):
+        url, site = _contextual_site_search_url(
+            "messi",
+            "https://www.youtube.com/",
+        )
+        self.assertEqual(site, "YouTube")
+        self.assertIn("youtube.com/results?search_query=messi", url)
+
+    @patch("jarvis_agent.tools._open_browser_url")
+    def test_plain_search_reuses_last_youtube_context(self, open_mock):
+        open_mock.return_value = True
+        with patch("jarvis_agent.tools._LAST_BROWSER_URL", ""):
+            opened = execute(
+                ToolIntent(
+                    "browser.open_url",
+                    {"url": "https://www.youtube.com"},
+                )
+            )
+            searched = execute(
+                ToolIntent(
+                    "browser.search",
+                    {"query": "messi", "scope": "context"},
+                )
+            )
+
+        self.assertTrue(opened.success)
+        self.assertTrue(searched.success)
+        self.assertEqual(open_mock.call_count, 2)
+        self.assertIn(
+            "youtube.com/results?search_query=messi",
+            open_mock.call_args_list[-1].args[0],
+        )
+        self.assertIn("YouTube", searched.message)
+
+    @patch("jarvis_agent.tools._open_browser_url")
+    def test_explicit_internet_search_ignores_youtube_context(self, open_mock):
+        open_mock.return_value = True
+        with patch("jarvis_agent.tools._LAST_BROWSER_URL", "https://www.youtube.com"):
+            result = execute(
+                ToolIntent(
+                    "browser.search",
+                    {"query": "messi", "scope": "web"},
+                )
+            )
+
+        self.assertTrue(result.success)
+        self.assertIn(
+            "google.com/search?q=messi",
+            open_mock.call_args.args[0],
+        )
 
     def test_search_without_subject_requests_followup(self):
         intent = route("Recherche sur Internet")
