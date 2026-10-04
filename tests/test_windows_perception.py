@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from jarvis_agent.native_tools import NativeToolRegistry
+import jarvis_agent.windows_perception as wp
 from jarvis_agent.windows_perception import (
+    click_ui_element,
     close_tab,
     inspect_active_window,
     type_text_active_window,
@@ -659,6 +661,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             )
         )
         self.assertFalse(payload["snapshot"]["vision_recommended"])
+        self.assertTrue(payload["observation_id"].startswith("obs"))
 
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._window_by_title")
@@ -926,9 +929,77 @@ class WindowsPerceptionTests(unittest.TestCase):
             tools["click_ui_element"]["properties"],
         )
         self.assertIn(
+            "observation_id",
+            tools["click_ui_element"]["properties"],
+        )
+        self.assertIn(
             "ref",
             tools["write_ui_element"]["properties"],
         )
+        self.assertIn(
+            "observation_id",
+            tools["write_ui_element"]["properties"],
+        )
+
+    def test_click_ref_expires_after_mutating_action(self):
+        class Clickable:
+            element_info = SimpleNamespace(
+                name="Ajouter un nouvel onglet",
+                control_type="Button",
+                automation_id="AddButton",
+            )
+
+            def window_text(self):
+                return "Ajouter un nouvel onglet"
+
+            def set_focus(self):
+                return None
+
+            def invoke(self):
+                return None
+
+        wp._SNAPSHOT_ELEMENTS = {"e6": Clickable()}
+        wp._SNAPSHOT_ID = "obs42"
+        wp._SNAPSHOT_WINDOW_TITLE = "Bloc-notes"
+
+        result = click_ui_element(
+            ref="e6",
+            observation_id="obs42",
+        )
+        self.assertTrue(result.success)
+        detail = json.loads(result.detail)
+        self.assertTrue(detail["refs_invalidated"])
+
+        stale = click_ui_element(
+            ref="e6",
+            observation_id="obs42",
+        )
+        self.assertFalse(stale.success)
+        stale_detail = json.loads(stale.detail)
+        self.assertTrue(stale_detail["stale_ref"])
+
+    def test_click_rejects_ref_from_different_observation(self):
+        class Clickable:
+            element_info = SimpleNamespace(
+                name="Button",
+                control_type="Button",
+                automation_id="",
+            )
+
+            def window_text(self):
+                return "Button"
+
+        wp._SNAPSHOT_ELEMENTS = {"e1": Clickable()}
+        wp._SNAPSHOT_ID = "obs100"
+
+        result = click_ui_element(
+            ref="e1",
+            observation_id="obs99",
+        )
+        self.assertFalse(result.success)
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["stale_ref"])
+        self.assertEqual(payload["current_observation_id"], "obs100")
 
     @patch("jarvis_agent.native_tools.inspect_active_window")
     def test_inspection_result_reaches_model(self, inspect_mock):
