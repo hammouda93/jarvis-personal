@@ -48,6 +48,8 @@ _SNAPSHOT_ELEMENTS: dict[str, Any] = {}
 _SNAPSHOT_WINDOW_TITLE = ""
 _SNAPSHOT_ID = ""
 _SNAPSHOT_SEQUENCE = 0
+_REF_DESCRIPTORS: dict[str, dict[str, Any]] = {}
+_REF_DESCRIPTOR_LIMIT = 120
 
 
 def _new_snapshot_id() -> str:
@@ -75,6 +77,39 @@ def _snapshot_ref(index: int) -> str:
     if not _SNAPSHOT_ID:
         raise RuntimeError("ui_snapshot_not_initialized")
     return f"{_SNAPSHOT_ID}:e{int(index)}"
+
+
+def _remember_ref_descriptor(
+    ref: str,
+    compact: dict[str, Any],
+    *,
+    window_title: str,
+) -> None:
+    """Keep a bounded non-actionable fingerprint for stale-ref recovery."""
+    key = str(ref or "").strip().lower()
+    if not key:
+        return
+    _REF_DESCRIPTORS[key] = {
+        "ref": ref,
+        "window_title": str(window_title or "")[:300],
+        "type": str(compact.get("type") or "")[:80],
+        "name": str(compact.get("name") or "")[:200],
+        "id": str(compact.get("id") or "")[:160],
+        "label": str(
+            compact.get("label")
+            or compact.get("label_hint")
+            or ""
+        )[:200],
+        "writable": bool(compact.get("writable")),
+    }
+    while len(_REF_DESCRIPTORS) > _REF_DESCRIPTOR_LIMIT:
+        oldest = next(iter(_REF_DESCRIPTORS))
+        _REF_DESCRIPTORS.pop(oldest, None)
+
+
+def ui_ref_descriptor(ref: str) -> dict[str, Any] | None:
+    value = _REF_DESCRIPTORS.get(str(ref or "").strip().lower())
+    return dict(value) if value is not None else None
 
 
 @dataclass(frozen=True)
@@ -1362,6 +1397,11 @@ def _cua_snapshot_payload(
                     )[:120],
                 }
             )
+        _remember_ref_descriptor(
+            ref,
+            compact,
+            window_title=_SNAPSHOT_WINDOW_TITLE,
+        )
         controls.append(compact)
 
     return {
@@ -1786,6 +1826,11 @@ def inspect_active_window(
                     )[:120],
                 }
             )
+        _remember_ref_descriptor(
+            ref,
+            compact,
+            window_title=_SNAPSHOT_WINDOW_TITLE,
+        )
         controls.append(compact)
 
     payload = {
