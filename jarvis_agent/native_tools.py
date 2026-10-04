@@ -9,6 +9,7 @@ from typing import Any
 from .agent_knowledge import AGENT_KNOWLEDGE
 from .background_web_research import BACKGROUND_WEB_RESEARCH
 from .config import settings
+from .cua_driver_bridge import CUA_DRIVER
 from .memory import LOCAL_MEMORY
 from .ms_football_bridge import MS_FOOTBALL_BRIDGE
 from .screen_vision import (
@@ -230,7 +231,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "click_ui_element",
-                "Clique/active un contrôle observé. Préférer ref + observation_id issus de la dernière inspection à un raccourci clavier. Toute action invalide les anciennes refs: réinspecter avant l'action suivante.",
+                "Clique/active un contrôle observé. Copier exactement la ref opaque fournie par la dernière inspection. Toute action invalide les anciennes refs: réinspecter avant l’action suivante.",
                 {
                     "name": {
                         "type": "string",
@@ -238,11 +239,7 @@ class NativeToolRegistry:
                     },
                     "ref": {
                         "type": "string",
-                        "description": "Référence e1, e2... fournie par la dernière inspection.",
-                    },
-                    "observation_id": {
-                        "type": "string",
-                        "description": "OBLIGATOIRE lorsque ref est fourni: observation_id exact qui a produit cette ref. Une ref sans cet identifiant ou provenant d’une ancienne observation est refusée.",
+                        "description": "Référence opaque complète fournie par la dernière inspection, par ex. obs3:e7. La copier telle quelle.",
                     },
                     "delivery_mode": {
                         "type": "string",
@@ -288,11 +285,7 @@ class NativeToolRegistry:
                     },
                     "ref": {
                         "type": "string",
-                        "description": "Référence e1, e2... fournie par la dernière inspection.",
-                    },
-                    "observation_id": {
-                        "type": "string",
-                        "description": "Identifiant observation_id qui a produit ref.",
+                        "description": "Référence opaque complète fournie par la dernière inspection, par ex. obs3:e7. La copier telle quelle.",
                     },
                     "text": {
                         "type": "string",
@@ -762,10 +755,36 @@ class NativeToolRegistry:
             if normalized in known:
                 result = execute(ToolIntent("app.open", {"app": known[normalized]}))
                 if not result.success:
+                    cua_launch = CUA_DRIVER.launch_application(target)
+                    if cua_launch.success:
+                        self._last_app_hint = target
+                        invalidate_ui_snapshot()
+                        return AgentActionResult(
+                            name=name,
+                            success=True,
+                            message=cua_launch.message,
+                            detail=json.dumps(
+                                cua_launch.detail,
+                                ensure_ascii=False,
+                            ),
+                        )
                     result = execute(
                         ToolIntent("app.open_named", {"query": target})
                     )
             else:
+                cua_launch = CUA_DRIVER.launch_application(target)
+                if cua_launch.success:
+                    self._last_app_hint = target
+                    invalidate_ui_snapshot()
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message=cua_launch.message,
+                        detail=json.dumps(
+                            cua_launch.detail,
+                            ensure_ascii=False,
+                        ),
+                    )
                 result = execute(ToolIntent("app.open_named", {"query": target}))
             self._record_app_launch(target, result)
             converted = self._convert(name, result)
@@ -873,6 +892,15 @@ class NativeToolRegistry:
         if name == "inspect_active_window":
             title = str(args.get("title", "")).strip() or None
             result = inspect_active_window(title=title)
+            if (
+                not result.success
+                and title
+                and self._last_app_hint
+                and normalize(title) != normalize(self._last_app_hint)
+            ):
+                result = inspect_active_window(title=self._last_app_hint)
+            if not result.success and title:
+                result = inspect_active_window(title=None)
             self._record_inspected_app(result)
             return AgentActionResult(
                 name=name,
@@ -939,7 +967,6 @@ class NativeToolRegistry:
                 target,
                 ref=ref,
                 control_type=control_type,
-                observation_id=str(args.get("observation_id", "")).strip(),
                 delivery_mode=str(
                     args.get("delivery_mode", "background")
                 ).strip() or "background",
@@ -981,7 +1008,6 @@ class NativeToolRegistry:
                 text,
                 ref=ref,
                 mode=mode,
-                observation_id=str(args.get("observation_id", "")).strip(),
                 delivery_mode=str(
                     args.get("delivery_mode", "background")
                 ).strip() or "background",
