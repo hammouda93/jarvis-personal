@@ -323,7 +323,10 @@ class AssistantWorker(QObject):
         if intent.name not in {
             "browser.open_url",
             "browser.search",
+            "browser.search_site",
             "browser.search_prompt",
+            "browser.close_tab",
+            "browser.back",
             "app.open",
             "folder.open",
             "folder.open_named",
@@ -336,11 +339,15 @@ class AssistantWorker(QObject):
         # Never let the legacy router truncate a compound mission. If the
         # utterance contains sequencing or a second obvious action, let the
         # native agent handle the complete objective.
-        if re.search(r"\b(et|puis|ensuite|après|apres|and|then)\b", text):
+        if (
+            intent.name != "browser.search_site"
+            and re.search(r"\b(et|puis|ensuite|après|apres|and|then)\b", text)
+        ):
             return False
-        if re.search(r"\b(ouvre|ouvrir|lance)\b", text) and re.search(
-            r"\b(recherche|cherche)\b",
-            text,
+        if (
+            intent.name != "browser.search_site"
+            and re.search(r"\b(ouvre|ouvrir|lance)\b", text)
+            and re.search(r"\b(recherche|cherche)\b", text)
         ):
             return False
 
