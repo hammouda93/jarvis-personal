@@ -144,6 +144,29 @@ class LiveMissionBrowserTests(unittest.TestCase):
             "Ouvre l'installation Cursor",
         )
 
+    def test_unrelated_direct_utility_does_not_mutate_browser_mission(self):
+        self.tracker.record_direct(
+            "Ouvre YouTube",
+            "browser.open_url",
+            {"url": "https://www.youtube.com"},
+            success=True,
+            detail="https://www.youtube.com",
+        )
+        before = self.tracker.view()
+        result = self.tracker.record_direct(
+            "Quelle heure est-il ?",
+            "system.time",
+            {},
+            success=True,
+            detail="21:00",
+        )
+        after = self.tracker.view()
+
+        self.assertEqual(result, "")
+        self.assertEqual(before.mission_id, after.mission_id)
+        self.assertEqual(before.current_step, after.current_step)
+        self.assertEqual(before.browser, after.browser)
+
     def test_unrelated_non_browser_turn_is_not_forced_into_browser_context(self):
         self.tracker.record_direct(
             "Ouvre YouTube",
