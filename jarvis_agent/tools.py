@@ -331,7 +331,10 @@ def _launch_chrome(*, url: str | None = None) -> bool:
     if not executable:
         return False
 
-    args = [executable]
+    args = [
+        executable,
+        "--force-renderer-accessibility=complete",
+    ]
     profile_directory = _chrome_profile_directory()
     if profile_directory:
         args.append(f"--profile-directory={profile_directory}")
