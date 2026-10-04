@@ -956,7 +956,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             "ref",
             tools["click_ui_element"]["properties"],
         )
-        self.assertIn(
+        self.assertNotIn(
             "observation_id",
             tools["click_ui_element"]["properties"],
         )
@@ -968,7 +968,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             "ref",
             tools["write_ui_element"]["properties"],
         )
-        self.assertIn(
+        self.assertNotIn(
             "observation_id",
             tools["write_ui_element"]["properties"],
         )
@@ -994,27 +994,25 @@ class WindowsPerceptionTests(unittest.TestCase):
             def invoke(self):
                 return None
 
-        wp._SNAPSHOT_ELEMENTS = {"e6": Clickable()}
+        wp._SNAPSHOT_ELEMENTS = {"obs42:e6": Clickable()}
         wp._SNAPSHOT_ID = "obs42"
         wp._SNAPSHOT_WINDOW_TITLE = "Bloc-notes"
 
         result = click_ui_element(
-            ref="e6",
-            observation_id="obs42",
+            ref="obs42:e6",
         )
         self.assertTrue(result.success)
         detail = json.loads(result.detail)
         self.assertTrue(detail["refs_invalidated"])
 
         stale = click_ui_element(
-            ref="e6",
-            observation_id="obs42",
+            ref="obs42:e6",
         )
         self.assertFalse(stale.success)
         stale_detail = json.loads(stale.detail)
         self.assertTrue(stale_detail["stale_ref"])
 
-    def test_click_rejects_ref_without_observation_id(self):
+    def test_click_rejects_unbound_short_ref(self):
         class Clickable:
             element_info = SimpleNamespace(
                 name="Button",
@@ -1025,7 +1023,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             def window_text(self):
                 return "Button"
 
-        wp._SNAPSHOT_ELEMENTS = {"e1": Clickable()}
+        wp._SNAPSHOT_ELEMENTS = {"obs100:e1": Clickable()}
         wp._SNAPSHOT_ID = "obs100"
 
         result = click_ui_element(ref="e1")
@@ -1046,12 +1044,11 @@ class WindowsPerceptionTests(unittest.TestCase):
             def window_text(self):
                 return "Button"
 
-        wp._SNAPSHOT_ELEMENTS = {"e1": Clickable()}
+        wp._SNAPSHOT_ELEMENTS = {"obs100:e1": Clickable()}
         wp._SNAPSHOT_ID = "obs100"
 
         result = click_ui_element(
-            ref="e1",
-            observation_id="obs99",
+            ref="obs99:e1",
         )
         self.assertFalse(result.success)
         payload = json.loads(result.detail)
@@ -1100,6 +1097,12 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertEqual(payload["fallback"], "cua_driver")
         self.assertEqual(payload["snapshot"]["provider"], "cua_driver")
         self.assertTrue(payload["observation_id"].startswith("obs"))
+        self.assertTrue(
+            all(
+                item["ref"].startswith(payload["observation_id"] + ":")
+                for item in payload["controls"]
+            )
+        )
         self.assertTrue(payload["capabilities"]["writable"])
         self.assertTrue(payload["capabilities"]["actionable"])
         self.assertNotIn("element_token", result.detail)
@@ -1114,7 +1117,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             label="Ajouter un nouvel onglet",
             actions=("invoke",),
         )
-        wp._SNAPSHOT_ELEMENTS = {"e6": element}
+        wp._SNAPSHOT_ELEMENTS = {"obs77:e6": element}
         wp._SNAPSHOT_ID = "obs77"
         wp._SNAPSHOT_WINDOW_TITLE = "Bloc-notes"
         cua_mock.click_element.return_value = CuaActionResult(
@@ -1129,8 +1132,7 @@ class WindowsPerceptionTests(unittest.TestCase):
         )
 
         result = click_ui_element(
-            ref="e6",
-            observation_id="obs77",
+            ref="obs77:e6",
             delivery_mode="background",
         )
 
@@ -1155,7 +1157,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             value="",
             actions=("set_value",),
         )
-        wp._SNAPSHOT_ELEMENTS = {"e1": element}
+        wp._SNAPSHOT_ELEMENTS = {"obs78:e1": element}
         wp._SNAPSHOT_ID = "obs78"
         wp._SNAPSHOT_WINDOW_TITLE = "WhatsApp"
         cua_mock.write_element.return_value = CuaActionResult(
@@ -1172,8 +1174,7 @@ class WindowsPerceptionTests(unittest.TestCase):
         result = write_ui_element(
             "",
             "Bouguera",
-            ref="e1",
-            observation_id="obs78",
+            ref="obs78:e1",
             mode="replace",
             delivery_mode="background",
         )
