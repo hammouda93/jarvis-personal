@@ -396,6 +396,31 @@ class WindowsPerceptionTests(unittest.TestCase):
 
     @patch("jarvis_agent.windows_perception.time.sleep")
     @patch("jarvis_agent.windows_perception._send_keys")
+    @patch("jarvis_agent.windows_perception._window_by_title")
+    @patch("jarvis_agent.windows_perception._active_window")
+    def test_close_named_tab_recovers_browser_when_jarvis_is_foreground(
+        self,
+        active_window_mock,
+        window_by_title_mock,
+        send_keys_mock,
+        sleep_mock,
+    ):
+        jarvis = _FakeTabWindow([])
+        youtube = _FakeTab("(5) YouTube - Google Chrome")
+        browser = _FakeTabWindow([youtube])
+        after = _FakeTabWindow([])
+        active_window_mock.side_effect = [jarvis, after]
+        window_by_title_mock.return_value = browser
+
+        result = close_tab("YouTube")
+
+        self.assertTrue(result.success)
+        self.assertTrue(youtube.clicked)
+        window_by_title_mock.assert_called_once_with("YouTube")
+        send_keys_mock.assert_called_once_with("^w")
+
+    @patch("jarvis_agent.windows_perception.time.sleep")
+    @patch("jarvis_agent.windows_perception._send_keys")
     @patch("jarvis_agent.windows_perception._active_window")
     def test_close_named_tab_does_not_use_close_window(
         self,
