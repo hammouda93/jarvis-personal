@@ -1400,8 +1400,8 @@ def _cua_snapshot_payload(
         },
         "fallback": "cua_driver",
         "note": (
-            "Fallback structuré Cua Driver: utiliser ref + observation_id. "
-            "Les refs expirent après toute action ou nouvelle inspection."
+            "Fallback structuré Cua Driver: copier la ref opaque complète telle "
+            "quelle. Elle expire après toute action ou nouvelle inspection."
         ),
     }
 
@@ -1440,9 +1440,9 @@ def inspect_active_window(
 ) -> UIActionResult:
     """Return a compact, model-friendly accessibility snapshot.
 
-    Interactive controls are prioritized and receive short refs (e1, e2, ...).
-    The refs can be used immediately by click/write operations, including for
-    controls that expose no accessible label.
+    Interactive controls are prioritized and receive opaque snapshot-bound refs
+    such as obs3:e7. Copy a ref exactly as returned; it expires after a UI
+    mutation or a newer inspection.
     """
     global _SNAPSHOT_ELEMENTS, _SNAPSHOT_WINDOW_TITLE
 
@@ -1843,9 +1843,9 @@ def inspect_active_window(
         },
         "fallback": "win32_handle_to_uia" if native_item is not None else None,
         "note": (
-            "Utiliser ref pour un contrôle sans nom. "
-            "Les refs appartiennent à observation_id et expirent dès qu'une "
-            "action peut modifier l'interface; réinspecter ensuite."
+            "Utiliser la ref opaque complète pour un contrôle observé, même "
+            "sans nom. Elle expire dès qu'une action peut modifier l'interface; "
+            "réinspecter ensuite."
         ),
     }
     if (
@@ -2549,17 +2549,6 @@ def write_ui_element(
 
     if normalized_mode == "insert":
         active = editable or wrapper
-        try:
-            active.set_focus()
-        except Exception:
-            pass
-        type_keys = getattr(active, "type_keys", None)
-        if not callable(type_keys):
-            return UIActionResult(
-                False,
-                f"Impossible d'insérer du texte dans {label}.",
-                control_type,
-            )
         if not _paste_text_to_control(active, value):
             return UIActionResult(
                 False,
