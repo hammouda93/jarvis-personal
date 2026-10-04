@@ -1,6 +1,8 @@
 import tempfile
+import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from jarvis_agent.live_mission import LiveMissionTracker
 from jarvis_agent.mission_context_store import MissionContextStore
@@ -64,6 +66,51 @@ class LiveMissionBrowserTests(unittest.TestCase):
 
         self.assertEqual(first_id, second_id)
         self.assertIn("YouTube", first + second)
+
+    def test_browser_post_click_updates_mission_page_state(self):
+        self.tracker.record_direct(
+            "Ouvre YouTube",
+            "browser.open_url",
+            {"url": "https://www.youtube.com"},
+            success=True,
+            detail="https://www.youtube.com",
+        )
+        self.tracker.record_direct(
+            "Recherche Messi",
+            "browser.search",
+            {"query": "messi", "scope": "context"},
+            success=True,
+            detail="https://www.youtube.com/results?search_query=messi",
+        )
+
+        action = SimpleNamespace(
+            name="click_ui_element",
+            success=True,
+            detail=json.dumps(
+                {
+                    "post_observation": {
+                        "window": {
+                            "title": "Lionel Messi Highlights - YouTube - Google Chrome"
+                        }
+                    }
+                }
+            ),
+        )
+        self.tracker.record_agent_turn(
+            "Ouvre la première vidéo",
+            [action],
+            "La première vidéo est ouverte.",
+        )
+
+        browser = self.tracker.view().browser
+        self.assertEqual(
+            browser["page_kind"],
+            "navigated_after_click",
+        )
+        self.assertIn(
+            "Lionel Messi Highlights",
+            browser["window_title"],
+        )
 
     def test_unrelated_non_browser_turn_is_not_forced_into_browser_context(self):
         self.tracker.record_direct(
