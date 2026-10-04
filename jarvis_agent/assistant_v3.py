@@ -142,6 +142,36 @@ class AssistantWorker(QObject):
                     f"{type(exc).__name__}: {exc}"
                 )
 
+    def _record_direct_context(
+        self,
+        user_text: str,
+        spoken: str,
+        intent: ToolIntent,
+        result,
+    ) -> None:
+        recorder = getattr(self._agent, "record_external_turn", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(
+                user_text,
+                spoken,
+                action_name=intent.name,
+                action_detail=str(result.detail or ""),
+                success=bool(result.success),
+            )
+            self.log_line.emit(
+                f"[CONTEXT] local_turn={intent.name} "
+                f"success={1 if result.success else 0}"
+            )
+        except Exception as exc:
+            # Context synchronization must never break an otherwise successful
+            # deterministic local action.
+            self.log_line.emit(
+                f"[CONTEXT] local_turn_sync_failed="
+                f"{type(exc).__name__}: {exc}"
+            )
+
     def _state(self, state: AssistantState, status: str | None = None) -> None:
         self.state_changed.emit(state.value)
         self.status_changed.emit(status or STATE_LABELS[state])
@@ -413,6 +443,12 @@ class AssistantWorker(QObject):
             f"args={intent.args} follow_up={result.follow_up}"
         )
         spoken = tool_message(intent, result, self._conversation_language)
+        self._record_direct_context(
+            user_text,
+            spoken,
+            intent,
+            result,
+        )
         self._shadow_observe(
             user_text,
             source="direct_fast_path",
@@ -487,6 +523,12 @@ class AssistantWorker(QObject):
                     follow_intent,
                     result,
                     self._conversation_language,
+                )
+                self._record_direct_context(
+                    user_text,
+                    response,
+                    follow_intent,
+                    result,
                 )
                 self._shadow_observe(
                     user_text,
