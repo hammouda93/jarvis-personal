@@ -19,6 +19,7 @@ from jarvis_agent.windows_perception import (
     _score_name,
     _title_app_hint,
     _window_identity_score,
+    _window_query_score,
 )
 
 
@@ -811,6 +812,21 @@ class WindowsPerceptionTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertIn("Text", result.detail)
+
+    def test_web_window_query_does_not_collapse_to_desktop_app(self):
+        desktop_score = _window_query_score(
+            "WhatsApp Web",
+            "WhatsApp",
+            process="WhatsApp.exe",
+        )
+        browser_score = _window_query_score(
+            "WhatsApp Web",
+            "(93) WhatsApp - Google Chrome",
+            process="chrome.exe",
+        )
+
+        self.assertLess(desktop_score, 0.82)
+        self.assertGreaterEqual(browser_score, 0.82)
 
     def test_window_score_ignores_hyphen_typography(self):
         self.assertGreaterEqual(
