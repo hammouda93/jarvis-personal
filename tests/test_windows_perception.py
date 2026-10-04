@@ -728,6 +728,26 @@ class WindowsPerceptionTests(unittest.TestCase):
         title_mock.assert_not_called()
         attach_mock.assert_called_once_with(4242)
 
+    @patch("jarvis_agent.windows_perception._try_cua_inspection")
+    @patch("jarvis_agent.windows_perception._active_window")
+    def test_inspection_uses_cua_when_no_active_uia_window(
+        self,
+        active_mock,
+        cua_mock,
+    ):
+        active_mock.return_value = None
+        cua_mock.return_value = wp.UIActionResult(
+            True,
+            "Fenêtre inspectée via Cua Driver: WhatsApp.",
+            '{"observation_id":"obs9","window":{"title":"WhatsApp"},"controls":[]}',
+        )
+
+        result = inspect_active_window()
+
+        self.assertTrue(result.success)
+        self.assertIn("WhatsApp", result.detail)
+        cua_mock.assert_called_once_with(title=None, limit=36)
+
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._native_target_window")
     @patch("jarvis_agent.windows_perception._active_window")
@@ -885,6 +905,42 @@ class WindowsPerceptionTests(unittest.TestCase):
 
         self.assertIsNotNone(item)
         self.assertEqual(item["handle"], 42)
+
+    @patch("jarvis_agent.windows_perception._control_value")
+    @patch("jarvis_agent.windows_perception._paste_text_to_control")
+    @patch("jarvis_agent.windows_perception._snapshot_element")
+    def test_append_fallback_pastes_exact_unicode_text(
+        self,
+        snapshot_mock,
+        paste_mock,
+        value_mock,
+    ):
+        document = _FakeControl(
+            "Document",
+            "Document",
+            (10, 20, 810, 620),
+        )
+        snapshot_mock.return_value = document
+        paste_mock.return_value = True
+        value_mock.side_effect = [
+            "bonjour Jarvis",
+            "bonjour Jarvis heureux de vous revoir.",
+        ]
+
+        result = write_ui_element(
+            "",
+            " heureux de vous revoir.",
+            ref="obs7:e4",
+            mode="append",
+        )
+
+        self.assertTrue(result.success)
+        paste_mock.assert_called_once_with(
+            document,
+            " heureux de vous revoir.",
+            append=True,
+        )
+        self.assertIn('"verified":true', result.detail)
 
     @patch("jarvis_agent.windows_perception._snapshot_element")
     def test_append_write_preserves_existing_document_text(
