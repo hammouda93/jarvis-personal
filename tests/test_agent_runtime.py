@@ -22,6 +22,7 @@ from jarvis_agent.agent_runtime import (
     _looks_mostly_english,
     _visible_text,
     _actions_have_verified_proof,
+    _completed_action_capabilities,
     _looks_like_clear_operational_feedback,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -3424,6 +3425,187 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(result.actions), 2)
         self.assertFalse(result.actions[0].success)
         self.assertTrue(result.actions[1].success)
+
+    def test_groq_blocks_blind_shortcut_after_insufficient_inspection(self):
+        class ShallowPerceptionTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "inspect_active_window":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="inspection shallow",
+                        detail=(
+                            '{"window":{"title":"Hybrid App"},'
+                            '"controls":[],'
+                            '"snapshot":{"semantic_coverage":"insufficient",'
+                            '"vision_recommended":true}}'
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="unexpected execution",
+                    detail=str(arguments),
+                )
+
+        tools = ShallowPerceptionTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect_shallow",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Hybrid App"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_blind_ctrl_f",
+                            "name": "press_key",
+                            "arguments": '{"key":"Ctrl+F"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je ne peux pas agir sans cible fiable.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Recherche le contact dans l'application.")
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            ["inspect_active_window"],
+        )
+        self.assertTrue(
+            any(
+                action.detail == "press_key_blocked_insufficient_perception"
+                for action in result.actions
+            )
+        )
+        self.assertIn("cible fiable", result.text)
+
+    def test_groq_never_claims_message_sent_without_send_action(self):
+        class ObservationOnlyTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "inspect_active_window":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="inspection",
+                        detail=(
+                            '{"window":{"title":"Application"},'
+                            '"controls":[],'
+                            '"snapshot":{"semantic_coverage":"usable"}}'
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = ObservationOnlyTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect_send_goal",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Application"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le message a été envoyé.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le message a été envoyé.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Envoie-lui un message de bienvenue."
+        )
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            ["inspect_active_window"],
+        )
+        self.assertNotIn("a été envoyé", result.text)
+        self.assertIn("pas terminé", result.text)
+        self.assertIn("send_ui", result.text)
+
+    def test_send_capability_requires_submit_then_after_state_observation(self):
+        actions = [
+            AgentActionResult(
+                name="write_ui_element",
+                success=True,
+                message="texte écrit",
+                detail='{"verified":true,"value":"Bienvenue"}',
+            ),
+            AgentActionResult(
+                name="press_key",
+                success=True,
+                message="Touche envoyée: Enter.",
+                detail="Touche envoyée: Enter. Effet final non vérifié.",
+            ),
+            AgentActionResult(
+                name="inspect_active_window",
+                success=True,
+                message="inspection",
+                detail='{"snapshot":{"semantic_coverage":"usable"}}',
+            ),
+        ]
+
+        capabilities = _completed_action_capabilities(actions)
+
+        self.assertIn("write_ui", capabilities)
+        self.assertIn("send_ui", capabilities)
 
     def test_groq_semantic_reset_tool_clears_temporary_context(self):
         tools = FakeTools()
