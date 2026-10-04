@@ -82,22 +82,22 @@ class VisualNode:
 
 
 NODES: tuple[VisualNode, ...] = (
-    VisualNode("voice", "Votre voix", "Microphone", 0.10, 0.47, "MIC"),
-    VisualNode("conversation", "Conversation", "Chat texte", 0.13, 0.72, "TXT"),
-    VisualNode("understand", "Comprendre", "Whisper / STT", 0.28, 0.22, "STT"),
-    VisualNode("think", "Réfléchir", "Cerebras", 0.50, 0.13, "AI"),
-    VisualNode("mission", "Mission", "Objectif & plan", 0.68, 0.19, "M"),
-    VisualNode("context", "Contexte", "Situation actuelle", 0.83, 0.25, "CTX"),
-    VisualNode("memory", "Mémoire", "Historique & préférences", 0.27, 0.49, "MEM"),
-    VisualNode("internet", "Internet", "Recherche arrière-plan", 0.78, 0.44, "WEB"),
-    VisualNode("browser", "Navigateur", "Pages & onglets", 0.89, 0.61, "NAV"),
-    VisualNode("windows", "Votre PC", "Fenêtres & applications", 0.75, 0.72, "PC"),
-    VisualNode("ms_football", "MS Football", "Vos données", 0.62, 0.88, "MS"),
-    VisualNode("verify", "Vérifier", "Résultat observé", 0.49, 0.88, "OK"),
-    VisualNode("respond", "Vous répondre", "Voix & texte", 0.27, 0.87, "OUT"),
+    VisualNode("voice", "Votre voix", "Microphone", 0.11, 0.47, "MIC"),
+    VisualNode("conversation", "Conversation", "Bientôt disponible", 0.13, 0.73, "TXT"),
+    VisualNode("understand", "Comprendre", "Whisper / STT", 0.28, 0.23, "STT"),
+    VisualNode("think", "Réfléchir", "Cerebras", 0.50, 0.14, "AI"),
+    VisualNode("mission", "Mission", "Objectif & plan", 0.68, 0.22, "M"),
+    VisualNode("context", "Contexte", "Situation actuelle", 0.83, 0.34, "CTX"),
+    VisualNode("memory", "Mémoire", "Historique & préférences", 0.21, 0.59, "MEM"),
+    VisualNode("internet", "Internet", "Recherche arrière-plan", 0.82, 0.51, "WEB"),
+    VisualNode("browser", "Navigateur", "Pages & onglets", 0.82, 0.70, "NAV"),
+    VisualNode("windows", "Votre PC", "Fenêtres & applications", 0.67, 0.78, "PC"),
+    VisualNode("ms_football", "MS Football", "Vos données", 0.56, 0.88, "MS"),
+    VisualNode("verify", "Vérifier", "Résultat observé", 0.43, 0.88, "OK"),
+    VisualNode("respond", "Vous répondre", "Voix & texte", 0.28, 0.79, "OUT"),
 )
 
-NODE_BY_KEY = {node.key: node for node in NODES}
+NODE_BY_KEYNODE_BY_KEY = {node.key: node for node in NODES}
 
 
 TOOL_NODE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -335,64 +335,76 @@ class PersonalJarvisCanvas(QWidget):
         painter.save()
         painter.translate(center)
 
-        for index, (rx, ry, rotation) in enumerate(
-            (
-                (2.55, 0.85, -8),
-                (2.10, 1.28, 18),
-                (1.78, 1.68, -28),
-                (2.65, 1.55, 34),
-            )
-        ):
+        orbit_specs = (
+            (1.72, 0.40, -7, 34),
+            (1.98, 0.64, 17, 27),
+            (2.18, 0.90, -25, 21),
+            (2.38, 1.16, 31, 15),
+        )
+        for index, (rx, ry, rotation, alpha) in enumerate(orbit_specs):
             painter.save()
-            painter.rotate(rotation + math.sin(self._phase + index) * 2.2)
-            pen = QPen(QColor(61, 191, 231, 28 + index * 5))
-            pen.setWidthF(1.0)
+            painter.rotate(rotation + math.sin(self._phase * 0.55 + index) * 1.4)
+            pen = QPen(QColor(78, 204, 236, alpha))
+            pen.setWidthF(0.85 if index < 2 else 0.7)
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(
-                QRectF(
-                    -scale * rx,
-                    -scale * ry,
-                    scale * rx * 2,
-                    scale * ry * 2,
-                )
+            orbit_rect = QRectF(
+                -scale * rx,
+                -scale * ry,
+                scale * rx * 2,
+                scale * ry * 2,
+            )
+            painter.drawArc(
+                orbit_rect,
+                int((18 + index * 49 + self._phase * 5) * 16),
+                int((210 - index * 18) * 16),
             )
             painter.restore()
+
+        # Sparse orbital particles make the core feel alive without becoming noisy.
+        for index in range(7):
+            angle = self._phase * (0.25 + index * 0.02) + index * 0.88
+            rx = scale * (1.72 + (index % 3) * 0.23)
+            ry = scale * (0.43 + (index % 4) * 0.11)
+            point = QPointF(math.cos(angle) * rx, math.sin(angle) * ry)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(115, 237, 255, 115 if index < 3 else 70))
+            painter.drawEllipse(point, 1.5 if index < 3 else 1.0, 1.5 if index < 3 else 1.0)
 
         painter.restore()
 
     def _draw_core(self, painter: QPainter, center: QPointF, radius: float) -> None:
-        breathing = 1.0 + math.sin(self._phase * 2.4) * 0.018
-        radius *= breathing + self._level * 0.08
+        breathing = 1.0 + math.sin(self._phase * 1.8) * 0.009
+        radius *= breathing + self._level * 0.035
 
-        glow = QRadialGradient(center, radius * 2.9)
-        glow.setColorAt(0.0, QColor(96, 239, 255, 92))
-        glow.setColorAt(0.28, QColor(29, 180, 236, 48))
-        glow.setColorAt(0.63, QColor(4, 95, 177, 15))
+        # Large, soft atmospheric glow.
+        glow = QRadialGradient(center, radius * 2.45)
+        glow.setColorAt(0.0, QColor(92, 235, 255, 78))
+        glow.setColorAt(0.28, QColor(29, 174, 226, 34))
+        glow.setColorAt(0.68, QColor(8, 71, 127, 10))
         glow.setColorAt(1.0, QColor(0, 0, 0, 0))
         painter.setPen(Qt.NoPen)
         painter.setBrush(glow)
-        painter.drawEllipse(center, radius * 2.9, radius * 2.9)
+        painter.drawEllipse(center, radius * 2.45, radius * 2.45)
 
+        # Dark glass core with a bright off-centre data light.
         shell = QRadialGradient(
-            QPointF(center.x() - radius * 0.24, center.y() - radius * 0.28),
-            radius * 1.4,
+            QPointF(center.x() - radius * 0.32, center.y() - radius * 0.34),
+            radius * 1.45,
         )
-        shell.setColorAt(0.0, QColor(207, 252, 255, 235))
-        shell.setColorAt(0.16, QColor(74, 224, 255, 210))
-        shell.setColorAt(0.42, QColor(8, 105, 177, 175))
-        shell.setColorAt(0.76, QColor(2, 24, 58, 230))
-        shell.setColorAt(1.0, QColor(0, 6, 18, 245))
+        shell.setColorAt(0.0, QColor(124, 239, 255, 230))
+        shell.setColorAt(0.12, QColor(39, 182, 225, 210))
+        shell.setColorAt(0.34, QColor(8, 83, 143, 190))
+        shell.setColorAt(0.70, QColor(3, 25, 55, 238))
+        shell.setColorAt(1.0, QColor(0, 7, 18, 252))
         painter.setBrush(shell)
-        painter.setPen(QPen(QColor(86, 226, 255, 180), 1.6))
+        painter.setPen(QPen(QColor(99, 231, 248, 185), 1.5))
         painter.drawEllipse(center, radius, radius)
 
-        # Longitude / latitude mesh gives the nucleus a planetary data-core look.
+        # Subtle globe/data mesh.
         painter.setBrush(Qt.NoBrush)
-        for idx, ratio in enumerate((0.28, 0.52, 0.74)):
-            pen = QPen(QColor(89, 226, 255, 55 + idx * 10))
-            pen.setWidthF(0.8)
-            painter.setPen(pen)
+        for ratio, alpha in ((0.30, 45), (0.52, 37), (0.73, 29)):
+            painter.setPen(QPen(QColor(116, 228, 248, alpha), 0.7))
             painter.drawEllipse(
                 QRectF(
                     center.x() - radius * ratio,
@@ -401,6 +413,8 @@ class PersonalJarvisCanvas(QWidget):
                     radius * 2,
                 )
             )
+        for ratio, alpha in ((0.25, 43), (0.48, 34), (0.69, 24)):
+            painter.setPen(QPen(QColor(107, 217, 242, alpha), 0.7))
             painter.drawEllipse(
                 QRectF(
                     center.x() - radius,
@@ -410,51 +424,78 @@ class PersonalJarvisCanvas(QWidget):
                 )
             )
 
-        # Saturn-like energy rings.
-        for index, factor in enumerate((1.18, 1.42, 1.72)):
-            pen = QPen(QColor(75, 211, 255, 80 - index * 14))
-            pen.setWidthF(1.8 if index == 0 else 1.1)
-            painter.setPen(pen)
+        # Thin equatorial energy rings.
+        for index, factor in enumerate((1.10, 1.31, 1.58)):
+            painter.setPen(
+                QPen(
+                    QColor(80, 219, 247, 88 - index * 20),
+                    1.35 if index == 0 else 0.8,
+                )
+            )
             painter.drawEllipse(
                 QRectF(
                     center.x() - radius * factor,
-                    center.y() - radius * factor * 0.28,
+                    center.y() - radius * factor * 0.21,
                     radius * factor * 2,
-                    radius * factor * 0.56,
+                    radius * factor * 0.42,
                 )
             )
 
-        painter.setPen(QColor(226, 252, 255, 245))
-        font = QFont("Segoe UI", max(11, int(radius * 0.16)))
-        font.setWeight(QFont.Weight.DemiBold)
-        painter.setFont(font)
-        painter.drawText(
-            QRectF(
-                center.x() - radius * 0.75,
-                center.y() - radius * 0.24,
-                radius * 1.5,
-                radius * 0.34,
-            ),
-            Qt.AlignCenter,
-            "PERSONAL JARVIS",
-        )
+        # Micro points on the shell.
+        painter.setPen(Qt.NoPen)
+        for index in range(18):
+            angle = index * (math.tau / 18.0) + self._phase * 0.08
+            ring = radius * (0.72 + (index % 3) * 0.08)
+            px = center.x() + math.cos(angle) * ring
+            py = center.y() + math.sin(angle) * ring * 0.72
+            painter.setBrush(QColor(144, 241, 255, 55 + (index % 4) * 18))
+            painter.drawEllipse(QPointF(px, py), 1.2, 1.2)
 
-        painter.setPen(QColor(99, 231, 255, 230))
-        font = QFont("Segoe UI", max(8, int(radius * 0.095)))
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.0)
+        title_rect = QRectF(
+            center.x() - radius * 0.88,
+            center.y() - radius * 0.25,
+            radius * 1.76,
+            radius * 0.30,
+        )
+        painter.setPen(QColor(236, 253, 255, 248))
+        font = QFont("Segoe UI", max(11, int(radius * 0.135)))
+        font.setWeight(QFont.Weight.DemiBold)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
+        painter.setFont(font)
+        painter.drawText(title_rect, Qt.AlignCenter, "PERSONAL JARVIS")
+
+        painter.setPen(QColor(112, 232, 248, 232))
+        font = QFont("Segoe UI", max(8, int(radius * 0.082)))
+        font.setWeight(QFont.Weight.DemiBold)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.1)
         painter.setFont(font)
         painter.drawText(
             QRectF(
                 center.x() - radius * 0.72,
                 center.y() + radius * 0.08,
                 radius * 1.44,
-                radius * 0.28,
+                radius * 0.18,
             ),
             Qt.AlignCenter,
-            "AI KERNEL · CEREBRAS",
+            "AI KERNEL",
         )
 
-    def _edge_path(
+        painter.setPen(QColor(116, 174, 196, 215))
+        font = QFont("Segoe UI", max(7, int(radius * 0.058)))
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.9)
+        painter.setFont(font)
+        painter.drawText(
+            QRectF(
+                center.x() - radius * 0.76,
+                center.y() + radius * 0.28,
+                radius * 1.52,
+                radius * 0.16,
+            ),
+            Qt.AlignCenter,
+            "CEREBRAS · ORCHESTRATION CORE",
+        )
+
+    def _edge_path(    def _edge_path(
         self,
         start: QPointF,
         end: QPointF,
@@ -476,14 +517,31 @@ class PersonalJarvisCanvas(QWidget):
     ) -> None:
         points = {node.key: self._node_center(node, rect) for node in NODES}
 
-        # Permanent faint neural links.
-        for node in NODES:
-            target = points[node.key]
-            path = self._edge_path(center, target, center)
-            painter.setPen(QPen(QColor(46, 155, 210, 23), 0.9))
+        structural_edges = (
+            ("voice", "understand"),
+            ("understand", "think"),
+            ("think", "mission"),
+            ("mission", "context"),
+            ("think", "memory"),
+            ("think", "internet"),
+            ("internet", "browser"),
+            ("think", "windows"),
+            ("windows", "ms_football"),
+            ("windows", "verify"),
+            ("verify", "respond"),
+            ("memory", "respond"),
+        )
+
+        for left, right in structural_edges:
+            start = points.get(left)
+            end = points.get(right)
+            if start is None or end is None:
+                continue
+            path = self._edge_path(start, end, center)
+            painter.setPen(QPen(QColor(65, 145, 184, 22), 0.75))
             painter.drawPath(path)
 
-        # Actual runtime route becomes the bright live path.
+        # The actual runtime route is the only bright connection layer.
         if len(self._route) < 2:
             return
 
@@ -494,25 +552,35 @@ class PersonalJarvisCanvas(QWidget):
                 continue
             path = self._edge_path(start, end, center)
 
-            glow_pen = QPen(QColor(44, 225, 255, 55), 7.0)
+            external = left == "internet" or right == "internet"
+            if external:
+                glow = QColor(255, 184, 87, 52)
+                line = QColor(245, 196, 111, 220)
+                pulse_color = QColor(255, 217, 151, 245)
+            else:
+                glow = QColor(52, 228, 255, 50)
+                line = QColor(93, 239, 255, 220)
+                pulse_color = QColor(230, 255, 255, 250)
+
+            glow_pen = QPen(glow, 5.6)
             glow_pen.setCapStyle(Qt.RoundCap)
             painter.setPen(glow_pen)
             painter.drawPath(path)
 
-            active_pen = QPen(QColor(89, 242, 255, 215), 1.7)
+            active_pen = QPen(line, 1.45)
             active_pen.setCapStyle(Qt.RoundCap)
             painter.setPen(active_pen)
             painter.drawPath(path)
 
-            t = (self._phase * 0.72 + index * 0.17) % 1.0
+            t = (self._phase * 0.60 + index * 0.13) % 1.0
             pulse = path.pointAtPercent(t)
-            pulse_glow = QRadialGradient(pulse, 11)
-            pulse_glow.setColorAt(0.0, QColor(230, 255, 255, 245))
-            pulse_glow.setColorAt(0.28, QColor(74, 236, 255, 210))
-            pulse_glow.setColorAt(1.0, QColor(74, 236, 255, 0))
+            pulse_glow = QRadialGradient(pulse, 8.0)
+            pulse_glow.setColorAt(0.0, pulse_color)
+            pulse_glow.setColorAt(0.34, QColor(line.red(), line.green(), line.blue(), 170))
+            pulse_glow.setColorAt(1.0, QColor(line.red(), line.green(), line.blue(), 0))
             painter.setPen(Qt.NoPen)
             painter.setBrush(pulse_glow)
-            painter.drawEllipse(pulse, 11, 11)
+            painter.drawEllipse(pulse, 8.0, 8.0)
 
     def _draw_node(
         self,
@@ -521,99 +589,159 @@ class PersonalJarvisCanvas(QWidget):
         rect: QRectF,
     ) -> None:
         pos = self._node_center(node, rect)
-        active = node.key in self._route[-6:]
+        route_tail = self._route[-8:]
+        active = node.key in route_tail
         current = bool(self._route and self._route[-1] == node.key)
-        base = min(rect.width(), rect.height())
-        radius = max(31.0, min(49.0, base * (0.065 if active else 0.056)))
+        completed = active and not current
+        external = node.key == "internet"
+        unavailable = node.key == "conversation"
 
-        if active:
-            halo = QRadialGradient(pos, radius * 1.85)
+        base = min(rect.width(), rect.height())
+        radius = max(22.0, min(31.0, base * (0.040 if active else 0.036)))
+
+        if current:
+            halo = QRadialGradient(pos, radius * 2.45)
             halo.setColorAt(
                 0.0,
-                QColor(66, 234, 255, 96 if current else 64),
+                QColor(255, 190, 96, 85)
+                if external
+                else QColor(73, 237, 255, 88),
             )
-            halo.setColorAt(0.55, QColor(23, 157, 219, 25))
+            halo.setColorAt(
+                0.45,
+                QColor(245, 166, 72, 24)
+                if external
+                else QColor(30, 160, 212, 22),
+            )
             halo.setColorAt(1.0, QColor(0, 0, 0, 0))
             painter.setPen(Qt.NoPen)
             painter.setBrush(halo)
-            painter.drawEllipse(pos, radius * 1.85, radius * 1.85)
+            painter.drawEllipse(pos, radius * 2.45, radius * 2.45)
 
         face = QRadialGradient(
-            QPointF(pos.x() - radius * 0.23, pos.y() - radius * 0.28),
-            radius * 1.25,
+            QPointF(pos.x() - radius * 0.24, pos.y() - radius * 0.26),
+            radius * 1.30,
         )
-        face.setColorAt(
-            0.0,
-            QColor(18, 55, 81, 245) if active else QColor(13, 33, 53, 236),
+        if unavailable:
+            face.setColorAt(0.0, QColor(15, 31, 44, 210))
+            face.setColorAt(1.0, QColor(3, 12, 22, 235))
+        elif active:
+            face.setColorAt(0.0, QColor(18, 69, 91, 240))
+            face.setColorAt(1.0, QColor(2, 17, 31, 246))
+        else:
+            face.setColorAt(0.0, QColor(12, 34, 52, 225))
+            face.setColorAt(1.0, QColor(2, 12, 25, 238))
+
+        border = (
+            QColor(242, 192, 115, 215)
+            if external and active
+            else QColor(94, 232, 247, 210 if active else 72)
         )
-        face.setColorAt(1.0, QColor(2, 13, 28, 245))
+        if unavailable:
+            border = QColor(73, 105, 119, 68)
+
         painter.setBrush(face)
-        painter.setPen(
-            QPen(
-                QColor(88, 231, 255, 220 if active else 86),
-                1.7 if current else 1.1,
-            )
-        )
+        painter.setPen(QPen(border, 1.45 if current else 0.95))
         painter.drawEllipse(pos, radius, radius)
 
-        painter.setPen(
-            QColor(218, 253, 255, 245)
-            if active
-            else QColor(170, 209, 223, 210)
+        # Inner symbol disc.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(
+            QColor(87, 232, 247, 34 if not unavailable else 12)
         )
-        badge_font = QFont("Segoe UI", max(7, int(radius * 0.20)))
+        painter.drawEllipse(pos, radius * 0.57, radius * 0.57)
+
+        painter.setPen(
+            QColor(226, 253, 255, 242)
+            if active
+            else QColor(150, 194, 211, 205)
+        )
+        badge_font = QFont("Segoe UI", max(7, int(radius * 0.34)))
         badge_font.setWeight(QFont.Weight.Bold)
         painter.setFont(badge_font)
         painter.drawText(
             QRectF(
-                pos.x() - radius,
-                pos.y() - radius * 0.64,
-                radius * 2,
-                radius * 0.36,
+                pos.x() - radius * 0.72,
+                pos.y() - radius * 0.34,
+                radius * 1.44,
+                radius * 0.68,
             ),
             Qt.AlignCenter,
             node.badge,
         )
 
-        title_font = QFont("Segoe UI", max(8, int(radius * 0.25)))
+        label_width = radius * 4.2
+        label_top = pos.y() + radius + 7.0
+        title_color = (
+            QColor(233, 253, 255, 246)
+            if active
+            else QColor(180, 215, 227, 215)
+        )
+        if unavailable:
+            title_color = QColor(112, 143, 156, 180)
+
+        painter.setPen(title_color)
+        title_font = QFont("Segoe UI", max(9, int(radius * 0.36)))
         title_font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(title_font)
         painter.drawText(
             QRectF(
-                pos.x() - radius * 1.45,
-                pos.y() - radius * 0.13,
-                radius * 2.9,
-                radius * 0.46,
+                pos.x() - label_width / 2,
+                label_top,
+                label_width,
+                20,
             ),
-            Qt.AlignCenter,
+            Qt.AlignHCenter | Qt.AlignTop,
             node.label,
         )
 
         painter.setPen(
-            QColor(100, 221, 244, 220)
+            QColor(104, 215, 235, 205)
             if active
-            else QColor(101, 151, 174, 190)
+            else QColor(91, 137, 157, 175)
         )
-        subtitle_font = QFont("Segoe UI", max(6, int(radius * 0.16)))
+        if unavailable:
+            painter.setPen(QColor(92, 119, 131, 155))
+        subtitle_font = QFont("Segoe UI", max(7, int(radius * 0.25)))
         painter.setFont(subtitle_font)
         painter.drawText(
             QRectF(
-                pos.x() - radius * 1.65,
-                pos.y() + radius * 0.34,
-                radius * 3.3,
-                radius * 0.60,
+                pos.x() - label_width * 0.60,
+                label_top + 19,
+                label_width * 1.20,
+                24,
             ),
             Qt.AlignHCenter | Qt.AlignTop,
             node.subtitle,
         )
 
-        if current:
-            ring_r = radius * (1.08 + math.sin(self._phase * 4.0) * 0.035)
-            painter.setBrush(Qt.NoBrush)
-            painter.setPen(QPen(QColor(136, 250, 255, 235), 1.7))
-            painter.drawEllipse(pos, ring_r, ring_r)
+        if active:
+            try:
+                route_index = route_tail.index(node.key)
+            except ValueError:
+                route_index = -1
+            if route_index >= 0:
+                bubble = QPointF(pos.x() + radius * 0.82, pos.y() - radius * 0.82)
+                painter.setPen(QPen(border, 1.0))
+                painter.setBrush(QColor(2, 17, 30, 245))
+                painter.drawEllipse(bubble, 8.5, 8.5)
+                painter.setPen(QColor(229, 253, 255, 238))
+                step_font = QFont("Segoe UI", 7)
+                step_font.setWeight(QFont.Weight.Bold)
+                painter.setFont(step_font)
+                painter.drawText(
+                    QRectF(bubble.x() - 8.5, bubble.y() - 8.5, 17, 17),
+                    Qt.AlignCenter,
+                    str(route_index + 1),
+                )
 
-    def paintEvent(self, _event) -> None:
+        if completed:
+            tick = QPointF(pos.x() - radius * 0.80, pos.y() - radius * 0.78)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(69, 234, 195, 215))
+            painter.drawEllipse(tick, 4.0, 4.0)
+
+    def paintEvent(    def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHints(
             QPainter.Antialiasing
@@ -626,11 +754,11 @@ class PersonalJarvisCanvas(QWidget):
         self._draw_background(painter, rect)
 
         center = QPointF(rect.width() * 0.50, rect.height() * 0.53)
-        scale = min(rect.width(), rect.height()) * 0.115
+        scale = min(rect.width(), rect.height()) * 0.148
 
         self._draw_orbits(painter, center, scale)
         self._draw_connections(painter, rect, center)
-        self._draw_core(painter, center, scale * 1.08)
+        self._draw_core(painter, center, scale)
 
         for node in NODES:
             self._draw_node(painter, node, rect)
