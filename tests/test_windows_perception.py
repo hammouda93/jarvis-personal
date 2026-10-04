@@ -10,6 +10,7 @@ from jarvis_agent.windows_perception import (
     inspect_active_window,
     type_text_active_window,
     write_ui_element,
+    _bounded_descendants,
     _control_value,
     _native_target_window,
     _uia_window_from_native_with_retry,
@@ -42,6 +43,18 @@ class _FakeWindow:
 
     def descendants(self):
         return []
+
+
+class _FakeBoundedWindow:
+    def __init__(self, count=20):
+        self.count = count
+        self.calls = []
+
+    def iter_descendants(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        for index in range(self.count):
+            yield f"node-{index}"
+
 
 
 class _FakeTab:
@@ -384,6 +397,75 @@ class WindowsPerceptionTests(unittest.TestCase):
         value = _control_value(wrapper)
 
         self.assertEqual(value, "Visible document text")
+
+
+    def test_bounded_descendants_stops_before_full_tree(self):
+        window = _FakeBoundedWindow(count=1000)
+
+        items, meta = _bounded_descendants(
+            window,
+            max_depth=5,
+            max_nodes=12,
+            time_budget_s=10.0,
+        )
+
+        self.assertEqual(len(items), 12)
+        self.assertTrue(meta["truncated"])
+        self.assertEqual(meta["visited_nodes"], 12)
+        self.assertEqual(window.calls[0]["depth"], 5)
+        self.assertTrue(window.calls[0]["cache_enable"])
+
+    @patch("jarvis_agent.windows_perception._uia_window_from_handle")
+    @patch("jarvis_agent.windows_perception._window_by_title")
+    @patch("jarvis_agent.windows_perception._native_window_is_minimized")
+    @patch("jarvis_agent.windows_perception._native_target_window")
+    def test_named_inspection_returns_fast_native_snapshot_when_minimized(
+        self,
+        native_mock,
+        minimized_mock,
+        title_mock,
+        attach_mock,
+    ):
+        native_mock.return_value = {
+            "handle": 4242,
+            "title": "WhatsApp",
+            "bounds": (-32000, -32000, -31000, -31200),
+        }
+        minimized_mock.return_value = True
+
+        result = inspect_active_window(title="WhatsApp")
+
+        self.assertTrue(result.success)
+        self.assertIn("win32_window_minimized", result.detail)
+        self.assertIn('"minimized":true', result.detail)
+        title_mock.assert_not_called()
+        attach_mock.assert_not_called()
+
+    @patch("jarvis_agent.windows_perception._uia_window_from_handle")
+    @patch("jarvis_agent.windows_perception._window_by_title")
+    @patch("jarvis_agent.windows_perception._native_window_is_minimized")
+    @patch("jarvis_agent.windows_perception._native_target_window")
+    def test_named_inspection_prefers_stable_native_handle(
+        self,
+        native_mock,
+        minimized_mock,
+        title_mock,
+        attach_mock,
+    ):
+        native_mock.return_value = {
+            "handle": 4242,
+            "title": "WhatsApp",
+            "bounds": (10, 20, 1210, 820),
+        }
+        minimized_mock.return_value = False
+        attach_mock.return_value = _FakeWindow()
+
+        result = inspect_active_window(title="WhatsApp")
+
+        self.assertTrue(result.success)
+        self.assertIn("win32_handle_to_uia", result.detail)
+        title_mock.assert_not_called()
+        attach_mock.assert_called_once_with(4242)
 
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._native_target_window")
