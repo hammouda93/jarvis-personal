@@ -598,6 +598,70 @@ class CuaDriverBridge:
             ),
         )
 
+    def launch_application(self, name: str) -> CuaActionResult:
+        """Launch a Windows application through Driver's native app catalog.
+
+        This is deliberately optional: if Driver is disabled/unavailable the
+        caller keeps the existing Windows discovery path. A successful launch
+        is grounded by Driver's returned pid, not by an optimistic shell call.
+        """
+        target = str(name or "").strip()
+        if not target:
+            return CuaActionResult(
+                False,
+                "Nom d'application vide.",
+                {"provider": "cua_driver", "error": "empty_app_name"},
+            )
+        if not self.available():
+            return CuaActionResult(
+                False,
+                "Cua Driver indisponible.",
+                {"provider": "cua_driver", "error": "driver_unavailable"},
+            )
+
+        try:
+            detail = self.call(
+                "launch_app",
+                {"name": target},
+                timeout_s=max(
+                    3.0,
+                    float(getattr(settings, "cua_driver_timeout_s", 6.0)),
+                ),
+            )
+        except Exception as exc:
+            return CuaActionResult(
+                False,
+                f"Cua Driver n'a pas pu lancer {target}.",
+                {
+                    "provider": "cua_driver",
+                    "error": str(exc)[:600],
+                    "application": target,
+                },
+            )
+
+        try:
+            pid = int(detail.get("pid") or detail.get("process_id") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        success = pid > 0
+        return CuaActionResult(
+            success,
+            (
+                f"Application lancée via Cua Driver: {target}."
+                if success
+                else f"Cua Driver n'a pas confirmé le lancement de {target}."
+            ),
+            {
+                "provider": "cua_driver",
+                "application": target,
+                "pid": pid or None,
+                "name": detail.get("name"),
+                "bundle_id": detail.get("bundle_id"),
+                "windows": detail.get("windows") or [],
+                "raw": detail,
+            },
+        )
+
     def inspect_window(
         self,
         title: str | None = None,
