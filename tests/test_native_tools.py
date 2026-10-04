@@ -503,6 +503,80 @@ class NativeToolRegistryTests(unittest.TestCase):
             ["Bloc de notes", "Notepad"],
         )
 
+    @patch("jarvis_agent.native_tools.ui_ref_descriptor")
+    @patch("jarvis_agent.native_tools.inspect_active_window")
+    @patch("jarvis_agent.native_tools.write_ui_element")
+    def test_stale_write_auto_reinspects_when_writable_target_is_unambiguous(
+        self,
+        write_mock,
+        inspect_mock,
+        descriptor_mock,
+    ):
+        self.registry._last_observed_window_title = (
+            "*bonjour Jarvis – Bloc-notes"
+        )
+        descriptor_mock.return_value = {
+            "ref": "obs3:e7",
+            "window_title": "*bonjour Jarvis – Bloc-notes",
+            "type": "Document",
+            "name": "bonjour Jarvis",
+            "id": "",
+            "label": "Personne",
+            "writable": True,
+        }
+        write_mock.side_effect = [
+            SimpleNamespace(
+                success=False,
+                message="stale",
+                detail='{"stale_ref":true}',
+            ),
+            SimpleNamespace(
+                success=True,
+                message="written",
+                detail='{"verified":true}',
+            ),
+        ]
+        inspect_mock.return_value = SimpleNamespace(
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "window": {
+                        "title": "*bonjour Jarvis – Bloc-notes",
+                    },
+                    "controls": [
+                        {
+                            "ref": "obs4:e7",
+                            "type": "Document",
+                            "name": "bonjour Jarvis",
+                            "label_hint": "Personne",
+                            "writable": True,
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        result = self.registry.execute(
+            "write_ui_element",
+            {
+                "ref": "obs3:e7",
+                "text": " heureux de vous revoir.",
+                "mode": "append",
+            },
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(write_mock.call_count, 2)
+        self.assertEqual(
+            write_mock.call_args_list[1].kwargs["ref"],
+            "obs4:e7",
+        )
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["auto_reinspection"])
+        self.assertEqual(payload["recovered_ref"], "obs4:e7")
+
     def test_verified_skill_tool_writes_to_injected_local_store(self):
         result = self.registry.execute(
             "save_verified_skill",
