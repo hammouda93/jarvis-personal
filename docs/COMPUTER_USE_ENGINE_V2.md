@@ -216,6 +216,32 @@ python -m pip install -r requirements-browser.txt
 
 L'adapter ne lance pas Chrome et n'active pas CDP dans un navigateur personnel. Pour le benchmark, utiliser un profil temporaire séparé et sans compte réel.
 
+### Mode conversation texte
+
+Sélectionner « Conversation texte » suspend l'entrée micro de Jarvis : fermeture de la capture
+en cours, arrêt du double clap et aucune transcription tant que ce mode reste sélectionné.
+Une capture ou transcription appartenant à une ancienne génération de mode est ignorée,
+même après un basculement rapide texte puis voix. Les messages écrits sont affichés et lus
+par la sortie vocale existante (ElevenLabs, puis SAPI en cas d'indisponibilité).
+Le bouton « Revenir à la voix » réactive l'entrée ; le contexte du runtime reste partagé.
+Les demandes directes de précision sont liées au canal et à la génération d'entrée :
+une ancienne question vocale « quel dossier ? » ne peut jamais consommer une salutation écrite.
+
+Une mission composée doit désormais définir son goal avant toute écriture, y compris via
+`write_ui_element`. Une tentative bloquée pour `GOAL_NOT_DEFINED` peut être reprise après
+définition du goal ; elle n'est pas mémorisée comme une exécution ayant échoué. Le runtime
+dispose de deux continuations au maximum pour réparer un goal absent, avec les faits d'une
+observation fraîche ; il ne réécrit pas le goal après une mutation. Une écriture native simple
+conserve sa preuve exacte, et un goal de valeur figé peut réutiliser cette relecture sans VLM.
+Une structure fusionnée exploitable n'est pas remplacée par un ancien signal `vision_recommended`
+uniquement parce que l'arbre global est partiel.
+
+Les événements `INPUT_MODE`, `UI_ENGINE_REPAIR` et `UI_MISSION` rendent ces choix observables.
+Les observations journalisent aussi `vision_attempted`, `vision_success` et `vision_error`.
+Les fallbacks Cerebras/ElevenLabs indiquent type d'erreur et code HTTP sans copier le corps API.
+Le [diagnostic du premier essai réel](REAL_TEST_DIAGNOSTIC_2026-10-04.md) précise les réussites,
+les corrections et les points qui restent à tester sur Windows.
+
 ## Tests automatisés et inconnus
 
 ```powershell

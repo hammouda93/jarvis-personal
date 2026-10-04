@@ -246,6 +246,10 @@ ui_verification et mission_state pour vérifier puis replanifier. L'outil réobs
 automatiquement ; ne répète pas les inspections sans cible, région ou stratégie nouvelle.
 Préserve le backend structuré : une cible UIA/DOM enrichie par vision garde son ref native.
 Une écriture UIA exacte simple peut conserver write_ui_element et sa relecture native.
+Pour « ouvre puis écris », définis le goal après l'observation et AVANT write_ui_element.
+Exemple pour un document observé : value_equals avec role=Document et la valeur exacte demandée.
+Une lecture UI demande aussi un goal fondé sur les faits observés puis verify_ui_goal ;
+un arbre partiel n'impose pas la vision lorsque le contrôle utile et sa valeur sont lisibles.
 Pour envoyer, exige un nouveau message dans la région de conversation ainsi que
 le bon destinataire visible ; un champ vidé ne prouve pas un envoi.
 PENDING_POSTCONDITION interdit une nouvelle mutation : rassemble une preuve ciblée.
@@ -259,6 +263,8 @@ Pour une mission multi-fenêtres/onglets : list_ui_surfaces, observe_ui avec win
 ou page_ref, puis bind_ui_surface pour chaque surface existante AVANT define_ui_goal.
 Chaque prédicat du goal précise sa surface liée. switch_ui_surface active uniquement
 une identité déjà observée ; un titre identique ne suffit jamais à remplacer cette identité.
+Si l'utilisateur parle de documents déjà ouverts, commence par list_ui_surfaces et leurs
+observations. Ne devine pas un chemin dans Documents ou un autre dossier pour les ouvrir.
 Déclare future_surfaces dans le goal pour une fenêtre encore inconnue. L'action qui
 l'ouvre précise expected_transition (owned_window/popup), et tous ses expected nomment
 la surface de destination. Le moteur exige une relation owner/opener et une seule nouvelle
@@ -561,6 +567,19 @@ def _inspection_requests_visual_fallback(
     if action.name != "inspect_active_window" or not action.success:
         return False
     payload = _action_detail_dict(action)
+    observation = payload.get("ui_observation")
+    if isinstance(observation, dict):
+        perception = payload.get("perception") or {}
+        # The Perception Manager already owns target-aware escalation. A legacy
+        # hint about a partial tree must not override its usable fused evidence.
+        if perception.get("vision_attempted") is True:
+            return False
+        coverage = observation.get("coverage") or {}
+        if coverage.get("mission_target") == "resolved":
+            return False
+        if coverage.get("mission_target") not in {None, "", "unspecified"}:
+            return True
+        return coverage.get("structured") == "insufficient"
     snapshot = payload.get("snapshot")
     if not isinstance(snapshot, dict):
         return False
@@ -1219,7 +1238,7 @@ class OllamaToolAgent:
                         detail_for_log = detail_for_log[:900] + "…"
                     log(
                         f"[AGENT_TOOL] result={name} "
-                        f"success={result.success} detail={detail_for_log!r}"
+                        f"success={result.success} message={result.message!r} detail={detail_for_log!r}"
                     )
 
                 self._messages.append(
@@ -2136,7 +2155,8 @@ class GroqResponsesAgent:
         } else 3500
         if getattr(settings, "computer_use_enabled", False) is True and name in {
             "observe_ui", "act_ui", "verify_ui_goal", "inspect_active_window", "observe_screen",
-            "define_ui_goal", "ui_engine_status", "list_browser_pages", "list_ui_surfaces", "bind_ui_surface", "switch_ui_surface"
+            "define_ui_goal", "ui_engine_status", "list_browser_pages", "list_ui_surfaces", "bind_ui_surface", "switch_ui_surface",
+            "write_ui_element", "close_tab", "close_window", "open_application", "open_file", "open_folder", "open_url"
         }:
             max_detail = 24000
             from .computer_use_runtime import compact_ui_tool_detail
@@ -2992,6 +3012,7 @@ class GroqResponsesAgent:
                 if (
                     not result.success
                     and result.detail != "ui_action_blocked_until_reinspection"
+                    and result.detail != "GOAL_NOT_DEFINED"
                 ):
                     failed_results[signature] = result
                 if result.success and name[:4] == "msf_":
@@ -3021,7 +3042,14 @@ class GroqResponsesAgent:
                     }
                 )
                 if not result.success:
-                    if result.detail == "open_url_blocked_for_search_submission":
+                    if result.detail == "GOAL_NOT_DEFINED":
+                        recovery = (
+                            "Aucune mutation n'a été délivrée : l'objectif complet manque. "
+                            "Utilise l'observation fraîche (ou observe_ui si elle est périmée), "
+                            "puis define_ui_goal avec TOUS les résultats de la mission originale. "
+                            "Ensuite reprends l'action native ou act_ui et vérifie le résultat."
+                        )
+                    elif result.detail == "open_url_blocked_for_search_submission":
                         recovery = (
                             "Le site est déjà ouvert et la demande concerne la "
                             "recherche préparée dans l'interface actuelle. "
@@ -3188,6 +3216,11 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 raise
 
             secondary_error = None
+            cause = primary_error.__cause__ or primary_error
+            status = getattr(cause, "status_code", None)
+            safe_status = status if isinstance(status, int) and not isinstance(status, bool) else "unknown"
+            print(f"[AGENT_FALLBACK] provider=cerebras stage=primary "
+                  f"error_type={type(cause).__name__} status_code={safe_status}")
             if settings.cerebras_secondary_api_key:
                 print(
                     "[AGENT] Cerebras primary unavailable; "

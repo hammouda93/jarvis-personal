@@ -338,6 +338,7 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual(len(self.fixture.actions), 2)
 
     def test_exact_unicode_readback_does_not_reinspect_or_call_vision(self):
+        self.controller.begin("Écris le texte exact dans le champ courant.")
         self.call("observe_ui")
         count = self.fixture.sequence
         text = "Bonjour éàç — مرحبا 😀"
@@ -390,7 +391,7 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("PENDING_POSTCONDITION", retry.detail)
 
     def test_fresh_observation_can_finish_pending_verification(self):
-        self.call("observe_ui")
+        self.start()
         self.call("act_ui", operation="write", target={"role":"search_input"}, text="Salah",
                   expected=[{"kind":"text_present", "role":"content_title", "value":"Salah"}])
         self.assertTrue(self.controller.pending_verification())
@@ -425,6 +426,7 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.fixture.actions)
 
     def test_stale_ref_is_rejected_and_semantic_target_can_be_reacquired(self):
+        self.controller.begin("Écris Salah dans le champ courant.")
         self.call("observe_ui")
         old_ref = self.manager.state.current.entities[0].ref
         self.manager.state.invalidate()
@@ -463,7 +465,7 @@ class ControllerTests(unittest.TestCase):
     def test_acknowledgement_never_calls_planner_or_tools(self):
         registry = NativeToolRegistry()
         delegate = Mock()
-        for text in ("Très bien", "Merci", "Parfait", "Thanks"):
+        for text in ("Très bien", "Merci", "Parfait", "Thanks", "Très bien, merci."):
             result = ComputerUseRuntime(delegate, registry).run(text)
             self.assertEqual(result.actions, ())
         delegate.run.assert_not_called()
@@ -509,6 +511,7 @@ class ControllerTests(unittest.TestCase):
         compacted = json.loads(compact_ui_tool_detail(json.dumps(source), max_chars=4000))
         self.assertEqual(compacted["ui_verification"]["action_id"], "a")
         self.assertFalse(compacted["mission_state"]["goal_completed"])
+
 
     def test_no_effect_guard_recognizes_same_semantics_with_new_refs(self):
         tracker = ProgressTracker()
@@ -594,6 +597,203 @@ class VisionProviderTests(unittest.TestCase):
         self.assertIn("GROUNDING_DISAGREEMENT_OR_AMBIGUITY",data["observation_json"]["ambiguities"])
         obs=fuse_observation(payload(),data,observation_id="obs")
         self.assertEqual(resolve_target(TargetIntent(role="search_input"),obs).status,"not_found")
+
+
+
+class NativeDocumentFixture:
+    """Independent value/readback oracle behind a generic opaque window title."""
+    def __init__(self, value=""):
+        self.value = value
+        self.observations = 0
+        self.deliveries = []
+        self.ref = ""
+
+    def observe(self, **kwargs):
+        self.observations += 1
+        self.ref = f"doc{self.observations}:e1"
+        result = payload([control(ref=self.ref, role="Document", label="", value=self.value,
+                                  writable=True)], observation_id=f"doc{self.observations}",
+                         capabilities={"writable": [{"ref": self.ref}]})
+        result["snapshot"].update(truncated=True, vision_recommended=True)
+        return UIActionResult(True, "Document observé.", json.dumps(result, ensure_ascii=False))
+
+    def execute(self, name, args, **kwargs):
+        self.deliveries.append((name, dict(args)))
+        if name == "open_application":
+            return AgentActionResult(name, True, "Éditeur ouvert.", "launch delivered")
+        if name != "write_ui_element" or args["ref"] != self.ref:
+            return AgentActionResult(name, False, "Ref périmée.", "stale_ref")
+        before = self.value
+        self.value = args["text"]
+        return AgentActionResult(name, True, "Valeur relue exactement.", json.dumps({
+            "verified": True, "mode": "replace", "before": before,
+            "value": self.value, "value_length": len(self.value)}, ensure_ascii=False))
+
+
+class ObservedLogRegressionTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        config = replace(real_settings, compatibility_baseline=False, computer_use_enabled=True,
+                         vision_enabled=True, strict_proof_enabled=False, operational_learning_enabled=False,
+                         ui_target_max_age_s=30)
+        for module in ("computer_use_controller", "native_tools", "perception_router", "agent_runtime"):
+            self.stack.enter_context(patch("jarvis_agent."+module+".settings", config))
+        self.fixture = NativeDocumentFixture()
+        self.vision = Mock(side_effect=AssertionError("Vision must not replace readable native values"))
+        self.controller = ComputerUseController(perception=PerceptionManager(
+            structured=self.fixture.observe, vision=self.vision))
+        self.registry = NativeToolRegistry()
+        self.registry._computer_use = self.controller
+        self.stack.enter_context(patch.object(self.registry, "_execute_legacy", side_effect=self.fixture.execute))
+
+    def test_compound_write_is_blocked_before_goal_for_both_native_tools(self):
+        for name in ("write_ui_element", "act_ui"):
+            with self.subTest(name=name):
+                self.controller.begin("Ouvre un éditeur et écris Bonjour.")
+                self.registry.execute("observe_ui", {})
+                args = {"ref": self.fixture.ref, "text": "Bonjour", "mode": "replace"}
+                if name == "act_ui":
+                    args = {"operation": "write", "target": {"ref": self.fixture.ref}, "text": "Bonjour",
+                            "expected": [{"kind": "value_equals", "role": "Document", "value": "Bonjour"}]}
+                result = self.registry.execute(name, args)
+                self.assertFalse(result.success)
+                self.assertEqual(result.detail, "GOAL_NOT_DEFINED")
+        self.assertEqual(self.fixture.deliveries, [])
+        self.assertEqual(self.fixture.value, "")
+
+    def test_frozen_native_value_goal_reuses_readback_without_extra_perception(self):
+        self.controller.begin("Ouvre un éditeur et écris Bonjour é — مرحبا.")
+        self.registry.execute("observe_ui", {})
+        value = "Bonjour é — مرحبا"
+        self.registry.execute("define_ui_goal", {"conditions": [
+            {"kind": "value_equals", "role": "Document", "value": value}]})
+        result = self.registry.execute("write_ui_element", {"ref": self.fixture.ref, "text": value, "mode": "replace"})
+        self.assertTrue(json.loads(result.detail)["verified"])
+        self.assertTrue(self.controller.summary()["goal_completed"])
+        self.assertEqual(self.fixture.value, value)
+        self.assertEqual(self.fixture.observations, 1)
+        self.vision.assert_not_called()
+
+    def test_single_native_write_compatibility_path_remains_verified(self):
+        registry, fixture = self.registry, self.fixture
+        class Planner:
+            def run(self, text, **kwargs):
+                observed = registry.execute("inspect_active_window", {})
+                written = registry.execute("write_ui_element", {"ref": fixture.ref, "text": "Test V2 terminé", "mode": "replace"})
+                return __import__("jarvis_agent.agent_runtime", fromlist=["AgentTurnResult"]).AgentTurnResult(
+                    "Texte vérifié.", (observed, written))
+        result = ComputerUseRuntime(Planner(), registry).run("Remplace tout le contenu par Test V2 terminé. Vérifie le résultat.")
+        self.assertTrue(result.goal_completed)
+        self.assertEqual(self.fixture.observations, 1)
+        self.assertEqual(self.fixture.value, "Test V2 terminé")
+        self.vision.assert_not_called()
+
+    def test_cerebras_can_retry_precondition_blocked_write_after_defining_goal(self):
+        from jarvis_agent.agent_runtime import CerebrasResponsesAgent
+        text = "Bonjour Salah — été, cœur, مرحبا"
+        responses = [
+            ("open_application", {"name": "éditeur inconnu"}),
+            ("inspect_active_window", {}),
+            ("write_ui_element", {"ref": "doc1:e1", "text": text, "mode": "replace"}),
+            ("define_ui_goal", {"conditions": [{"kind": "value_equals", "role": "Document", "value": text}]}),
+            ("write_ui_element", {"ref": "doc1:e1", "text": text, "mode": "replace"}),
+            ("", "Texte écrit et vérifié."),
+        ]
+        class Planner(CerebrasResponsesAgent):
+            def _chat(self, **kwargs):
+                name, args = responses.pop(0)
+                calls = [SimpleNamespace(id="call"+str(len(responses)), function=SimpleNamespace(
+                    name=name, arguments=json.dumps(args, ensure_ascii=False)))] if name else []
+                return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                    content="" if name else args, tool_calls=calls))])
+        planner = Planner(self.registry)
+        planner.api_key = "test-only"
+        result = ComputerUseRuntime(planner, self.registry).run("Ouvre un éditeur et écris exactement : " + text)
+        self.assertTrue(result.goal_completed)
+        self.assertEqual(self.fixture.value, text)
+        self.assertEqual([name for name, _ in self.fixture.deliveries], ["open_application", "write_ui_element"])
+        self.assertEqual(self.fixture.observations, 1)
+        self.vision.assert_not_called()
+        for message in planner._messages:
+            if message.get("role") == "tool":
+                json.loads(json.loads(message["content"])["detail"])
+
+    def test_read_only_mission_recovers_missing_goal_without_mutation_or_vision(self):
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        self.fixture.value = "Référence Tunis-42-é"
+        registry, controller = self.registry, self.controller
+        class Planner:
+            calls = 0
+            def run(self, text, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    actions = (registry.execute("inspect_active_window", {}),)
+                else:
+                    observed_value = controller.state.current.entities[0].value
+                    actions = (registry.execute("define_ui_goal", {"conditions": [
+                        {"kind": "value_equals", "role": "Document", "value": observed_value}]}),
+                        registry.execute("verify_ui_goal", {}))
+                return AgentTurnResult(controller.state.current.entities[0].value, actions)
+        planner, logs = Planner(), []
+        result = ComputerUseRuntime(planner, registry).run("Relis le contenu du document ouvert.", log=logs.append)
+        self.assertTrue(result.goal_completed)
+        self.assertEqual(result.text, "Référence Tunis-42-é")
+        self.assertEqual(planner.calls, 2)
+        self.assertEqual(self.fixture.deliveries, [])
+        self.vision.assert_not_called()
+        self.assertTrue(any("GOAL_NOT_DEFINED" in x for x in logs))
+
+    def test_missing_goal_repair_is_bounded_and_never_delivers_a_compound_write(self):
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        registry, fixture = self.registry, self.fixture
+        class Planner:
+            calls = 0
+            def run(self, text, **kwargs):
+                self.calls += 1
+                observed = registry.execute("observe_ui", {})
+                blocked = registry.execute("write_ui_element", {"ref": fixture.ref, "text": "bonjour"})
+                return AgentTurnResult("Mission terminée", (observed, blocked))
+        planner = Planner()
+        result = ComputerUseRuntime(planner, registry).run("Ouvre un éditeur et écris bonjour.")
+        self.assertFalse(result.goal_completed)
+        self.assertLessEqual(planner.calls, 3)
+        self.assertEqual(self.fixture.deliveries, [])
+        self.assertEqual(self.fixture.value, "")
+
+    def test_failed_launch_keeps_original_diagnostic(self):
+        self.controller.begin("Copie les deux documents ouverts.")
+        failed = AgentActionResult("open_file", False, "Fichier absent du dossier demandé.", "Source_V2.txt not found in Documents")
+        result = self.controller.execute("open_file", {"name": "Source_V2.txt", "within": "Documents"}, lambda *args: failed)
+        self.assertFalse(result.success)
+        self.assertEqual(json.loads(result.detail)["execution_detail"], failed.detail)
+
+    def test_native_receipt_feedback_remains_valid_json_when_large(self):
+        from jarvis_agent.agent_runtime import GroqResponsesAgent
+        original = {"verified": True, "value": "é"*6000, "mission_state": {"goal_completed": True}}
+        result = AgentActionResult("write_ui_element", True, "Relu.", json.dumps(original, ensure_ascii=False))
+        feedback = json.loads(GroqResponsesAgent._compact_tool_content(result.name, result))
+        detail = json.loads(feedback["detail"])
+        self.assertTrue(detail["verified"])
+        self.assertEqual(detail["value"], original["value"])
+
+    def test_partial_tree_hint_does_not_override_fused_readable_structure(self):
+        from jarvis_agent.agent_runtime import _inspection_requests_visual_fallback
+        result = AgentActionResult("inspect_active_window", True, "observed", json.dumps({
+            "snapshot": {"semantic_coverage": "usable", "truncated": True, "vision_recommended": True},
+            "ui_observation": {"coverage": {"structured": "usable", "mission_target": "unspecified"}},
+            "perception": {"vision_attempted": False}}))
+        self.assertFalse(_inspection_requests_visual_fallback(result))
+
+    def test_missing_target_can_escalate_but_failed_vision_is_not_blindly_repeated(self):
+        from jarvis_agent.agent_runtime import _inspection_requests_visual_fallback
+        base = {"ui_observation": {"coverage": {"structured": "usable", "mission_target": "not_found"}},
+                "perception": {"vision_attempted": False}}
+        self.assertTrue(_inspection_requests_visual_fallback(AgentActionResult(
+            "inspect_active_window", True, "observed", json.dumps(base))))
+        base["perception"].update(vision_attempted=True, vision_success=False, vision_error="MODEL_NOT_INSTALLED")
+        self.assertFalse(_inspection_requests_visual_fallback(AgentActionResult(
+            "inspect_active_window", True, "observed", json.dumps(base))))
 
 
 if __name__ == "__main__":

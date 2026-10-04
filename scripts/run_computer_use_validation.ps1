@@ -17,7 +17,7 @@ try {
     python -m compileall -q jarvis_agent benchmarks tests
     $JarvisValidationExitCode = $LASTEXITCODE
     if ($JarvisValidationExitCode -eq 0) {
-        python -m unittest tests.test_cua_driver_bridge tests.test_windows_perception tests.test_native_tools tests.test_agent_runtime tests.test_screen_vision tests.test_perception_router tests.test_computer_use_engine tests.test_multi_surface_engine tests.test_kernel_foundations tests.test_architecture_extensions tests.test_assistant_v3 tests.test_ui_logging -v
+        python -m unittest tests.test_cua_driver_bridge tests.test_windows_perception tests.test_native_tools tests.test_agent_runtime tests.test_screen_vision tests.test_perception_router tests.test_computer_use_engine tests.test_multi_surface_engine tests.test_kernel_foundations tests.test_architecture_extensions tests.test_assistant_v3 tests.test_input_modes tests.test_ui_logging -v
         $JarvisValidationExitCode = $LASTEXITCODE
     }
     if ($JarvisValidationExitCode -eq 0 -and $IncludeBrowser) {

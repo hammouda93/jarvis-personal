@@ -14,6 +14,7 @@ from .audio import record_utterance, wait_for_double_clap
 from .config import settings
 from .language import normalize_language, repeat_prompt, tool_message
 from .recognition import recognize_command
+from .semantic_grounding import normalized_text
 from .states import AssistantState, STATE_LABELS
 from .stt import build_stt
 from .tools import ToolIntent, execute, route
@@ -54,6 +55,43 @@ class TextTurnInbox:
         return self.event.is_set() or not self._queue.empty()
 
 
+class VoiceCaptureInterrupt:
+    """Invalidate a capture even when Text -> Voice happens between blocks."""
+
+    def __init__(self, gate: InputModeGate, generation: int) -> None:
+        self.gate, self.generation = gate, generation
+
+    def is_set(self) -> bool:
+        return not self.gate.voice_allowed(self.generation)
+
+
+class InputModeGate:
+    """UI-safe admission state; audio and agent work stay on the worker."""
+
+    def __init__(self, inbox: TextTurnInbox) -> None:
+        self.inbox = inbox
+        self.changed = threading.Event()
+        self._lock = threading.Lock()
+        self._text_mode = False
+        self._generation = 0
+
+    def snapshot(self) -> tuple[bool, int]:
+        with self._lock:
+            return self._text_mode, self._generation
+
+    def set_text_mode(self, enabled: bool) -> None:
+        with self._lock:
+            if self._text_mode != bool(enabled):
+                self._text_mode = bool(enabled)
+                self._generation += 1
+        self.changed.set()
+
+    def voice_allowed(self, generation: int) -> bool:
+        with self._lock:
+            return (not self._text_mode and self._generation == generation
+                    and not self.inbox.pending())
+
+
 class AssistantWorker(QObject):
     """Voice shell around the model-native Agent Runtime.
 
@@ -79,8 +117,13 @@ class AssistantWorker(QObject):
         self._agent = build_agent_runtime()
         self._conversation_language = "fr"
         self._pending_direct_follow_up = ""
+        self._pending_direct_source = ""
+        self._pending_direct_generation = 0
         self._text_inbox = TextTurnInbox()
+        self._input_mode = InputModeGate(self._text_inbox)
+        self._announced_input_generation = -1
         self._reply_with_voice = True
+        self._reply_source = "voice"
         self._kernel_shadow = None
         self._kernel_shadow_boot_error = ""
         if settings.kernel_shadow_enabled:
@@ -158,25 +201,57 @@ class AssistantWorker(QObject):
     @Slot()
     def stop(self) -> None:
         self._stop.set()
+        gate = getattr(self, "_input_mode", None)
+        if gate is not None:
+            gate.changed.set()
         cancel = getattr(self._agent, "cancel", None)
         if callable(cancel):
             cancel()
 
     def submit_text(self, text: str) -> bool:
         """Queue a typed turn without touching the agent from the UI thread."""
-        return self._text_inbox.submit(text)
+        accepted = self._text_inbox.submit(text)
+        if accepted:
+            self._input_mode.changed.set()
+        return accepted
+
+    def set_text_mode(self, enabled: bool) -> None:
+        """Called directly by Qt UI: only synchronized state/events are touched."""
+        self._input_mode.set_text_mode(enabled)
+
+    def _clear_direct_follow_up(self, reason: str) -> None:
+        if self._pending_direct_follow_up:
+            self.log_line.emit(f"[DIRECT] follow_up_discarded reason={reason}")
+        self._pending_direct_follow_up = ""
+        self._pending_direct_source = ""
+
+    def _apply_input_mode(self) -> tuple[bool, int]:
+        text_mode, generation = self._input_mode.snapshot()
+        if generation != self._announced_input_generation:
+            if self._pending_direct_follow_up:
+                self._clear_direct_follow_up("input_mode_changed")
+            self._announced_input_generation = generation
+            self._level(0.0)
+            self.log_line.emit(
+                f"[INPUT_MODE] {'text' if text_mode else 'voice'} "
+                f"microphone={'off' if text_mode else 'enabled'} generation={generation}"
+            )
+            if text_mode:
+                self._state(AssistantState.ARMED, "Mode texte — microphone coupé · réponses texte et voix")
+        return text_mode, generation
 
     def _deliver_reply(self, text: str) -> None:
         value = (text or "").strip()
         if not value:
             return
         value = re.sub(r"[*_#]+", "", value).replace("`", "").strip()
-        source = "voice" if self._reply_with_voice else "text"
+        source = self._reply_source
         self.conversation_message.emit("assistant", value, source)
+        if source == "text":
+            self.log_line.emit(f"[TEXT_REPLY] {value}")
         if self._reply_with_voice:
             self._speak(value)
         else:
-            self.log_line.emit(f"[TEXT_REPLY] {value}")
             self.status_changed.emit("Réponse texte prête")
 
 
@@ -266,6 +341,18 @@ class AssistantWorker(QObject):
             return False
 
         text = user_text.lower()
+        # Describing what a user *can* ask is not itself a launch command.
+        # Only explicit requests enter the deterministic router; other language
+        # is interpreted by the shared conversational runtime.
+        if intent.name != "system.time" and not re.match(
+            r"^(?:jarvis\s+)?(?:s il te plait\s+|stp\s+|please\s+)?"
+            r"(?:ouvre|ouvrez|ouvrir|lance|lancer|affiche|montre|demarre|"
+            r"cherche|chercher|recherche|open|launch|start|search|find|"
+            r"peux tu|pourrais tu|tu peux|je veux|j aimerais|can you|could you|"
+            r"est ce que tu peux)\b",
+            normalized_text(user_text),
+        ):
+            return False
         # Never let the legacy router truncate a compound mission. If the
         # utterance contains sequencing or a second obvious action, let the
         # native agent handle the complete objective.
@@ -334,6 +421,8 @@ class AssistantWorker(QObject):
 
         result = execute(intent)
         self._pending_direct_follow_up = result.follow_up or ""
+        self._pending_direct_source = self._reply_source
+        self._pending_direct_generation = self._input_mode.snapshot()[1]
         self.log_line.emit(
             f"[DIRECT] simple={intent.name} success={result.success} "
             f"args={intent.args} follow_up={result.follow_up}"
@@ -370,12 +459,30 @@ class AssistantWorker(QObject):
             return True
 
         source = "text" if source == "text" else "voice"
-        self._reply_with_voice = source == "voice"
+        gate = getattr(self, "_input_mode", None)
+        if source == "voice" and gate is not None:
+            text_mode, generation = gate.snapshot()
+            if text_mode or not gate.voice_allowed(generation) or self._stop.is_set():
+                self.log_line.emit("[VOICE] turn discarded because voice input is disabled")
+                return False
+        self._reply_source = source
+        self._reply_with_voice = True
         self.conversation_message.emit("user", user_text, source)
         if source == "text":
             self.log_line.emit(
                 f"[YOU] {user_text} [source=text lang={self._conversation_language}]"
             )
+
+        resolved_intent = legacy_intent or route(user_text)
+        generation = gate.snapshot()[1] if gate is not None else 0
+        if self._pending_direct_follow_up and (
+            source != getattr(self, "_pending_direct_source", source)
+            or generation != getattr(self, "_pending_direct_generation", generation)
+            or resolved_intent.name != "unknown"
+            or re.match(r"^(bonjour|salut|bonsoir|hello|hi|merci|tres bien|parfait|super|ok|d accord)(?:\s|$)",
+                        normalized_text(user_text))
+        ):
+            self._clear_direct_follow_up("new_request_or_input_channel")
 
         lifecycle_handled, keep_listening = self._handle_lifecycle(user_text)
         if lifecycle_handled:
@@ -398,6 +505,8 @@ class AssistantWorker(QObject):
                     f"success={result.success} args={follow_intent.args}"
                 )
                 self._pending_direct_follow_up = result.follow_up or ""
+                self._pending_direct_source = source
+                self._pending_direct_generation = generation
                 response = tool_message(
                     follow_intent,
                     result,
@@ -418,7 +527,6 @@ class AssistantWorker(QObject):
                 )
                 return True
 
-        resolved_intent = legacy_intent or route(user_text)
         if self._handle_simple_direct_action(user_text, resolved_intent):
             return True
 
@@ -488,6 +596,9 @@ class AssistantWorker(QObject):
         return True
 
     def _listen_turn(self, *, first_turn: bool) -> bool:
+        text_mode, generation = self._input_mode.snapshot()
+        if text_mode or self._text_inbox.pending():
+            return False
         self._state(AssistantState.LISTENING, "Je vous écoute…")
         timeout = None if first_turn else settings.conversation_followup_timeout_s
 
@@ -496,8 +607,12 @@ class AssistantWorker(QObject):
             on_level=self._level,
             on_status=self.status_changed.emit,
             start_timeout_s=timeout,
-            interrupt_event=self._text_inbox.event,
+            interrupt_event=VoiceCaptureInterrupt(self._input_mode, generation),
         )
+
+        if not self._input_mode.voice_allowed(generation) or self._stop.is_set():
+            self.log_line.emit("[VOICE] capture discarded after input change")
+            return False
 
         if audio is None:
             if self._text_inbox.pending():
@@ -533,6 +648,10 @@ class AssistantWorker(QObject):
             f"[PERF] stt_total_seconds="
             f"{time.perf_counter() - stt_started:.2f}"
         )
+
+        if not self._input_mode.voice_allowed(generation) or self._stop.is_set():
+            self.log_line.emit("[VOICE] stale transcription discarded after input change")
+            return False
 
         if not transcript.text:
             self._state(AssistantState.ERROR, "Phrase non comprise")
@@ -623,6 +742,8 @@ class AssistantWorker(QObject):
             self.status_changed.emit("Chargement du cerveau local…")
             self._agent.warm_up(log=self.log_line.emit)
             while not self._stop.is_set():
+                self._input_mode.changed.clear()
+                text_mode, generation = self._apply_input_mode()
                 self.transcript_changed.emit("")
                 self.detail_changed.emit("")
 
@@ -630,6 +751,12 @@ class AssistantWorker(QObject):
                 if typed is not None:
                     self.log_line.emit("[TEXT] typed conversation turn")
                     self._process_user_text(typed, source="text")
+                    continue
+
+                if text_mode:
+                    # The input stream is closed before reaching this wait.
+                    # No clap detector, recorder or STT runs while text is selected.
+                    self._input_mode.changed.wait(0.25)
                     continue
 
                 self._state(
@@ -644,11 +771,11 @@ class AssistantWorker(QObject):
                         AssistantState.ARMED,
                         "Prêt — double clap pour réveiller Jarvis",
                     ),
-                    interrupt_event=self._text_inbox.event,
+                    interrupt_event=VoiceCaptureInterrupt(self._input_mode, generation),
                 )
                 if self._stop.is_set():
                     break
-                if self._text_inbox.pending():
+                if not self._input_mode.voice_allowed(generation):
                     continue
                 if not detected:
                     break
@@ -666,7 +793,7 @@ class AssistantWorker(QObject):
                 first_turn = True
 
                 while not self._stop.is_set():
-                    if self._text_inbox.pending():
+                    if not self._input_mode.voice_allowed(generation):
                         self.log_line.emit(
                             "[TEXT] typed turn queued during voice session"
                         )

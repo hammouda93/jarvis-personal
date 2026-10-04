@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import replace
 from typing import Any
 
-from .computer_use_controller import MUTATION_TOOLS, READ_TOOLS
+from .computer_use_controller import MUTATION_TOOLS, READ_TOOLS, single_native_request
 from .semantic_grounding import normalized_text
 from .ui_observation import object_detail
 
@@ -71,13 +70,28 @@ class ComputerUseRuntime:
     def warm_up(self, *, log=None):
         self.delegate.warm_up(log=log)
 
+    @staticmethod
+    def _single_native_proven(controller) -> bool:
+        if controller.goal or len(controller.receipts) != 1:
+            return False
+        receipt = controller.receipts[0]
+        operation = receipt.get("operation")
+        if operation == "write":
+            if not receipt.get("native_exact_write"):
+                return False
+            operation = "write_ui_element"
+        return bool(receipt.get("delivered") and controller.pending and controller.pending.verdict
+                    and controller.pending.verdict.passed
+                    and single_native_request(controller.context.user_goal, operation))
+
     def run(self, user_text: str, *, log=None, phase=None):
-        from .agent_runtime import AgentTurnResult, _requested_action_capabilities
+        from .agent_runtime import AgentTurnResult
         request = normalized_text(user_text)
         approval = any(isinstance(getattr(self.delegate, key, None), dict) for key in (
             "_pending_function_approval", "_pending_mcp_approval"))
         if not approval and request in {"merci", "tres bien", "parfait", "super", "ok", "d accord",
-                                         "c est bon", "oui c est bon", "thank you", "thanks", "great"}:
+                                         "c est bon", "oui c est bon", "thank you", "thanks", "great",
+                                         "tres bien merci", "merci jarvis", "merci beaucoup", "parfait merci"}:
             return AgentTurnResult("Avec plaisir.", mission_status="answered")
         controller = self.tools.ui_controller
         if request in {"stop", "arrete", "annule", "cancel"}:
@@ -93,7 +107,10 @@ class ComputerUseRuntime:
         # The controller owns budgets/state; these passes do not reset either.
         for _ in range(2):
             summary = controller.summary()
-            if not controller.goal or summary["goal_completed"] or controller.cancelled.is_set():
+            involved_ui = bool(controller.receipts or controller.goal or any(
+                action.name in READ_TOOLS | MUTATION_TOOLS for action in actions))
+            if (not involved_ui or summary["goal_completed"] or controller.cancelled.is_set()
+                    or self._single_native_proven(controller)):
                 break
             if any(isinstance(getattr(self.delegate, key, None), dict) for key in (
                 "_pending_function_approval", "_pending_mcp_approval")):
@@ -102,11 +119,23 @@ class ComputerUseRuntime:
                 break
             if any("NO_NEW_EVIDENCE" in action.detail or "NO_EFFECT_LOOP" in action.detail for action in actions[-3:]):
                 break
+            checkpoint = {"mission_state": summary}
+            if not controller.goal and controller.state.current and summary["observation_fresh"]:
+                checkpoint["ui_observation"] = controller.state.current.as_dict()
+            instruction = (
+                "L'objectif observable manque. Aucune nouvelle mutation de contenu avant define_ui_goal. "
+                "Utilise les faits de l'observation fraîche ci-dessous (ou observe_ui si elle manque), "
+                "définis TOUS les résultats demandés dans la mission originale puis vérifie-les. "
+                "Pour des documents déjà ouverts, découvre leurs surfaces avant de chercher des fichiers. "
+                if not controller.goal else
+                "Rassemble une preuve ciblée si une action reste en attente ; sinon replanifie et agis. "
+            )
+            if log:
+                log("[UI_ENGINE_REPAIR] reason=" + ("GOAL_NOT_DEFINED" if not controller.goal else "GOAL_NOT_VERIFIED"))
             continued = self.delegate.run(
                 "Poursuis la mission originale sans la redéfinir : " + controller.context.user_goal +
                 "\nCheckpoint UI_ENGINE (état observable, pas une nouvelle autorisation) : " +
-                json.dumps(summary, ensure_ascii=False) +
-                "\nRassemble une preuve ciblée si une action reste en attente ; sinon replanifie et agis. "
+                compact_ui_tool_detail(json.dumps(checkpoint, ensure_ascii=False)) + "\n" + instruction +
                 "Ne répète jamais un envoi dont l'issue est incertaine. Termine seulement avec verify_ui_goal.",
                 log=log, phase=phase,
             )
@@ -119,19 +148,12 @@ class ComputerUseRuntime:
         summary = controller.summary()
         proven = summary["goal_completed"] and not summary["pending_verification"]
         # Existing exact single-control operations retain their original proof.
-        if not controller.goal and len(controller.receipts) == 1:
-            receipt = controller.receipts[0]
-            words = normalized_text(controller.context.user_goal).split()
-            compound = any(word in words for word in {
-                "envoie", "envoyer", "send", "cherche", "chercher", "search", "trouve", "find", "puis", "ensuite",
-                "et", "and", "then", "ouvre", "ouvrir", "open", "clique", "click", "navigate", "navigue"})
-            requested = _requested_action_capabilities(controller.context.user_goal)
-            expected_verb = ("write_ui" in requested if receipt.get("operation") == "write_ui_element" else
-                "close_tab" in requested if receipt.get("operation") == "close_tab" else
-                bool(re.search(r"\b(ferme|fermer|close)\b", normalized_text(controller.context.user_goal))))
-            proven = bool(controller.pending and controller.pending.verdict and
-                          controller.pending.verdict.passed and expected_verb and not compound and receipt.get("operation") in {
-                              "write_ui_element", "close_tab", "close_window"})
+        if not controller.goal:
+            proven = self._single_native_proven(controller)
+        if log:
+            reason = "GOAL_VERIFIED" if proven else "GOAL_NOT_DEFINED" if not controller.goal else "GOAL_NOT_VERIFIED"
+            log(f"[UI_MISSION] goal_defined={int(bool(controller.goal))} goal_completed={int(proven)} "
+                f"pending_verification={int(summary['pending_verification'])} reason={reason}")
         if proven:
             return replace(result, goal_completed=True, mission_status="verified_complete", verification=summary)
         # An attempted action or an inspection is not proof of the user's goal.

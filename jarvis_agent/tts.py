@@ -199,8 +199,10 @@ class ElevenLabsTTS:
         except Exception as exc:
             self._cloud_disabled = True
             self._cloud_failure_reason = f"{type(exc).__name__}: {exc}"
+            status = getattr(exc, "status_code", None)
+            safe_status = status if isinstance(status, int) and not isinstance(status, bool) else "unknown"
             print(
                 "[TTS] ElevenLabs unavailable; switching to local Windows voice "
-                "for this session."
+                f"for this session. error_type={type(exc).__name__} status_code={safe_status}"
             )
             self._speak_windows(text, on_level=on_level)

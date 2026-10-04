@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import uuid
@@ -28,6 +29,25 @@ MUTATION_TOOLS = frozenset({
     "close_window", "close_tab", "open_application", "open_file", "open_folder", "open_url",
     "switch_ui_surface", "activate_window",
 })
+
+
+def single_native_request(user_text: str, operation: str) -> bool:
+    """Conservative compatibility exception, never a compound-goal substitute."""
+    from .agent_runtime import _requested_action_capabilities
+    request = normalized_text(user_text)
+    words = set(request.split())
+    if words & {"et", "and", "puis", "ensuite", "then", "envoie", "envoyer", "send",
+                "cherche", "chercher", "search", "trouve", "find", "ouvre", "ouvrir", "open",
+                "lance", "clique", "click", "navigate", "navigue", "recopie", "copie", "copy",
+                "scroll", "defile", "selectionne", "enregistre", "save"}:
+        return False
+    required = _requested_action_capabilities(user_text)
+    if operation == "write_ui_element":
+        return required == {"write_ui"} and not words & {"ferme", "fermer", "close"}
+    if operation == "close_tab":
+        return required == {"close_tab"}
+    return (operation == "close_window" and not required
+            and bool(re.search(r"\b(ferme|fermer|close)\b", request)))
 
 
 @dataclass
@@ -141,6 +161,8 @@ class ComputerUseController:
             "mission_id": self.context.mission_id if self.context else "",
             "goal": [asdict(x) for x in self.goal],
             "observation_id": current.observation_id if current else "",
+            "observation_fresh": bool(current and current.generation == self.state.generation and
+                                      time.monotonic()-current.monotonic_at <= float(settings.ui_target_max_age_s)),
             "scope": current.scope.as_dict() if current else {},
             "pending_action_id": self.pending.action_id if self.pending else "",
             "pending_verification": self.pending_verification(),
@@ -372,7 +394,8 @@ class ComputerUseController:
         allowed = self.progress.record_observation(observation, strategy)
         self._emit("observation", observation_id=observation.observation_id,
                    scope=observation.scope.as_dict(), coverage=observation.coverage,
-                   sensors=observation.sensors, uncertainties=observation.uncertainties)
+                   sensors=observation.sensors, uncertainties=observation.uncertainties,
+                   perception=object_detail(result.detail).get("perception", {}))
         self._emit("transition", **self.state.transition)
         self._check_pending(observation)
         self._check_goal(observation)
@@ -471,7 +494,9 @@ class ComputerUseController:
         if operation not in {"click", "write", "scroll", "key"}:
             raise ValueError("Unsupported UI operation")
         conditions = parse_conditions(args.get("expected"))
-        if not self.goal and operation != "write":
+        if not self.goal and (operation != "write" or self.receipts or not single_native_request(
+            self.context.user_goal if self.context else "", "write_ui_element"
+        )):
             return _result("act_ui", False, "Définissez d'abord le résultat observable de la mission.", "GOAL_NOT_DEFINED")
         if self.pending_verification():
             return _result("act_ui", False, "Vérifiez l'action précédente avant une nouvelle mutation.",
@@ -572,7 +597,8 @@ class ComputerUseController:
         invalidate_ui_snapshot()
         payload = object_detail(delivered.detail)
         self.receipts.append({"action_id": action_id, "operation": operation, "target_ref": target.ref,
-                              "delivered": delivered.success, "backend": target.sensor})
+                              "delivered": delivered.success, "backend": target.sensor,
+                              "native_exact_write": operation == "write" and payload.get("verified") is True})
         # Reuse the exact native read-back for a pure write, avoiding extra vision.
         if delivered.success and payload.get("verified") is True and operation == "write" and len(conditions) == 1 and not transition:
             expected = conditions[0]
@@ -657,6 +683,12 @@ class ComputerUseController:
                     "press_key", "type_text_active_window"}:
             return _result(name, False, "Utilisez act_ui avec la cible observée et ses postconditions.",
                            "EXPLICIT_POSTCONDITION_REQUIRED")
+        if name in {"write_ui_element", "close_tab", "close_window"} and not self.goal and (
+            self.receipts or not single_native_request(self.context.user_goal if self.context else "", name)
+        ):
+            return _result(name, False,
+                           "Avant cette mission composée, appelez define_ui_goal avec tous les résultats demandés. "
+                           "La relecture UIA exacte reste disponible après définition du goal.", "GOAL_NOT_DEFINED")
         if self.pending_verification():
             return _result(name, False, "Une postcondition reste à vérifier. Utilisez observe_ui ou verify_ui_goal.",
                            {"error": "PENDING_POSTCONDITION", "mission_state": self.summary()})
@@ -665,6 +697,8 @@ class ComputerUseController:
         action_id = "action_" + uuid.uuid4().hex[:12]
         result = delegate(name, args)
         payload = object_detail(result.detail)
+        if not payload and result.detail:
+            payload["execution_detail"] = str(result.detail)[:1500]
         self.state.invalidate()
         from .windows_perception import invalidate_ui_snapshot
         invalidate_ui_snapshot()
@@ -678,6 +712,21 @@ class ComputerUseController:
             self.pending = PendingVerification(action_id, before, (), name, False, verdict=verdict)
             payload["ui_verification"] = verdict.as_dict()
             self._emit("proof", verification=verdict.as_dict())
+            # Keep exact UIA/Cua readback authoritative for a frozen value goal.
+            # It certifies this control, not unrelated controls or window text.
+            value = payload.get("value")
+            target = next((x for x in before.entities if x.native_ref == args.get("ref")), None) if before else None
+            if name == "write_ui_element" and target is not None and isinstance(value, str) and (
+                payload.get("value_length", len(value)) == len(value)
+            ) and self.goal and all(x.kind.startswith("value_") for x in self.goal):
+                proof_id = "native_proof_" + uuid.uuid4().hex[:12]
+                entity = replace(target, ref=proof_id+":value", native_ref="", value=value,
+                                 evidence_ids=(action_id+":native_readback",))
+                proof = UIObservation(proof_id, before.scope, (entity,), generation=-1,
+                                      coverage={"tree_complete": False},
+                                      sensors={target.sensor: {"status": "exact_readback"}})
+                self.state.observe(proof)
+                self._check_goal(proof)
         elif name in {"open_application", "open_file", "open_folder", "open_url"}:
             # Launch delivery stays distinct from the subsequent UI objective.
             self.pending = None

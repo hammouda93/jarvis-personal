@@ -7,7 +7,7 @@ import threading
 import time
 import wave
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 import numpy as np
 import sounddevice as sd
@@ -17,6 +17,10 @@ from .config import settings
 
 LevelCallback = Callable[[float], None]
 StatusCallback = Callable[[str], None]
+
+
+class InterruptSignal(Protocol):
+    def is_set(self) -> bool: ...
 
 
 def rms_mono(block: np.ndarray) -> float:
@@ -80,9 +84,11 @@ def wait_for_double_clap(
     on_level: LevelCallback | None = None,
     on_status: StatusCallback | None = None,
     on_armed: Callable[[], None] | None = None,
-    interrupt_event: threading.Event | None = None,
+    interrupt_event: InterruptSignal | None = None,
 ) -> bool:
     """Wait for a double clap. Returns False when shutdown is requested."""
+    if stop_event.is_set() or (interrupt_event is not None and interrupt_event.is_set()):
+        return False
     blocksize = block_samples()
     device = input_device_index()
 
@@ -180,7 +186,7 @@ def record_utterance(
     on_level: LevelCallback | None = None,
     on_status: StatusCallback | None = None,
     start_timeout_s: float | None = None,
-    interrupt_event: threading.Event | None = None,
+    interrupt_event: InterruptSignal | None = None,
 ) -> np.ndarray | None:
     """Record one phrase with adaptive VAD and a preserved pre-roll.
 
@@ -188,6 +194,8 @@ def record_utterance(
     kept in the pre-roll, so a user who starts speaking immediately after
     Jarvis finishes talking will not lose the beginning of the sentence.
     """
+    if stop_event.is_set() or (interrupt_event is not None and interrupt_event.is_set()):
+        return None
     blocksize = block_samples()
     device = input_device_index()
 
