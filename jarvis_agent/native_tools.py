@@ -28,6 +28,7 @@ from .windows_perception import (
     list_windows,
     press_key,
     type_text_active_window,
+    ui_ref_descriptor,
     write_ui_element,
 )
 
@@ -1003,15 +1004,33 @@ class NativeToolRegistry:
             ref = str(args.get("ref", "")).strip()
             text = str(args.get("text", ""))
             mode = str(args.get("mode", "replace")).strip() or "replace"
+            delivery_mode = str(
+                args.get("delivery_mode", "background")
+            ).strip() or "background"
             result = write_ui_element(
                 target,
                 text,
                 ref=ref,
                 mode=mode,
-                delivery_mode=str(
-                    args.get("delivery_mode", "background")
-                ).strip() or "background",
+                delivery_mode=delivery_mode,
             )
+            if not result.success and ref:
+                try:
+                    stale = bool(
+                        json.loads(result.detail or "{}").get("stale_ref")
+                    )
+                except Exception:
+                    stale = False
+                if stale:
+                    recovered = self._recover_stale_write(
+                        ref=ref,
+                        target=target,
+                        text=text,
+                        mode=mode,
+                        delivery_mode=delivery_mode,
+                    )
+                    if recovered is not None:
+                        result = recovered
             return AgentActionResult(
                 name=name,
                 success=result.success,
@@ -1361,6 +1380,131 @@ class NativeToolRegistry:
             )
         except Exception:
             pass
+
+    def _recover_stale_write(
+        self,
+        *,
+        ref: str,
+        target: str,
+        text: str,
+        mode: str,
+        delivery_mode: str,
+    ):
+        """Reobserve and reacquire a stale writable control without guessing.
+
+        Recovery is intentionally narrow: exact control identity wins; if the
+        old control had no stable label/id, the fresh snapshot must expose one
+        and only one writable control of the same type.
+        """
+        descriptor = ui_ref_descriptor(ref)
+        if not descriptor or not descriptor.get("writable"):
+            return None
+
+        old_title = str(descriptor.get("window_title") or "").strip()
+        current_title = str(self._last_observed_window_title or "").strip()
+        if (
+            old_title
+            and current_title
+            and normalize(old_title) != normalize(current_title)
+        ):
+            return None
+
+        observed = inspect_active_window(
+            title=old_title or current_title or None,
+        )
+        if (
+            not observed.success
+            and self._last_app_hint
+            and normalize(self._last_app_hint)
+            != normalize(old_title or current_title)
+        ):
+            observed = inspect_active_window(title=self._last_app_hint)
+        if not observed.success:
+            return None
+
+        self._record_inspected_app(observed)
+        try:
+            payload = json.loads(observed.detail or "{}")
+        except Exception:
+            return None
+        controls = [
+            item
+            for item in (payload.get("controls") or [])
+            if isinstance(item, dict)
+            and item.get("writable")
+            and str(item.get("ref") or "").strip()
+        ]
+        if not controls:
+            return None
+
+        old_type = normalize(str(descriptor.get("type") or ""))
+        old_id = normalize(str(descriptor.get("id") or ""))
+        old_name = normalize(str(descriptor.get("name") or ""))
+        old_label = normalize(str(descriptor.get("label") or ""))
+
+        ranked: list[tuple[int, dict[str, Any]]] = []
+        for item in controls:
+            score = 0
+            current_type = normalize(str(item.get("type") or ""))
+            current_id = normalize(str(item.get("id") or ""))
+            current_name = normalize(str(item.get("name") or ""))
+            current_label = normalize(
+                str(
+                    item.get("label")
+                    or item.get("label_hint")
+                    or ""
+                )
+            )
+            if old_type and current_type == old_type:
+                score += 2
+            if old_id and current_id == old_id:
+                score += 6
+            if old_name and current_name == old_name:
+                score += 5
+            if old_label and current_label == old_label:
+                score += 5
+            ranked.append((score, item))
+
+        ranked.sort(key=lambda pair: -pair[0])
+        chosen: dict[str, Any] | None = None
+        if ranked and ranked[0][0] >= 5:
+            if len(ranked) == 1 or ranked[0][0] > ranked[1][0]:
+                chosen = ranked[0][1]
+        elif len(controls) == 1:
+            only = controls[0]
+            if not old_type or normalize(str(only.get("type") or "")) == old_type:
+                chosen = only
+
+        if chosen is None:
+            return None
+
+        recovered_ref = str(chosen.get("ref") or "").strip()
+        result = write_ui_element(
+            target,
+            text,
+            ref=recovered_ref,
+            mode=mode,
+            delivery_mode=delivery_mode,
+        )
+        if result.detail:
+            try:
+                detail = json.loads(result.detail)
+            except Exception:
+                detail = {"raw_detail": result.detail}
+        else:
+            detail = {}
+        detail.update(
+            {
+                "auto_reinspection": True,
+                "recovered_from_stale_ref": ref,
+                "recovered_ref": recovered_ref,
+            }
+        )
+        return type(result)(
+            result.success,
+            result.message,
+            json.dumps(detail, ensure_ascii=False, separators=(",", ":")),
+        )
 
     @staticmethod
     def _safe_target(value: str) -> bool:
