@@ -890,18 +890,10 @@ def _bounded_descendants(
         strategy = "descendants_depth"
         descendants = getattr(window, "descendants")
         try:
-            items = list(
-                descendants(
-                    depth=max(1, int(max_depth)),
-                    cache_enable=True,
-                )
-            )
+            items = list(descendants(depth=max(1, int(max_depth))))
         except TypeError:
-            try:
-                items = list(descendants(depth=max(1, int(max_depth))))
-            except TypeError:
-                strategy = "legacy_descendants"
-                items = list(descendants())
+            strategy = "legacy_descendants"
+            items = list(descendants())
         if len(items) > max_nodes:
             items = items[:max_nodes]
             truncated = True
