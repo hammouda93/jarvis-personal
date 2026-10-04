@@ -25,6 +25,7 @@ from .windows_perception import (
     close_tab,
     close_window,
     inspect_active_window,
+    inspect_browser_window,
     invalidate_ui_snapshot,
     list_windows,
     press_key,
@@ -69,6 +70,7 @@ class NativeToolRegistry:
         self._last_app_hint = ""
         self._last_observed_window_title = ""
         self._last_web_title_hint = ""
+        self._work_surface_title = ""
         self._browser = None
 
     @staticmethod
@@ -112,6 +114,32 @@ class NativeToolRegistry:
             return hint
         return value
 
+    def _work_surface(self, requested: str | None = None) -> str | None:
+        value = str(requested or "").strip()
+        if value:
+            web = self._resolve_web_window_title(value)
+            return web or value
+        for candidate in (
+            self._last_web_title_hint,
+            self._work_surface_title,
+            self._last_observed_window_title,
+            self._last_app_hint,
+        ):
+            candidate = str(candidate or "").strip()
+            if candidate:
+                return candidate
+        return None
+
+    def _is_web_surface(self, title: str | None = None) -> bool:
+        value = normalize(str(title or self._work_surface() or ""))
+        return bool(
+            "google chrome" in value
+            or (
+                self._last_web_title_hint
+                and normalize(self._last_web_title_hint) in value
+            )
+        )
+
     @staticmethod
     def _compact_observation(payload: dict[str, Any], limit: int = 24) -> dict[str, Any]:
         value = dict(payload or {})
@@ -151,7 +179,12 @@ class NativeToolRegistry:
         if not isinstance(payload, dict) or payload.get("requires_fresh_inspection") is not True:
             return action
 
-        observed = inspect_active_window(title=None)
+        target_title = self._work_surface()
+        observed = (
+            inspect_browser_window(title=target_title)
+            if self._is_web_surface(target_title)
+            else inspect_active_window(title=target_title)
+        )
         if not observed.success:
             payload["post_observation_error"] = observed.detail or observed.message
             return AgentActionResult(
@@ -264,6 +297,17 @@ class NativeToolRegistry:
                 "list_windows",
                 "Liste les fenêtres visibles actuellement sur Windows. Outil de perception en lecture seule.",
                 {},
+                [],
+            ),
+            self._ollama(
+                "inspect_browser_window",
+                "Inspecte profondément le contenu accessible de la fenêtre navigateur de la mission en gardant le profil Chrome normal. À utiliser pour comprendre une page, ses résultats, liens, champs ou boutons avant de cliquer. Préfère cet outil pour un site web lorsque le backend DOM/CDP optionnel n'est pas actif.",
+                {
+                    "title": {
+                        "type": "string",
+                        "description": "Titre optionnel du navigateur/site. Omettre pour utiliser la surface web mémorisée par la mission.",
+                    }
+                },
                 [],
             ),
             self._ollama(
@@ -899,6 +943,7 @@ class NativeToolRegistry:
             target = str(args.get("name", "")).strip()
             new_instance = bool(args.get("new_instance", False))
             self._last_web_title_hint = ""
+            self._work_surface_title = target
 
             observed_title = self._last_observed_window_title
             if (
@@ -976,6 +1021,7 @@ class NativeToolRegistry:
                     cua_launch = CUA_DRIVER.launch_application(target)
                     if cua_launch.success:
                         self._last_app_hint = target
+                        self._work_surface_title = target
                         invalidate_ui_snapshot()
                         return AgentActionResult(
                             name=name,
@@ -993,6 +1039,7 @@ class NativeToolRegistry:
                 cua_launch = CUA_DRIVER.launch_application(target)
                 if cua_launch.success:
                     self._last_app_hint = target
+                    self._work_surface_title = target
                     invalidate_ui_snapshot()
                     return AgentActionResult(
                         name=name,
@@ -1056,6 +1103,9 @@ class NativeToolRegistry:
             if converted.success:
                 self._last_web_title_hint = self._web_window_title_hint(url)
                 self._last_app_hint = "Google Chrome"
+                self._work_surface_title = (
+                    self._last_web_title_hint or "Google Chrome"
+                )
                 invalidate_ui_snapshot()
             return converted
 
@@ -1169,11 +1219,28 @@ class NativeToolRegistry:
                 ),
             )
 
+        if name == "inspect_browser_window":
+            requested_title = str(args.get("title", "")).strip() or None
+            title = self._work_surface(requested_title)
+            if not title:
+                title = "Google Chrome"
+            result = inspect_browser_window(title=title)
+            self._record_inspected_app(result)
+            return AgentActionResult(
+                name=name,
+                success=result.success,
+                message=result.message,
+                detail=result.detail,
+            )
+
         if name == "inspect_interface":
-            title = str(args.get("title", "")).strip()
+            requested_title = str(args.get("title", "")).strip() or None
+            title = self._work_surface(requested_title)
             focus = str(args.get("focus", "")).strip()
             structured = self.execute(
-                "inspect_active_window",
+                "inspect_browser_window"
+                if self._is_web_surface(title)
+                else "inspect_active_window",
                 {"title": title} if title else {},
             )
             if not structured.success:
@@ -1250,8 +1317,12 @@ class NativeToolRegistry:
 
         if name == "inspect_active_window":
             requested_title = str(args.get("title", "")).strip() or None
-            title = self._resolve_web_window_title(requested_title)
-            result = inspect_active_window(title=title)
+            title = self._work_surface(requested_title)
+            result = (
+                inspect_browser_window(title=title)
+                if self._is_web_surface(title)
+                else inspect_active_window(title=title)
+            )
             if (
                 not result.success
                 and title
@@ -1270,7 +1341,8 @@ class NativeToolRegistry:
             )
 
         if name == "observe_screen":
-            title = str(args.get("title", "")).strip() or None
+            requested_title = str(args.get("title", "")).strip() or None
+            title = self._work_surface(requested_title)
             focus = str(args.get("focus", "")).strip()
             result = observe_screen(title=title, focus=focus)
             return AgentActionResult(
@@ -1281,7 +1353,8 @@ class NativeToolRegistry:
             )
 
         if name == "click_visual_target":
-            title = str(args.get("title", "")).strip() or None
+            requested_title = str(args.get("title", "")).strip() or None
+            title = self._work_surface(requested_title)
             target = str(args.get("target", "")).strip()
             result = click_visual_target(target=target, title=title)
             return AgentActionResult(
@@ -1292,7 +1365,8 @@ class NativeToolRegistry:
             )
 
         if name == "write_visual_target":
-            title = str(args.get("title", "")).strip() or None
+            requested_title = str(args.get("title", "")).strip() or None
+            title = self._work_surface(requested_title)
             target = str(args.get("target", "")).strip()
             text_value = str(args.get("text", ""))
             mode = str(args.get("mode", "replace")).strip() or "replace"
@@ -1351,6 +1425,9 @@ class NativeToolRegistry:
 
         if name == "close_tab":
             target = str(args.get("name", "")).strip()
+            target_title = self._work_surface()
+            if target_title:
+                activate_window(target_title)
             result = close_tab(target)
             return AgentActionResult(
                 name=name,
@@ -1400,7 +1477,8 @@ class NativeToolRegistry:
 
         if name == "type_text_active_window":
             text_value = str(args.get("text", ""))
-            title = str(args.get("title", "")).strip()
+            requested_title = str(args.get("title", "")).strip() or None
+            title = self._work_surface(requested_title) or ""
             mode = str(args.get("mode", "insert")).strip() or "insert"
             result = type_text_active_window(
                 text_value,
@@ -1416,6 +1494,9 @@ class NativeToolRegistry:
 
         if name == "press_key":
             key = str(args.get("key", "")).strip()
+            target_title = self._work_surface()
+            if target_title:
+                activate_window(target_title)
             result = press_key(key)
             action = AgentActionResult(
                 name=name,
@@ -1692,6 +1773,7 @@ class NativeToolRegistry:
         # an application whose observed window is already available.
         if result.success:
             self._last_app_hint = target
+            self._work_surface_title = target
 
         if not settings.operational_learning_enabled:
             return
@@ -1716,6 +1798,7 @@ class NativeToolRegistry:
             if not title:
                 return
             self._last_observed_window_title = title
+            self._work_surface_title = title
             if not settings.operational_learning_enabled:
                 return
             parts = [
