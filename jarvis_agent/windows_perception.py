@@ -1324,10 +1324,7 @@ def _cua_snapshot_payload(
     """Project one Cua observation into Jarvis' compact ref contract."""
     global _SNAPSHOT_ELEMENTS, _SNAPSHOT_WINDOW_TITLE
 
-    max_items = max(
-        8,
-        min(int(limit), 80 if deep else 40),
-    )
+    max_items = max(8, min(int(limit), 40))
     elements = list(snapshot.elements)
 
     selected: list[CuaElement] = []
@@ -1764,7 +1761,10 @@ def inspect_active_window(
     documents.sort(key=visual_order)
     informative.sort(key=visual_order)
 
-    max_items = max(8, min(int(limit), 40))
+    max_items = max(
+        8,
+        min(int(limit), 80 if deep else 40),
+    )
     selected: list[Any] = []
 
     if content_rect is None:
