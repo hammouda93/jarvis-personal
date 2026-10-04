@@ -248,6 +248,53 @@ class FallbackDiagnosticTests(unittest.TestCase):
         self.assertNotIn("secondary-test-key", logs)
         self.assertEqual(agent.api_key, "primary-test-key")
 
+    def test_cerebras_429_cooldown_skips_repeating_primary_request(self):
+        from jarvis_agent.agent_runtime import (
+            AgentRuntimeUnavailable,
+            CerebrasResponsesAgent,
+            GroqResponsesAgent,
+        )
+
+        class Response:
+            headers = {"retry-after": "12"}
+
+        class ServiceError(Exception):
+            status_code = 429
+            response = Response()
+
+        cause = ServiceError("rate limit")
+        error = AgentRuntimeUnavailable("API error 429")
+        error.__cause__ = cause
+        first_secondary = object()
+        second_secondary = object()
+        agent = CerebrasResponsesAgent(Mock())
+        agent.api_key = "primary-test-key"
+
+        with patch(
+            "jarvis_agent.agent_runtime.settings",
+            replace(
+                real_settings,
+                cerebras_secondary_api_key="secondary-test-key",
+                cerebras_fallback_to_groq=False,
+            ),
+        ), patch(
+            "jarvis_agent.agent_runtime.time.monotonic",
+            return_value=100.0,
+        ), patch.object(
+            GroqResponsesAgent,
+            "_chat",
+            side_effect=[error, first_secondary, second_secondary],
+        ) as chat_mock, patch("builtins.print") as output:
+            self.assertIs(agent._chat(), first_secondary)
+            self.assertIs(agent._chat(), second_secondary)
+
+        self.assertEqual(chat_mock.call_count, 3)
+        self.assertEqual(agent._primary_rate_limited_until, 112.0)
+        logs = "\n".join(
+            str(call.args[0]) for call in output.call_args_list
+        )
+        self.assertIn("cooldown=active", logs)
+
     def test_tts_keeps_local_voice_and_reports_status_without_dumping_api_body(self):
         from jarvis_agent.tts import ElevenLabsTTS
         class ServiceError(Exception):

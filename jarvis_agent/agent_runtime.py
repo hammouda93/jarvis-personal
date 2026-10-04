@@ -3174,6 +3174,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         self.api_key = settings.cerebras_api_key
         self.provider_name = "cerebras"
         self.reasoning_effort = settings.cerebras_reasoning_effort
+        self._primary_rate_limited_until = 0.0
 
     def _get_client(self):
         if not self.api_key:
@@ -3216,6 +3217,26 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 "connection",
             )
         )
+
+    @staticmethod
+    def _retry_after_seconds(error: BaseException) -> float:
+        cause = getattr(error, "__cause__", None) or error
+        response = getattr(cause, "response", None)
+        headers = getattr(response, "headers", None) or getattr(cause, "headers", None)
+        value = None
+        try:
+            if headers is not None:
+                value = headers.get("retry-after") or headers.get("Retry-After")
+        except Exception:
+            value = None
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            seconds = 10.0
+        return max(1.0, min(60.0, seconds))
+
+    def _primary_in_cooldown(self) -> bool:
+        return time.monotonic() < self._primary_rate_limited_until
 
     def _chat_via_groq_fallback(
         self,
@@ -3270,64 +3291,93 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
     ):
-        try:
-            return super()._chat(
-                tool_choice=tool_choice,
-                ms_football_only=ms_football_only,
-                msf_tool_names=msf_tool_names,
-            )
-        except AgentRuntimeUnavailable as primary_error:
-            if not self._should_try_secondary(primary_error):
-                raise
+        primary_error: AgentRuntimeUnavailable | None = None
+        primary_skipped = self._primary_in_cooldown()
 
-            secondary_error = None
-            cause = primary_error.__cause__ or primary_error
-            status = getattr(cause, "status_code", None)
-            safe_status = status if isinstance(status, int) and not isinstance(status, bool) else "unknown"
-            print(f"[AGENT_FALLBACK] provider=cerebras stage=primary "
-                  f"error_type={type(cause).__name__} status_code={safe_status}")
-            if settings.cerebras_secondary_api_key:
-                print(
-                    "[AGENT] Cerebras primary unavailable; "
-                    "trying secondary Cerebras API."
-                )
-                primary_api_key = self.api_key
-                primary_base_url = self.base_url
-                primary_client = self._client
-
-                self.api_key = settings.cerebras_secondary_api_key
-                self.base_url = settings.cerebras_secondary_base_url.rstrip("/")
-                self._client = None
-                try:
-                    return super()._chat(
-                        tool_choice=tool_choice,
-                        ms_football_only=ms_football_only,
-                        msf_tool_names=msf_tool_names,
-                    )
-                except AgentRuntimeUnavailable as exc:
-                    secondary_error = exc
-                finally:
-                    self.api_key = primary_api_key
-                    self.base_url = primary_base_url
-                    self._client = primary_client
-
-            if (
-                settings.cerebras_fallback_to_groq
-                and settings.groq_api_key
-            ):
-                print(
-                    "[AGENT] Cerebras stalled/unavailable; "
-                    "trying Groq GPT-OSS fallback."
-                )
-                return self._chat_via_groq_fallback(
+        if not primary_skipped:
+            try:
+                response = super()._chat(
                     tool_choice=tool_choice,
                     ms_football_only=ms_football_only,
                     msf_tool_names=msf_tool_names,
                 )
+                self._primary_rate_limited_until = 0.0
+                return response
+            except AgentRuntimeUnavailable as exc:
+                primary_error = exc
+                if not self._should_try_secondary(exc):
+                    raise
 
-            if secondary_error is not None:
-                raise secondary_error
+                cause = exc.__cause__ or exc
+                status = getattr(cause, "status_code", None)
+                if status == 429:
+                    self._primary_rate_limited_until = (
+                        time.monotonic() + self._retry_after_seconds(exc)
+                    )
+                safe_status = (
+                    status
+                    if isinstance(status, int) and not isinstance(status, bool)
+                    else "unknown"
+                )
+                print(
+                    "[AGENT_FALLBACK] provider=cerebras stage=primary "
+                    f"error_type={type(cause).__name__} "
+                    f"status_code={safe_status}"
+                )
+        else:
+            primary_error = AgentRuntimeUnavailable(
+                "Cerebras primary temporarily rate-limited."
+            )
+            print(
+                "[AGENT_FALLBACK] provider=cerebras stage=primary "
+                "cooldown=active request_skipped=1"
+            )
+
+        secondary_error = None
+        if settings.cerebras_secondary_api_key:
+            print(
+                "[AGENT] Cerebras primary unavailable; "
+                "trying secondary Cerebras API."
+            )
+            primary_api_key = self.api_key
+            primary_base_url = self.base_url
+            primary_client = self._client
+
+            self.api_key = settings.cerebras_secondary_api_key
+            self.base_url = settings.cerebras_secondary_base_url.rstrip("/")
+            self._client = None
+            try:
+                return super()._chat(
+                    tool_choice=tool_choice,
+                    ms_football_only=ms_football_only,
+                    msf_tool_names=msf_tool_names,
+                )
+            except AgentRuntimeUnavailable as exc:
+                secondary_error = exc
+            finally:
+                self.api_key = primary_api_key
+                self.base_url = primary_base_url
+                self._client = primary_client
+
+        if (
+            settings.cerebras_fallback_to_groq
+            and settings.groq_api_key
+        ):
+            print(
+                "[AGENT] Cerebras stalled/unavailable; "
+                "trying Groq GPT-OSS fallback."
+            )
+            return self._chat_via_groq_fallback(
+                tool_choice=tool_choice,
+                ms_football_only=ms_football_only,
+                msf_tool_names=msf_tool_names,
+            )
+
+        if secondary_error is not None:
+            raise secondary_error
+        if primary_error is not None:
             raise primary_error
+        raise AgentRuntimeUnavailable("Cerebras indisponible.")
 
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
