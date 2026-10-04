@@ -38,6 +38,60 @@ class ToolResult:
     follow_up: str | None = None
 
 
+_LAST_BROWSER_URL = ""
+
+
+def _remember_browser_url(url: str) -> None:
+    global _LAST_BROWSER_URL
+    value = str(url or "").strip()
+    if value:
+        _LAST_BROWSER_URL = value
+
+
+def _contextual_site_search_url(query: str, context_url: str = "") -> tuple[str, str]:
+    """Return a deterministic in-site search URL when the current site supports one."""
+    value = str(query or "").strip()
+    if not value:
+        return "", ""
+    raw = str(context_url or _LAST_BROWSER_URL or "").strip()
+    try:
+        host = urllib.parse.urlparse(raw).netloc.casefold()
+    except Exception:
+        host = ""
+
+    encoded = urllib.parse.quote_plus(value)
+    if host.endswith("youtube.com") or host.endswith("www.youtube.com"):
+        return (
+            f"https://www.youtube.com/results?search_query={encoded}",
+            "YouTube",
+        )
+    if "google." in host:
+        return (
+            f"https://www.google.com/search?q={encoded}",
+            "Google",
+        )
+    return "", ""
+
+
+def _explicit_site_search_url(site: str, query: str) -> tuple[str, str]:
+    normalized_site = normalize(site)
+    value = str(query or "").strip()
+    if not value:
+        return "", ""
+    encoded = urllib.parse.quote_plus(value)
+    if "youtube" in normalized_site:
+        return (
+            f"https://www.youtube.com/results?search_query={encoded}",
+            "YouTube",
+        )
+    if "google" in normalized_site:
+        return (
+            f"https://www.google.com/search?q={encoded}",
+            "Google",
+        )
+    return "", ""
+
+
 def normalize(text: str) -> str:
     value = unicodedata.normalize("NFKD", (text or "").lower().strip())
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
@@ -198,6 +252,45 @@ def route(text: str) -> ToolIntent:
 
         return ToolIntent("folder.open_prompt")
 
+    close_tab_match = re.search(
+        r"\b(?:ferme|fermes|fermer|fermez)\b.*\bonglet\b\s*(.*)$",
+        cmd,
+    )
+    if close_tab_match:
+        target = re.sub(
+            r"\b(?:uniquement|seulement|juste)\b",
+            "",
+            close_tab_match.group(1) or "",
+        ).strip()
+        return ToolIntent("browser.close_tab", {"name": target})
+
+    if any(
+        phrase in cmd
+        for phrase in (
+            "retour arriere",
+            "retour en arriere",
+            "reviens en arriere",
+            "revenir en arriere",
+            "page precedente",
+            "precedent dans le navigateur",
+        )
+    ):
+        return ToolIntent("browser.back")
+
+    compound_search = re.search(
+        r"\b(?:ouvre|ouvrir|lance|affiche)\b.*\b(youtube|google)\b"
+        r".*\b(?:recherche|cherche)\b\s+(.+)$",
+        cmd,
+    )
+    if compound_search:
+        return ToolIntent(
+            "browser.search_site",
+            {
+                "site": compound_search.group(1),
+                "query": compound_search.group(2).strip(),
+            },
+        )
+
     if any(word in cmd for word in ("ouvre", "ouvrir", "lance", "affiche")):
         if "youtube" in cmd:
             return ToolIntent("browser.open_url", {"url": "https://www.youtube.com"})
@@ -228,7 +321,19 @@ def route(text: str) -> ToolIntent:
         query = _search_query_from_command(cmd)
         if not query:
             return ToolIntent("browser.search_prompt")
-        return ToolIntent("browser.search", {"query": query})
+        explicit_web = bool(
+            re.search(
+                r"\b(?:internet|google|le web|web)\b",
+                cmd,
+            )
+        )
+        return ToolIntent(
+            "browser.search",
+            {
+                "query": query,
+                "scope": "web" if explicit_web else "context",
+            },
+        )
 
     return ToolIntent("unknown", {"text": text})
 
@@ -946,6 +1051,8 @@ def execute(intent: ToolIntent) -> ToolResult:
     if intent.name == "browser.open_url":
         url = str(intent.args["url"])
         ok = _open_browser_url(url)
+        if ok:
+            _remember_browser_url(url)
         return ToolResult(
             bool(ok),
             "C'est fait." if ok else "Je n'ai pas pu ouvrir le navigateur.",
@@ -969,9 +1076,80 @@ def execute(intent: ToolIntent) -> ToolResult:
                 "En attente du sujet de recherche",
                 follow_up="search_query",
             )
-        url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
+        scope = str(intent.args.get("scope") or "context").strip().casefold()
+        url = ""
+        site_name = ""
+        if scope != "web":
+            url, site_name = _contextual_site_search_url(query)
+        if not url:
+            url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
+            site_name = "Google"
         ok = _open_browser_url(url)
-        return ToolResult(bool(ok), f"Je recherche {query}.", url)
+        if ok:
+            _remember_browser_url(url)
+        message = (
+            f"Je recherche {query} sur {site_name}."
+            if site_name
+            else f"Je recherche {query}."
+        )
+        return ToolResult(bool(ok), message, url)
+
+    if intent.name == "browser.search_site":
+        site = str(intent.args.get("site") or "").strip()
+        query = str(intent.args.get("query") or "").strip()
+        url, site_name = _explicit_site_search_url(site, query)
+        if not url:
+            return ToolResult(
+                False,
+                f"Je n'ai pas de recherche directe fiable pour {site or 'ce site'}.",
+                site,
+            )
+        ok = _open_browser_url(url)
+        if ok:
+            _remember_browser_url(url)
+        return ToolResult(
+            bool(ok),
+            f"Je recherche {query} sur {site_name}.",
+            url,
+        )
+
+    if intent.name == "browser.close_tab":
+        from .windows_perception import close_tab
+
+        target = str(intent.args.get("name") or "").strip()
+        result = close_tab(target)
+        return ToolResult(
+            result.success,
+            result.message,
+            result.detail,
+        )
+
+    if intent.name == "browser.back":
+        from .windows_perception import activate_window, press_key
+
+        hint = "Google Chrome"
+        raw = str(_LAST_BROWSER_URL or "")
+        if "youtube.com" in raw.casefold():
+            hint = "YouTube"
+        elif "web.whatsapp.com" in raw.casefold():
+            hint = "WhatsApp"
+        activation = activate_window(hint)
+        if not activation.success and hint != "Google Chrome":
+            activation = activate_window("Google Chrome")
+        if not activation.success:
+            return ToolResult(
+                False,
+                "Je n'ai pas trouvé la fenêtre du navigateur.",
+                activation.detail or activation.message,
+            )
+        key_result = press_key("altleft")
+        return ToolResult(
+            key_result.success,
+            "Je reviens à la page précédente."
+            if key_result.success
+            else key_result.message,
+            key_result.detail,
+        )
 
     if intent.name == "app.open":
         return _open_application(str(intent.args["app"]))
