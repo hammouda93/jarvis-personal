@@ -2253,9 +2253,14 @@ def _is_selected_tab(wrapper: Any) -> bool:
     return False
 
 
-def close_tab(name: str = "") -> UIActionResult:
-    """Close one browser/app tab without assuming Jarvis itself is foreground."""
+def close_tab(
+    name: str = "",
+    *,
+    window_title: str = "",
+) -> UIActionResult:
+    """Close one tab on an explicit work surface, never Jarvis by accident."""
     target = (name or "").strip()
+    requested_window = (window_title or "").strip()
 
     def visible_top_tabs(candidate: Any) -> list[Any]:
         if candidate is None:
@@ -2276,7 +2281,11 @@ def close_tab(name: str = "") -> UIActionResult:
             )
         ]
 
-    window = _active_window()
+    window = (
+        _window_by_title(requested_window)
+        if requested_window
+        else _active_window()
+    )
     tabs = visible_top_tabs(window)
 
     # Typed commands naturally leave Personal Jarvis in the foreground.
