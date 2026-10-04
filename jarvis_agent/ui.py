@@ -1318,7 +1318,7 @@ class JarvisWindow(QWidget):
 
         text = str(line)
         if text.startswith("[AI] provider="):
-            provider = re.search(r"provider=([^\\s]+)", text)
+            provider = re.search(r"provider=([^\s]+)", text)
             if provider:
                 value = provider.group(1).strip()
                 self.chip_cerebras.detail.setText(
@@ -1328,7 +1328,7 @@ class JarvisWindow(QWidget):
         if text.startswith("[AGENT] provider=cerebras"):
             self.chip_cerebras.detail.setText("Actif")
 
-        call = re.search(r"\\[AGENT_TOOL\\] call=([^\\s]+)", text)
+        call = re.search(r"\[AGENT_TOOL\] call=([^\s]+)", text)
         if call:
             node = _tool_visual_node(call.group(1))
             if node == "windows":
@@ -1339,7 +1339,7 @@ class JarvisWindow(QWidget):
                 self.chip_research.detail.setText("Active")
 
         result = re.search(
-            r"\\[AGENT_TOOL\\] result=([^\\s]+)\\s+success=(True|False)",
+            r"\[AGENT_TOOL\] result=([^\s]+)\s+success=(True|False)",
             text,
         )
         if result:
