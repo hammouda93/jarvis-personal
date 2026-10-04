@@ -48,6 +48,21 @@ def _remember_browser_url(url: str) -> None:
         _LAST_BROWSER_URL = value
 
 
+def _browser_window_hint(context_url: str = "") -> str:
+    raw = str(context_url or _LAST_BROWSER_URL or "").strip()
+    try:
+        host = urllib.parse.urlparse(raw).netloc.casefold()
+    except Exception:
+        host = ""
+    if host.endswith("youtube.com"):
+        return "YouTube - Google Chrome"
+    if host == "web.whatsapp.com":
+        return "WhatsApp - Google Chrome"
+    if "google." in host:
+        return "Google - Google Chrome"
+    return "Google Chrome"
+
+
 def _contextual_site_search_url(query: str, context_url: str = "") -> tuple[str, str]:
     """Return a deterministic in-site search URL when the current site supports one."""
     value = str(query or "").strip()
@@ -1117,7 +1132,10 @@ def execute(intent: ToolIntent) -> ToolResult:
         from .windows_perception import close_tab
 
         target = str(intent.args.get("name") or "").strip()
-        result = close_tab(target)
+        result = close_tab(
+            target,
+            window_title=_browser_window_hint(),
+        )
         return ToolResult(
             result.success,
             result.message,
