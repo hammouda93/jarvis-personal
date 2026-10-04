@@ -272,6 +272,9 @@ class AgentRuntime(Protocol):
     ) -> AgentTurnResult:
         ...
 
+    def set_live_mission_context(self, value: str) -> None:
+        _set_live_mission_message(self._messages, value)
+
     def record_external_turn(
         self,
         user_text: str,
@@ -292,6 +295,25 @@ class AgentRuntime(Protocol):
 
 class AgentRuntimeUnavailable(RuntimeError):
     pass
+
+
+def _set_live_mission_message(
+    messages: list[dict[str, Any]],
+    value: str,
+) -> None:
+    """Keep exactly one structured live-mission system message."""
+    marker = "[LIVE_MISSION]"
+    messages[:] = [
+        item
+        for item in messages
+        if not (
+            item.get("role") == "system"
+            and str(item.get("content") or "").startswith(marker)
+        )
+    ]
+    text = str(value or "").strip()
+    if text:
+        messages.append({"role": "system", "content": text})
 
 
 _THINK_BLOCK_RE = re.compile(
@@ -1805,6 +1827,9 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+
+    def set_live_mission_context(self, value: str) -> None:
+        _set_live_mission_message(self._messages, value)
 
     def record_external_turn(
         self,
