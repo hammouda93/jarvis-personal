@@ -23,6 +23,59 @@ class NativeToolRegistryTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    @patch("jarvis_agent.native_tools.activate_window")
+    @patch("jarvis_agent.native_tools.execute")
+    def test_open_application_reuses_only_previously_observed_window(
+        self,
+        execute_mock,
+        activate_mock,
+    ):
+        self.registry._last_observed_window_title = (
+            "*Bonjour Jarvis – Bloc-notes"
+        )
+        activate_mock.return_value = SimpleNamespace(
+            success=True,
+            detail='{"window":"*Bonjour Jarvis – Bloc-notes"}',
+        )
+
+        result = self.registry.execute(
+            "open_application",
+            {"name": "Bloc-notes"},
+        )
+
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["reused_existing_window"])
+        activate_mock.assert_called_once_with(
+            "*Bonjour Jarvis – Bloc-notes"
+        )
+        execute_mock.assert_not_called()
+
+    @patch("jarvis_agent.native_tools.activate_window")
+    @patch("jarvis_agent.native_tools.execute")
+    def test_open_application_new_instance_bypasses_observed_window_reuse(
+        self,
+        execute_mock,
+        activate_mock,
+    ):
+        self.registry._last_observed_window_title = (
+            "*Bonjour Jarvis – Bloc-notes"
+        )
+        execute_mock.return_value = ToolResult(
+            True,
+            "ok",
+            "notepad",
+        )
+
+        result = self.registry.execute(
+            "open_application",
+            {"name": "Bloc-notes", "new_instance": True},
+        )
+
+        self.assertTrue(result.success)
+        activate_mock.assert_not_called()
+        execute_mock.assert_called()
+
     @patch("jarvis_agent.native_tools.execute")
     def test_unknown_named_app_uses_generic_discovery(self, execute_mock):
         execute_mock.return_value = ToolResult(True, "ok", "vlc")
@@ -174,6 +227,10 @@ class NativeToolRegistryTests(unittest.TestCase):
             for item in self.registry.ollama_tools()
         }
         self.assertIn("open_file", tools)
+        self.assertIn(
+            "new_instance",
+            tools["open_application"]["properties"],
+        )
         self.assertIn("close_tab", tools)
         self.assertIn("type_text_active_window", tools)
         self.assertIn("research_web", tools)
