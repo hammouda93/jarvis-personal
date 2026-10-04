@@ -242,7 +242,7 @@ class NativeToolRegistry:
                     },
                     "observation_id": {
                         "type": "string",
-                        "description": "Identifiant observation_id qui a produit ref.",
+                        "description": "OBLIGATOIRE lorsque ref est fourni: observation_id exact qui a produit cette ref. Une ref sans cet identifiant ou provenant d’une ancienne observation est refusée.",
                     },
                     "delivery_mode": {
                         "type": "string",
@@ -697,6 +697,17 @@ class NativeToolRegistry:
                 and (
                     normalize(target) in normalize(observed_title)
                     or normalize(observed_title) in normalize(target)
+                    or (
+                        self._last_app_hint
+                        and (
+                            normalize(target)
+                            == normalize(self._last_app_hint)
+                            or normalize(target)
+                            in normalize(self._last_app_hint)
+                            or normalize(self._last_app_hint)
+                            in normalize(target)
+                        )
+                    )
                 )
             ):
                 existing = activate_window(observed_title)
@@ -1270,6 +1281,12 @@ class NativeToolRegistry:
         return None
 
     def _record_app_launch(self, target: str, result: ToolResult) -> None:
+        # Session-local grounding is not persistent learning. Keep the app
+        # identity even in baseline mode so a later request does not relaunch
+        # an application whose observed window is already available.
+        if result.success:
+            self._last_app_hint = target
+
         if not settings.operational_learning_enabled:
             return
         try:
@@ -1280,8 +1297,6 @@ class NativeToolRegistry:
                 success=result.success,
                 observed_capabilities=["launch"],
             )
-            if result.success:
-                self._last_app_hint = target
         except Exception:
             pass
 
