@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from jarvis_agent.ui import _safe_console_log, _tool_visual_node
+from jarvis_agent.ui import NODE_BY_KEY, NODES, _safe_console_log, _tool_visual_node
 
 
 class _CP1252Stream:
@@ -40,6 +40,16 @@ class SafeConsoleLogTests(unittest.TestCase):
 
     def test_unknown_tool_stays_in_reasoning_visual_node(self):
         self.assertEqual(_tool_visual_node("future_generic_tool"), "think")
+
+    def test_visual_nodes_have_unique_keys(self):
+        keys = [node.key for node in NODES]
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_text_conversation_is_marked_as_future_visual_only(self):
+        self.assertEqual(
+            NODE_BY_KEY["conversation"].subtitle,
+            "Bientôt disponible",
+        )
 
 
 if __name__ == "__main__":
