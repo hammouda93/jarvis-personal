@@ -1060,6 +1060,8 @@ class NativeToolRegistry:
         if name == "open_file":
             target = str(args.get("name", "")).strip()
             within = str(args.get("within", "")).strip()
+            self._last_web_title_hint = ""
+            self._work_surface_title = target
             if not self._safe_target(target):
                 return self._error(name, "Le nom du fichier est trop vague.")
             payload: dict[str, Any] = {"query": target}
@@ -1076,6 +1078,8 @@ class NativeToolRegistry:
         if name == "open_folder":
             target = str(args.get("name", "")).strip()
             within = str(args.get("within", "")).strip()
+            self._last_web_title_hint = ""
+            self._work_surface_title = target
             if not self._safe_target(target):
                 return self._error(name, "Le nom du dossier est trop vague.")
 
