@@ -441,6 +441,17 @@ def _native_identity(handle: int) -> dict[str, Any]:
         get_pid(wintypes.HWND(handle), ctypes.byref(pid))
         result["pid"] = int(pid.value)
         try:
+            get_owner = user32.GetWindow
+            get_owner.argtypes = [wintypes.HWND, wintypes.UINT]
+            get_owner.restype = wintypes.HWND
+            get_root = user32.GetAncestor
+            get_root.argtypes = [wintypes.HWND, wintypes.UINT]
+            get_root.restype = wintypes.HWND
+            result["owner_hwnd"] = int(get_owner(wintypes.HWND(handle), 4) or 0)
+            result["root_owner_hwnd"] = int(get_root(wintypes.HWND(handle), 3) or 0)
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        try:
             import win32api
             import win32process
             process = win32api.OpenProcess(0x1000, False, int(pid.value))
@@ -1111,6 +1122,8 @@ def _native_compact_window(item: dict[str, Any]) -> dict[str, Any]:
         "title": str(item.get("title") or ""),
         "type": "Window",
         "bounds": [int(value) for value in bounds],
+        "hwnd": int(item.get("hwnd") or item.get("handle") or 0),
+        **{key: item[key] for key in ("pid", "process_start", "process", "owner_hwnd", "root_owner_hwnd") if key in item},
     }
 
 
@@ -1527,10 +1540,54 @@ def _try_cua_inspection(
         _json(payload),
     )
 
+def _native_window_by_id(window_id: str | int) -> dict[str, Any]:
+    """Resolve an exact HWND, without fuzzy titles or capped enumeration."""
+    import win32gui
+    value = str(window_id)
+    if not value.isdecimal() or int(value) <= 0:
+        raise ValueError("Invalid native window_id")
+    handle = int(value)
+    if not win32gui.IsWindow(handle) or not win32gui.IsWindowVisible(handle):
+        raise ValueError("STALE_NATIVE_WINDOW")
+    return {"handle": handle, **_native_identity(handle), "title": win32gui.GetWindowText(handle),
+            "bounds": tuple(win32gui.GetWindowRect(handle)), "process": _native_process_name(handle)}
+
+
+def activate_bound_window(identity: Any) -> UIActionResult:
+    """Activate and verify one observed native identity, never a similarly named window."""
+    from .ui_observation import SurfaceIdentity
+    try:
+        import win32gui
+        item = _native_window_by_id(identity.window_id)
+        if not identity.same_binding(SurfaceIdentity.from_payload(item)):
+            return UIActionResult(False, "L'identité de fenêtre a changé.", "STALE_NATIVE_WINDOW")
+        try:
+            wrapper = _uia_window_from_handle(int(identity.window_id))
+            try:
+                wrapper.restore()
+            except Exception:
+                pass
+            wrapper.set_focus()
+        except Exception:
+            # Focus is a Win32 operation even when the app has no usable UIA provider.
+            if win32gui.IsIconic(int(identity.window_id)):
+                win32gui.ShowWindow(int(identity.window_id), 9)
+            win32gui.SetForegroundWindow(int(identity.window_id))
+        fresh = _native_window_by_id(identity.window_id)
+        verified = (win32gui.GetForegroundWindow() == int(identity.window_id) and
+                    identity.same_binding(SurfaceIdentity.from_payload(fresh)))
+        invalidate_ui_snapshot()
+        return UIActionResult(verified, "Focus de fenêtre vérifié." if verified else "Focus non prouvé.",
+                              _json({"verified": verified, "window": fresh, "postcondition": "foreground_window"}))
+    except Exception as exc:
+        return UIActionResult(False, "Impossible d'activer la fenêtre liée.", str(exc))
+
+
 def inspect_active_window(
     *,
     title: str | None = None,
     limit: int = 36,
+    window_id: str = "",
 ) -> UIActionResult:
     """Return a compact, model-friendly accessibility snapshot.
 
@@ -1544,10 +1601,25 @@ def inspect_active_window(
     native_item: dict[str, Any] | None = None
     uia_error = ""
 
+    if window_id:
+        try:
+            native_item = _native_window_by_id(window_id)
+            if _native_window_is_minimized(native_item):
+                return _native_only_inspection(native_item, uia_error="Fenêtre réduite.",
+                                               fallback="win32_window_minimized", minimized=True)
+            window = _uia_window_from_handle(int(native_item["handle"]))
+        except Exception as exc:
+            if native_item is None:
+                return UIActionResult(False, "Fenêtre liée introuvable.", str(exc))
+            cua_result = _try_cua_inspection(title=str(native_item.get("title") or ""), limit=limit)
+            if cua_result is not None:
+                return cua_result  # The fusion manager must prove the HWND binding.
+            return _native_only_inspection(native_item, uia_error=str(exc))
+
     # Named inspections prefer Win32 resolution first. This avoids expensive
     # top-level UIA enumeration and gives us a stable HWND for modern packaged
     # / Chromium applications.
-    if title:
+    if title and not window_id:
         try:
             native_item = _native_target_window(title)
         except Exception as exc:

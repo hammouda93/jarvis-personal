@@ -10,20 +10,23 @@ from typing import Any, Callable
 
 from .config import settings
 from .kernel_contracts import MissionContext, MissionStatus
+from .mission_surfaces import ExpectedSurfaceTransition, MissionSurfaces, surface_name
 from .perception_router import PerceptionManager
 from .semantic_grounding import normalized_text
 from .target_resolver import TargetIntent, resolve_target
 from .ui_geometry import CaptureGeometry
-from .ui_observation import UIEntity, UIObservation, object_detail
+from .ui_observation import SurfaceIdentity, UIEntity, UIObservation, object_detail
 from .ui_state import ProgressTracker, UIState
 from .ui_verifier import CONDITION_KINDS, Postcondition, VerificationVerdict, parse_conditions, verify_conditions
 
 READ_TOOLS = frozenset({"observe_ui", "inspect_active_window", "observe_screen",
-                        "verify_ui_goal", "ui_engine_status", "define_ui_goal", "list_browser_pages"})
+                        "verify_ui_goal", "ui_engine_status", "define_ui_goal", "list_browser_pages",
+                        "list_ui_surfaces", "bind_ui_surface"})
 MUTATION_TOOLS = frozenset({
     "act_ui", "click_ui_element", "write_ui_element", "click_visual_target",
     "write_visual_target", "press_key", "type_text_active_window",
     "close_window", "close_tab", "open_application", "open_file", "open_folder", "open_url",
+    "switch_ui_surface", "activate_window",
 })
 
 
@@ -37,6 +40,8 @@ class PendingVerification:
     non_idempotent: bool = False
     verdict: VerificationVerdict | None = None
     progress_recorded: bool = False
+    transition: ExpectedSurfaceTransition | None = None
+    expected_identity: SurfaceIdentity | None = None
 
 
 def _result(name: str, success: bool, message: str, payload: dict[str, Any] | str):
@@ -47,7 +52,8 @@ def _result(name: str, success: bool, message: str, payload: dict[str, Any] | st
 
 class ComputerUseController:
     def __init__(self, *, perception: PerceptionManager | None = None,
-                 browser: Any = None, store: Any = None):
+                 browser: Any = None, store: Any = None, surface_inventory: Callable[..., Any] | None = None,
+                 surface_activator: Callable[..., Any] | None = None):
         self.state = perception.state if perception else UIState()
         self.perception = perception or PerceptionManager(state=self.state, browser=browser)
         self.browser = browser or self.perception.browser
@@ -66,6 +72,10 @@ class ComputerUseController:
         self._events: list[dict[str, Any]] = []
         self._log: Callable[[str], None] | None = None
         self.receipts: list[dict[str, Any]] = []
+        self.surfaces = MissionSurfaces()
+        self._surface_inventory = surface_inventory
+        self._surface_activator = surface_activator
+        self._verifying_goal = False
 
     def begin(self, user_text: str, *, mission_id: str = "", log=None, resume: bool = False) -> None:
         with self._lock:
@@ -84,6 +94,8 @@ class ComputerUseController:
                 self.progress = ProgressTracker()
                 self._events = []
                 self.state.invalidate()
+                self.state.verified_facts.clear()
+                self.surfaces = MissionSurfaces()
             elif mission_id:
                 self.context.mission_id = mission_id
             self._persist()
@@ -136,6 +148,8 @@ class ComputerUseController:
             "last_verification": self.pending.verdict.as_dict() if self.pending and self.pending.verdict else None,
             "action_count": self.action_count, "observation_count": self.observation_count,
             "cancelled": self.cancelled.is_set(),
+            "surfaces": self.surfaces.summary(),
+            "expected_transition": asdict(self.pending.transition) if self.pending and self.pending.transition else None,
         }
         if include_progress:
             result["progress"] = self.progress.summary()
@@ -169,6 +183,19 @@ class ComputerUseController:
                     return _result(name, True, "État du moteur.", self.summary())
                 if name == "define_ui_goal":
                     return self._define_goal(arguments)
+                if name == "bind_ui_surface":
+                    current = self.state.current
+                    if current is None or current.generation != self.state.generation or (
+                        time.monotonic()-current.monotonic_at > float(settings.ui_target_max_age_s)):
+                        return _result(name, False, "Observez d'abord la surface fraîche à lier.", "SURFACE_BASELINE_REQUIRED")
+                    binding = self.surfaces.bind(arguments.get("name"), current)
+                    self._emit("decision", reason="SURFACE_BOUND", surface=binding.name,
+                               identity=binding.identity.as_dict(), observation_id=current.observation_id)
+                    self._persist()
+                    return _result(name, True, "Surface liée à son identité observée.", self.summary())
+                if name == "list_ui_surfaces":
+                    return _result(name, True, "Inventaire des surfaces accessibles.",
+                                   {"surfaces": self._inventory(), "bindings": self.surfaces.summary()})
                 if name == "list_browser_pages":
                     if self.browser is None:
                         return _result(name, False, "Aucune session CDP configurée.", "browser_unavailable")
@@ -179,12 +206,17 @@ class ComputerUseController:
                     return self._observe(name, arguments)
                 if name == "act_ui":
                     return self._act(arguments, delegate)
+                if name == "switch_ui_surface":
+                    return self._switch_surface(arguments)
+                if name == "activate_window":
+                    return _result(name, False, "Liez une identité observée puis utilisez switch_ui_surface.",
+                                   "EXACT_SURFACE_SELECTION_REQUIRED")
                 return self._legacy_mutation(name, arguments, delegate)
             except (ValueError, TypeError, OverflowError) as exc:
                 return _result(name, False, "Arguments UI non valides.", {"error": "INVALID_UI_REQUEST", "detail": str(exc)})
 
     def _define_goal(self, args: dict[str, Any]):
-        if self.goal or any(x.get("operation") not in {"open_application", "open_file", "open_folder", "open_url"}
+        if self.goal or any(x.get("operation") not in {"open_application", "open_file", "open_folder", "open_url", "switch_ui_surface"}
                             for x in self.receipts):
             return _result("define_ui_goal", False, "L'objectif ne peut pas être affaibli après le début des actions.",
                            "GOAL_ALREADY_FROZEN")
@@ -205,11 +237,79 @@ class ComputerUseController:
         ):
             return _result("define_ui_goal", False, "Un nouveau message exige aussi une preuve de destinataire ou de contexte.",
                            "GOAL_MISSING_CONTEXT_PROOF")
+        for message in (x for x in goal if x.kind == "new_text"):
+            if not any((x.surface or "default") == (message.surface or "default") and (
+                x.kind == "text_present" and (x.role == "content_title" or x.region) or
+                x.kind in {"selected", "target_present"} and x.label and x.role in {
+                    "conversation_item", "contact_result", "content_title"} or x.kind == "title_contains") for x in goal):
+                return _result("define_ui_goal", False, "Le contexte du message doit appartenir à la même surface.",
+                               "GOAL_CONTEXT_SURFACE_MISMATCH")
+        self.surfaces.freeze(goal, self.state.current, args.get("future_surfaces"))
         self.goal = goal
         self.goal_before = self.state.current
         self._emit("decision", reason="GOAL_FROZEN", predicates=[asdict(x) for x in goal])
         self._persist()
         return _result("define_ui_goal", True, "Objectif observable enregistré.", self.summary())
+
+    def _inventory(self, *, require_complete: bool = False) -> list[dict[str, Any]]:
+        if self._surface_inventory:
+            items = list(self._surface_inventory())
+        else:
+            items = []
+            try:
+                from .windows_perception import _native_window_candidates
+                items.extend(_native_window_candidates(limit=80))
+            except Exception:
+                if require_complete and self.state.current and not self.state.current.scope.page_ref:
+                    raise ValueError("NATIVE_SURFACE_INVENTORY_UNAVAILABLE")
+            if self.browser is not None:
+                items.extend(self.browser.pages())
+        if require_complete and len(items) >= 80:
+            raise ValueError("SURFACE_INVENTORY_TRUNCATED")
+        return items[:80]
+
+    def _surface_arguments(self, identity: SurfaceIdentity) -> dict[str, Any]:
+        if identity.page_ref:
+            return {"page_ref": identity.page_ref}
+        return {"window_id": identity.window_id} if identity.has_stable_identity else {"title": identity.title}
+
+    def _switch_surface(self, args: dict[str, Any]):
+        if self.pending_verification():
+            return _result("switch_ui_surface", False, "Vérifiez la mutation avant de changer le focus.", "PENDING_POSTCONDITION")
+        binding = self.surfaces.get(args.get("surface", ""))
+        if not binding.identity.has_stable_identity:
+            return _result("switch_ui_surface", False, "Une identité native ou navigateur est requise.", "SURFACE_IDENTITY_TOO_WEAK")
+        before = self.state.current
+        self.action_count += 1
+        action_id = "action_" + uuid.uuid4().hex[:12]
+        if binding.identity.page_ref:
+            payload = self.browser.activate(binding.identity.page_ref)
+            delivered = _result("switch_ui_surface", payload.get("verified") is True, "Activation d'onglet.", payload)
+        else:
+            from .windows_perception import activate_bound_window
+            delivered = (self._surface_activator or activate_bound_window)(binding.identity)
+        self.state.invalidate()
+        from .windows_perception import invalidate_ui_snapshot
+        invalidate_ui_snapshot()
+        self.goal_verdict = None
+        self.receipts.append({"action_id": action_id, "operation": "switch_ui_surface", "delivered": delivered.success,
+                              "surface": binding.name})
+        seen = self._observe("observe_ui", {"surface": binding.name})
+        verified = bool(delivered.success and object_detail(delivered.detail).get("verified") is True and seen.success)
+        self._emit("decision", reason="BOUND_SURFACE_ACTIVATED" if verified else "SURFACE_ACTIVATION_NOT_PROVEN",
+                   action_id=action_id, surface=binding.name, identity=binding.identity.as_dict())
+        if verified:
+            verdict = VerificationVerdict("passed", action_id, before.observation_id if before else "",
+                                          self.state.current.observation_id,
+                                          ({"predicate": "surface_focus", "surface": binding.name,
+                                            "surface_ref": binding.identity.ref, "evidence_ids": [action_id+":focus"]},),
+                                          "BOUND_SURFACE_FOCUS_VERIFIED")
+            self.state.add_proof(verdict)
+            self._emit("proof", verification=verdict.as_dict())
+        self._persist()
+        return _result("switch_ui_surface", delivered.success, delivered.message,
+                       {"action_id": action_id, "verified": verified, "mission_state": self.summary(),
+                        "after_observation": self.state.current.as_dict() if seen.success else None})
 
     def _observe(self, name: str, args: dict[str, Any]):
         error = self._budget_error("observe_ui")
@@ -220,16 +320,53 @@ class ComputerUseController:
         if target is not None and not isinstance(target, dict):
             raise ValueError("target must be an object")
         current = self.state.current
-        title = str(args.get("title") or (current.scope.title if self.pending and current else "") or "") or None
-        page_ref = str(args.get("page_ref") or (current.scope.page_ref if self.pending and current else "") or "")
+        options = {key: args[key] for key in ("title", "page_ref", "window_id") if args.get(key)}
+        chosen = None
+        transition_binding = None
+        surface_alias = str(args.get("surface") or "")
+        pending_transition = self.pending.transition if self.pending and not (self.pending.verdict and self.pending.verdict.passed) else None
+        if pending_transition and (surface_alias == pending_transition.surface or not surface_alias and not options):
+            try:
+                chosen = self.pending.expected_identity or self.surfaces.resolve_transition(
+                    pending_transition, self._inventory(require_complete=True))
+            except ValueError as exc:
+                self.pending.verdict = VerificationVerdict("inconclusive", self.pending.action_id,
+                    self.pending.before.observation_id if self.pending.before else "", "", (), str(exc))
+                self._emit("decision", reason=str(exc), surface=pending_transition.surface)
+                return _result(name, False, "La surface attendue n'est pas identifiée de façon unique.",
+                               {"error": str(exc), "mission_state": self.summary()})
+            surface_alias = pending_transition.surface
+            transition_binding = surface_alias
+        elif surface_alias:
+            chosen = self.surfaces.get(surface_alias).identity
+        elif not options and self.pending and current:
+            chosen = current.scope
+        if chosen is not None:
+            exact = self._surface_arguments(chosen)
+            if options and any(str(options.get(key, value)) != str(value) for key, value in exact.items()):
+                raise ValueError("SURFACE_SELECTOR_CONFLICT")
+            options = exact
         result = self.perception.perceive(
-            title=title, focus=str(args.get("focus") or ""), target=target,
+            title=options.get("title"), focus=str(args.get("focus") or ""), target=target,
             force_visual=name == "observe_screen" or args.get("force_visual") is True,
-            page_ref=page_ref, crop=args.get("crop"),
+            page_ref=str(options.get("page_ref") or ""), crop=args.get("crop"),
+            window_id=str(options.get("window_id") or ""),
         )
         if not result.success:
             return _result(name, False, result.message, object_detail(result.detail))
         observation = self.state.current
+        if chosen and not chosen.same_binding(observation.scope):
+            self.state.invalidate()
+            self.goal_verdict = None
+            self._emit("decision", reason="WRONG_BOUND_SURFACE", observed_scope=observation.scope.as_dict())
+            return _result("observe_ui", False, "L'observation ne correspond pas à l'identité liée.", "WRONG_BOUND_SURFACE")
+        if transition_binding:
+            self.surfaces.bind(transition_binding, observation, transition=True)
+            self.pending.expected_identity = observation.scope
+            self._emit("transition", kind_of_transition=pending_transition.kind,
+                       action_id=self.pending.action_id, surface=transition_binding,
+                       source=pending_transition.source.as_dict(), destination=observation.scope.as_dict())
+        self.surfaces.observe(observation)
         strategy = "crop" if args.get("crop") else "vision" if name == "observe_screen" or args.get("force_visual") else "structured_or_fused"
         strategy += ":"+json.dumps({"crop":args.get("crop"), "target":target},sort_keys=True,ensure_ascii=False)
         allowed = self.progress.record_observation(observation, strategy)
@@ -250,13 +387,19 @@ class ComputerUseController:
     def _check_pending(self, after: UIObservation) -> None:
         if self.pending is None or (self.pending.verdict and self.pending.verdict.passed):
             return
+        if self.pending.transition and self.pending.expected_identity is None:
+            return  # Only the declared owner/opener transition can bind this destination.
         verdict = verify_conditions(
             self.pending.conditions, before=self.pending.before, after=after,
             action_id=self.pending.action_id, require_transition=self.pending.require_transition,
             allow_document_transition=bool(self.pending.before and self.pending.before.scope.page_ref),
+            expected_surface=self.pending.expected_identity,
         )
         self.pending.verdict = verdict
         self.state.add_proof(verdict)
+        self.surfaces.observe(after)
+        if self.pending.non_idempotent:
+            self.surfaces.record_message_proof(self.pending.conditions, verdict, self.pending.before, after)
         self._emit("proof", verification=verdict.as_dict())
         if not self.pending.progress_recorded or verdict.passed:
             self.progress.record_action(semantic_signature=self.pending.signature, before=self.pending.before,
@@ -266,14 +409,14 @@ class ComputerUseController:
     def _check_goal(self, after: UIObservation) -> None:
         if not self.goal:
             return
-        # A send/new-text goal requires an action receipt as well as a new state.
-        if any(x.kind == "new_text" for x in self.goal) and not self.receipts:
-            return
-        verdict = verify_conditions(
-            self.goal, before=self.goal_before, after=after,
-            action_id="goal:" + (self.context.mission_id if self.context else ""),
-            allow_document_transition=bool(self.goal_before and self.goal_before.scope.page_ref),
-        )
+        self.surfaces.observe(after)
+        verdict = self.surfaces.verify(self.goal, action_id="goal:" + (self.context.mission_id if self.context else ""),
+                                       max_age_s=float(settings.ui_target_max_age_s))
+        identities = {self.surfaces.bindings[x.surface or "default"].identity.page_ref or
+                      self.surfaces.bindings[x.surface or "default"].identity.ref
+                      for x in self.goal if (x.surface or "default") in self.surfaces.bindings}
+        if verdict.passed and len(identities) > 1 and not self._verifying_goal:
+            verdict = replace(verdict, status="inconclusive", reason="FINAL_SCOPED_OBSERVATION_REQUIRED")
         if verdict.passed and not self.pending_verification():
             self.goal_verdict = verdict
             self.state.add_proof(verdict)
@@ -282,6 +425,8 @@ class ComputerUseController:
             self._emit("proof", goal_completed=True, verification=verdict.as_dict())
         else:
             self.goal_verdict = verdict if not verdict.passed else None
+            self.context.status = MissionStatus.RUNNING
+            self.context.proof_refs = []
 
     def _verify_goal(self, args: dict[str, Any]):
         if not self.goal:
@@ -289,13 +434,30 @@ class ComputerUseController:
                            "GOAL_NOT_DEFINED")
         if not (self.goal_verdict and self.goal_verdict.passed and self.state.current and
                 self.state.current.observation_id.startswith("native_proof_")):
-            target = next((x for x in self.goal if x.role or x.label), None)
-            observed = self._observe("observe_ui", {
-                **args, "target": {"role": target.role, "label": target.label,
+            if self.pending_verification():
+                confirmed = self._observe("observe_ui", {})
+                if not confirmed.success or self.pending_verification():
+                    return _result("verify_ui_goal", False, "La dernière action reste à vérifier.",
+                                   {"error": "PENDING_POSTCONDITION", "mission_state": self.summary()})
+            names = list(dict.fromkeys(x.surface or "default" for x in self.goal))
+            try:
+                for surface in names:
+                    target = next((x for x in self.goal if (x.surface or "default") == surface and (x.role or x.label)), None)
+                    observed = self._observe("observe_ui", {
+                        **{key: value for key, value in args.items() if key not in {"surface", "title", "page_ref", "window_id"}},
+                        "surface": surface,
+                        "target": {"role": target.role, "label": target.label,
                                    "region": target.region, "operation": "read"} if target else None,
-            })
-            if not observed.success:
-                return _result("verify_ui_goal", False, observed.message, object_detail(observed.detail))
+                    })
+                    if not observed.success:
+                        self.goal_verdict = None
+                        return _result("verify_ui_goal", False, observed.message, object_detail(observed.detail))
+                # Commit completion only after every relevant surface has been freshly reread.
+                self._verifying_goal = True
+                self._check_goal(self.state.current)
+            finally:
+                self._verifying_goal = False
+            self._persist()
         proven = bool(self.goal_verdict and self.goal_verdict.passed)
         return _result("verify_ui_goal", proven,
                        "Objectif vérifié." if proven else "Les preuves ne démontrent pas encore l'objectif.",
@@ -316,6 +478,13 @@ class ComputerUseController:
                            {"error": "PENDING_POSTCONDITION", "mission_state": self.summary()})
         intent = TargetIntent.from_dict({**args["target"], "operation": operation})
         current = self.state.current
+        if args.get("surface"):
+            requested = self.surfaces.get(args["surface"]).identity
+            if current is None or not requested.same_binding(current.scope):
+                return _result("act_ui", False, "Observez ou activez d'abord la surface liée.", "SURFACE_SELECTION_REQUIRED")
+        if current and (args.get("page_ref") and args["page_ref"] != current.scope.page_ref or
+                        args.get("window_id") and str(args["window_id"]) != current.scope.window_id):
+            return _result("act_ui", False, "La cible appartient à une autre surface.", "SURFACE_SELECTION_REQUIRED")
         if current is None or current.generation != self.state.generation or (
             time.monotonic()-current.monotonic_at > float(settings.ui_target_max_age_s)
         ):
@@ -324,10 +493,25 @@ class ComputerUseController:
                 return _result("act_ui", False, "La ref n'est plus fraîche. Réobservez puis recopiez une nouvelle ref.",
                                "STALE_OBSERVATION")
             seen = self._observe("observe_ui", {"title": args.get("title"), "page_ref": args.get("page_ref"),
+                                               "surface": args.get("surface"), "window_id": args.get("window_id"),
                                                "target": asdict(intent)})
             if not seen.success:
                 return seen
             current = self.state.current
+        transition = None
+        if args.get("expected_transition") is not None:
+            transition = ExpectedSurfaceTransition.from_dict(args["expected_transition"], current.scope,
+                                                              self._inventory(require_complete=True))
+            if any(x.surface != transition.surface or x.kind == "new_text" for x in conditions):
+                raise ValueError("Transition postconditions must name the destination surface and cannot prove new_text")
+            if transition.kind == "bound_surface":
+                self.surfaces.get(transition.surface)
+            elif transition.surface not in self.surfaces.future:
+                raise ValueError("TRANSITION_SURFACE_NOT_DECLARED")
+        else:
+            for condition in conditions:
+                if condition.surface and not self.surfaces.get(condition.surface).identity.same_binding(current.scope):
+                    raise ValueError("POSTCONDITION_SURFACE_MISMATCH")
         resolution = resolve_target(intent, current, generation=self.state.generation,
                                     max_age_s=float(settings.ui_target_max_age_s))
         if resolution.status != "resolved":
@@ -364,7 +548,9 @@ class ComputerUseController:
             context = tuple(x for x in self.goal if (
                 x.kind == "text_present" and (x.role == "content_title" or x.region) or
                 x.kind in {"target_present", "selected"} and x.label and x.role in {
-                    "conversation_item", "contact_result", "content_title"} or x.kind == "title_contains"))
+                    "conversation_item", "contact_result", "content_title"} or x.kind == "title_contains")
+                and (x.surface or "default") in self.surfaces.bindings
+                and self.surfaces.get(x.surface or "default").identity.same_binding(current.scope))
             if not context or not verify_conditions(context, before=None, after=current).passed:
                 return _result("act_ui", False, "Le contexte de l'envoi n'est pas prouvé dans l'état actuel.",
                                "SEND_CONTEXT_NOT_PROVEN")
@@ -373,7 +559,7 @@ class ComputerUseController:
         self.action_count += 1
         action_id = "action_" + uuid.uuid4().hex[:12]
         self.pending = PendingVerification(action_id, current, conditions, signature,
-                                           operation != "write", non_idempotent=send)
+                                           operation != "write", non_idempotent=send, transition=transition)
         self.goal_verdict = None
         self._emit("decision", action_id=action_id, reason="TARGET_RESOLVED",
                    target_ref=target.ref, backend=target.sensor, evidence_ids=target.evidence_ids)
@@ -388,7 +574,7 @@ class ComputerUseController:
         self.receipts.append({"action_id": action_id, "operation": operation, "target_ref": target.ref,
                               "delivered": delivered.success, "backend": target.sensor})
         # Reuse the exact native read-back for a pure write, avoiding extra vision.
-        if delivered.success and payload.get("verified") is True and operation == "write" and len(conditions) == 1:
+        if delivered.success and payload.get("verified") is True and operation == "write" and len(conditions) == 1 and not transition:
             expected = conditions[0]
             text = str(args.get("text") or "")
             mode = str(args.get("mode") or "replace")
@@ -397,14 +583,14 @@ class ComputerUseController:
                 entity = replace(target, ref=proof_id+":value", native_ref="", value=text,
                                  evidence_ids=(action_id+":native_readback",))
                 proof = UIObservation(proof_id, current.scope, (entity,), generation=-1,
-                                      coverage={"tree_complete": False}, sensors={"uia": {"status": "exact_readback"}})
+                                      coverage={"tree_complete": False}, sensors={target.sensor: {"status": "exact_readback"}})
                 self.state.observe(proof)
                 self._check_pending(proof)
                 self._check_goal(proof)
         if self.pending.verdict is None or not self.pending.verdict.passed:
             evidence_target = next((x for x in conditions if x.role or x.label), None)
             self._observe("observe_ui", {
-                "title": current.scope.title, "page_ref": current.scope.page_ref,
+                **({"surface": transition.surface} if transition else self._surface_arguments(current.scope)),
                 "force_visual": target.sensor == "vision",
                 "target": {"role": evidence_target.role, "label": evidence_target.label,
                            "region": evidence_target.region, "operation": "read"} if evidence_target else None,
@@ -446,7 +632,7 @@ class ComputerUseController:
                 # A structural target may need a physical wheel event; capture
                 # geometry without calling a VLM or replacing its UIA identity.
                 from .screen_vision import _capture_window_bytes
-                _, metadata = _capture_window_bytes(before.scope.title)
+                _, metadata = _capture_window_bytes(before.scope.title, window_id=before.scope.window_id)
             if not metadata:
                 return _result("act_ui", False, "Une capture fraîche est nécessaire.", "visual_capture_missing")
             geometry = CaptureGeometry.from_metadata(metadata)
@@ -510,22 +696,35 @@ def ui_tool_definitions(make_tool: Callable[..., Any], *, browser_available: boo
     condition = {"type": "object", "properties": {
         "kind": {"type": "string", "enum": sorted(CONDITION_KINDS)},
         "value": {"type": "string"}, "role": {"type": "string"}, "label": {"type": "string"}, "region": {"type": "string"},
+        "surface": {"type": "string", "description": "Nom de surface liée ; omission = surface initiale du goal ou courante de l'action."},
     }, "required": ["kind"], "additionalProperties": False}
     conditions = {"type": "array", "items": condition, "minItems": 1, "maxItems": 24}
     target = {"type": "object", "properties": {key: {"type": "string"} for key in (
         "ref", "role", "label", "region", "within", "operation")}, "additionalProperties": False}
     observe_properties = {
         "title": {"type": "string"}, "page_ref": {"type": "string"}, "focus": {"type": "string"},
+        "window_id": {"type": "string"}, "surface": {"type": "string"},
         "target": target, "force_visual": {"type": "boolean"},
         "crop": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
     }
     tools = [
+        make_tool("list_ui_surfaces", "Liste les fenêtres Windows et onglets de la session CDP configurée, "
+                  "avec leurs identités et relations owner/opener. Aucun navigateur n'est lancé.", {}, []),
+        make_tool("bind_ui_surface", "Lie name à l'identité de la dernière observation fraîche. Observe les "
+                  "surfaces existantes et lie-les AVANT define_ui_goal. Un nom ne peut jamais désigner une autre fenêtre/onglet.",
+                  {"name": {"type": "string"}}, ["name"]),
+        make_tool("switch_ui_surface", "Active une surface déjà liée par HWND/PID ou page_ref, vérifie son focus, "
+                  "et réobserve. Attend la preuve de l'action précédente avant de changer de surface.",
+                  {"surface": {"type": "string"}}, ["surface"]),
         make_tool("observe_ui", "Observe et fusionne UIA/Cua/DOM puis vision seulement si la cible utile manque. "
                   "target peut préciser role/label/region. Les refs sont opaques et expirent après mutation. "
                   "force_visual/crop apportent une preuve ciblée nouvelle.", observe_properties, []),
         make_tool("define_ui_goal", "Avant une mission UI multi-étapes, définis TOUS les prédicats observables de "
                   "l'objectif utilisateur. Ils ne peuvent pas être affaiblis après action. Un envoi exige new_text "
-                  "avec role=message ou une région précise, ainsi que le bon destinataire.", {"conditions": conditions}, ["conditions"]),
+                  "avec role=message ou une région précise, ainsi que le bon destinataire sur la même surface. "
+                  "Pour plusieurs applications, chaque prédicat nomme surface. Déclare future_surfaces pour des "
+                  "dialogues/popups encore inconnus ; ils ne seront liés que par une transition owner/opener vérifiée.",
+                  {"conditions": conditions, "future_surfaces": {"type": "array", "items": {"type": "string"}, "maxItems": 15}}, ["conditions"]),
         make_tool("act_ui", "Résout une cible observée/sémantique, agit avec le meilleur backend puis vérifie "
                   "les postconditions expected sur une nouvelle observation. Utilise cette primitive pour les "
                   "clics et actions opaques. success signifie livraison ; verified et goal_completed prouvent le résultat.",
@@ -533,7 +732,11 @@ def ui_tool_definitions(make_tool: Callable[..., Any], *, browser_available: boo
                    "expected": conditions, "text": {"type": "string"},
                    "mode": {"type": "string", "enum": ["replace", "append", "insert"]},
                    "direction": {"type": "string", "enum": ["up", "down"]}, "key": {"type": "string"},
-                   "title": {"type": "string"}, "page_ref": {"type": "string"}},
+                   "title": {"type": "string"}, "page_ref": {"type": "string"},
+                   "window_id": {"type": "string"}, "surface": {"type": "string"},
+                   "expected_transition": {"type": "object", "properties": {
+                       "kind": {"type": "string", "enum": ["owned_window", "popup", "bound_surface"]},
+                       "surface": {"type": "string"}}, "required": ["kind", "surface"], "additionalProperties": False}},
                   ["target", "operation", "expected"]),
         make_tool("verify_ui_goal", "Vérifie l'objectif enregistré, sur des preuves fraîches et dans le bon scope. "
                   "Ne termine une mission multi-étapes que si goal_completed=true.", observe_properties, []),

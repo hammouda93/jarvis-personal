@@ -6,7 +6,7 @@ from typing import Any
 
 from .semantic_grounding import normalized_text
 from .ui_geometry import intersection_over_union
-from .ui_observation import UIEntity, UIObservation
+from .ui_observation import SurfaceIdentity, UIEntity, UIObservation
 
 CONDITION_KINDS = frozenset({
     "value_equals", "value_contains", "value_endswith", "text_present",
@@ -23,14 +23,15 @@ class Postcondition:
     role: str = ""
     label: str = ""
     region: str = ""
+    surface: str = ""
 
     @classmethod
     def from_dict(cls, value: Any) -> Postcondition:
-        if not isinstance(value, dict) or set(value)-{"kind", "value", "role", "label", "region"}:
+        if not isinstance(value, dict) or set(value)-{"kind", "value", "role", "label", "region", "surface"}:
             raise ValueError("Invalid postcondition fields")
         if value.get("kind") not in CONDITION_KINDS:
             raise ValueError("Unsupported postcondition")
-        for key in ("value", "role", "label", "region"):
+        for key in ("value", "role", "label", "region", "surface"):
             if key in value and not isinstance(value[key], str):
                 raise ValueError(f"{key} must be a string")
         result = cls(**value)
@@ -40,7 +41,7 @@ class Postcondition:
         if result.kind in {"text_present", "text_absent", "new_text", "title_contains",
                            "url_contains", "value_contains", "value_endswith"} and not result.value.strip():
             raise ValueError("An empty string cannot prove a predicate")
-        if any(len(getattr(result, key)) > 2000 for key in ("value", "role", "label", "region")):
+        if any(len(getattr(result, key)) > 2000 for key in ("value", "role", "label", "region", "surface")):
             raise ValueError("Postcondition too large")
         return result
 
@@ -151,6 +152,7 @@ def verify_conditions(
     before: UIObservation | None, after: UIObservation | None,
     action_id: str = "", require_transition: bool = False,
     allow_document_transition: bool = False,
+    expected_surface: SurfaceIdentity | None = None,
 ) -> VerificationVerdict:
     before_id = before.observation_id if before else ""
     after_id = after.observation_id if after else ""
@@ -160,19 +162,22 @@ def verify_conditions(
         allow_document_transition and before is not None
         and bool(before.scope.page_ref) and before.scope.page_ref == after.scope.page_ref
     )
-    if before is not None and not before.scope.same_surface(after.scope) and not same_page_navigation:
+    permitted_transition = expected_surface is not None and expected_surface.same_binding(after.scope)
+    if expected_surface is not None and not permitted_transition:
+        return VerificationVerdict("unsafe", action_id, before_id, after_id, (), "WRONG_EXPECTED_SURFACE")
+    if before is not None and not before.scope.same_surface(after.scope) and not same_page_navigation and not permitted_transition:
         return VerificationVerdict("unsafe", action_id, before_id, after_id, (), "WRONG_SURFACE")
     if before is not None and (after.monotonic_at < before.monotonic_at or before_id == after_id):
         return VerificationVerdict("inconclusive", action_id, before_id, after_id, (), "STALE_AFTER_STATE")
     facts = []
-    changed = False
+    changed = bool(permitted_transition and before and not before.scope.same_binding(after.scope))
     any_failed = False
     any_unknown = False
     for condition in conditions:
         passed, evidence, actual = _predicate(condition, after)
         previous, _, old = _predicate(condition, before) if before else (None, [], None)
         if condition.kind == "new_text":
-            if before is None:
+            if before is None or not before.scope.same_surface(after.scope):
                 passed = None
             else:
                 passed = True if passed is True and isinstance(actual, int) and isinstance(old, int) and actual > old else None
@@ -182,6 +187,7 @@ def verify_conditions(
         facts.append({
             "predicate": asdict(condition), "passed": passed, "evidence_ids": evidence,
             "observed": actual, "previous": old,
+            "surface_ref": after.scope.ref, "observation_id": after_id,
         })
     status = "failed" if any_failed else "inconclusive" if any_unknown else "passed"
     reason = "EXPECTED_TRANSITION_OBSERVED" if status == "passed" else "POSTCONDITION_NOT_PROVEN"

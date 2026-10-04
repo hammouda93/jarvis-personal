@@ -95,6 +95,7 @@ def _capture_window_bytes(
     title: str | None = None,
     *,
     crop: list[float] | None = None,
+    window_id: str = "",
 ) -> tuple[bytes, dict[str, Any]]:
     try:
         from PIL import ImageGrab
@@ -103,11 +104,23 @@ def _capture_window_bytes(
             "Pillow n'est pas installé. Exécutez pip install -r requirements.txt."
         ) from exc
 
-    item = _native_target_window(title)
+    if window_id:
+        from .windows_perception import _native_window_by_id
+        item = _native_window_by_id(window_id)
+    else:
+        item = _native_target_window(title)
     if item is None:
         raise RuntimeError(
             f"Fenêtre introuvable: {title}." if title else "Aucune fenêtre de travail détectée."
         )
+    if getattr(settings, "computer_use_enabled", False) is True:
+        import win32gui
+        handle = int(item.get("hwnd") or item.get("handle") or 0)
+        if not handle or win32gui.IsIconic(handle):
+            raise RuntimeError("WINDOW_RESTORE_REQUIRED")
+        if win32gui.GetForegroundWindow() != handle:
+            # ImageGrab captures desktop pixels, including other windows covering this one.
+            raise RuntimeError("BOUND_SURFACE_ACTIVATION_REQUIRED")
 
     bounds = tuple(item.get("bounds") or (0, 0, 0, 0))
     left, top, right, bottom = [int(value) for value in bounds]
@@ -155,6 +168,7 @@ def _capture_window_bytes(
         "monotonic_at": time.monotonic(),
         "capture_id": capture_id,
         "normalized_domain": 1000,
+        "pinned_window": bool(window_id),
         "crop": list(physical_crop) if physical_crop is not None else None,
     }
 
@@ -190,6 +204,7 @@ def observe_screen(
     focus: str = "",
     crop: list[float] | None = None,
     target: dict[str, Any] | None = None,
+    window_id: str = "",
 ) -> ScreenObservation:
     if not settings.vision_enabled:
         return ScreenObservation(
@@ -207,8 +222,12 @@ def observe_screen(
         )
 
     try:
-        image_bytes, metadata = (_capture_window_bytes(title, crop=crop) if crop is not None
-                                 else _capture_window_bytes(title))
+        capture_options = {}
+        if crop is not None:
+            capture_options["crop"] = crop
+        if window_id:
+            capture_options["window_id"] = window_id
+        image_bytes, metadata = _capture_window_bytes(title, **capture_options)
     except Exception as exc:
         return ScreenObservation(
             False,
@@ -469,7 +488,15 @@ def visual_action_guard(detail: dict[str, Any]) -> bool:
     if not handle:
         return not strict  # Legacy mocked adapters keep their compatibility path.
     try:
-        current = _native_target_window(str(detail.get("title") or "") or None)
+        if detail.get("pinned_window") is True:
+            from .windows_perception import _native_window_by_id
+            current = _native_window_by_id(str(detail.get("hwnd") or ""))
+            if strict:
+                import win32gui
+                if win32gui.GetForegroundWindow() != int(handle) or win32gui.IsIconic(int(handle)):
+                    return False
+        else:
+            current = _native_target_window(str(detail.get("title") or "") or None)
         if current is None or int(current.get("hwnd") or current.get("handle") or 0) != int(handle):
             return False
         for key in ("pid", "process_start"):

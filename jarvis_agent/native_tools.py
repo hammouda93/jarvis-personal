@@ -657,7 +657,7 @@ class NativeToolRegistry:
             # Legacy exact write and close primitives remain available. UI clicks
             # on this branch use one generic action with explicit postconditions.
             replaced = {"click_ui_element", "click_visual_target", "write_visual_target",
-                        "press_key", "type_text_active_window"}
+                        "press_key", "type_text_active_window", "activate_window"}
             tools = [x for x in tools if x["function"]["name"] not in replaced]
             tools += ui_tool_definitions(
                 self._ollama, browser_available=getattr(settings, "browser_enabled", False) is True

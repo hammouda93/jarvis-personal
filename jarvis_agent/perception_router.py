@@ -45,7 +45,10 @@ class PerceptionManager:
 
     def perceive(self, *, title: str | None = None, focus: str = "",
                  target: dict[str, Any] | None = None, force_visual: bool = False,
-                 page_ref: str = "", crop: list[float] | None = None) -> UIActionResult:
+                 page_ref: str = "", crop: list[float] | None = None,
+                 window_id: str = "") -> UIActionResult:
+        if window_id and page_ref:
+            raise ValueError("Choose one native window or browser page")
         if page_ref:
             if self.browser is None:
                 return UIActionResult(False, "Aucune session navigateur configurée.", "browser_unavailable")
@@ -55,7 +58,10 @@ class PerceptionManager:
             except Exception as exc:
                 return UIActionResult(False, "Observation navigateur indisponible.", str(exc))
         else:
-            result = (self.structured or inspect_uia_window)(title=title)
+            options = {"title": title}
+            if window_id:
+                options["window_id"] = window_id
+            result = (self.structured or inspect_uia_window)(**options)
         structured = object_detail(result.detail)
         structured.setdefault("monotonic_at", time.monotonic())
         structured.setdefault("captured_at", utc_now())
@@ -70,6 +76,9 @@ class PerceptionManager:
                 win.update({key: matches[0][key] for key in ("hwnd", "handle", "pid", "process_start", "process")
                             if key in matches[0]})
                 structured["sensor"] = "cua"
+        if window_id and str((structured.get("window") or {}).get("hwnd") or
+                             (structured.get("window") or {}).get("handle") or "") != window_id:
+            return UIActionResult(False, "Le capteur n'a pas prouvé l'identité HWND demandée.", "WRONG_BOUND_SURFACE")
         visual = None
         needs_visual = force_visual or not result.success or _uia_needs_visual_fallback(structured, target)
         attempted = needs_visual and bool(settings.vision_enabled)
@@ -83,6 +92,8 @@ class PerceptionManager:
             if target:
                 question += "\nTarget to resolve: " + json.dumps(target, ensure_ascii=False)[:800]
             kwargs: dict[str, Any] = {"title": observed_title or title, "focus": question}
+            if window_id:
+                kwargs["window_id"] = window_id
             if crop is not None:
                 kwargs["crop"] = crop
             if target is not None:

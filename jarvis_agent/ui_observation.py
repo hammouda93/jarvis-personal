@@ -34,6 +34,19 @@ class SurfaceIdentity:
     document_generation: int = 0
     url: str = ""
     bounds: tuple[float, ...] = ()
+    owner_window_id: str = ""
+    root_owner_window_id: str = ""
+    opener_page_ref: str = ""
+
+    def same_binding(self, other: SurfaceIdentity) -> bool:
+        """Stable window/tab identity; a document navigation still expires element refs."""
+        if self.page_ref or other.page_ref:
+            return bool(self.page_ref) and self.page_ref == other.page_ref
+        return self.same_surface(other)
+
+    @property
+    def has_stable_identity(self) -> bool:
+        return bool(self.page_ref) or bool(self.window_id.isdecimal() and int(self.window_id) > 0 and self.pid > 0)
 
     @property
     def ref(self) -> str:
@@ -81,6 +94,9 @@ class SurfaceIdentity:
             process=str(win.get("process") or win.get("app") or ""),
             page_ref=str(win.get("page_ref") or ""),
             document_generation=generation, url=str(win.get("url") or ""), bounds=bounds,
+            owner_window_id=str(win.get("owner_hwnd") or win.get("owner_window_id") or ""),
+            root_owner_window_id=str(win.get("root_owner_hwnd") or win.get("root_owner_window_id") or ""),
+            opener_page_ref=str(win.get("opener_page_ref") or ""),
         )
 
 

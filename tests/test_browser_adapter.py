@@ -5,14 +5,17 @@ import subprocess
 import socket
 import tempfile
 import time
+import threading
 import unittest
 from pathlib import Path
 
 from benchmarks.unknown_ui import generate_html
+from benchmarks.unknown_multi_surface import make_server
 from jarvis_agent.browser_adapter import BrowserAdapter
 from jarvis_agent.computer_use_controller import ComputerUseController
 from jarvis_agent.perception_router import PerceptionManager
 from jarvis_agent.ui_observation import UIEntity
+from jarvis_agent.ui_observation import object_detail
 
 
 class BrowserBoundaryTests(unittest.TestCase):
@@ -186,6 +189,144 @@ class ChromiumFixtureTests(unittest.TestCase):
         snapshot=self.adapter.observe(self.page_ref)
         result=self.adapter.act(self.page_ref,self.find(snapshot,"Courriel")["ref"],"write",{"text":"agent@example.test"})
         self.assertTrue(result["verified"])
+
+    def start_workflow_server(self, seed):
+        server = make_server(seed=seed)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        def stop():
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=2)
+        self.addCleanup(stop)
+        return f"http://127.0.0.1:{server.server_port}"
+
+    def test_held_out_three_surface_workflow_has_independent_oracles(self):
+        for seed in (72, 113, 287):
+            with self.subTest(seed=seed):
+                origin = self.start_workflow_server(seed)
+                context = self.browser.new_context()
+                self.addCleanup(context.close)
+                source_page = context.new_page()
+                source_page.goto(origin + "/source")
+                review = context.new_page()
+                review.goto(origin + "/review")
+                controller = ComputerUseController(perception=PerceptionManager(browser=self.adapter))
+                controller.begin("Recopie la référence source, ouvre la confirmation puis confirme et vérifie les trois surfaces.")
+                delegate = lambda *_args: self.fail("A DOM workflow must keep the structured browser backend")
+                pages = self.adapter.pages()
+                source_ref = next(x["page_ref"] for x in pages if x["url"] == origin + "/source")
+                review_ref = next(x["page_ref"] for x in pages if x["url"] == origin + "/review")
+                execute = lambda name, args=None: controller.execute(name, args or {}, delegate)
+                source = execute("observe_ui", {"page_ref": source_ref})
+                entities = object_detail(source.detail)["ui_observation"]["entities"]
+                reference = next(x for x in entities if x["technical_role"] == "textbox")
+                code = reference["value"]  # Read through perception, never through fixtureState/source code.
+                self.assertTrue(code)
+                self.assertFalse(reference["writable"])
+                self.assertTrue(execute("bind_ui_surface", {"name": "source"}).success)
+                self.assertTrue(execute("observe_ui", {"page_ref": review_ref}).success)
+                self.assertTrue(execute("bind_ui_surface", {"name": "review"}).success)
+                # The user asks to confirm; the fixture localizes the observed status.
+                done = "Confirmed" if any(x.label == "Review" for x in controller.state.current.entities) else "Confirmé"
+                goals = [{"kind": "text_present", "value": done, "surface": name}
+                         for name in ("source", "review", "confirmation")]
+                defined = execute("define_ui_goal", {"conditions": goals, "future_surfaces": ["confirmation"]})
+                self.assertTrue(defined.success, defined.detail)
+                written = execute("act_ui", {"operation": "write", "surface": "review", "target": {
+                    "role": "text_input", "label": reference["label"]}, "text": code,
+                    "expected": [{"kind": "value_equals", "label": reference["label"], "value": code, "surface": "review"}]})
+                self.assertTrue(object_detail(written.detail)["verified"], written.detail)
+                self.assertTrue(execute("observe_ui", {"surface": "review"}).success)
+                open_button = next(x for x in controller.state.current.entities if x.technical_role == "button")
+                confirm_label = "Confirm" if done == "Confirmed" else "Confirmer"
+                opened = execute("act_ui", {"operation": "click", "target": {"ref": open_button.ref},
+                    "expected_transition": {"kind": "popup", "surface": "confirmation"},
+                    "expected": [{"kind": "target_present", "label": confirm_label, "surface": "confirmation"}]})
+                self.assertTrue(object_detail(opened.detail)["verified"], opened.detail)
+                confirmation_ref = controller.surfaces.get("confirmation").identity.page_ref
+                popup_metadata = next(x for x in self.adapter.pages() if x["page_ref"] == confirmation_ref)
+                self.assertEqual(popup_metadata["opener_page_ref"], review_ref)
+                confirmed = execute("act_ui", {"operation": "click", "surface": "confirmation", "target": {"label": confirm_label},
+                    "expected": [goals[2]]})
+                self.assertTrue(object_detail(confirmed.detail)["verified"], confirmed.detail)
+                self.assertFalse(controller.summary()["goal_completed"])
+                final = execute("verify_ui_goal")
+                self.assertTrue(final.success, final.detail)
+                proof = object_detail(final.detail)["ui_verification"]["predicates"]
+                self.assertEqual({x["surface"] for x in proof}, {"source", "review", "confirmation"})
+                # Oracles are read by the test only after the engine's final proof.
+                source_page.evaluate("1")  # Flush events for the independent test client.
+                popup = next(p for p in context.pages if p.url.startswith(origin + "/confirmation"))
+                self.assertEqual(review.evaluate("fixtureState().value"), code)
+                self.assertTrue(source_page.evaluate("fixtureState().confirmed"))
+                self.assertTrue(review.evaluate("fixtureState().confirmed"))
+                self.assertEqual(popup.evaluate("fixtureState().confirmCount"), 1)
+                popup.close()
+                review.close()
+                source_page.close()
+
+    def test_browser_surface_binding_survives_navigation_but_old_elements_do_not(self):
+        controller = ComputerUseController(perception=PerceptionManager(browser=self.adapter))
+        controller.begin("Navigue puis vérifie")
+        delegate = lambda *_args: self.fail("Unexpected Windows fallback")
+        controller.execute("observe_ui", {"page_ref": self.page_ref}, delegate)
+        old_ref = controller.state.current.entities[0].native_ref
+        self.assertTrue(controller.execute("bind_ui_surface", {"name": "workspace"}, delegate).success)
+        old_identity = controller.surfaces.get("workspace").identity
+        self.page.goto("about:blank")
+        self.page.set_content('<h1>Destination</h1><input aria-label="Editor">')
+        observed = controller.execute("observe_ui", {"surface": "workspace"}, delegate)
+        self.assertTrue(observed.success, observed.detail)
+        self.assertTrue(old_identity.same_binding(controller.state.current.scope))
+        self.assertFalse(old_identity.same_surface(controller.state.current.scope))
+        with self.assertRaisesRegex(ValueError, "stale_browser_ref"):
+            self.adapter.act(self.page_ref, old_ref, "write", {"text": "wrong"})
+        activated = controller.execute("switch_ui_surface", {"surface": "workspace"}, delegate)
+        self.assertTrue(object_detail(activated.detail)["verified"], activated.detail)
+
+    def test_real_two_popups_are_ambiguous_and_no_confirmation_is_clicked(self):
+        origin = self.start_workflow_server(72)
+        self.page.goto(origin + "/review")
+        self.page.evaluate("""() => {
+          const b=document.querySelector('button');
+          b.onclick=()=>{window.open('/confirmation');window.open('/confirmation');};
+        }""")
+        controller = ComputerUseController(perception=PerceptionManager(browser=self.adapter))
+        controller.begin("Ouvre la confirmation puis confirme")
+        delegate = lambda *_args: self.fail("Unexpected Windows fallback")
+        controller.execute("observe_ui", {"page_ref": self.page_ref}, delegate)
+        goal = {"kind": "text_present", "value": "Confirmé", "surface": "confirmation"}
+        self.assertTrue(controller.execute("define_ui_goal", {"conditions": [goal], "future_surfaces": ["confirmation"]}, delegate).success)
+        button = next(x for x in controller.state.current.entities if x.technical_role == "button")
+        result = controller.execute("act_ui", {"operation": "click", "target": {"ref": button.ref},
+            "expected_transition": {"kind": "popup", "surface": "confirmation"},
+            "expected": [{"kind": "target_present", "label": "Confirmer", "surface": "confirmation"}]}, delegate)
+        self.assertFalse(object_detail(result.detail)["verified"])
+        self.assertIn("AMBIGUOUS_SURFACE_TRANSITION", result.detail)
+        self.assertTrue(controller.pending_verification())
+        self.assertNotIn("confirmation", controller.surfaces.bindings)
+        self.assertFalse(controller.execute("switch_ui_surface", {"surface": "default"}, delegate).success)
+        self.page.evaluate("1")  # The adapter and test observer have separate protocol clients.
+        popups = [p for p in self.page.context.pages if p.url.startswith(origin + "/confirmation")]
+        self.assertEqual(len(popups), 2)
+        self.assertEqual([p.evaluate("fixtureState().confirmCount") for p in popups], [0, 0])
+
+    def test_opening_existing_messages_cannot_prove_a_send_goal(self):
+        self.page.set_content('''<button aria-label="Salah" onclick="document.querySelector('main').innerHTML=
+            '<h1>Salah</h1><div role=log><p>already-existing-unique-message</p></div>'">Salah</button><main></main>''')
+        controller = ComputerUseController(perception=PerceptionManager(browser=self.adapter))
+        controller.begin("Envoie already-existing-unique-message à Salah")
+        delegate = lambda *_args: self.fail("Unexpected Windows fallback")
+        controller.execute("observe_ui", {"page_ref": self.page_ref}, delegate)
+        goal = [{"kind": "text_present", "role": "content_title", "value": "Salah"},
+                {"kind": "new_text", "role": "message", "value": "already-existing-unique-message"}]
+        self.assertTrue(controller.execute("define_ui_goal", {"conditions": goal}, delegate).success)
+        result = controller.execute("act_ui", {"operation": "click", "target": {"label": "Salah"}, "expected": goal}, delegate)
+        self.assertTrue(object_detail(result.detail)["verified"], result.detail)
+        self.assertFalse(controller.summary()["goal_completed"])
+        self.assertFalse(controller.execute("verify_ui_goal", {}, delegate).success)
+        self.assertEqual(controller.goal_verdict.reason, "NEW_TEXT_ACTION_PROOF_REQUIRED")
 
 
 if __name__ == "__main__":

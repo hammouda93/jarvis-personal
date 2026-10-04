@@ -47,7 +47,8 @@ SNAPSHOT_JS = r"""els => {
     const log=e.closest('[role=log]');
     return {index,node_id:s.document+":"+s.nodes.get(e),id:e.id||"",role,
       semantic_role:log&&log!==e&&!actionable?'message':'',
-      label:label.trim().slice(0,500),value:writable ? (e.type==="password"?"":e.value??e.innerText??"") : null,
+      label:label.trim().slice(0,500),value:(["INPUT","TEXTAREA","SELECT"].includes(e.tagName)||e.isContentEditable)
+        ? (e.type==="password"?null:e.value??e.innerText??"") : null,
       writable,actionable,enabled:!e.disabled && e.getAttribute("aria-disabled")!=="true",
       selected:e.getAttribute("aria-selected")==="true"||e.checked===true,
       focused:document.activeElement===e,
@@ -85,7 +86,7 @@ class BrowserAdapter:
             raise RuntimeError("browser_call_timeout_before_start" if cancelled else "browser_action_outcome_unknown")
 
     def _worker(self):
-        browser = playwright = None
+        browser = playwright = discovery = None
         pages: dict[str, Any] = {}
         generations: dict[str, int] = {}
         targets: dict[str, dict[str, Any]] = {}
@@ -107,6 +108,14 @@ class BrowserAdapter:
                             from playwright.sync_api import sync_playwright
                             playwright = sync_playwright().start()
                             browser = playwright.chromium.connect_over_cdp(self.endpoint, timeout=8000)
+                        try:
+                            discovery = browser.new_browser_cdp_session()
+                        except AttributeError:
+                            pass  # A test connection factory may supply a smaller protocol.
+                    if discovery is not None:
+                        # Flush target events before enumerating cached contexts/pages.
+                        # This discovers tabs/popups created by another protocol client too.
+                        discovery.send("Target.getTargets")
                     current_pages = [p for context in browser.contexts for p in context.pages if not p.is_closed()]
                     for page in current_pages:
                         if page not in pages.values():
@@ -120,8 +129,15 @@ class BrowserAdapter:
                                         del targets[key]
                             page.on("framenavigated", navigated)
                     pages = {ref:p for ref,p in pages.items() if p in current_pages}
+                    def opener_ref(p):
+                        try:
+                            opener = p.opener()
+                            return next((ref for ref, candidate in pages.items() if candidate == opener), "")
+                        except Exception:
+                            return ""
                     if method == "pages":
                         future.set_result([{"page_ref":ref,"title":p.title(),"url":p.url,
+                                            "opener_page_ref":opener_ref(p),
                                             "document_generation":generations[ref]} for ref,p in pages.items()])
                         continue
                     page_ref = str(args[0] or "")
@@ -135,9 +151,24 @@ class BrowserAdapter:
                     # A synchronous read flushes queued navigation events before the freshness check.
                     viewport = page.evaluate("({width:innerWidth,height:innerHeight})")
                     window = {"title":page.title(),"page_ref":page_ref,"url":page.url,
+                              "opener_page_ref":opener_ref(page),
                               "document_generation":generations[page_ref],
                               "bounds":[0,0,viewport["width"],viewport["height"]]}
-                    if method == "observe":
+                    def watch_popup(deliver, options):
+                        transition = options.get("expected_transition") or {}
+                        if transition.get("kind") == "popup":
+                            wait_ms = min(5000, max(1, int(self.timeout_s * 1000)))
+                            with page.expect_popup(timeout=wait_ms) as popup:
+                                deliver()
+                            popup.value.wait_for_load_state("domcontentloaded", timeout=wait_ms)
+                        else:
+                            deliver()
+                    if method == "activate":
+                        page.bring_to_front()
+                        focused = page.evaluate("document.hasFocus()")
+                        future.set_result({"verified":focused is True,"window":window,
+                                           "postcondition":"page_focus"})
+                    elif method == "observe":
                         sequence += 1
                         observation_id = f"bobs{sequence}"
                         for key in list(targets):
@@ -265,7 +296,7 @@ class BrowserAdapter:
                             value = locator.evaluate("(e)=>e.value??e.innerText??''")
                             verified = value == text if mode == "replace" else value == previous+text if mode == "append" else text in value
                         elif operation == "click":
-                            locator.click(timeout=5000)
+                            watch_popup(lambda: locator.click(timeout=5000), options)
                         elif operation == "scroll":
                             locator.hover(timeout=5000)
                             page.mouse.wheel(0,-500 if options.get("direction")=="up" else 500)
@@ -305,7 +336,7 @@ class BrowserAdapter:
                             page.mouse.move(x,y)
                             page.mouse.wheel(0,-500 if options.get("direction")=="up" else 500)
                         elif operation=="click":
-                            page.mouse.click(x,y)
+                            watch_popup(lambda: page.mouse.click(x,y), options)
                         elif operation=="write":
                             page.mouse.click(x,y)
                             focus = page.evaluate("""() => {
@@ -328,8 +359,16 @@ class BrowserAdapter:
                     else:
                         raise ValueError("Unknown browser adapter operation")
                 except Exception as exc:
+                    if method in {"act", "act_visual"}:
+                        targets.clear()
+                        captures.clear()
                     future.set_exception(exc)
         finally:
+            if discovery is not None:
+                try:
+                    discovery.detach()
+                except Exception:
+                    pass
             if playwright:
                 playwright.stop()  # Disconnect our client; never call browser.close().
 
@@ -338,6 +377,9 @@ class BrowserAdapter:
 
     def observe(self, page_ref: str = "") -> dict[str, Any]:
         return self._call("observe", page_ref)
+
+    def activate(self, page_ref: str) -> dict[str, Any]:
+        return self._call("activate", page_ref)
 
     def capture(self, page_ref: str, *, crop=None):
         return self._call("capture", page_ref, crop)

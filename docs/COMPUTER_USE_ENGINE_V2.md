@@ -14,10 +14,12 @@ Base de développement : `feature/visual-perception-fallback-v1`, commit `e83558
 - Réobservation automatique après mutation. Les relectures natives exactes d'une écriture simple restent prioritaires et évitent une capture/VLM supplémentaire.
 - Budgets, détection d'inspections sans information nouvelle, actions répétées sans effet, annulation et continuation bornée lorsque le planner s'arrête avant son objectif.
 - Journal de décisions, observations, transitions et preuves dans les fondations existantes. `AgentTurnResult` porte `goal_completed`, `mission_status` et `verification`. La voix, le texte et le miroir Kernel Shadow conservent ce verdict.
+- Objectifs multi-surfaces : noms liés à HWND/PID/process-start ou page_ref, preuves séparées et relecture finale de toutes les surfaces concernées.
+- Transitions explicites vers une fenêtre possédée, une popup ou une surface déjà liée ; refus des candidates ambiguës et des fenêtres seulement homonymes.
 
 Il s'agit d'une première intégration du moteur et de son protocole de preuve. Les tests ne démontrent pas encore une maîtrise universelle des applications Windows ni la précision d'un modèle de vision sur la machine de l'utilisateur.
 
-Les objectifs composés de cette version sont vérifiés dans une même surface, avec les navigations explicitement reconnues du même onglet. Une mission traversant plusieurs applications nécessite l'extension suivante : prédicats scoped par surface et preuves indépendantes pour chaque surface. Le moteur ne contourne pas cette limite en acceptant une observation d'une autre fenêtre comme preuve.
+Les objectifs peuvent désormais traverser plusieurs fenêtres Windows ou onglets. Chaque prédicat précise sa surface ; la preuve est rattachée à une identité réellement observée. Une navigation conserve le lien avec l'onglet, mais invalide les refs des éléments du document. Les transitions entre Windows et navigateur utilisent les mêmes contrats ; les tests de vrais bureaux multi-applications restent à exécuter sur la machine cible.
 
 ## Architecture exécutée
 
@@ -25,6 +27,8 @@ Les objectifs composés de cette version sont vérifiés dans une même surface,
 flowchart TD
     Mission["Mission utilisateur"] --> Controller["Controller : objectif et budgets"]
     Controller --> Perception["Perception Manager"]
+    Controller --> Surfaces["Surfaces liées et objectifs scopés"]
+    Surfaces --> Verifier
     Perception --> Structure["UIA / Cua ou DOM / Playwright"]
     Perception -->|"Cible manquante ou ambiguë"| Vision["Vision locale et grounding optionnel"]
     Structure --> Fusion["Fusion et UIState"]
@@ -51,6 +55,7 @@ Le controller appelle les primitives existantes plutôt que de créer un deuxiè
 | `target_resolver.py` | Identification unique, scope, fraîcheur et éligibilité de l'action |
 | `ui_verifier.py` | Postconditions typées ; `passed`, `failed`, `inconclusive`, `unsafe` et IDs des preuves |
 | `ui_state.py` | Transitions, historique borné, détection de répétition et d'absence d'effet |
+| `mission_surfaces.py` | Identités de surface immuables, baselines séparées, owner/opener, preuves d'envoi et vérification multi-surfaces |
 | `computer_use_controller.py` | Objectif figé, outils génériques, exécution, réobservation, budgets et checkpoint |
 | `computer_use_runtime.py` | Garde de complétion commune aux providers ; reprise bornée ; acknowledgements sans mutation |
 | `browser_adapter.py` | Adapter Playwright/CDP optionnel, worker dédié, refs de nœuds et de documents |
@@ -61,6 +66,7 @@ Le controller appelle les primitives existantes plutôt que de créer un deuxiè
 | `tracing_runtime.py`, `event_journal.py`, `kernel_contracts.py` | Événements observables et complétion fondée sur le verdict explicite |
 | `assistant_v3.py`, `shadow_kernel_runtime.py`, `capability_registry.py` | Voix/texte, arrêt, affichage de mission non vérifiée et miroir des résultats sans fausse complétion |
 | `benchmarks/unknown_ui.py` | Interface locale nouvelle, plusieurs layouts et mode canvas opaque ; oracle séparé des outils du planner |
+| `benchmarks/unknown_multi_surface.py` | Parcours source/révision/popup, layouts et langues variables, oracle indépendant dans chaque surface |
 
 `cua_driver_bridge.py` et `ui.py` n'ont pas besoin d'une réécriture pour cette intégration. Les refs et la session persistante du driver sont conservées. L'interface Qt reçoit le verdict par le worker commun.
 
@@ -99,11 +105,49 @@ Les rôles génériques incluent recherche, rédaction, résultat de liste/conta
 
 Le premier objectif vient du planner et doit correspondre à la demande humaine. Le moteur peut empêcher de l'affaiblir et exiger les types de preuve nécessaires ; il ne garantit pas à lui seul la traduction parfaite de toute mission en prédicats.
 
+## Missions traversant plusieurs surfaces
+
+`list_ui_surfaces` expose les fenêtres natives et les onglets de l'endpoint CDP configuré. `observe_ui(window_id=...)` observe un HWND exact ; `observe_ui(page_ref=...)` observe un onglet exact. Les titres servent à la découverte initiale, jamais à remplacer une identité liée.
+
+Avant les mutations de contenu, observer chaque surface existante puis appeler `bind_ui_surface` avec un nom court, par exemple `source` ou `destination`. Le nom reste lié à la même identité pendant toute la mission. Une observation fraîche peut actualiser ses faits ; elle ne peut pas déplacer ce lien vers une autre fenêtre du même titre. `switch_ui_surface` active ce HWND ou cet onglet et vérifie le focus, puis réobserve. Les changements de focus préalables sont autorisés avant de figer le goal.
+
+Exemple de goal à deux surfaces déjà liées :
+
+```json
+{
+  "conditions": [
+    {"kind": "value_equals", "label": "Notes", "value": "42", "surface": "source"},
+    {"kind": "value_equals", "label": "Notes", "value": "42", "surface": "destination"}
+  ]
+}
+```
+
+Chaque `act_ui` peut préciser sa surface. Ses `expected` ne peuvent emprunter la valeur d'une autre fenêtre. `verify_ui_goal` relit chaque surface du goal, sous le même verrou de mission, puis agrège les preuves. Une ancienne preuve dans une fenêtre en arrière-plan ne suffit pas : si son contenu a changé, la relecture finale échoue. Le verdict conserve, pour chaque prédicat, la surface, l'observation, les refs de preuve et l'action d'envoi correspondante. La relecture est séquentielle ; elle ne constitue pas une capture atomique de toutes les applications.
+
+Pour une nouvelle fenêtre encore inconnue, déclarer son nom dans `future_surfaces` lors de `define_ui_goal`. L'action qui l'ouvre annonce par exemple :
+
+```json
+{
+  "operation": "click",
+  "target": {"ref": "ref_observée_du_bouton"},
+  "expected_transition": {"kind": "popup", "surface": "confirmation"},
+  "expected": [{"kind": "target_present", "label": "Confirmer", "surface": "confirmation"}]
+}
+```
+
+Une `popup` exige un nouvel onglet dont `Page.opener()` est la page source. Une `owned_window` exige une nouvelle fenêtre visible dont le propriétaire Win32 ou le propriétaire racine est la fenêtre source. `bound_surface` permet de revenir vers une identité déjà liée, par exemple après validation d'un dialogue. Tous les `expected` de cette action nomment la destination. Une transition ne peut pas servir de preuve `new_text` : ouvrir un historique de messages ne démontre pas un envoi.
+
+Le moteur compare les inventaires avant/après, puis exige une seule candidate et une observation dans cette identité. Un PID commun, un titre ressemblant ou une coordonnée ne prouvent pas une relation. Le navigateur attend l'événement popup et son DOMContentLoaded avec une limite de cinq secondes par attente ; un timeout conserve l'issue incertaine et interdit une répétition aveugle. Une observation ultérieure peut confirmer la transition sans recliquer. L'inventaire est rafraîchi via CDP pour découvrir aussi les onglets créés par un autre client.
+
+Limites explicites : au plus 16 surfaces par mission ; un inventaire tronqué ne permet pas de découvrir une nouvelle surface ; les références persistées ne sont pas réactivées après redémarrage. Une fenêtre nouvelle sans relation owner/opener exploitable demande une autre preuve générique ; elle n'est pas automatiquement acceptée. La présence d'un seul prédicat dans un dialogue ensuite fermé ne devient pas une preuve durable de fichier enregistré : le goal doit vérifier le résultat dans le document ou une autre surface encore observable.
+
 ## Preuve et sécurité des reprises
 
 `success=true` d'une action signifie qu'elle a été délivrée. `verified=true` signifie que ses postconditions ont été démontrées. `goal_completed=true` signifie que tous les prédicats figés de la mission sont vérifiés et qu'aucune action incertaine ne reste en attente.
 
 Pour un envoi, le moteur demande un `new_text` dans une région de messages ou avec `role=message`, ainsi qu'une preuve de contexte/destinataire. Il vérifie le contexte avant de délivrer l'envoi. Une commande Entrée dans un rédacteur est soumise à la même règle. Un champ vidé ou un texte déjà visible avant l'action ne prouvent pas un nouveau message. Un envoi non confirmé n'est pas répété automatiquement.
+
+Le contexte et le message doivent être sur la même surface. Le goal `new_text` exige également la preuve d'une action d'envoi correspondante. Un clic ouvrant une conversation peut révéler un ancien message : même si ce texte est nouveau dans l'observation, il ne termine pas une mission d'envoi. Les champs DOM en lecture seule restent lisibles pour transférer des informations ; la valeur d'un mot de passe n'est pas présentée comme une chaîne vide vérifiée.
 
 La preuve d'un message visible correspond à un objectif UI ; elle ne prouve pas une réception distante ni un accusé serveur que l'interface ne montre pas. Utiliser un texte de test unique et inspecter les statuts affichés lorsqu'une mission exige davantage.
 
@@ -133,6 +177,8 @@ Les boîtes déclarent leur domaine. Le chemin Ollama actuel demande expliciteme
 
 Windows conserve les bornes physiques et l'origine multi-moniteur, le crop original, le HWND/PID/process-start et un petit cache borné de frames. Avant une action, identité, bornes, âge et pixels de la cible sont recontrôlés. Un déplacement/redimensionnement/layout changé impose une nouvelle observation. La garde de pixels utilise une différence moyenne tolérée ; elle réduit le risque mais ne garantit pas la stabilité de toute animation ou superposition.
 
+Le fallback Win32 conserve son HWND/PID même si UIA échoue. La capture épinglée prend exactement ce HWND, sans recherche floue par titre. Dans le nouveau moteur, une fenêtre réduite ou qui n'est pas au premier plan demande d'abord `switch_ui_surface` : `ImageGrab` capture les pixels du bureau et pourrait sinon interpréter la fenêtre qui la recouvre. Le focus est recontrôlé avant une action visuelle épinglée. Cela ne garantit pas l'absence de toute superposition toujours au-dessus ; ce cas doit rester dans la validation visuelle réelle.
+
 Le navigateur utilise des coordonnées de viewport CSS et des captures `scale=css`, y compris à DPR=2. Un crop garde son offset dans ce viewport. Les actions DOM utilisent les contrôles d'actionability Playwright. Une écriture visuelle exige un focus éditable prouvé après le clic ; sur Windows opaque, une nouvelle preuve de caret/focus visible est exigée avant le paste Unicode. Un VLM incapable de cette preuve provoque un arrêt sûr.
 
 `JARVIS_VISION_MODEL` configure la compréhension. `JARVIS_VISION_GROUNDING_MODEL` permet un autre modèle Ollama local pour la localisation ciblée. `JARVIS_VISION_GROUNDING_ENABLED=1` exécute les deux étapes sur la **même capture**, sans addition artificielle des confidences. Un désaccord rend la cible non résolue. Les confidences déclarées restent non calibrées, pas des probabilités mesurées.
@@ -157,7 +203,7 @@ Puis perception visuelle et actions visuelles, en utilisant un modèle local ins
 .\scripts\run_jarvis_computer_use.ps1 -EnableVisualActions -EnableGrounding -GroundingModel "modele-local-compatible"
 ```
 
-Le lanceur restaure ses variables d'environnement à la sortie afin de ne pas altérer le prochain lancement historique. Les screenshots restent en mémoire par défaut. Le tracing stocke des textes observés et des arguments d'action localement ; ne partager un log de test réel qu'après avoir retiré les données privées.
+Le lanceur et le script de validation restaurent leurs variables d'environnement à la sortie afin de ne pas altérer le prochain lancement historique. Les screenshots restent en mémoire par défaut. Le tracing stocke des textes observés et des arguments d'action localement ; ne partager un log de test réel qu'après avoir retiré les données privées.
 
 Pour une session CDP que vous avez explicitement ouverte :
 
@@ -193,6 +239,18 @@ python -m benchmarks.unknown_ui --seed 927 --opaque --port 8768
 
 Ne donner à Jarvis que la mission humaine et la fenêtre/page ouverte. Garder les seeds de validation séparés des seeds de développement. Ne lui transmettre ni le code, ni les rectangles, ni `fixtureState()`. Le mode opaque dessine ses contrôles ; il doit déclencher l'escalade perceptuelle. Aucun envoi externe n'est effectué par cette fixture.
 
+Benchmark de mission inconnue traversant trois surfaces :
+
+```powershell
+python -m benchmarks.unknown_multi_surface --seed 929 --port 8769
+```
+
+Dans le même navigateur de test, ouvrir `http://127.0.0.1:8769/source` et `http://127.0.0.1:8769/review`. Donner uniquement cette mission : « Recopie la référence du dossier source dans le formulaire de révision, ouvre la confirmation et confirme. Vérifie la confirmation dans les trois surfaces. » Le seed change langue, référence et placement. L'engine doit lire la valeur en lecture seule, lier les deux pages, remplir via DOM, découvrir une popup par son opener, confirmer une seule fois et relire chaque page avant de terminer. L'oracle `fixtureState()` est consulté exclusivement par le test après la preuve de l'engine.
+
+Les tests automatisés utilisent trois variantes de ce parcours avec Chromium neuf et des oracles indépendants. Ils vérifient le moteur, les adapters et la preuve ; ils n'évaluent pas la compréhension autonome d'un Cerebras ou VLM réel. Le test manuel avec uniquement la mission humaine constitue cette évaluation complémentaire.
+
+Pour Windows : ouvrir deux documents de test portant éventuellement le même titre, demander une écriture Unicode distincte dans chacun et vérifier les deux relectures. Puis ouvrir un dialogue appartenant à une fenêtre de test, confirmer et vérifier le résultat dans le document. Déplacer une autre fenêtre au premier plan après une capture : l'action visuelle doit être refusée et une nouvelle activation/observation demandée. Une fenêtre sans relation propriétaire ou deux dialogues nouveaux simultanés doivent laisser la mission non vérifiée, sans clic arbitraire.
+
 | Scénario réel | Perception attendue | Action et preuve attendues | Échec à signaler |
 |---|---|---|---|
 | Bloc-notes, texte Unicode unique | Document writable UIA ; aucune vision | Écriture native puis relecture exacte | Substitution visuelle ou texte altéré |
@@ -204,6 +262,10 @@ Ne donner à Jarvis que la mission humaine et la fenêtre/page ouverte. Garder l
 | Ref après scroll/navigation | Ancienne ref rejetée | Nouvelle ref ou intention sémantique réacquise | Réutilisation d'un token périmé |
 | « Très bien » après une mission | Aucun capteur/outil/planner | Réponse conversationnelle seulement | Mutation supplémentaire |
 | Mauvaise fenêtre ou onglet | Identité incompatible | Refus sans mutation puis sélection explicite | Preuve prise dans une autre surface |
+| Deux fenêtres homonymes | HWND/PID séparés et noms liés | Action dans chaque identité puis relecture finale des deux | Un seul résultat utilisé comme preuve globale |
+| Source/révision/popup inconnues | DOM, valeur readonly, nouveaux onglets et opener | Copie exacte, popup unique, confirmation unique, trois preuves | Ancien onglet homonyme, popup ambiguë ou copie déduite sans relecture |
+| Dialogue Windows possédé | Nouvelle fenêtre visible et owner/root-owner | Transition explicite, postconditions dans le dialogue, résultat final dans le document | PID partagé considéré comme propriétaire |
+| Historique contenant le texte à envoyer | Titre et messages observés après ouverture | Aucune preuve d'envoi tant qu'une action correspondante n'est pas prouvée | Ancien message visible assimilé à un envoi |
 
 WhatsApp sert de benchmark opaque, pas de nom de classe ni de condition dans le moteur. Pour les vrais envois, utiliser uniquement une conversation de test autorisée et un texte unique. Les contrôles visibles sont découverts à chaque run.
 
@@ -221,12 +283,15 @@ WhatsApp sert de benchmark opaque, pas de nom de classe ni de condition dans le 
 L'intégration est originale et réutilise les dépendances existantes et Playwright, sans importer un framework d'agent complet. Les patterns ont été confrontés aux sources et au code réels lors de l'investigation préalable.
 
 - Microsoft UI Automation : https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-uiautomationoverview
+- Identités et relations Windows : https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindow ; https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getancestor
+- Playwright pages/popups/opener : https://playwright.dev/python/docs/pages ; https://playwright.dev/python/docs/api/class-page#page-expect-popup ; https://playwright.dev/python/docs/api/class-page#page-opener ; https://playwright.dev/python/docs/api/class-page#page-wait-for-load-state
 - Electron accessibility : https://www.electronjs.org/docs/latest/tutorial/accessibility
 - Playwright locators/actionability/CDP : https://playwright.dev/python/docs/locators ; https://playwright.dev/python/docs/actionability ; https://playwright.dev/python/docs/api/class-browsertype#browser-type-connect-over-cdp
 - CDP AX : https://chromedevtools.github.io/devtools-protocol/tot/Accessibility/
 - OpenClaw, targets et cycle des refs : https://github.com/openclaw/openclaw/blob/main/extensions/cua-computer/src/action-targets.ts ; https://github.com/openclaw/openclaw/blob/main/extensions/cua-computer/src/ref-lifecycle.contract.test.ts
 - OpenClaw, snapshots/deltas navigateur : https://github.com/openclaw/openclaw/blob/main/extensions/browser/src/browser/pw-role-snapshot.ts ; https://github.com/openclaw/openclaw/blob/main/extensions/browser/src/browser/snapshot-delta-cache.ts
 - UFO : https://github.com/microsoft/UFO/blob/main/ufo/agents/processors/strategies/app_agent_processing_strategy.py
+- UFO, orchestration et contexte d'application : https://github.com/microsoft/UFO/blob/main/ufo/agents/agent/host_agent.py
 - WindowsAgentArena/Navi : https://github.com/microsoft/WindowsAgentArena/blob/main/src/win-arena-container/client/mm_agents/navi/agent.py
 - browser-use DOM/CDP : https://github.com/browser-use/browser-use/blob/main/browser_use/dom/service.py ; https://github.com/browser-use/browser-use/blob/main/browser_use/dom/enhanced_snapshot.py
 - Agent S3, séparation planner/grounder/exécution : https://github.com/simular-ai/Agent-S/blob/main/gui_agents/s3/agents/grounding.py ; https://github.com/simular-ai/Agent-S/blob/main/gui_agents/s3/agents/worker.py
