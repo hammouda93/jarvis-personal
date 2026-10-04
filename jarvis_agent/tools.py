@@ -1142,7 +1142,11 @@ def execute(intent: ToolIntent) -> ToolResult:
                 "Je n'ai pas trouvé la fenêtre du navigateur.",
                 activation.detail or activation.message,
             )
-        result = close_tab(target)
+        # The historical reliable path closes the currently selected tab
+        # after the browser window has been explicitly restored. Passing the
+        # site label again can make Chrome tab matching ambiguous when titles
+        # contain memory/status suffixes.
+        result = close_tab("")
         return ToolResult(
             result.success,
             result.message,
