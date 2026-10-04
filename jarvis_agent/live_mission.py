@@ -195,7 +195,9 @@ class LiveMissionTracker:
         elif intent_name in _DESKTOP_ACTIONS:
             domain = "desktop"
         else:
-            domain = ""
+            # Conversational/deterministic utilities (time, etc.) are not
+            # mission mutations. Preserve the active mission untouched.
+            return ""
         context = self._ensure(user_text, domain=domain)
         context.status = MissionStatus.RUNNING if success else MissionStatus.BLOCKED
         context.current_step = str(intent_name)
