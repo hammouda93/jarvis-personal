@@ -88,6 +88,73 @@ class CuaWindowSnapshot:
     total_element_count: int
     returned_element_count: int
     degraded_reason: str = ""
+    snapshot_id: str = ""
+    capture_id: str = ""
+
+    @property
+    def has_meaningful_content(self) -> bool:
+        """Reject snapshots that expose only title-bar/window chrome."""
+        if any(item.writable for item in self.elements):
+            return True
+
+        chrome_labels = {
+            "close",
+            "fermer",
+            "maximize",
+            "maximise",
+            "agrandir",
+            "minimize",
+            "minimise",
+            "reduire",
+            "réduire",
+            "restore",
+            "restaurer",
+            "system",
+            "systeme",
+            "système",
+        }
+        content_roles = {
+            "checkbox",
+            "combo box",
+            "combobox",
+            "document",
+            "edit",
+            "entry",
+            "hyperlink",
+            "link",
+            "list",
+            "list item",
+            "listitem",
+            "menu",
+            "radio button",
+            "radiobutton",
+            "search box",
+            "searchbox",
+            "tab",
+            "tab item",
+            "tabitem",
+            "text field",
+            "textfield",
+            "textbox",
+            "tree",
+            "tree item",
+            "treeitem",
+        }
+        left, top, right, bottom = self.bounds
+        height = max(0, bottom - top)
+        content_top = top + min(110, max(60, int(height * 0.14)))
+
+        for item in self.elements:
+            role = normalize(item.role)
+            label = normalize(item.label)
+            if label in chrome_labels:
+                continue
+            if role in content_roles:
+                return True
+            if item.actionable and item.frame is not None:
+                if item.frame[3] > content_top:
+                    return True
+        return False
 
 
 @dataclass(frozen=True)
@@ -506,6 +573,31 @@ class CuaDriverBridge:
             return None
         return (x, y, x + width, y + height)
 
+    def _read_window_state(
+        self,
+        *,
+        pid: int,
+        window_id: int,
+        max_elements: int,
+        max_depth: int,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        return self.call(
+            "get_window_state",
+            {
+                "pid": int(pid),
+                "window_id": int(window_id),
+                "include_screenshot": False,
+                "max_elements": max(16, min(int(max_elements), 600)),
+                "max_depth": max(2, min(int(max_depth), 16)),
+                "timeout_ms": max(250, min(int(timeout_ms), 10000)),
+            },
+            timeout_s=max(
+                float(getattr(settings, "cua_driver_timeout_s", 6.0)),
+                (max(250, int(timeout_ms)) / 1000.0) + 2.0,
+            ),
+        )
+
     def inspect_window(
         self,
         title: str | None = None,
@@ -517,20 +609,12 @@ class CuaDriverBridge:
         window = self._resolve_window(title)
         pid = int(window["pid"])
         window_id = int(window["window_id"])
-        state = self.call(
-            "get_window_state",
-            {
-                "pid": pid,
-                "window_id": window_id,
-                "include_screenshot": False,
-                "max_elements": max(16, min(int(max_elements), 600)),
-                "max_depth": max(2, min(int(max_depth), 16)),
-                "timeout_ms": max(250, min(int(timeout_ms), 10000)),
-            },
-            timeout_s=max(
-                float(getattr(settings, "cua_driver_timeout_s", 6.0)),
-                (max(250, int(timeout_ms)) / 1000.0) + 2.0,
-            ),
+        state = self._read_window_state(
+            pid=pid,
+            window_id=window_id,
+            max_elements=max_elements,
+            max_depth=max_depth,
+            timeout_ms=timeout_ms,
         )
         elements: list[CuaElement] = []
         for raw in state.get("elements") or []:
@@ -582,7 +666,7 @@ class CuaDriverBridge:
         except (TypeError, ValueError):
             bounds = (0, 0, 0, 0)
 
-        return CuaWindowSnapshot(
+        snapshot = CuaWindowSnapshot(
             pid=pid,
             window_id=window_id,
             title=str(
@@ -607,7 +691,94 @@ class CuaDriverBridge:
                 or len(elements)
             ),
             degraded_reason=str(state.get("degraded_reason") or "")[:500],
-        )
+            snapshot_id=str(state.get("snapshot_id") or "")[:160],
+            capture_id=str(state.get("capture_id") or "")[:160],
+        )        if not snapshot.has_meaningful_content:
+            # OpenClaw/Cua Driver's Windows workflow retries one fresh window
+            # snapshot when the accessibility surface is sparse. A second
+            # sparse snapshot is preserved as truthful evidence; we do not
+            # invent keyboard shortcuts or pretend content was found.
+            retry_state = self._read_window_state(
+                pid=pid,
+                window_id=window_id,
+                max_elements=max_elements,
+                max_depth=max_depth,
+                timeout_ms=timeout_ms,
+            )
+            if retry_state != state:
+                state = retry_state
+                elements = []
+                for raw in state.get("elements") or []:
+                    if not isinstance(raw, dict):
+                        continue
+                    token = str(raw.get("element_token") or "").strip()
+                    if not token:
+                        continue
+                    actions = tuple(
+                        str(item)
+                        for item in (raw.get("actions") or [])
+                        if str(item or "").strip()
+                    )
+                    elements.append(
+                        CuaElement(
+                            token=token,
+                            pid=pid,
+                            window_id=window_id,
+                            role=str(raw.get("role") or "")[:120],
+                            label=str(
+                                raw.get("label")
+                                or raw.get("title")
+                                or raw.get("name")
+                                or ""
+                            )[:300],
+                            value=str(raw.get("value") or "")[:1000],
+                            enabled=(
+                                bool(raw["enabled"])
+                                if raw.get("enabled") is not None
+                                else None
+                            ),
+                            selected=(
+                                bool(raw["selected"])
+                                if raw.get("selected") is not None
+                                else None
+                            ),
+                            actions=actions,
+                            frame=self._element_frame(raw.get("frame")),
+                        )
+                    )
+                snapshot = CuaWindowSnapshot(
+                    pid=pid,
+                    window_id=window_id,
+                    title=str(
+                        state.get("window_title")
+                        or window.get("title")
+                        or ""
+                    )[:300],
+                    app_name=str(
+                        state.get("app_name")
+                        or window.get("app_name")
+                        or ""
+                    )[:200],
+                    bounds=bounds,
+                    elements=tuple(elements),
+                    truncated=bool(state.get("truncated")),
+                    total_element_count=int(
+                        state.get("total_element_count")
+                        or len(elements)
+                    ),
+                    returned_element_count=int(
+                        state.get("returned_element_count")
+                        or len(elements)
+                    ),
+                    degraded_reason=str(
+                        state.get("degraded_reason") or ""
+                    )[:500],
+                    snapshot_id=str(state.get("snapshot_id") or "")[:160],
+                    capture_id=str(state.get("capture_id") or "")[:160],
+                )
+
+        return snapshot
+
 
     def click_element(
         self,
