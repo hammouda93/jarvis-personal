@@ -1324,7 +1324,10 @@ def _cua_snapshot_payload(
     """Project one Cua observation into Jarvis' compact ref contract."""
     global _SNAPSHOT_ELEMENTS, _SNAPSHOT_WINDOW_TITLE
 
-    max_items = max(8, min(int(limit), 40))
+    max_items = max(
+        8,
+        min(int(limit), 80 if deep else 40),
+    )
     elements = list(snapshot.elements)
 
     selected: list[CuaElement] = []
@@ -1481,6 +1484,7 @@ def inspect_active_window(
     *,
     title: str | None = None,
     limit: int = 36,
+    deep: bool = False,
 ) -> UIActionResult:
     """Return a compact, model-friendly accessibility snapshot.
 
@@ -1599,7 +1603,12 @@ def inspect_active_window(
 
     traversal_meta: dict[str, Any] = {}
     try:
-        descendants, traversal_meta = _bounded_descendants(window)
+        descendants, traversal_meta = _bounded_descendants(
+            window,
+            max_depth=10 if deep else 6,
+            max_nodes=1200 if deep else 240,
+            time_budget_s=5.5 if deep else 3.0,
+        )
     except Exception as exc:
         first_desc_error = exc
 
@@ -1627,7 +1636,12 @@ def inspect_active_window(
                     attempts=3,
                     delay_s=0.12,
                 )
-                descendants, traversal_meta = _bounded_descendants(window)
+                descendants, traversal_meta = _bounded_descendants(
+                    window,
+                    max_depth=10 if deep else 6,
+                    max_nodes=1200 if deep else 240,
+                    time_budget_s=5.5 if deep else 3.0,
+                )
             except Exception:
                 descendants = None
 
@@ -1710,6 +1724,9 @@ def inspect_active_window(
         if native_item is not None:
             fragment_nodes, fragment_probe_meta = _probe_child_uia_fragments(
                 native_item,
+                max_roots=12 if deep else 8,
+                max_nodes_per_root=180 if deep else 80,
+                time_budget_s=4.0 if deep else 2.5,
             )
             consume_wrappers(fragment_nodes)
 
@@ -1848,6 +1865,7 @@ def inspect_active_window(
         "snapshot": {
             "traversal": traversal_meta,
             "fragment_probe": fragment_probe_meta or None,
+            "deep_browser_inspection": bool(deep),
             "semantic_coverage": (
                 "insufficient"
                 if _system_chrome_only(
@@ -1913,6 +1931,25 @@ def inspect_active_window(
         True,
         f"Fenêtre inspectée: {_SNAPSHOT_WINDOW_TITLE or 'sans titre'}.",
         _json(payload),
+    )
+
+
+def inspect_browser_window(
+    *,
+    title: str | None = None,
+    limit: int = 64,
+) -> UIActionResult:
+    """Deep accessibility inspection for a real browser window.
+
+    This keeps the user's normal Chrome profile and uses the same UIA/Cua
+    contract as desktop apps, but traverses enough of the page Document region
+    to expose links, search boxes and result items before vision is considered.
+    """
+    requested = str(title or "").strip() or "Google Chrome"
+    return inspect_active_window(
+        title=requested,
+        limit=max(24, min(int(limit), 80)),
+        deep=True,
     )
 
 
