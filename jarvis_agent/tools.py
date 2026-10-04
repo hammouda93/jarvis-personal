@@ -48,6 +48,21 @@ def _remember_browser_url(url: str) -> None:
         _LAST_BROWSER_URL = value
 
 
+def _browser_window_hint(context_url: str = "") -> str:
+    raw = str(context_url or _LAST_BROWSER_URL or "").strip()
+    try:
+        host = urllib.parse.urlparse(raw).netloc.casefold()
+    except Exception:
+        host = ""
+    if host.endswith("youtube.com"):
+        return "YouTube"
+    if host == "web.whatsapp.com":
+        return "WhatsApp"
+    if "google." in host:
+        return "Google Chrome"
+    return "Google Chrome"
+
+
 def _contextual_site_search_url(query: str, context_url: str = "") -> tuple[str, str]:
     """Return a deterministic in-site search URL when the current site supports one."""
     value = str(query or "").strip()
@@ -1114,9 +1129,19 @@ def execute(intent: ToolIntent) -> ToolResult:
         )
 
     if intent.name == "browser.close_tab":
-        from .windows_perception import close_tab
+        from .windows_perception import activate_window, close_tab
 
         target = str(intent.args.get("name") or "").strip()
+        hint = _browser_window_hint()
+        activation = activate_window(hint)
+        if not activation.success and hint != "Google Chrome":
+            activation = activate_window("Google Chrome")
+        if not activation.success:
+            return ToolResult(
+                False,
+                "Je n'ai pas trouvé la fenêtre du navigateur.",
+                activation.detail or activation.message,
+            )
         result = close_tab(target)
         return ToolResult(
             result.success,
