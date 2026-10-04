@@ -32,7 +32,7 @@ SNAPSHOT_JS = r"""els => {
     const labelBy=(e.getAttribute("aria-labelledby")||"").split(/\s+/)
       .map(id=>document.getElementById(id)?.textContent||"").join(" ").trim();
     const label=e.getAttribute("aria-label") || labelBy ||
-      [...(e.labels||[])].map(x=>x.textContent).join(" ").trim() ||
+      Array.from(e.labels||[]).map(x=>x.textContent).join(" ").trim() ||
       e.getAttribute("placeholder") || e.getAttribute("title") ||
       e.querySelector("svg title")?.textContent || e.querySelector("img")?.alt ||
       ((e.tagName==="INPUT") ? "" : (e.innerText||""));
@@ -362,6 +362,29 @@ class BrowserAdapter:
                     if method in {"act", "act_visual"}:
                         targets.clear()
                         captures.clear()
+                    message = str(exc).lower()
+                    if (
+                        type(exc).__name__ == "TargetClosedError"
+                        or "browser has been closed" in message
+                        or "target page, context or browser has been closed" in message
+                    ):
+                        if discovery is not None:
+                            try:
+                                discovery.detach()
+                            except Exception:
+                                pass
+                        discovery = None
+                        browser = None
+                        pages.clear()
+                        generations.clear()
+                        targets.clear()
+                        captures.clear()
+                        if playwright is not None:
+                            try:
+                                playwright.stop()
+                            except Exception:
+                                pass
+                        playwright = None
                     future.set_exception(exc)
         finally:
             if discovery is not None:
