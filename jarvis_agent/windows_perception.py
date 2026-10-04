@@ -523,6 +523,221 @@ def _native_window_candidates(*, limit: int = 40) -> list[dict[str, Any]]:
     return items
 
 
+def _native_child_windows(
+    parent_handle: int,
+    *,
+    limit: int = 24,
+) -> list[dict[str, Any]]:
+    """Enumerate substantial visible child HWNDs for a top-level window.
+
+    Hybrid applications can host separate UI Automation fragments in child
+    HWNDs. Enumerating those hosts is a generic structured fallback when the
+    top-level UIA provider exposes only window chrome.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    parent = int(parent_handle or 0)
+    if not parent:
+        return []
+
+    user32 = ctypes.windll.user32
+    items: list[dict[str, Any]] = []
+    seen: set[int] = set()
+
+    enum_proc = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HWND,
+        wintypes.LPARAM,
+    )
+
+    @enum_proc
+    def callback(hwnd, _lparam):
+        try:
+            handle = int(hwnd or 0)
+            if (
+                not handle
+                or handle in seen
+                or not user32.IsWindowVisible(hwnd)
+            ):
+                return True
+
+            rect = wintypes.RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return True
+            bounds = (
+                int(rect.left),
+                int(rect.top),
+                int(rect.right),
+                int(rect.bottom),
+            )
+            width = max(0, bounds[2] - bounds[0])
+            height = max(0, bounds[3] - bounds[1])
+            if width < 32 or height < 24:
+                return True
+
+            class_buffer = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, class_buffer, len(class_buffer))
+            class_name = str(class_buffer.value or "").strip()
+
+            title_length = int(user32.GetWindowTextLengthW(hwnd) or 0)
+            title = ""
+            if title_length > 0:
+                title_buffer = ctypes.create_unicode_buffer(title_length + 1)
+                user32.GetWindowTextW(hwnd, title_buffer, title_length + 1)
+                title = str(title_buffer.value or "").strip()
+
+            seen.add(handle)
+            items.append(
+                {
+                    "handle": handle,
+                    "title": title[:180],
+                    "class_name": class_name[:180],
+                    "bounds": bounds,
+                    "area": width * height,
+                }
+            )
+        except Exception:
+            return True
+        return len(items) < max(1, min(int(limit), 64))
+
+    user32.EnumChildWindows(
+        wintypes.HWND(parent),
+        callback,
+        0,
+    )
+    items.sort(
+        key=lambda item: (
+            -int(item.get("area") or 0),
+            str(item.get("class_name") or ""),
+            int(item.get("handle") or 0),
+        )
+    )
+    return items[: max(1, min(int(limit), 64))]
+
+
+def _system_chrome_only(
+    window: Any,
+    interactive: list[Any],
+    documents: list[Any],
+    informative: list[Any],
+) -> bool:
+    """Detect a structurally shallow snapshot that contains only window chrome."""
+    if documents:
+        return False
+
+    meaningful_types = {
+        "ComboBox",
+        "DataItem",
+        "Edit",
+        "Hyperlink",
+        "ListItem",
+        "Slider",
+        "Spinner",
+        "TabItem",
+        "TreeItem",
+    }
+    if any(_control_type(item) in meaningful_types for item in interactive):
+        return False
+
+    left, top, right, bottom = _rect_tuple(window)
+    height = max(0, bottom - top)
+    if height < 220:
+        return False
+
+    chrome_names = {
+        "close",
+        "maximize",
+        "minimize",
+        "restore",
+        "system",
+        "systeme",
+        "système",
+    }
+    content_band_top = top + min(110, max(60, int(height * 0.14)))
+
+    for item in interactive:
+        name = normalize(_element_name(item))
+        _, item_top, _, item_bottom = _rect_tuple(item)
+        if name not in chrome_names and item_bottom > content_band_top:
+            return False
+
+    for item in informative:
+        name = _element_name(item).strip()
+        if not name:
+            continue
+        _, item_top, _, item_bottom = _rect_tuple(item)
+        if item_bottom > content_band_top:
+            return False
+
+    return True
+
+
+def _probe_child_uia_fragments(
+    native_item: dict[str, Any],
+    *,
+    max_roots: int = 8,
+    max_nodes_per_root: int = 80,
+    time_budget_s: float = 2.5,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Inspect child-HWND UIA fragment roots using a strict shared budget."""
+    started = time.perf_counter()
+    parent_handle = int(native_item.get("handle") or 0)
+    candidates = _native_child_windows(
+        parent_handle,
+        limit=max(12, int(max_roots) * 3),
+    )
+    wrappers: list[Any] = []
+    roots_meta: list[dict[str, Any]] = []
+    attempted = 0
+
+    for child in candidates:
+        if attempted >= max(1, int(max_roots)):
+            break
+        elapsed = time.perf_counter() - started
+        remaining = float(time_budget_s) - elapsed
+        if remaining <= 0.05:
+            break
+
+        attempted += 1
+        handle = int(child.get("handle") or 0)
+        root_meta = {
+            "handle": handle,
+            "class_name": str(child.get("class_name") or "")[:120],
+            "title": str(child.get("title") or "")[:120],
+            "bounds": [int(v) for v in tuple(child.get("bounds") or (0, 0, 0, 0))],
+        }
+
+        try:
+            root = _uia_window_from_handle(handle)
+            descendants, traversal = _bounded_descendants(
+                root,
+                max_depth=5,
+                max_nodes=max(12, int(max_nodes_per_root)),
+                time_budget_s=max(0.15, min(0.75, remaining)),
+            )
+            wrappers.append(root)
+            wrappers.extend(descendants)
+            root_meta["success"] = True
+            root_meta["visited_nodes"] = len(descendants)
+            root_meta["truncated"] = bool(traversal.get("truncated"))
+            root_meta["elapsed_seconds"] = traversal.get("elapsed_seconds")
+        except Exception as exc:
+            root_meta["success"] = False
+            root_meta["error"] = str(exc)[:180]
+
+        roots_meta.append(root_meta)
+
+    return wrappers, {
+        "strategy": "child_hwnd_fragments",
+        "candidate_hwnds": len(candidates),
+        "attempted_roots": attempted,
+        "returned_nodes": len(wrappers),
+        "elapsed_seconds": round(time.perf_counter() - started, 3),
+        "roots": roots_meta,
+    }
+
+
 def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
     """Resolve a requested/foreground work window without UI Automation."""
     import ctypes
@@ -708,6 +923,8 @@ def _native_only_inspection(
     item: dict[str, Any],
     *,
     uia_error: str,
+    fallback: str = "win32_window_only",
+    minimized: bool = False,
 ) -> UIActionResult:
     """Return useful window perception even when its UIA tree is unavailable."""
     global _SNAPSHOT_ELEMENTS, _SNAPSHOT_WINDOW_TITLE
@@ -717,12 +934,18 @@ def _native_only_inspection(
     payload = {
         "window": _native_compact_window(item),
         "controls": [],
-        "fallback": "win32_window_only",
+        "fallback": str(fallback or "win32_window_only"),
+        "minimized": bool(minimized),
         "uia_error": str(uia_error or "")[:300],
         "note": (
-            "La fenêtre est identifiée par Win32, mais son arbre UI Automation "
-            "n'est pas disponible. Les actions par ref nécessitent une nouvelle "
-            "inspection UIA."
+            "La fenêtre est réduite. Activez/restaurez-la avant une inspection "
+            "UIA détaillée."
+            if minimized
+            else (
+                "La fenêtre est identifiée par Win32, mais son arbre UI Automation "
+                "n'est pas disponible. Les actions par ref nécessitent une nouvelle "
+                "inspection UIA."
+            )
         ),
     }
     return UIActionResult(
@@ -824,6 +1047,84 @@ def _nearest_text_label(
     return candidates[0][1][:160]
 
 
+def _native_window_is_minimized(item: dict[str, Any] | None) -> bool:
+    """Return True when a resolved Win32 top-level window is iconic/minimized."""
+    if not item:
+        return False
+    try:
+        import ctypes
+
+        handle = int(item.get("handle") or 0)
+        return bool(handle and ctypes.windll.user32.IsIconic(handle))
+    except Exception:
+        return False
+
+
+def _bounded_descendants(
+    window: Any,
+    *,
+    max_depth: int = 6,
+    max_nodes: int = 240,
+    time_budget_s: float = 3.0,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Traverse a bounded slice of a UIA subtree.
+
+    Full UIA descendant enumeration can be extremely expensive for Chromium /
+    WebView applications. Prefer incremental traversal so a huge accessibility
+    tree cannot monopolize a Jarvis turn.
+    """
+    started = time.perf_counter()
+    items: list[Any] = []
+    truncated = False
+    strategy = "iter_descendants"
+
+    iterator_factory = getattr(window, "iter_descendants", None)
+    if callable(iterator_factory):
+        # Keep this call compatible with the pywinauto 0.6.x family used by
+        # Jarvis. Some releases forward unknown kwargs such as cache_enable
+        # into IUIA.build_condition(), which rejects them. Depth-bounded
+        # iteration provides the important performance win without relying on
+        # that version-sensitive cache keyword.
+        iterator = iterator_factory(depth=max(1, int(max_depth)))
+
+        try:
+            for wrapper in iterator:
+                items.append(wrapper)
+                if len(items) >= max(1, int(max_nodes)):
+                    truncated = True
+                    break
+                if time.perf_counter() - started >= max(0.25, float(time_budget_s)):
+                    truncated = True
+                    break
+        except Exception:
+            if items:
+                truncated = True
+            else:
+                raise
+    else:
+        strategy = "descendants_depth"
+        descendants = getattr(window, "descendants")
+        try:
+            items = list(descendants(depth=max(1, int(max_depth))))
+        except TypeError:
+            strategy = "legacy_descendants"
+            items = list(descendants())
+        if len(items) > max_nodes:
+            items = items[:max_nodes]
+            truncated = True
+
+    elapsed = time.perf_counter() - started
+    return items, {
+        "strategy": strategy,
+        "depth": int(max_depth),
+        "max_nodes": int(max_nodes),
+        "visited_nodes": len(items),
+        "truncated": bool(truncated),
+        "elapsed_seconds": round(elapsed, 3),
+    }
+
+
+
 def inspect_active_window(
     *,
     title: str | None = None,
@@ -841,10 +1142,34 @@ def inspect_active_window(
     native_item: dict[str, Any] | None = None
     uia_error = ""
 
-    try:
-        window = _window_by_title(title) if title else _active_window()
-    except Exception as exc:
-        uia_error = str(exc)
+    # Named inspections prefer Win32 resolution first. This avoids expensive
+    # top-level UIA enumeration and gives us a stable HWND for modern packaged
+    # / Chromium applications.
+    if title:
+        try:
+            native_item = _native_target_window(title)
+        except Exception as exc:
+            uia_error = str(exc)
+
+        if native_item is not None and _native_window_is_minimized(native_item):
+            return _native_only_inspection(
+                native_item,
+                uia_error="Fenêtre réduite; inspection UIA détaillée différée.",
+                fallback="win32_window_minimized",
+                minimized=True,
+            )
+
+        if native_item is not None:
+            try:
+                window = _uia_window_from_handle(int(native_item["handle"]))
+            except Exception as exc:
+                uia_error = str(exc)
+
+    if window is None:
+        try:
+            window = _window_by_title(title) if title else _active_window()
+        except Exception as exc:
+            uia_error = str(exc)
 
     # UI Automation top-level enumeration can intermittently fail with
     # WinError 6 when a window disappears. Resolve the HWND with Win32, then
@@ -868,6 +1193,13 @@ def inspect_active_window(
                 )
 
             if native_item is not None:
+                if _native_window_is_minimized(native_item):
+                    return _native_only_inspection(
+                        native_item,
+                        uia_error="Fenêtre réduite; inspection UIA détaillée différée.",
+                        fallback="win32_window_minimized",
+                        minimized=True,
+                    )
                 try:
                     window = _uia_window_from_handle(
                         int(native_item["handle"])
@@ -905,8 +1237,9 @@ def inspect_active_window(
                 uia_error=combined,
             )
 
+    traversal_meta: dict[str, Any] = {}
     try:
-        descendants = window.descendants()
+        descendants, traversal_meta = _bounded_descendants(window)
     except Exception as exc:
         first_desc_error = exc
 
@@ -934,7 +1267,7 @@ def inspect_active_window(
                     attempts=3,
                     delay_s=0.12,
                 )
-                descendants = window.descendants()
+                descendants, traversal_meta = _bounded_descendants(window)
             except Exception:
                 descendants = None
 
@@ -961,33 +1294,64 @@ def inspect_active_window(
     document_rects: list[tuple[int, int, int, int]] = []
     seen: set[tuple[str, str, str, tuple[int, int, int, int]]] = set()
 
-    for wrapper in descendants:
-        if not _is_visible(wrapper):
-            continue
-        ctype = _control_type(wrapper)
-        name = _element_name(wrapper)
-        automation_id = _automation_id(wrapper)
-        rect = _rect_tuple(wrapper)
-        key = (
-            normalize(name),
-            normalize(ctype),
-            normalize(automation_id),
-            rect,
-        )
-        if key in seen:
-            continue
-        seen.add(key)
+    def consume_wrappers(items: list[Any]) -> None:
+        for wrapper in items:
+            if not _is_visible(wrapper):
+                continue
+            ctype = _control_type(wrapper)
+            name = _element_name(wrapper)
+            automation_id = _automation_id(wrapper)
+            rect = _rect_tuple(wrapper)
+            key = (
+                normalize(name),
+                normalize(ctype),
+                normalize(automation_id),
+                rect,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
 
-        if ctype == "Document":
-            document_rects.append(rect)
-            documents.append(wrapper)
+            if ctype == "Document":
+                document_rects.append(rect)
+                documents.append(wrapper)
 
-        if ctype in _INTERACTIVE_TYPES:
-            # Keep unlabeled interactive controls: their ref + type + position
-            # can still let the agent operate them safely after inspection.
-            interactive.append(wrapper)
-        elif ctype == "Text" and name:
-            informative.append(wrapper)
+            if ctype in _INTERACTIVE_TYPES:
+                # Keep unlabeled interactive controls: their ref + type +
+                # position can still let the agent operate them safely.
+                interactive.append(wrapper)
+            elif ctype == "Text" and name:
+                informative.append(wrapper)
+
+    consume_wrappers(list(descendants))
+
+    fragment_probe_meta: dict[str, Any] = {}
+    if _system_chrome_only(
+        window,
+        interactive,
+        documents,
+        informative,
+    ):
+        if native_item is None:
+            try:
+                current_handle = int(getattr(window, "handle", 0) or 0)
+                if current_handle:
+                    native_item = next(
+                        (
+                            item
+                            for item in _native_window_candidates(limit=60)
+                            if int(item.get("handle") or 0) == current_handle
+                        ),
+                        None,
+                    )
+            except Exception:
+                native_item = None
+
+        if native_item is not None:
+            fragment_nodes, fragment_probe_meta = _probe_child_uia_fragments(
+                native_item,
+            )
+            consume_wrappers(fragment_nodes)
 
     # Browser accessibility trees contain lots of Chrome toolbar/bookmark
     # controls before the actual web page. Prefer controls physically inside
@@ -1115,16 +1479,40 @@ def inspect_active_window(
             "actionable": actionable_refs[:24],
         },
         "snapshot": {
+            "traversal": traversal_meta,
+            "fragment_probe": fragment_probe_meta or None,
+            "semantic_coverage": (
+                "insufficient"
+                if _system_chrome_only(
+                    window,
+                    interactive,
+                    documents,
+                    informative,
+                )
+                else "usable"
+            ),
             "total_interactive": len(interactive),
+            "observed_interactive": len(interactive),
             "selected_interactive": sum(
                 1 for item in selected if item in interactive
             ),
-            "truncated": len(interactive) > sum(
-                1 for item in selected if item in interactive
+            "tree_complete": not bool(traversal_meta.get("truncated")),
+            "truncated": (
+                bool(traversal_meta.get("truncated"))
+                or len(interactive) > sum(
+                    1 for item in selected if item in interactive
+                )
             ),
             "has_document_region": content_rect is not None,
             "vision_recommended": (
-                len(interactive) > len(selected)
+                _system_chrome_only(
+                    window,
+                    interactive,
+                    documents,
+                    informative,
+                )
+                or bool(traversal_meta.get("truncated"))
+                or len(interactive) > len(selected)
                 or (
                     not writable_refs
                     and any(
