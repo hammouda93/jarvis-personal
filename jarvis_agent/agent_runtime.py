@@ -416,9 +416,10 @@ def _completed_action_capabilities(
         evidence = normalize(
             f"{action.message or ''} {action.detail or ''}"
         )
-        if action.name == "press_key" and re.search(
-            r"\b(?:enter|entree|entrée)\b",
-            evidence,
+        if (
+            action.name == "press_key"
+            and re.search(r"\b(?:enter|entree|entrée)\b", evidence)
+            and any(write_index < index for write_index in verified_write_indices)
         ):
             send_index = index
         elif action.name in {"click_ui_element", "click_visual_target"} and re.search(
