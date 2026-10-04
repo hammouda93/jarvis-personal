@@ -473,6 +473,36 @@ class NativeToolRegistryTests(unittest.TestCase):
             mode="replace",
         )
 
+    @patch("jarvis_agent.native_tools.inspect_active_window")
+    def test_inspection_retries_recent_app_identity_after_localized_title_miss(
+        self,
+        inspect_mock,
+    ):
+        self.registry._last_app_hint = "Notepad"
+        inspect_mock.side_effect = [
+            SimpleNamespace(
+                success=False,
+                message="Fenêtre introuvable.",
+                detail="Bloc de notes",
+            ),
+            SimpleNamespace(
+                success=True,
+                message="Fenêtre inspectée.",
+                detail='{"window":{"title":"Sans titre – Bloc-notes"}}',
+            ),
+        ]
+
+        result = self.registry.execute(
+            "inspect_active_window",
+            {"title": "Bloc de notes"},
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            [call.kwargs["title"] for call in inspect_mock.call_args_list],
+            ["Bloc de notes", "Notepad"],
+        )
+
     def test_verified_skill_tool_writes_to_injected_local_store(self):
         result = self.registry.execute(
             "save_verified_skill",
