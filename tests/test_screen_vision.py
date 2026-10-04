@@ -131,6 +131,54 @@ class ScreenVisionTests(unittest.TestCase):
     @patch("jarvis_agent.screen_vision._call_local_vision")
     @patch("jarvis_agent.screen_vision._capture_window_bytes")
     @patch("jarvis_agent.screen_vision.settings")
+    def test_compact_observation_uses_smaller_capture_and_output_budget(
+        self,
+        settings_mock,
+        capture_mock,
+        vision_mock,
+    ):
+        settings_mock.vision_enabled = True
+        settings_mock.vision_local_only = True
+        settings_mock.ollama_base_url = "http://127.0.0.1:11434"
+        settings_mock.vision_model = "gemma3:latest"
+        settings_mock.vision_num_predict = 420
+        settings_mock.vision_max_width = 1600
+        settings_mock.vision_save_evidence = False
+        capture_mock.return_value = (
+            b"fake-image",
+            {
+                "title": "Opaque App",
+                "bounds": [0, 0, 1200, 800],
+                "captured_width": 1024,
+                "captured_height": 683,
+            },
+        )
+        vision_mock.return_value = (
+            '{"summary":"search visible","targets":[],"ambiguities":[]}',
+            0.5,
+        )
+
+        result = observe_screen(
+            title="Opaque App",
+            focus="Find search",
+            compact=True,
+        )
+
+        self.assertTrue(result.success)
+        capture_mock.assert_called_once_with(
+            "Opaque App",
+            max_width=1024,
+        )
+        self.assertEqual(
+            vision_mock.call_args.kwargs["num_predict"],
+            180,
+        )
+        detail = json.loads(result.detail)
+        self.assertTrue(detail["compact"])
+
+    @patch("jarvis_agent.screen_vision._call_local_vision")
+    @patch("jarvis_agent.screen_vision._capture_window_bytes")
+    @patch("jarvis_agent.screen_vision.settings")
     def test_visual_target_localization_returns_normalized_box(
         self,
         settings_mock,
