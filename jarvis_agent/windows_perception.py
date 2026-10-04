@@ -257,7 +257,7 @@ def _window_by_title(title: str):
 
     identity_ranked = sorted(
         (
-            (_window_identity_score(target, _element_name(wrapper)), wrapper)
+            (_window_query_score(target, _element_name(wrapper)), wrapper)
             for wrapper in windows
         ),
         key=lambda pair: -pair[0],
@@ -840,9 +840,10 @@ def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
         identity_ranked = sorted(
             (
                 (
-                    _window_identity_score(
+                    _window_query_score(
                         target,
                         str(item.get("title") or ""),
+                        process=str(item.get("process") or ""),
                     ),
                     item,
                 )
