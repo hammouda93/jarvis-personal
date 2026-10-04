@@ -71,6 +71,7 @@ def _call_local_vision(
     payload = {
         "model": settings.vision_model,
         "stream": False,
+        "format": "json",
         "messages": [
             {
                 "role": "user",
@@ -252,6 +253,14 @@ def observe_screen(
             "empty_vision_response",
         )
 
+    parsed = _extract_json_object(content)
+    if not parsed:
+        return ScreenObservation(
+            False,
+            "Le capteur visuel local n'a pas retourné une observation JSON exploitable.",
+            "invalid_visual_observation",
+        )
+
     saved_path = ""
     if settings.vision_save_evidence:
         try:
@@ -264,7 +273,8 @@ def observe_screen(
         "model": settings.vision_model,
         "seconds": round(elapsed, 3),
         "observation": content[:8000],
-        "observation_json": _extract_json_object(content),
+        "observation_json": parsed,
+        "sensor": "visual",
         "evidence_saved": bool(saved_path),
     }
     if saved_path:

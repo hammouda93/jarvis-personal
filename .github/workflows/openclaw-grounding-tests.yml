@@ -24,7 +24,7 @@ jobs:
       - name: Compile changed runtime modules
         shell: pwsh
         run: |
-          python -m py_compile jarvis_agent/cua_driver_bridge.py jarvis_agent/windows_perception.py jarvis_agent/native_tools.py jarvis_agent/agent_runtime.py
+          python -m py_compile jarvis_agent/cua_driver_bridge.py jarvis_agent/windows_perception.py jarvis_agent/screen_vision.py jarvis_agent/native_tools.py jarvis_agent/agent_runtime.py
       - name: Run focused unit tests
         shell: pwsh
         env:

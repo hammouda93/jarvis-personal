@@ -513,6 +513,23 @@ def _action_detail_dict(action: AgentActionResult) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _inspection_requests_visual_fallback(
+    action: AgentActionResult,
+) -> bool:
+    """Return True when structured perception explicitly says it is incomplete."""
+    if action.name != "inspect_active_window" or not action.success:
+        return False
+    payload = _action_detail_dict(action)
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    return (
+        str(snapshot.get("semantic_coverage") or "").strip().lower()
+        == "insufficient"
+        or snapshot.get("vision_recommended") is True
+    )
+
+
 def _actions_have_verified_proof(
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
 ) -> bool:
@@ -2283,6 +2300,8 @@ class GroqResponsesAgent:
         skill_learning_checkpoint_attempted = False
         lesson_learning_checkpoint_attempted = False
         research_web_calls = 0
+        visual_fallback_required = False
+        visual_fallback_repair_attempted = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -2337,6 +2356,32 @@ class GroqResponsesAgent:
                     pseudo_tool_repair_attempted = True
                     if log:
                         log("[AGENT] repair=pseudo_tool_text_to_real_call")
+                    continue
+
+                if (
+                    settings.vision_enabled
+                    and visual_fallback_required
+                    and not visual_fallback_repair_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "La dernière inspection structurée indique que la "
+                                "couverture sémantique est insuffisante. N'en conclus "
+                                "pas que la cible n'existe pas et ne répète pas la même "
+                                "inspection. Utilise maintenant observe_screen sur la "
+                                "même fenêtre comme second capteur visuel, avec un focus "
+                                "lié à la mission actuelle."
+                            ),
+                        }
+                    )
+                    visual_fallback_repair_attempted = True
+                    if log:
+                        log("[AGENT] repair=visual_fallback_required")
                     continue
 
                 missing_capabilities = (
@@ -2672,6 +2717,21 @@ class GroqResponsesAgent:
                 ):
                     result = _blocked_memory_write_result()
                 elif (
+                    settings.vision_enabled
+                    and visual_fallback_required
+                    and name == "inspect_active_window"
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La perception structurée est déjà insuffisante. "
+                            "Utilisez observe_screen comme second capteur avant "
+                            "de réessayer la même inspection."
+                        ),
+                        detail="structured_perception_insufficient_use_vision",
+                    )
+                elif (
                     ui_verification_required
                     and name in {
                         "click_ui_element",
@@ -2789,6 +2849,35 @@ class GroqResponsesAgent:
                     if name in {"research_web", "search_web"}:
                         research_web_calls += 1
                 actions.append(result)
+                if (
+                    result.success
+                    and name == "inspect_active_window"
+                ):
+                    visual_fallback_required = (
+                        settings.vision_enabled
+                        and _inspection_requests_visual_fallback(result)
+                    )
+                    if visual_fallback_required:
+                        visual_fallback_repair_attempted = False
+                elif result.success and name == "observe_screen":
+                    visual_fallback_required = False
+                    visual_fallback_repair_attempted = False
+                elif (
+                    result.success
+                    and name in {
+                        "click_ui_element",
+                        "click_visual_target",
+                        "write_visual_target",
+                        "write_ui_element",
+                        "press_key",
+                        "close_window",
+                        "close_tab",
+                    }
+                ):
+                    # The screen may have changed. Allow a fresh structured
+                    # inspection before deciding whether vision is needed again.
+                    visual_fallback_required = False
+                    visual_fallback_repair_attempted = False
                 if (
                     pending_ui_action is not None
                     and result.success
@@ -2909,6 +2998,18 @@ class GroqResponsesAgent:
                             "le contrôle Search/Recherche visible. Si les résultats "
                             "sont visuellement ambigus et la vision est disponible, "
                             "utilise observe_screen."
+                        )
+                    elif (
+                        result.detail
+                        == "structured_perception_insufficient_use_vision"
+                    ):
+                        recovery = (
+                            "La structure UIA/Cua de cette fenêtre est déjà connue "
+                            "comme insuffisante. N'appelle pas encore "
+                            "inspect_active_window sans changement d'écran. Utilise "
+                            "observe_screen maintenant pour lire visuellement la "
+                            "fenêtre et poursuivre la mission à partir de ce qui est "
+                            "réellement visible."
                         )
                     else:
                         recovery = (

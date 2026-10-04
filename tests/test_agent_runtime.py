@@ -24,6 +24,7 @@ from jarvis_agent.agent_runtime import (
     _actions_have_verified_proof,
     _looks_like_clear_operational_feedback,
     _requested_action_capabilities,
+    _inspection_requests_visual_fallback,
 )
 from jarvis_agent.native_tools import AgentActionResult
 
@@ -1726,6 +1727,137 @@ class AgentRuntimeTests(unittest.TestCase):
             focused_typing_fallback_enabled=False,
         ),
     )
+    def test_groq_switches_to_visual_sensor_after_insufficient_inspection(self):
+        class PerceptionTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "inspect_active_window":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="structured",
+                        detail=json.dumps(
+                            {
+                                "window": {"title": "Opaque App"},
+                                "controls": [
+                                    {"ref": "obs1:e1", "type": "Button", "name": "Close"}
+                                ],
+                                "snapshot": {
+                                    "semantic_coverage": "insufficient",
+                                    "vision_recommended": True,
+                                },
+                            }
+                        ),
+                    )
+                if name == "observe_screen":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="visual",
+                        detail=json.dumps(
+                            {
+                                "window": {"title": "Opaque App"},
+                                "sensor": "visual",
+                                "observation_json": {
+                                    "summary": "Search field visible",
+                                    "targets": [
+                                        {
+                                            "label": "Search",
+                                            "role": "search_input",
+                                            "box_1000": [50, 100, 450, 180],
+                                            "confidence": 0.94,
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        tools = PerceptionTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "inspect1",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Opaque App"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "inspect2",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Opaque App"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "vision1",
+                            "name": "observe_screen",
+                            "arguments": (
+                                '{"title":"Opaque App",'
+                                '"focus":"Find the search field"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je vois maintenant le champ de recherche.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Inspecte l'application et trouve le champ de recherche.")
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            ["inspect_active_window", "observe_screen"],
+        )
+        self.assertTrue(
+            any(
+                action.detail == "structured_perception_insufficient_use_vision"
+                for action in result.actions
+            )
+        )
+        self.assertIn("champ de recherche", result.text)
+
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(
+            real_settings,
+            compatibility_baseline=False,
+            vision_enabled=True,
+            vision_actions_enabled=False,
+            operational_learning_enabled=False,
+            strict_proof_enabled=False,
+            focused_typing_fallback_enabled=False,
+        ),
+    )
     def test_groq_vision_mode_exposes_observation_but_not_visual_click(self):
         agent = FakeGroqAgent(FakeTools(), [])
         definitions = {
@@ -2705,6 +2837,37 @@ class AgentRuntimeTests(unittest.TestCase):
                 "Ajoute du texte dans le document."
             ),
         )
+
+    def test_insufficient_structured_inspection_requests_visual_fallback(self):
+        action = AgentActionResult(
+            name="inspect_active_window",
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "snapshot": {
+                        "semantic_coverage": "insufficient",
+                        "vision_recommended": True,
+                    }
+                }
+            ),
+        )
+        self.assertTrue(_inspection_requests_visual_fallback(action))
+
+        usable = AgentActionResult(
+            name="inspect_active_window",
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "snapshot": {
+                        "semantic_coverage": "usable",
+                        "vision_recommended": False,
+                    }
+                }
+            ),
+        )
+        self.assertFalse(_inspection_requests_visual_fallback(usable))
 
     def test_action_promise_is_detected(self):
         self.assertTrue(

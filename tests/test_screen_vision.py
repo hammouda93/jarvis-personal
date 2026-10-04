@@ -122,6 +122,7 @@ class ScreenVisionTests(unittest.TestCase):
         request = urlopen_mock.call_args.args[0]
         body = json.loads(request.data.decode("utf-8"))
         image = body["messages"][0]["images"][0]
+        self.assertEqual(body["format"], "json")
         self.assertEqual(
             base64.b64decode(image),
             b"fake-image",
@@ -279,6 +280,36 @@ class ScreenVisionTests(unittest.TestCase):
         self.assertFalse(detail["verified"])
         self.assertEqual(detail["text_length"], len("jarvis_test.txt"))
         sleep_mock.assert_called_once()
+
+    @patch("jarvis_agent.screen_vision._call_local_vision")
+    @patch("jarvis_agent.screen_vision._capture_window_bytes")
+    @patch("jarvis_agent.screen_vision.settings")
+    def test_visual_observation_fails_closed_on_non_json_response(
+        self,
+        settings_mock,
+        capture_mock,
+        vision_mock,
+    ):
+        settings_mock.vision_enabled = True
+        settings_mock.vision_local_only = True
+        settings_mock.ollama_base_url = "http://127.0.0.1:11434"
+        settings_mock.vision_model = "gemma3:latest"
+        settings_mock.vision_save_evidence = False
+        capture_mock.return_value = (
+            b"fake-image",
+            {
+                "title": "Opaque App",
+                "bounds": [0, 0, 1000, 800],
+                "captured_width": 1000,
+                "captured_height": 800,
+            },
+        )
+        vision_mock.return_value = ("I think there is a search field.", 0.1)
+
+        result = observe_screen(title="Opaque App", focus="Find search")
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.detail, "invalid_visual_observation")
 
     @patch("jarvis_agent.screen_vision._capture_window_bytes")
     @patch("jarvis_agent.screen_vision.settings")
