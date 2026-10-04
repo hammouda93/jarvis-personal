@@ -97,6 +97,21 @@ class CuaActionResult:
     detail: dict[str, Any]
 
 
+class CuaDriverToolError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "",
+        recommended_delivery: str = "",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = str(code or "")
+        self.recommended_delivery = str(recommended_delivery or "")
+        self.detail = dict(detail or {})
+
+
 class CuaDriverBridge:
     """Optional persistent bridge to Cua Driver's local MCP server.
 
@@ -312,21 +327,45 @@ class CuaDriverBridge:
             timeout_s=timeout_s,
         )
         if result.get("isError"):
+            structured = result.get("structuredContent")
+            structured = structured if isinstance(structured, dict) else {}
+            refusal = structured.get("refusal")
+            refusal = refusal if isinstance(refusal, dict) else {}
+            escalation = structured.get("escalation")
+            escalation = escalation if isinstance(escalation, dict) else {}
+            code = str(
+                structured.get("code")
+                or refusal.get("code")
+                or ""
+            )
+            recommended = str(escalation.get("recommended") or "")
             text_parts = [
                 str(item.get("text") or "")
                 for item in result.get("content", [])
                 if isinstance(item, dict) and item.get("type") == "text"
             ]
-            raise RuntimeError(
+            raise CuaDriverToolError(
                 "cua-driver_tool_error:"
-                + (" ".join(part for part in text_parts if part).strip() or name)
+                + (" ".join(part for part in text_parts if part).strip() or name),
+                code=code,
+                recommended_delivery=recommended,
+                detail=structured,
             )
         structured = result.get("structuredContent")
         if isinstance(structured, dict):
             if structured.get("status") == "refused" or structured.get("refusal"):
-                raise RuntimeError(
+                refusal = structured.get("refusal")
+                refusal = refusal if isinstance(refusal, dict) else {}
+                escalation = structured.get("escalation")
+                escalation = escalation if isinstance(escalation, dict) else {}
+                raise CuaDriverToolError(
                     "cua-driver_refused:"
-                    + json.dumps(structured, ensure_ascii=False)
+                    + json.dumps(structured, ensure_ascii=False),
+                    code=str(refusal.get("code") or structured.get("code") or ""),
+                    recommended_delivery=str(
+                        escalation.get("recommended") or ""
+                    ),
+                    detail=structured,
                 )
             return structured
         texts = [
@@ -588,6 +627,20 @@ class CuaDriverBridge:
                     "delivery_mode": mode,
                 },
             )
+        except CuaDriverToolError as exc:
+            return CuaActionResult(
+                False,
+                "Cua Driver a refusé ou n'a pas pu confirmer cette action.",
+                {
+                    "provider": "cua_driver",
+                    "error": str(exc)[:600],
+                    "code": exc.code or None,
+                    "recommended_delivery": exc.recommended_delivery or None,
+                    "delivery_mode": mode,
+                    "requires_fresh_inspection": True,
+                    "raw": exc.detail,
+                },
+            )
         except Exception as exc:
             return CuaActionResult(
                 False,
@@ -600,11 +653,10 @@ class CuaDriverBridge:
                 },
             )
         effect = normalize(str(detail.get("effect") or ""))
-        success = effect not in {
-            "refused",
-            "suspected noop",
-            "suspected_noop",
-        }
+        success = (
+            effect in {"confirmed", "unverifiable", "partial"}
+            or detail.get("success") is True
+        )
         return CuaActionResult(
             success,
             (
@@ -665,6 +717,21 @@ class CuaDriverBridge:
 
         try:
             detail = self.call(tool, arguments)
+        except CuaDriverToolError as exc:
+            return CuaActionResult(
+                False,
+                "Cua Driver a refusé ou n'a pas pu confirmer cette saisie.",
+                {
+                    "provider": "cua_driver",
+                    "tool": tool,
+                    "error": str(exc)[:600],
+                    "code": exc.code or None,
+                    "recommended_delivery": exc.recommended_delivery or None,
+                    "delivery_mode": delivery,
+                    "requires_fresh_inspection": True,
+                    "raw": exc.detail,
+                },
+            )
         except Exception as exc:
             return CuaActionResult(
                 False,
@@ -679,11 +746,10 @@ class CuaDriverBridge:
             )
 
         effect = normalize(str(detail.get("effect") or ""))
-        success = effect not in {
-            "refused",
-            "suspected noop",
-            "suspected_noop",
-        }
+        success = (
+            effect in {"confirmed", "unverifiable", "partial"}
+            or detail.get("success") is True
+        )
         return CuaActionResult(
             success,
             (
