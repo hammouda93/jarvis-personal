@@ -147,6 +147,17 @@ class Settings:
         "JARVIS_FOCUSED_TYPING_FALLBACK_ENABLED",
         False,
     )
+    cua_driver_enabled: bool = _bool(
+        "JARVIS_CUA_DRIVER_ENABLED",
+        True,
+    )
+    cua_driver_binary: str = (
+        os.getenv("JARVIS_CUA_DRIVER_BINARY") or ""
+    ).strip()
+    cua_driver_timeout_s: float = _float(
+        "JARVIS_CUA_DRIVER_TIMEOUT_S",
+        6.0,
+    )
     structured_tracing_enabled: bool = _bool(
         "JARVIS_STRUCTURED_TRACING_ENABLED",
         False,
