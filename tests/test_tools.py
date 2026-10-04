@@ -67,6 +67,37 @@ class ToolRouterTests(unittest.TestCase):
         self.assertEqual(intent.name, "browser.close_tab")
         self.assertEqual(intent.args["name"], "youtube")
 
+    @patch("jarvis_agent.windows_perception.close_tab")
+    def test_direct_close_tab_targets_last_browser_work_surface(
+        self,
+        close_tab_mock,
+    ):
+        close_tab_mock.return_value = type(
+            "Result",
+            (),
+            {
+                "success": True,
+                "message": "closed",
+                "detail": "{}",
+            },
+        )()
+        with patch(
+            "jarvis_agent.tools._LAST_BROWSER_URL",
+            "https://www.youtube.com/results?search_query=messi",
+        ):
+            result = execute(
+                ToolIntent(
+                    "browser.close_tab",
+                    {"name": "youtube"},
+                )
+            )
+
+        self.assertTrue(result.success)
+        close_tab_mock.assert_called_once_with(
+            "youtube",
+            window_title="YouTube - Google Chrome",
+        )
+
     def test_browser_back_routes_as_browser_primitive(self):
         intent = route("retour en arrière")
         self.assertEqual(intent.name, "browser.back")
