@@ -66,14 +66,15 @@ def invalidate_ui_snapshot(*, preserve_window_title: bool = True) -> None:
         _SNAPSHOT_WINDOW_TITLE = ""
 
 
-def _observation_matches(observation_id: str) -> bool:
-    """Refs are valid only inside the exact observation that minted them."""
-    requested = (observation_id or "").strip()
-    return bool(
-        requested
-        and _SNAPSHOT_ID
-        and requested == _SNAPSHOT_ID
-    )
+def _snapshot_ref(index: int) -> str:
+    """Return one opaque, snapshot-bound ref for the model.
+
+    The model should copy one ref only. It never has to pair e7 with obs3,
+    which proved error-prone in live use.
+    """
+    if not _SNAPSHOT_ID:
+        raise RuntimeError("ui_snapshot_not_initialized")
+    return f"{_SNAPSHOT_ID}:e{int(index)}"
 
 
 @dataclass(frozen=True)
@@ -1317,7 +1318,7 @@ def _cua_snapshot_payload(
     writable_refs: list[dict[str, str]] = []
     actionable_refs: list[dict[str, str]] = []
     for index, element in enumerate(selected, start=1):
-        ref = f"e{index}"
+        ref = _snapshot_ref(index)
         _SNAPSHOT_ELEMENTS[ref] = element
         ctype = _cua_role_type(element.role)
         compact: dict[str, Any] = {
@@ -1477,6 +1478,14 @@ def inspect_active_window(
             window = _window_by_title(title) if title else _active_window()
         except Exception as exc:
             uia_error = str(exc)
+
+    if window is None:
+        cua_result = _try_cua_inspection(
+            title=title,
+            limit=limit,
+        )
+        if cua_result is not None:
+            return cua_result
 
     # UI Automation top-level enumeration can intermittently fail with
     # WinError 6 when a window disappears. Resolve the HWND with Win32, then
@@ -1735,7 +1744,7 @@ def inspect_active_window(
     writable_refs: list[dict[str, str]] = []
     actionable_refs: list[dict[str, str]] = []
     for index, wrapper in enumerate(selected, start=1):
-        ref = f"e{index}"
+        ref = _snapshot_ref(index)
         _SNAPSHOT_ELEMENTS[ref] = wrapper
         compact = _compact_control(ref, wrapper)
         if compact.get("writable"):
@@ -1955,10 +1964,12 @@ def _find_active_element(
     return ranked[0][1], names
 
 
-def _snapshot_element(ref: str, *, observation_id: str = ""):
-    if not _observation_matches(observation_id):
-        return None
+def _snapshot_element(ref: str):
     key = (ref or "").strip().lower()
+    if not key or not _SNAPSHOT_ID:
+        return None
+    if not key.startswith(_SNAPSHOT_ID.lower() + ":"):
+        return None
     return _SNAPSHOT_ELEMENTS.get(key)
 
 
@@ -1967,14 +1978,13 @@ def click_ui_element(
     *,
     ref: str = "",
     control_type: str | None = None,
-    observation_id: str = "",
     delivery_mode: str = "background",
 ) -> UIActionResult:
     wrapper = None
     alternatives: list[str] = []
 
     if ref:
-        wrapper = _snapshot_element(ref, observation_id=observation_id)
+        wrapper = _snapshot_element(ref)
         if wrapper is None:
             return UIActionResult(
                 False,
@@ -1982,7 +1992,6 @@ def click_ui_element(
                 _json(
                     {
                         "ref": ref,
-                        "requested_observation_id": observation_id or None,
                         "current_observation_id": _SNAPSHOT_ID or None,
                         "stale_ref": True,
                     }
@@ -2356,8 +2365,14 @@ def _editable_target(wrapper: Any):
     return None
 
 
-def _type_text_into_focused_control(wrapper: Any, value: str) -> bool:
-    """Fallback only for controls that can reasonably accept text input."""
+def _paste_text_to_control(
+    wrapper: Any,
+    value: str,
+    *,
+    replace: bool = False,
+    append: bool = False,
+) -> bool:
+    """Paste exact Unicode text into an already-grounded editable control."""
     if _control_type(wrapper) not in {"Edit", "Document", "ComboBox"}:
         return False
 
@@ -2370,25 +2385,61 @@ def _type_text_into_focused_control(wrapper: Any, value: str) -> bool:
     except Exception:
         pass
 
-    type_keys = getattr(wrapper, "type_keys", None)
-    if callable(type_keys):
+    try:
+        import win32clipboard
+
+        previous_text: str | None = None
         try:
-            type_keys(
-                "^a",
-                set_foreground=True,
-            )
-        except Exception:
-            pass
+            win32clipboard.OpenClipboard()
+            try:
+                if win32clipboard.IsClipboardFormatAvailable(
+                    win32clipboard.CF_UNICODETEXT
+                ):
+                    previous_text = win32clipboard.GetClipboardData(
+                        win32clipboard.CF_UNICODETEXT
+                    )
+            except Exception:
+                previous_text = None
+            finally:
+                win32clipboard.CloseClipboard()
+
+        win32clipboard.OpenClipboard()
         try:
-            type_keys(
-                value,
-                with_spaces=True,
-                set_foreground=True,
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(
+                str(value),
+                win32clipboard.CF_UNICODETEXT,
             )
-            return True
-        except Exception:
-            return False
-    return False
+        finally:
+            win32clipboard.CloseClipboard()
+
+        if replace:
+            _send_keys("^a")
+        elif append:
+            _send_keys("^{END}")
+        _send_keys("^v")
+        time.sleep(0.06)
+
+        if previous_text is not None:
+            try:
+                win32clipboard.OpenClipboard()
+                try:
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardText(
+                        previous_text,
+                        win32clipboard.CF_UNICODETEXT,
+                    )
+                finally:
+                    win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+        return True
+    except Exception:
+        return False
+
+
+def _type_text_into_focused_control(wrapper: Any, value: str) -> bool:
+    return _paste_text_to_control(wrapper, value, replace=True)
 
 
 def write_ui_element(
@@ -2397,7 +2448,6 @@ def write_ui_element(
     *,
     ref: str = "",
     mode: str = "replace",
-    observation_id: str = "",
     delivery_mode: str = "background",
 ) -> UIActionResult:
     target = (name or "").strip()
@@ -2416,7 +2466,7 @@ def write_ui_element(
     alternatives: list[str] = []
 
     if ref:
-        wrapper = _snapshot_element(ref, observation_id=observation_id)
+        wrapper = _snapshot_element(ref)
         if wrapper is None:
             return UIActionResult(
                 False,
@@ -2424,7 +2474,6 @@ def write_ui_element(
                 _json(
                     {
                         "ref": ref,
-                        "requested_observation_id": observation_id or None,
                         "current_observation_id": _SNAPSHOT_ID or None,
                         "stale_ref": True,
                     }
@@ -2511,13 +2560,11 @@ def write_ui_element(
                 f"Impossible d'insérer du texte dans {label}.",
                 control_type,
             )
-        try:
-            type_keys(value, with_spaces=True, set_foreground=True)
-        except Exception as exc:
+        if not _paste_text_to_control(active, value):
             return UIActionResult(
                 False,
                 f"Impossible d'insérer du texte dans {label}.",
-                str(exc),
+                control_type,
             )
     elif editable is not None:
         desired = value if normalized_mode == "replace" else before + value
@@ -2532,19 +2579,11 @@ def write_ui_element(
             )
     else:
         if normalized_mode == "append":
-            try:
-                wrapper.set_focus()
-                wrapper.click_input()
-                type_keys = getattr(wrapper, "type_keys", None)
-                if not callable(type_keys):
-                    raise RuntimeError("type_keys indisponible")
-                type_keys("{END}", set_foreground=True)
-                type_keys(value, with_spaces=True, set_foreground=True)
-            except Exception as exc:
+            if not _paste_text_to_control(wrapper, value, append=True):
                 return UIActionResult(
                     False,
                     f"Impossible d'ajouter du texte dans {label}.",
-                    str(exc),
+                    control_type,
                 )
         elif not _type_text_into_focused_control(wrapper, value):
             return UIActionResult(
