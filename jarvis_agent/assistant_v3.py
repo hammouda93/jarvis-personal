@@ -398,6 +398,36 @@ class AssistantWorker(QObject):
             return False
         return True
 
+    def _record_direct_agent_context(
+        self,
+        user_text: str,
+        response_text: str,
+        intent: ToolIntent,
+        result,
+    ) -> None:
+        recorder = getattr(self._agent, "record_external_turn", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(
+                user_text,
+                response_text,
+                action_name=intent.name,
+                action_detail=str(result.detail or ""),
+                success=bool(result.success),
+            )
+            self.log_line.emit(
+                f"[CONTEXT] direct={intent.name} "
+                f"success={1 if result.success else 0}"
+            )
+        except Exception as exc:
+            # A context sync failure must never break the action that already
+            # succeeded locally.
+            self.log_line.emit(
+                f"[CONTEXT] direct_sync_failed="
+                f"{type(exc).__name__}: {exc}"
+            )
+
     def _handle_simple_direct_action(
         self,
         user_text: str,
@@ -413,6 +443,12 @@ class AssistantWorker(QObject):
             f"args={intent.args} follow_up={result.follow_up}"
         )
         spoken = tool_message(intent, result, self._conversation_language)
+        self._record_direct_agent_context(
+            user_text,
+            spoken,
+            intent,
+            result,
+        )
         self._shadow_observe(
             user_text,
             source="direct_fast_path",
@@ -487,6 +523,12 @@ class AssistantWorker(QObject):
                     follow_intent,
                     result,
                     self._conversation_language,
+                )
+                self._record_direct_agent_context(
+                    user_text,
+                    response,
+                    follow_intent,
+                    result,
                 )
                 self._shadow_observe(
                     user_text,
