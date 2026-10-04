@@ -9,6 +9,40 @@ from jarvis_agent.cua_driver_bridge import (
 
 
 class CuaDriverBridgeTests(unittest.TestCase):
+    def test_launch_application_uses_driver_native_catalog(self):
+        bridge = CuaDriverBridge()
+
+        with patch.object(bridge, "available", return_value=True), patch.object(
+            bridge,
+            "call",
+            return_value={
+                "pid": 4242,
+                "name": "WhatsApp",
+                "windows": [],
+            },
+        ) as call_mock:
+            result = bridge.launch_application("WhatsApp")
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.detail["pid"], 4242)
+        call_mock.assert_called_once_with(
+            "launch_app",
+            {"name": "WhatsApp"},
+            timeout_s=6.0,
+        )
+
+    def test_launch_application_fails_closed_without_confirmed_pid(self):
+        bridge = CuaDriverBridge()
+
+        with patch.object(bridge, "available", return_value=True), patch.object(
+            bridge,
+            "call",
+            return_value={"name": "WhatsApp", "windows": []},
+        ):
+            result = bridge.launch_application("WhatsApp")
+
+        self.assertFalse(result.success)
+
     def test_text_field_with_set_value_is_writable(self):
         element = CuaElement(
             token="s0000002a:1",
