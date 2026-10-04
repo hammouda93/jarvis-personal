@@ -16,13 +16,13 @@ from .screen_vision import (
     observe_screen,
     write_visual_target,
 )
+from .perception_router import inspect_window_hybrid as inspect_active_window
 from .tools import ToolIntent, ToolResult, execute, normalize
 from .windows_perception import (
     activate_window,
     click_ui_element,
     close_tab,
     close_window,
-    inspect_active_window,
     list_windows,
     press_key,
     type_text_active_window,
