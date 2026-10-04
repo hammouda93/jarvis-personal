@@ -96,7 +96,7 @@ NODES: tuple[VisualNode, ...] = (
     VisualNode("respond", "Vous répondre", "Voix & texte", 0.28, 0.79, "OUT"),
 )
 
-NODE_BY_KEYNODE_BY_KEY = {node.key: node for node in NODES}
+NODE_BY_KEY = {node.key: node for node in NODES}
 
 
 TOOL_NODE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -494,7 +494,7 @@ class PersonalJarvisCanvas(QWidget):
             "CEREBRAS · ORCHESTRATION CORE",
         )
 
-    def _edge_path(    def _edge_path(
+    def _edge_path(
         self,
         start: QPointF,
         end: QPointF,
@@ -740,7 +740,7 @@ class PersonalJarvisCanvas(QWidget):
             painter.setBrush(QColor(69, 234, 195, 215))
             painter.drawEllipse(tick, 4.0, 4.0)
 
-    def paintEvent(    def paintEvent(self, _event) -> None:
+    def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHints(
             QPainter.Antialiasing
@@ -922,7 +922,7 @@ class FlowPanel(QFrame):
             self.state.setText("● En attente")
 
 
-class JarvisWindowclass JarvisWindow(QWidget):
+class JarvisWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Personal Jarvis")
