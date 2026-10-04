@@ -243,16 +243,56 @@ class LiveMissionTracker:
         if self.context is None:
             return ""
         observed = dict(self.context.observed_state or {})
+        browser = dict(observed.get("browser") or {})
         steps = list(observed.get("recent_steps") or [])
         for action in actions:
             name = str(getattr(action, "name", "") or "")
             if not name:
                 continue
+            success = bool(getattr(action, "success", False))
             steps.append({
                 "action": name,
-                "success": bool(getattr(action, "success", False)),
+                "success": success,
                 "request": str(user_text)[:240],
             })
+            if name not in _BROWSER_ACTIONS and name not in {
+                "inspect_active_window",
+                "inspect_interface",
+                "click_ui_element",
+                "press_key",
+            }:
+                continue
+            try:
+                detail = json.loads(
+                    str(getattr(action, "detail", "") or "{}")
+                )
+            except Exception:
+                detail = {}
+            if not isinstance(detail, dict):
+                detail = {}
+
+            current_window = detail.get("window")
+            if isinstance(current_window, dict):
+                title = str(current_window.get("title") or "").strip()
+                if title:
+                    browser["window_title"] = title
+
+            post = detail.get("post_observation")
+            if isinstance(post, dict):
+                post_window = post.get("window")
+                if isinstance(post_window, dict):
+                    title = str(post_window.get("title") or "").strip()
+                    if title:
+                        browser["window_title"] = title
+                if name == "click_ui_element" and success:
+                    browser["page_kind"] = "navigated_after_click"
+
+            if name == "inspect_browser_window" and success:
+                browser["last_inspected"] = "browser_window"
+            browser["last_action"] = name
+            browser["last_success"] = success
+
+        observed["browser"] = browser
         observed["recent_steps"] = steps[-8:]
         observed["last_response"] = str(response_text or "")[:600]
         observed["updated_at"] = time.time()
