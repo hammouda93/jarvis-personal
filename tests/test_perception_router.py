@@ -155,14 +155,7 @@ class HybridPerceptionTests(unittest.TestCase):
                     "structured",
                     json.dumps(uia_payload),
                 )
-            ),
-            vision=Mock(
-                return_value=ScreenObservation(
-                    True,
-                    "vision",
-                    json.dumps(vision_payload),
-                )
-            ),
+            )
         )
 
         with patch(
@@ -173,6 +166,13 @@ class HybridPerceptionTests(unittest.TestCase):
                 '{"verified":true}',
             ),
         ) as activate_mock, patch(
+            "jarvis_agent.perception_router.observe_screen",
+            return_value=ScreenObservation(
+                True,
+                "vision",
+                json.dumps(vision_payload),
+            ),
+        ) as vision_mock, patch(
             "jarvis_agent.perception_router.settings",
             SimpleNamespace(vision_enabled=True),
         ):
@@ -181,7 +181,7 @@ class HybridPerceptionTests(unittest.TestCase):
         self.assertTrue(result.success)
         activate_mock.assert_called_once()
         self.assertEqual(
-            manager.vision.call_args.kwargs["window_id"],
+            vision_mock.call_args.kwargs["window_id"],
             "4242",
         )
 

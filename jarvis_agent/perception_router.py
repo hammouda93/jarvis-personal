@@ -146,15 +146,15 @@ class PerceptionManager:
                     # capture the same HWND for the VLM.
                     activation_error = ""
                     if identity.has_stable_identity:
-                        from .windows_perception import activate_bound_window
+                        kwargs["window_id"] = identity.window_id
+                        if self.vision is None:
+                            from .windows_perception import activate_bound_window
 
-                        activation = activate_bound_window(identity)
-                        if activation.success:
-                            kwargs["window_id"] = identity.window_id
-                        else:
-                            activation_error = str(
-                                activation.detail or activation.message
-                            )[:700]
+                            activation = activate_bound_window(identity)
+                            if not activation.success:
+                                activation_error = str(
+                                    activation.detail or activation.message
+                                )[:700]
                     elif window_id:
                         kwargs["window_id"] = window_id
 
