@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from dataclasses import dataclass
+from urllib.parse import urlparse
 from typing import Any
 
 from .agent_knowledge import AGENT_KNOWLEDGE
@@ -67,7 +68,49 @@ class NativeToolRegistry:
         self.knowledge = knowledge or AGENT_KNOWLEDGE
         self._last_app_hint = ""
         self._last_observed_window_title = ""
+        self._last_web_title_hint = ""
         self._browser = None
+
+    @staticmethod
+    def _web_window_title_hint(url: str) -> str:
+        try:
+            host = urlparse(str(url or "")).netloc.casefold()
+        except Exception:
+            host = ""
+        if not host:
+            return ""
+        if host.endswith("youtube.com"):
+            label = "YouTube"
+        elif host == "web.whatsapp.com":
+            label = "WhatsApp"
+        elif "google." in host:
+            label = "Google"
+        else:
+            parts = [part for part in host.split(".") if part and part != "www"]
+            label = (parts[0] if parts else host).replace("-", " ").title()
+        return f"{label} - Google Chrome"
+
+    def _resolve_web_window_title(self, requested: str | None) -> str | None:
+        hint = str(self._last_web_title_hint or "").strip()
+        value = str(requested or "").strip()
+        if not hint:
+            return value or None
+        if not value:
+            return hint
+        normalized_value = normalize(value)
+        normalized_hint = normalize(hint)
+        site_label = normalize(hint.split(" - ", 1)[0])
+        if (
+            normalized_value == site_label
+            or normalized_value in normalized_hint
+            or (
+                "google chrome" not in normalized_value
+                and site_label
+                and site_label in normalized_value
+            )
+        ):
+            return hint
+        return value
 
     @staticmethod
     def _compact_observation(payload: dict[str, Any], limit: int = 24) -> dict[str, Any]:
@@ -855,6 +898,7 @@ class NativeToolRegistry:
         if name == "open_application":
             target = str(args.get("name", "")).strip()
             new_instance = bool(args.get("new_instance", False))
+            self._last_web_title_hint = ""
 
             observed_title = self._last_observed_window_title
             if (
@@ -1010,6 +1054,8 @@ class NativeToolRegistry:
                 execute(ToolIntent("browser.open_url", {"url": url})),
             )
             if converted.success:
+                self._last_web_title_hint = self._web_window_title_hint(url)
+                self._last_app_hint = "Google Chrome"
                 invalidate_ui_snapshot()
             return converted
 
@@ -1203,7 +1249,8 @@ class NativeToolRegistry:
             )
 
         if name == "inspect_active_window":
-            title = str(args.get("title", "")).strip() or None
+            requested_title = str(args.get("title", "")).strip() or None
+            title = self._resolve_web_window_title(requested_title)
             result = inspect_active_window(title=title)
             if (
                 not result.success
