@@ -399,7 +399,7 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertTrue(result.success)
         close_tab_mock.assert_called_once_with("YouTube")
 
-    @patch("jarvis_agent.native_tools.inspect_active_window")
+    @patch("jarvis_agent.native_tools.inspect_browser_window")
     @patch("jarvis_agent.native_tools.execute")
     def test_web_open_disambiguates_whatsapp_web_from_desktop(
         self,
