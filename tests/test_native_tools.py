@@ -455,6 +455,90 @@ class NativeToolRegistryTests(unittest.TestCase):
 
         self.assertEqual(self.registry._last_web_title_hint, "")
 
+    @patch("jarvis_agent.native_tools.inspect_browser_window")
+    @patch("jarvis_agent.native_tools.inspect_active_window")
+    def test_text_ui_focus_does_not_replace_browser_work_surface(
+        self,
+        inspect_active_mock,
+        inspect_browser_mock,
+    ):
+        self.registry._last_web_title_hint = "YouTube - Google Chrome"
+        self.registry._work_surface_title = "YouTube - Google Chrome"
+        inspect_browser_mock.return_value = SimpleNamespace(
+            success=True,
+            message="browser observed",
+            detail=json.dumps(
+                {
+                    "window": {"title": "Messi - YouTube - Google Chrome"},
+                    "controls": [],
+                }
+            ),
+        )
+
+        result = self.registry.execute(
+            "inspect_active_window",
+            {},
+        )
+
+        self.assertTrue(result.success)
+        inspect_browser_mock.assert_called_once_with(
+            title="YouTube - Google Chrome"
+        )
+        inspect_active_mock.assert_not_called()
+
+    @patch("jarvis_agent.native_tools.press_key")
+    @patch("jarvis_agent.native_tools.activate_window")
+    def test_press_key_reactivates_mission_work_surface(
+        self,
+        activate_mock,
+        press_mock,
+    ):
+        self.registry._work_surface_title = "YouTube - Google Chrome"
+        activate_mock.return_value = SimpleNamespace(
+            success=True,
+            message="activated",
+            detail="",
+        )
+        press_mock.return_value = SimpleNamespace(
+            success=True,
+            message="pressed",
+            detail="{}",
+        )
+
+        result = self.registry.execute(
+            "press_key",
+            {"key": "enter"},
+        )
+
+        self.assertTrue(result.success)
+        activate_mock.assert_called_once_with(
+            "YouTube - Google Chrome"
+        )
+        press_mock.assert_called_once_with("enter")
+
+    @patch("jarvis_agent.native_tools.observe_screen")
+    def test_visual_fallback_uses_mission_work_surface_not_jarvis(
+        self,
+        observe_mock,
+    ):
+        self.registry._work_surface_title = "YouTube - Google Chrome"
+        observe_mock.return_value = SimpleNamespace(
+            success=True,
+            message="seen",
+            detail="{}",
+        )
+
+        result = self.registry.execute(
+            "observe_screen",
+            {"focus": "first result"},
+        )
+
+        self.assertTrue(result.success)
+        observe_mock.assert_called_once_with(
+            title="YouTube - Google Chrome",
+            focus="first result",
+        )
+
     @patch("jarvis_agent.native_tools.observe_screen")
     def test_observe_screen_routes_to_local_visual_sensor(self, observe_mock):
         observe_mock.return_value = SimpleNamespace(
