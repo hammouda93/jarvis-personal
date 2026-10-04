@@ -23,6 +23,7 @@ from .windows_perception import (
     close_tab,
     close_window,
     inspect_active_window,
+    invalidate_ui_snapshot,
     list_windows,
     press_key,
     type_text_active_window,
@@ -68,7 +69,7 @@ class NativeToolRegistry:
         return [
             self._ollama(
                 "open_application",
-                "Trouve et ouvre une application de bureau installée sur Windows par son nom. Ne pas utiliser pour ouvrir un site ou service web: utiliser open_url directement.",
+                "Trouve et ouvre une application de bureau installée sur Windows par son nom. Ne pas utiliser comme substitut à un contrôle déjà observé dans une application ouverte: si inspect_active_window montre la cible, agir sur sa ref. Ne pas utiliser pour ouvrir un site web: utiliser open_url.",
                 {
                     "name": {
                         "type": "string",
@@ -148,7 +149,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "inspect_active_window",
-                "Observe la fenêtre de travail active ou une fenêtre nommée et retourne une vue compacte de ses contrôles. Les contrôles ont des refs e1, e2... réutilisables immédiatement pour cliquer ou écrire, même sans libellé.",
+                "Observe la fenêtre active ou nommée et retourne observation_id + contrôles e1/e2... Les refs appartiennent uniquement à cette observation. Préférer une ref observée à un raccourci clavier ou à la réouverture de l'application. Après toute action qui peut modifier l'interface, refaire une inspection avant de réutiliser une ref.",
                 {
                     "title": {
                         "type": "string",
@@ -224,7 +225,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "click_ui_element",
-                "Clique/active un contrôle observé. Utilise ref après inspect_active_window si le contrôle est sans nom ou si la cible est ambiguë.",
+                "Clique/active un contrôle observé. Préférer ref + observation_id issus de la dernière inspection à un raccourci clavier. Toute action invalide les anciennes refs: réinspecter avant l'action suivante.",
                 {
                     "name": {
                         "type": "string",
@@ -233,6 +234,10 @@ class NativeToolRegistry:
                     "ref": {
                         "type": "string",
                         "description": "Référence e1, e2... fournie par la dernière inspection.",
+                    },
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Identifiant observation_id qui a produit ref.",
                     },
                     "control_type": {
                         "type": "string",
@@ -274,6 +279,10 @@ class NativeToolRegistry:
                     "ref": {
                         "type": "string",
                         "description": "Référence e1, e2... fournie par la dernière inspection.",
+                    },
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Identifiant observation_id qui a produit ref.",
                     },
                     "text": {
                         "type": "string",
@@ -704,7 +713,10 @@ class NativeToolRegistry:
             else:
                 result = execute(ToolIntent("app.open_named", {"query": target}))
             self._record_app_launch(target, result)
-            return self._convert(name, result)
+            converted = self._convert(name, result)
+            if converted.success:
+                invalidate_ui_snapshot()
+            return converted
 
         if name == "open_file":
             target = str(args.get("name", "")).strip()
@@ -714,10 +726,13 @@ class NativeToolRegistry:
             payload: dict[str, Any] = {"query": target}
             if within and self._safe_target(within):
                 payload["within"] = within
-            return self._convert(
+            converted = self._convert(
                 name,
                 execute(ToolIntent("file.open_named", payload)),
             )
+            if converted.success:
+                invalidate_ui_snapshot()
+            return converted
 
         if name == "open_folder":
             target = str(args.get("name", "")).strip()
@@ -733,16 +748,22 @@ class NativeToolRegistry:
                 if within and self._safe_target(within):
                     payload["within"] = within
                 result = execute(ToolIntent("folder.open_named", payload))
-            return self._convert(name, result)
+            converted = self._convert(name, result)
+            if converted.success:
+                invalidate_ui_snapshot()
+            return converted
 
         if name == "open_url":
             url = str(args.get("url", "")).strip()
             if not url.startswith(("https://", "http://")):
                 return self._error(name, "URL non autorisée ou invalide.")
-            return self._convert(
+            converted = self._convert(
                 name,
                 execute(ToolIntent("browser.open_url", {"url": url})),
             )
+            if converted.success:
+                invalidate_ui_snapshot()
+            return converted
 
         if name in {"research_web", "search_web"}:
             query = str(args.get("query", "")).strip()
@@ -863,6 +884,7 @@ class NativeToolRegistry:
                 target,
                 ref=ref,
                 control_type=control_type,
+                observation_id=str(args.get("observation_id", "")).strip(),
             )
             return AgentActionResult(
                 name=name,
@@ -896,7 +918,13 @@ class NativeToolRegistry:
             ref = str(args.get("ref", "")).strip()
             text = str(args.get("text", ""))
             mode = str(args.get("mode", "replace")).strip() or "replace"
-            result = write_ui_element(target, text, ref=ref, mode=mode)
+            result = write_ui_element(
+                target,
+                text,
+                ref=ref,
+                mode=mode,
+                observation_id=str(args.get("observation_id", "")).strip(),
+            )
             return AgentActionResult(
                 name=name,
                 success=result.success,
