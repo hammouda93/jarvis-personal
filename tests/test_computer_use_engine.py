@@ -232,6 +232,73 @@ class PerceptionContractTests(unittest.TestCase):
             self.assertFalse(visual_action_guard(metadata))
 
 
+class SemanticTechnicalRoleProofTests(unittest.TestCase):
+    def test_semantic_role_plus_technical_label_can_prove_exact_native_value(self):
+        scope = SurfaceIdentity(
+            title="Éditeur",
+            window_id="100",
+            pid=42,
+        )
+        entity = UIEntity(
+            ref="proof:e1",
+            native_ref="",
+            sensor="uia",
+            technical_role="Document",
+            semantic_roles=("text_input",),
+            label="bonjour jarvis",
+            value="bonjour jarvis",
+            writable=True,
+            actionable=True,
+            evidence_ids=("native:readback",),
+        )
+        after = UIObservation(
+            "proof",
+            scope,
+            (entity,),
+            coverage={"tree_complete": False},
+        )
+        condition = Postcondition(
+            kind="value_equals",
+            value="bonjour jarvis",
+            role="text_input",
+            label="Document",
+        )
+
+        verdict = verify_conditions(
+            (condition,),
+            before=None,
+            after=after,
+        )
+
+        self.assertTrue(verdict.passed)
+        self.assertEqual(
+            verdict.predicates[0]["observed"],
+            "bonjour jarvis",
+        )
+
+    def test_technical_label_alias_is_not_used_without_matching_role(self):
+        scope = SurfaceIdentity(title="Éditeur", window_id="100", pid=42)
+        entity = UIEntity(
+            ref="proof:e1",
+            native_ref="",
+            sensor="uia",
+            technical_role="Document",
+            semantic_roles=("text_input",),
+            label="contenu réel",
+            value="bonjour",
+        )
+        after = UIObservation("proof", scope, (entity,), coverage={})
+        condition = Postcondition(
+            kind="value_equals",
+            value="bonjour",
+            label="Document",
+        )
+
+        verdict = verify_conditions((condition,), before=None, after=after)
+
+        self.assertFalse(verdict.passed)
+
+
 class PostconditionTests(unittest.TestCase):
     def test_arbitrary_inspection_is_not_goal_evidence(self):
         before = observation(id="a")

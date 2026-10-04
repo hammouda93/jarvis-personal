@@ -83,7 +83,17 @@ def matching_entities(condition: Postcondition, observation: UIObservation) -> l
         ):
             continue
         if condition.label and normalized_text(condition.label) != normalized_text(entity.label):
-            continue
+            # Models commonly use a generic accessibility type such as
+            # "Document" as the label while also giving the correct semantic
+            # role. Accept that technical-role alias only when the role itself
+            # already matches this entity. A label-only predicate stays exact.
+            technical_alias = (
+                bool(condition.role)
+                and normalized_text(condition.label)
+                == normalized_text(entity.technical_role)
+            )
+            if not technical_alias:
+                continue
         if condition.region and normalized_text(condition.region) != normalized_text(entity.region):
             continue
         result.append(entity)
