@@ -13,6 +13,7 @@ from .agent_runtime import AgentRuntimeUnavailable, build_agent_runtime
 from .audio import record_utterance, wait_for_double_clap
 from .config import settings
 from .language import normalize_language, repeat_prompt, tool_message
+from .live_mission import LiveMissionTracker
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
 from .stt import build_stt
@@ -118,6 +119,7 @@ class AssistantWorker(QObject):
         self._stt = build_stt()
         self._tts = ElevenLabsTTS()
         self._agent = build_agent_runtime()
+        self._live_mission = LiveMissionTracker()
         self._conversation_language = "fr"
         self._pending_direct_follow_up = ""
         self._text_inbox = TextTurnInbox()
@@ -149,13 +151,47 @@ class AssistantWorker(QObject):
         intent: ToolIntent,
         result,
     ) -> None:
+        mission_block = ""
+        try:
+            mission_block = self._live_mission.record_direct(
+                user_text,
+                intent.name,
+                dict(intent.args or {}),
+                success=bool(result.success),
+                detail=str(result.detail or ""),
+                response_text=spoken,
+            )
+            if mission_block:
+                self.log_line.emit(
+                    f"[MISSION_LIVE] action={intent.name} "
+                    f"success={1 if result.success else 0}"
+                )
+        except Exception as exc:
+            self.log_line.emit(
+                f"[MISSION_LIVE] update_failed="
+                f"{type(exc).__name__}: {exc}"
+            )
+
+        setter = getattr(self._agent, "set_live_mission_context", None)
+        if callable(setter):
+            try:
+                setter(mission_block)
+            except Exception as exc:
+                self.log_line.emit(
+                    f"[MISSION_LIVE] inject_failed="
+                    f"{type(exc).__name__}: {exc}"
+                )
+
         recorder = getattr(self._agent, "record_external_turn", None)
         if not callable(recorder):
             return
         try:
+            assistant_context = spoken
+            if mission_block:
+                assistant_context += "\n" + mission_block
             recorder(
                 user_text,
-                spoken,
+                assistant_context,
                 action_name=intent.name,
                 action_detail=str(result.detail or ""),
                 success=bool(result.success),
@@ -554,6 +590,29 @@ class AssistantWorker(QObject):
             "Compréhension de votre demande…",
         )
 
+        mission_block = ""
+        try:
+            mission_block = self._live_mission.prepare_turn(user_text)
+        except Exception as exc:
+            self.log_line.emit(
+                f"[MISSION_LIVE] prepare_failed={type(exc).__name__}: {exc}"
+            )
+        mission_setter = getattr(
+            self._agent,
+            "set_live_mission_context",
+            None,
+        )
+        if callable(mission_setter):
+            try:
+                mission_setter(mission_block)
+            except Exception as exc:
+                self.log_line.emit(
+                    f"[MISSION_LIVE] inject_failed="
+                    f"{type(exc).__name__}: {exc}"
+                )
+        if mission_block:
+            self.log_line.emit("[MISSION_LIVE] context_injected=1")
+
         try:
             turn = self._agent.run(
                 user_text,
@@ -581,6 +640,22 @@ class AssistantWorker(QObject):
             actions=turn.actions,
             response_text=turn.text,
         )
+
+        try:
+            updated_mission = self._live_mission.record_agent_turn(
+                user_text,
+                list(turn.actions),
+                turn.text,
+            )
+            if callable(mission_setter):
+                mission_setter(updated_mission)
+            if updated_mission:
+                self.log_line.emit("[MISSION_LIVE] agent_turn_recorded=1")
+        except Exception as exc:
+            self.log_line.emit(
+                f"[MISSION_LIVE] agent_update_failed="
+                f"{type(exc).__name__}: {exc}"
+            )
 
         if turn.actions:
             details = " · ".join(
