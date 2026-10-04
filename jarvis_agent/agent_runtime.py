@@ -115,6 +115,15 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   préparée, conserve la fenêtre et l'onglet existants: inspecte l'interface
   actuelle et active le contrôle de recherche. Ne rouvre pas le site avec
   open_url sauf si l'interface cible est réellement absente;
+- pour sélectionner un résultat, une vidéo ou un lien déjà affiché dans un
+  navigateur, inspecte d'abord la fenêtre réelle et clique une ref concrète.
+  N'utilise pas Enter comme substitut si aucun contrôle sélectionné/focalisé
+  n'a été observé;
+- sur Chromium/Chrome, une première inspection peut n'exposer que l'onglet et
+  les boutons du navigateur pendant que le contenu de page se charge. Si la
+  demande vise le contenu web et que la première inspection ne montre que ce
+  chrome, inspecte une seconde fois la même fenêtre avant tout fallback visuel
+  ou avant de demander à l'utilisateur de préciser;
 - quand l'inspection fournit value sur un champ/document, traite cette valeur
   comme l'état réel visible. Ne reconstruis jamais le contenu depuis la mémoire
   de conversation si l'interface fournit une valeur actuelle;
@@ -270,6 +279,17 @@ class AgentRuntime(Protocol):
         log: LogFn | None = None,
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
+        ...
+
+    def record_external_turn(
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        action_name: str = "",
+        action_detail: str = "",
+        success: bool = True,
+    ) -> None:
         ...
 
     def reset(self) -> None:
@@ -1008,6 +1028,24 @@ class OllamaToolAgent:
         self._messages = [
             {"role": "system", "content": _effective_system_instructions()}
         ]
+
+    def record_external_turn(
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        action_name: str = "",
+        action_detail: str = "",
+        success: bool = True,
+    ) -> None:
+        self._messages.append({"role": "user", "content": str(user_text or "").strip()})
+        context = str(assistant_text or "").strip()
+        if action_name:
+            context += f"\n[LOCAL_ACTION] {action_name} success={1 if success else 0}"
+        if action_detail:
+            context += f"\n[LOCAL_RESULT] {str(action_detail)[:1000]}"
+        self._messages.append({"role": "assistant", "content": context.strip()})
+        self._trim_history()
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         # Prime the same system prompt + tool schema used by real turns. This
@@ -1773,6 +1811,25 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+
+    def record_external_turn(
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        action_name: str = "",
+        action_detail: str = "",
+        success: bool = True,
+    ) -> None:
+        """Record a deterministic local action without another model request."""
+        self._messages.append({"role": "user", "content": str(user_text or "").strip()})
+        context = str(assistant_text or "").strip()
+        if action_name:
+            context += f"\n[LOCAL_ACTION] {action_name} success={1 if success else 0}"
+        if action_detail:
+            context += f"\n[LOCAL_RESULT] {str(action_detail)[:1000]}"
+        self._messages.append({"role": "assistant", "content": context.strip()})
+        self._trim_history()
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         return
