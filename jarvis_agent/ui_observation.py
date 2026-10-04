@@ -37,6 +37,7 @@ class SurfaceIdentity:
     owner_window_id: str = ""
     root_owner_window_id: str = ""
     opener_page_ref: str = ""
+    window_backend: str = "native"
 
     def same_binding(self, other: SurfaceIdentity) -> bool:
         """Stable window/tab identity; a document navigation still expires element refs."""
@@ -46,12 +47,13 @@ class SurfaceIdentity:
 
     @property
     def has_stable_identity(self) -> bool:
-        return bool(self.page_ref) or bool(self.window_id.isdecimal() and int(self.window_id) > 0 and self.pid > 0)
+        return bool(self.page_ref) or bool(self.window_backend == "native" and self.window_id.isdecimal()
+                                           and int(self.window_id) > 0 and self.pid > 0)
 
     @property
     def ref(self) -> str:
         key = (self.page_ref, self.document_generation) if self.page_ref else (
-            self.window_id, self.pid, self.process_start, self.title if not self.window_id else ""
+            self.window_backend, self.window_id, self.pid, self.process_start, self.title if not self.window_id else ""
         )
         return "surface:" + hashlib.sha256(repr(key).encode()).hexdigest()[:16]
 
@@ -61,6 +63,8 @@ class SurfaceIdentity:
                 self.page_ref == other.page_ref
                 and self.document_generation == other.document_generation
             )
+        if self.window_backend != other.window_backend:
+            return False
         for name in ("window_id", "pid", "process_start"):
             left, right = getattr(self, name), getattr(other, name)
             if left and left != right:
@@ -73,7 +77,8 @@ class SurfaceIdentity:
 
     def as_dict(self) -> dict[str, Any]:
         return {**asdict(self), "surface_ref": self.ref,
-                "identity_strength": "native" if self.window_id or self.page_ref else "title_only"}
+                "identity_strength": "native" if self.has_stable_identity else
+                "driver" if self.window_backend == "cua" else "title_only"}
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> SurfaceIdentity:
@@ -97,6 +102,10 @@ class SurfaceIdentity:
             owner_window_id=str(win.get("owner_hwnd") or win.get("owner_window_id") or ""),
             root_owner_window_id=str(win.get("root_owner_hwnd") or win.get("root_owner_window_id") or ""),
             opener_page_ref=str(win.get("opener_page_ref") or ""),
+            window_backend="cua" if not (win.get("hwnd") or win.get("handle")) and (
+                (payload.get("snapshot") or {}).get("provider") == "cua_driver" or payload.get("sensor") == "cua"
+                or win.get("window_backend") == "cua"
+            ) else "native",
         )
 
 

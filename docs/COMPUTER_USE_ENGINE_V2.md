@@ -109,6 +109,8 @@ Le premier objectif vient du planner et doit correspondre à la demande humaine.
 
 `list_ui_surfaces` expose les fenêtres natives et les onglets de l'endpoint CDP configuré. `observe_ui(window_id=...)` observe un HWND exact ; `observe_ui(page_ref=...)` observe un onglet exact. Les titres servent à la découverte initiale, jamais à remplacer une identité liée.
 
+Un identifiant de fenêtre Cua reste un token du driver, même s'il ressemble à un nombre. Il ne devient pas un HWND. Une association native exige la correspondance unique PID/bornes déjà effectuée par le Perception Manager ; le contrôle garde ensuite son exécuteur Cua. Sans HWND prouvé, le driver reste utilisable sur son chemin structuré, mais le moteur refuse de lier ce token comme une fenêtre native pour une mission multi-surfaces.
+
 Avant les mutations de contenu, observer chaque surface existante puis appeler `bind_ui_surface` avec un nom court, par exemple `source` ou `destination`. Le nom reste lié à la même identité pendant toute la mission. Une observation fraîche peut actualiser ses faits ; elle ne peut pas déplacer ce lien vers une autre fenêtre du même titre. `switch_ui_surface` active ce HWND ou cet onglet et vérifie le focus, puis réobserve. Les changements de focus préalables sont autorisés avant de figer le goal.
 
 Exemple de goal à deux surfaces déjà liées :

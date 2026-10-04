@@ -268,6 +268,23 @@ class MultiSurfaceEngineTests(unittest.TestCase):
 
 
 class SurfaceContractTests(unittest.TestCase):
+    def test_numeric_cua_window_id_is_not_a_native_hwnd(self):
+        driver = SurfaceIdentity.from_payload({"window": {"window_id": 101, "pid": 42, "title": "Opaque"},
+                                               "snapshot": {"provider": "cua_driver"}})
+        native = SurfaceIdentity(window_id="101", pid=42, title="Opaque")
+        self.assertFalse(driver.has_stable_identity)
+        self.assertFalse(driver.same_surface(native))
+        self.assertNotEqual(driver.ref, native.ref)
+        self.assertEqual(SurfaceIdentity.from_payload(driver.as_dict()), driver)
+        with self.assertRaisesRegex(ValueError, "TOO_WEAK"):
+            MissionSurfaces().bind("opaque", UIObservation("obs", driver))
+
+    def test_proven_native_hwnd_keeps_cua_as_element_executor(self):
+        identity = SurfaceIdentity.from_payload({"window": {"window_id": 7, "hwnd": 101, "pid": 42},
+                                                 "snapshot": {"provider": "cua_driver"}, "sensor": "cua"})
+        self.assertTrue(identity.has_stable_identity)
+        self.assertTrue(identity.same_binding(SurfaceIdentity(window_id="101", pid=42)))
+
     def test_pinned_native_only_inspection_keeps_identity_for_vision_fallback(self):
         window = {"hwnd": 101, "handle": 101, "pid": 42, "process_start": "p42", "title": "Opaque",
                   "bounds": [0, 0, 600, 400]}
