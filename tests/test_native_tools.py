@@ -51,6 +51,51 @@ class NativeToolRegistryTests(unittest.TestCase):
         )
         execute_mock.assert_not_called()
 
+    @patch(
+        "jarvis_agent.native_tools.settings",
+        replace(real_settings, operational_learning_enabled=False),
+    )
+    @patch("jarvis_agent.native_tools.activate_window")
+    @patch("jarvis_agent.native_tools.execute")
+    def test_session_app_identity_reuses_localized_observed_window_with_learning_off(
+        self,
+        execute_mock,
+        activate_mock,
+        _settings_mock,
+    ):
+        # First launch establishes the app identity independently of persistent
+        # operational learning.
+        execute_mock.return_value = ToolResult(True, "ok", "notepad")
+        first = self.registry.execute(
+            "open_application",
+            {"name": "Notepad"},
+        )
+        self.assertTrue(first.success)
+        self.assertEqual(self.registry._last_app_hint, "Notepad")
+
+        # The subsequent UI observation can use a localized/changing title.
+        self.registry._last_observed_window_title = (
+            "*Bonjour Jarvis – Bloc-notes"
+        )
+        activate_mock.return_value = SimpleNamespace(
+            success=True,
+            detail='{"window":"*Bonjour Jarvis – Bloc-notes"}',
+        )
+        execute_mock.reset_mock()
+
+        second = self.registry.execute(
+            "open_application",
+            {"name": "Notepad"},
+        )
+
+        self.assertTrue(second.success)
+        payload = json.loads(second.detail)
+        self.assertTrue(payload["reused_existing_window"])
+        activate_mock.assert_called_once_with(
+            "*Bonjour Jarvis – Bloc-notes"
+        )
+        execute_mock.assert_not_called()
+
     @patch("jarvis_agent.native_tools.activate_window")
     @patch("jarvis_agent.native_tools.execute")
     def test_open_application_new_instance_bypasses_observed_window_reuse(
