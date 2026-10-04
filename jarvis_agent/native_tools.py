@@ -224,6 +224,21 @@ class NativeToolRegistry:
                 [],
             ),
             self._ollama(
+                "inspect_interface",
+                "Inspection générique d'une application Windows: utilise UIA/Cua d'abord et, seulement si la couverture structurée est insuffisante, tente une seule observation visuelle locale. Préfère cet outil pour découvrir une interface de bureau inconnue.",
+                {
+                    "title": {
+                        "type": "string",
+                        "description": "Titre ou nom optionnel de la fenêtre.",
+                    },
+                    "focus": {
+                        "type": "string",
+                        "description": "Ce qu'il faut comprendre ou trouver dans l'interface.",
+                    },
+                },
+                [],
+            ),
+            self._ollama(
                 "inspect_active_window",
                 "Observe la fenêtre active ou nommée et retourne des contrôles avec une ref opaque complète (par ex. obs3:e7). Pour agir, copie uniquement cette ref exactement telle quelle; observation_id est une métadonnée de diagnostic, pas un argument d’action. Après toute mutation, une ancienne ref expire.",
                 {
@@ -1104,6 +1119,75 @@ class NativeToolRegistry:
                         "factual_evidence": False,
                         "visible_browser_opened": bool(base.success),
                     },
+                    ensure_ascii=False,
+                ),
+            )
+
+        if name == "inspect_interface":
+            title = str(args.get("title", "")).strip()
+            focus = str(args.get("focus", "")).strip()
+            structured = self.execute(
+                "inspect_active_window",
+                {"title": title} if title else {},
+            )
+            if not structured.success:
+                return AgentActionResult(
+                    name=name,
+                    success=False,
+                    message=structured.message,
+                    detail=structured.detail,
+                )
+            try:
+                payload = json.loads(structured.detail or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            snapshot = dict(payload.get("snapshot") or {})
+            coverage = str(snapshot.get("semantic_coverage") or "").strip().lower()
+            insufficient = (
+                coverage == "insufficient"
+                or snapshot.get("vision_recommended") is True
+            )
+            perception = {
+                "structured_success": True,
+                "structured_coverage": coverage or "unknown",
+                "vision_attempted": False,
+                "vision_success": False,
+            }
+            if insufficient and settings.vision_enabled:
+                perception["vision_attempted"] = True
+                window = payload.get("window") if isinstance(payload.get("window"), dict) else {}
+                visual_title = str(window.get("title") or title).strip() or None
+                visual = observe_screen(
+                    title=visual_title,
+                    focus=focus or (
+                        "Describe les contrôles et zones utiles visibles pour la mission actuelle."
+                    ),
+                )
+                perception["vision_success"] = bool(visual.success)
+                if visual.success:
+                    try:
+                        visual_payload = json.loads(visual.detail or "{}")
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        visual_payload = {"raw": visual.detail}
+                    payload["visual_observation"] = visual_payload
+                else:
+                    perception["vision_error"] = visual.detail or visual.message
+            payload["perception"] = perception
+            return AgentActionResult(
+                name=name,
+                success=True,
+                message=(
+                    "Interface inspectée avec perception structurée"
+                    + (
+                        " et vision."
+                        if perception["vision_success"]
+                        else "."
+                    )
+                ),
+                detail=json.dumps(
+                    self._compact_observation(payload, limit=28),
                     ensure_ascii=False,
                 ),
             )
