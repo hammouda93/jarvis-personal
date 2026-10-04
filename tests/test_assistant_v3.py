@@ -1,7 +1,28 @@
 import unittest
 
-from jarvis_agent.assistant_v3 import AssistantWorker
+from jarvis_agent.assistant_v3 import AssistantWorker, TextTurnInbox
 from jarvis_agent.tools import ToolIntent
+
+
+class TextTurnInboxTests(unittest.TestCase):
+    def test_text_inbox_is_fifo_and_signals_pending_state(self):
+        inbox = TextTurnInbox()
+
+        self.assertFalse(inbox.pending())
+        self.assertTrue(inbox.submit("premier"))
+        self.assertTrue(inbox.submit("deuxième"))
+        self.assertTrue(inbox.pending())
+        self.assertEqual(inbox.pop_nowait(), "premier")
+        self.assertTrue(inbox.pending())
+        self.assertEqual(inbox.pop_nowait(), "deuxième")
+        self.assertFalse(inbox.pending())
+
+    def test_text_inbox_rejects_empty_messages(self):
+        inbox = TextTurnInbox()
+
+        self.assertFalse(inbox.submit("   "))
+        self.assertIsNone(inbox.pop_nowait())
+        self.assertFalse(inbox.pending())
 
 
 class AssistantV3FastPathTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import re
 import threading
 import time
@@ -19,6 +20,40 @@ from .tools import ToolIntent, execute, route
 from .tts import ElevenLabsTTS
 
 
+class TextTurnInbox:
+    """Thread-safe text inbox used to interrupt passive microphone waits."""
+
+    def __init__(self) -> None:
+        self._queue: queue.Queue[str] = queue.Queue()
+        self.event = threading.Event()
+
+    def submit(self, text: str) -> bool:
+        value = str(text or "").strip()
+        if not value:
+            return False
+        self._queue.put(value)
+        self.event.set()
+        return True
+
+    def pop_nowait(self) -> str | None:
+        try:
+            value = self._queue.get_nowait()
+        except queue.Empty:
+            self.event.clear()
+            return None
+
+        if self._queue.empty():
+            self.event.clear()
+            # Close the tiny race where a producer submits between empty()
+            # and clear().
+            if not self._queue.empty():
+                self.event.set()
+        return value
+
+    def pending(self) -> bool:
+        return self.event.is_set() or not self._queue.empty()
+
+
 class AssistantWorker(QObject):
     """Voice shell around the model-native Agent Runtime.
 
@@ -33,6 +68,7 @@ class AssistantWorker(QObject):
     detail_changed = Signal(str)
     audio_level_changed = Signal(float)
     log_line = Signal(str)
+    conversation_message = Signal(str, str, str)
     finished = Signal()
 
     def __init__(self) -> None:
@@ -43,6 +79,8 @@ class AssistantWorker(QObject):
         self._agent = build_agent_runtime()
         self._conversation_language = "fr"
         self._pending_direct_follow_up = ""
+        self._text_inbox = TextTurnInbox()
+        self._reply_with_voice = True
         self._kernel_shadow = None
         self._kernel_shadow_boot_error = ""
         if settings.kernel_shadow_enabled:
@@ -111,7 +149,7 @@ class AssistantWorker(QObject):
                 f"[RESEARCH] announce reason={reason or 'unspecified'} "
                 f"query={query!r}"
             )
-            self._speak(prefix + subject)
+            self._deliver_reply(prefix + subject)
             self._state(
                 AssistantState.THINKING,
                 "Recherche en arrière-plan…",
@@ -120,6 +158,24 @@ class AssistantWorker(QObject):
     @Slot()
     def stop(self) -> None:
         self._stop.set()
+
+    def submit_text(self, text: str) -> bool:
+        """Queue a typed turn without touching the agent from the UI thread."""
+        return self._text_inbox.submit(text)
+
+    def _deliver_reply(self, text: str) -> None:
+        value = (text or "").strip()
+        if not value:
+            return
+        value = re.sub(r"[*_#]+", "", value).replace("`", "").strip()
+        source = "voice" if self._reply_with_voice else "text"
+        self.conversation_message.emit("assistant", value, source)
+        if self._reply_with_voice:
+            self._speak(value)
+        else:
+            self.log_line.emit(f"[TEXT_REPLY] {value}")
+            self.status_changed.emit("Réponse texte prête")
+
 
     def _shadow_observe(
         self,
@@ -177,7 +233,7 @@ class AssistantWorker(QObject):
             response_text=spoken,
             success=result.success,
         )
-        self._speak(spoken)
+        self._deliver_reply(spoken)
 
         if result.should_exit:
             self._stop.set()
@@ -291,11 +347,135 @@ class AssistantWorker(QObject):
         self.detail_changed.emit(
             f"{intent.name}:{'ok' if result.success else 'erreur'}"
         )
-        self._speak(spoken)
+        self._deliver_reply(spoken)
         self._state(
             AssistantState.SUCCESS if result.success else AssistantState.ERROR,
             "Prêt" if result.success else "Action non terminée",
         )
+        return True
+
+    def _process_user_text(
+        self,
+        user_text: str,
+        *,
+        source: str,
+        legacy_intent: ToolIntent | None = None,
+    ) -> bool:
+        """Process voice or typed text through one authoritative turn path."""
+        user_text = str(user_text or "").strip()
+        if not user_text:
+            return True
+
+        source = "text" if source == "text" else "voice"
+        self._reply_with_voice = source == "voice"
+        self.conversation_message.emit("user", user_text, source)
+        if source == "text":
+            self.log_line.emit(
+                f"[YOU] {user_text} [source=text lang={self._conversation_language}]"
+            )
+
+        lifecycle_handled, keep_listening = self._handle_lifecycle(user_text)
+        if lifecycle_handled:
+            return keep_listening
+
+        if self._pending_direct_follow_up:
+            follow_up = self._pending_direct_follow_up
+            self._pending_direct_follow_up = ""
+            if follow_up == "search_query":
+                follow_intent = ToolIntent("browser.search", {"query": user_text})
+            elif follow_up == "folder_name":
+                follow_intent = ToolIntent("folder.open_named", {"query": user_text})
+            else:
+                follow_intent = ToolIntent("unknown", {"text": user_text})
+
+            if follow_intent.name != "unknown":
+                result = execute(follow_intent)
+                self.log_line.emit(
+                    f"[DIRECT] follow_up={follow_up} "
+                    f"success={result.success} args={follow_intent.args}"
+                )
+                self._pending_direct_follow_up = result.follow_up or ""
+                response = tool_message(
+                    follow_intent,
+                    result,
+                    self._conversation_language,
+                )
+                self._shadow_observe(
+                    user_text,
+                    source="direct_follow_up",
+                    actions=(result,),
+                    action_names=(follow_intent.name,),
+                    response_text=response,
+                    success=result.success,
+                )
+                self._deliver_reply(response)
+                self._state(
+                    AssistantState.SUCCESS if result.success else AssistantState.ERROR,
+                    "Prêt" if result.success else "Action non terminée",
+                )
+                return True
+
+        resolved_intent = legacy_intent or route(user_text)
+        if self._handle_simple_direct_action(user_text, resolved_intent):
+            return True
+
+        self._state(
+            AssistantState.UNDERSTANDING,
+            "Compréhension de votre demande…",
+        )
+
+        try:
+            turn = self._agent.run(
+                user_text,
+                log=self.log_line.emit,
+                phase=self._agent_phase,
+            )
+        except AgentRuntimeUnavailable as exc:
+            self.log_line.emit(f"[AGENT] unavailable: {exc}")
+            self._shadow_observe(
+                user_text,
+                source="agent_runtime",
+                response_text=str(exc),
+                success=False,
+            )
+            self._state(AssistantState.ERROR, "Cerveau agent indisponible")
+            self._deliver_reply(
+                "Mon cerveau agent n'est pas disponible pour le moment. "
+                "Vérifiez le modèle configuré puis réessayez."
+            )
+            return True
+
+        self._shadow_observe(
+            user_text,
+            source="agent_runtime",
+            actions=turn.actions,
+            response_text=turn.text,
+        )
+
+        if turn.actions:
+            details = " · ".join(
+                f"{action.name}:{'ok' if action.success else 'erreur'}"
+                for action in turn.actions
+            )
+            self.detail_changed.emit(details)
+            self.log_line.emit(
+                f"[AGENT] completed_actions={len(turn.actions)}"
+            )
+        else:
+            self.detail_changed.emit("Conversation")
+
+        self._deliver_reply(turn.text)
+
+        if turn.should_exit:
+            self._stop.set()
+            return False
+
+        if turn.end_session:
+            self.log_line.emit("[SESSION] agent requested standby")
+            return False
+
+        self._state(AssistantState.SUCCESS, "Prêt")
+        self._level(0.0)
         return True
 
     def _listen_turn(self, *, first_turn: bool) -> bool:
@@ -307,9 +487,13 @@ class AssistantWorker(QObject):
             on_level=self._level,
             on_status=self.status_changed.emit,
             start_timeout_s=timeout,
+            interrupt_event=self._text_inbox.event,
         )
 
         if audio is None:
+            if self._text_inbox.pending():
+                self.log_line.emit("[TEXT] microphone wait interrupted by typed turn")
+                return False
             if first_turn and not self._stop.is_set():
                 self.log_line.emit("[VOICE] aucune phrase détectée")
             else:
@@ -379,108 +563,11 @@ class AssistantWorker(QObject):
             self._speak(repeat_prompt(self._conversation_language))
             return True
 
-        lifecycle_handled, keep_listening = self._handle_lifecycle(user_text)
-        if lifecycle_handled:
-            return keep_listening
-
-        if self._pending_direct_follow_up:
-            follow_up = self._pending_direct_follow_up
-            self._pending_direct_follow_up = ""
-            if follow_up == "search_query":
-                follow_intent = ToolIntent("browser.search", {"query": user_text})
-            elif follow_up == "folder_name":
-                follow_intent = ToolIntent("folder.open_named", {"query": user_text})
-            else:
-                follow_intent = ToolIntent("unknown", {"text": user_text})
-
-            if follow_intent.name != "unknown":
-                result = execute(follow_intent)
-                self.log_line.emit(
-                    f"[DIRECT] follow_up={follow_up} "
-                    f"success={result.success} args={follow_intent.args}"
-                )
-                self._pending_direct_follow_up = result.follow_up or ""
-                spoken = tool_message(
-                    follow_intent,
-                    result,
-                    self._conversation_language,
-                )
-                self._shadow_observe(
-                    user_text,
-                    source="direct_follow_up",
-                    actions=(result,),
-                    action_names=(follow_intent.name,),
-                    response_text=spoken,
-                    success=result.success,
-                )
-                self._speak(spoken)
-                self._state(
-                    AssistantState.SUCCESS if result.success else AssistantState.ERROR,
-                    "Prêt" if result.success else "Action non terminée",
-                )
-                return True
-
-        if self._handle_simple_direct_action(user_text, legacy_intent):
-            return True
-
-        self._state(
-            AssistantState.UNDERSTANDING,
-            "Compréhension de votre demande…",
-        )
-
-        try:
-            turn = self._agent.run(
-                user_text,
-                log=self.log_line.emit,
-                phase=self._agent_phase,
-            )
-        except AgentRuntimeUnavailable as exc:
-            self.log_line.emit(f"[AGENT] unavailable: {exc}")
-            self._shadow_observe(
-                user_text,
-                source="agent_runtime",
-                response_text=str(exc),
-                success=False,
-            )
-            self._state(AssistantState.ERROR, "Cerveau agent indisponible")
-            self._speak(
-                "Mon cerveau agent n'est pas disponible pour le moment. "
-                "Vérifiez le modèle configuré puis réessayez."
-            )
-            return True
-
-        self._shadow_observe(
+        return self._process_user_text(
             user_text,
-            source="agent_runtime",
-            actions=turn.actions,
-            response_text=turn.text,
+            source="voice",
+            legacy_intent=legacy_intent,
         )
-
-        if turn.actions:
-            details = " · ".join(
-                f"{action.name}:{'ok' if action.success else 'erreur'}"
-                for action in turn.actions
-            )
-            self.detail_changed.emit(details)
-            self.log_line.emit(
-                f"[AGENT] completed_actions={len(turn.actions)}"
-            )
-        else:
-            self.detail_changed.emit("Conversation")
-
-        self._speak(turn.text)
-
-        if turn.should_exit:
-            self._stop.set()
-            return False
-
-        if turn.end_session:
-            self.log_line.emit("[SESSION] agent requested standby")
-            return False
-
-        self._state(AssistantState.SUCCESS, "Prêt")
-        self._level(0.0)
-        return True
 
     @Slot()
     def run(self) -> None:
@@ -530,6 +617,12 @@ class AssistantWorker(QObject):
                 self.transcript_changed.emit("")
                 self.detail_changed.emit("")
 
+                typed = self._text_inbox.pop_nowait()
+                if typed is not None:
+                    self.log_line.emit("[TEXT] typed conversation turn")
+                    self._process_user_text(typed, source="text")
+                    continue
+
                 self._state(
                     AssistantState.CALIBRATING,
                     "Calibration du microphone…",
@@ -542,8 +635,13 @@ class AssistantWorker(QObject):
                         AssistantState.ARMED,
                         "Prêt — double clap pour réveiller Jarvis",
                     ),
+                    interrupt_event=self._text_inbox.event,
                 )
-                if not detected or self._stop.is_set():
+                if self._stop.is_set():
+                    break
+                if self._text_inbox.pending():
+                    continue
+                if not detected:
                     break
 
                 self._state(AssistantState.WAKE, "Réveil détecté")
@@ -553,12 +651,17 @@ class AssistantWorker(QObject):
                 if self._stop.is_set():
                     break
 
-                # Important: agent context intentionally survives wake/sleep.
-                # A short microphone timeout must not erase the conversation.
+                # Important: agent context intentionally survives wake/sleep
+                # and is shared with typed turns.
                 self.log_line.emit("[SESSION] conversation active")
                 first_turn = True
 
                 while not self._stop.is_set():
+                    if self._text_inbox.pending():
+                        self.log_line.emit(
+                            "[TEXT] typed turn queued during voice session"
+                        )
+                        break
                     keep_listening = self._listen_turn(first_turn=first_turn)
                     if not keep_listening:
                         break

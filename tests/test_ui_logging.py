@@ -45,10 +45,10 @@ class SafeConsoleLogTests(unittest.TestCase):
         keys = [node.key for node in NODES]
         self.assertEqual(len(keys), len(set(keys)))
 
-    def test_text_conversation_is_marked_as_future_visual_only(self):
+    def test_text_conversation_is_available_visual_node(self):
         self.assertEqual(
             NODE_BY_KEY["conversation"].subtitle,
-            "Bientôt disponible",
+            "Saisie directe",
         )
 
 

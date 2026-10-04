@@ -80,6 +80,7 @@ def wait_for_double_clap(
     on_level: LevelCallback | None = None,
     on_status: StatusCallback | None = None,
     on_armed: Callable[[], None] | None = None,
+    interrupt_event: threading.Event | None = None,
 ) -> bool:
     """Wait for a double clap. Returns False when shutdown is requested."""
     blocksize = block_samples()
@@ -101,7 +102,9 @@ def wait_for_double_clap(
         warmup_levels: list[float] = []
 
         for _ in range(warmup_blocks):
-            if stop_event.is_set():
+            if stop_event.is_set() or (
+                interrupt_event is not None and interrupt_event.is_set()
+            ):
                 return False
             data, overflowed = stream.read(blocksize)
             if overflowed:
@@ -124,6 +127,8 @@ def wait_for_double_clap(
             on_status("Prêt — double clap pour réveiller Jarvis")
 
         while not stop_event.is_set():
+            if interrupt_event is not None and interrupt_event.is_set():
+                return False
             data, overflowed = stream.read(blocksize)
             if overflowed:
                 continue
@@ -175,6 +180,7 @@ def record_utterance(
     on_level: LevelCallback | None = None,
     on_status: StatusCallback | None = None,
     start_timeout_s: float | None = None,
+    interrupt_event: threading.Event | None = None,
 ) -> np.ndarray | None:
     """Record one phrase with adaptive VAD and a preserved pre-roll.
 
@@ -233,6 +239,8 @@ def record_utterance(
         deadline = time.monotonic() + effective_start_timeout
 
         while not stop_event.is_set():
+            if interrupt_event is not None and interrupt_event.is_set():
+                return None
             data, overflowed = stream.read(blocksize)
             if overflowed:
                 continue

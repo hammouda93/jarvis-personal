@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import math
 import random
 import re
@@ -23,8 +24,10 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -82,7 +85,7 @@ class VisualNode:
 
 NODES: tuple[VisualNode, ...] = (
     VisualNode("voice", "Votre voix", "Microphone", 0.11, 0.47, "MIC"),
-    VisualNode("conversation", "Conversation", "Bientôt disponible", 0.13, 0.73, "TXT"),
+    VisualNode("conversation", "Conversation", "Saisie directe", 0.13, 0.73, "TXT"),
     VisualNode("understand", "Comprendre", "Whisper / STT", 0.28, 0.23, "STT"),
     VisualNode("think", "Réfléchir", "Cerebras", 0.50, 0.14, "AI"),
     VisualNode("mission", "Mission", "Objectif & plan", 0.68, 0.22, "M"),
@@ -593,7 +596,7 @@ class PersonalJarvisCanvas(QWidget):
         current = bool(self._route and self._route[-1] == node.key)
         completed = active and not current
         external = node.key == "internet"
-        unavailable = node.key == "conversation"
+        unavailable = False
 
         base = min(rect.width(), rect.height())
         radius = max(22.0, min(31.0, base * (0.040 if active else 0.036)))
@@ -1023,12 +1026,58 @@ class JarvisWindow(QWidget):
         self.voice_button.setObjectName("modeButton")
         self.voice_button.setProperty("active", True)
 
-        self.conversation_button = QPushButton("Conversation texte  ·  bientôt")
-        self.conversation_button.setObjectName("futureButton")
-        self.conversation_button.setEnabled(False)
+        self.conversation_button = QPushButton("⌨  Conversation texte")
+        self.conversation_button.setObjectName("modeButton")
+        self.conversation_button.setCheckable(True)
         self.conversation_button.setToolTip(
-            "Le mode texte n'est pas encore connecté au runtime."
+            "Afficher le chat texte. La voix reste disponible."
         )
+
+        self.chat_panel = QFrame()
+        self.chat_panel.setObjectName("chatPanel")
+        self.chat_panel.setMaximumHeight(250)
+
+        chat_title = QLabel("CONVERSATION")
+        chat_title.setObjectName("chatTitle")
+        chat_help = QLabel("Même contexte et mêmes outils que la voix · réponses texte silencieuses")
+        chat_help.setObjectName("chatHelp")
+
+        chat_head = QHBoxLayout()
+        chat_head.setContentsMargins(0, 0, 0, 0)
+        chat_head.addWidget(chat_title)
+        chat_head.addStretch(1)
+        chat_head.addWidget(chat_help)
+
+        self.chat_history = QTextBrowser()
+        self.chat_history.setObjectName("chatHistory")
+        self.chat_history.setOpenExternalLinks(False)
+        self.chat_history.setPlaceholderText(
+            "Les échanges texte et voix apparaîtront ici."
+        )
+
+        self.chat_input = QLineEdit()
+        self.chat_input.setObjectName("chatInput")
+        self.chat_input.setPlaceholderText(
+            "Écrivez à Jarvis…  Entrée pour envoyer"
+        )
+        self.chat_input.setClearButtonEnabled(True)
+
+        self.chat_send_button = QPushButton("Envoyer  ↵")
+        self.chat_send_button.setObjectName("chatSend")
+
+        chat_entry = QHBoxLayout()
+        chat_entry.setContentsMargins(0, 0, 0, 0)
+        chat_entry.setSpacing(8)
+        chat_entry.addWidget(self.chat_input, 1)
+        chat_entry.addWidget(self.chat_send_button)
+
+        chat_layout = QVBoxLayout(self.chat_panel)
+        chat_layout.setContentsMargins(13, 10, 13, 11)
+        chat_layout.setSpacing(7)
+        chat_layout.addLayout(chat_head)
+        chat_layout.addWidget(self.chat_history, 1)
+        chat_layout.addLayout(chat_entry)
+        self.chat_panel.hide()
 
         self.bottom_hint = QLabel("Deux claquements pour parler")
         self.bottom_hint.setObjectName("bottomHint")
@@ -1050,6 +1099,7 @@ class JarvisWindow(QWidget):
         root.addLayout(header)
         root.addLayout(middle, 1)
         root.addLayout(status_stack)
+        root.addWidget(self.chat_panel)
         root.addWidget(self.bottom_dock)
 
         self.setStyleSheet(
@@ -1209,6 +1259,52 @@ class JarvisWindow(QWidget):
                 font-size: 8px;
                 letter-spacing: 1px;
             }
+            QFrame#chatPanel {
+                background: rgba(2, 15, 28, 232);
+                border: 1px solid rgba(67, 174, 204, 90);
+                border-radius: 16px;
+            }
+            QLabel#chatTitle {
+                color: rgba(220, 250, 255, 240);
+                font-size: 9px;
+                font-weight: 700;
+                letter-spacing: 1px;
+            }
+            QLabel#chatHelp {
+                color: rgba(92, 150, 170, 180);
+                font-size: 8px;
+            }
+            QTextBrowser#chatHistory {
+                color: rgba(221, 249, 253, 235);
+                background: rgba(0, 7, 16, 150);
+                border: 1px solid rgba(54, 125, 151, 45);
+                border-radius: 10px;
+                padding: 7px;
+                font-size: 10px;
+            }
+            QLineEdit#chatInput {
+                color: #e9fdff;
+                background: rgba(0, 8, 17, 210);
+                border: 1px solid rgba(70, 170, 195, 90);
+                border-radius: 11px;
+                padding: 8px 11px;
+                selection-background-color: rgba(48, 190, 210, 170);
+            }
+            QLineEdit#chatInput:focus {
+                border-color: rgba(91, 232, 241, 190);
+            }
+            QPushButton#chatSend {
+                color: #e8fdff;
+                background: rgba(4, 48, 58, 210);
+                border: 1px solid rgba(70, 226, 235, 145);
+                border-radius: 11px;
+                padding: 8px 14px;
+                font-size: 9px;
+                font-weight: 600;
+            }
+            QPushButton#chatSend:hover {
+                background: rgba(6, 67, 79, 230);
+            }
             QFrame#bottomDock {
                 background: rgba(2, 13, 25, 190);
                 border: 1px solid rgba(52, 123, 151, 55);
@@ -1249,11 +1345,15 @@ class JarvisWindow(QWidget):
         self._worker.audio_level_changed.connect(self.canvas.set_audio_level)
         self._worker.log_line.connect(self._on_log)
         self._worker.log_line.connect(_safe_console_log)
+        self._worker.conversation_message.connect(self._on_conversation_message)
 
         self.canvas.route_changed.connect(self._on_route_changed)
 
         self.clean_button.toggled.connect(self._set_clean_view)
         self.freeze_button.toggled.connect(self._set_animations_frozen)
+        self.conversation_button.toggled.connect(self._set_text_panel)
+        self.chat_send_button.clicked.connect(self._submit_text)
+        self.chat_input.returnPressed.connect(self._submit_text)
         self.min_button.clicked.connect(self.showMinimized)
         self.max_button.clicked.connect(self._toggle_maximize)
         self.close_button.clicked.connect(self.close)
@@ -1262,6 +1362,77 @@ class JarvisWindow(QWidget):
 
         if settings.ui_fullscreen:
             self.showFullScreen()
+
+    def _set_text_panel(self, enabled: bool) -> None:
+        self.chat_panel.setVisible(bool(enabled))
+        self.conversation_button.setText(
+            "⌨  Masquer le chat" if enabled else "⌨  Conversation texte"
+        )
+        self.bottom_hint.setText(
+            "Texte + voix disponibles"
+            if enabled
+            else "Deux claquements pour parler"
+        )
+        if enabled:
+            self.chat_input.setFocus()
+
+    def _submit_text(self) -> None:
+        text = self.chat_input.text().strip()
+        if not text:
+            return
+        if not self._thread.isRunning():
+            self.status_label.setText("Jarvis n'est pas actif")
+            return
+
+        # submit_text only touches a thread-safe queue/event. The agent itself
+        # remains serialized on AssistantWorker's thread.
+        accepted = self._worker.submit_text(text)
+        if not accepted:
+            return
+        self.chat_input.clear()
+        self.canvas.begin_request("conversation")
+        self.transcript_label.setText(f"« {text} »")
+        self.status_label.setText("Message texte envoyé à Jarvis…")
+
+    def _on_conversation_message(
+        self,
+        role: str,
+        text: str,
+        source: str,
+    ) -> None:
+        value = str(text or "").strip()
+        if not value:
+            return
+        safe = html.escape(value).replace("\n", "<br>")
+        if role == "user":
+            label = "VOUS · TEXTE" if source == "text" else "VOUS · VOIX"
+            block = (
+                "<div style='margin:5px 0 7px 0;'>"
+                "<span style='color:#72ddea;font-size:9px;font-weight:600;'>"
+                f"{label}</span><br>"
+                "<span style='color:#dcf8fc;font-size:11px;'>"
+                f"{safe}</span></div>"
+            )
+        else:
+            block = (
+                "<div style='margin:5px 0 9px 18px;'>"
+                "<span style='color:#6ff0cf;font-size:9px;font-weight:600;'>"
+                "JARVIS</span><br>"
+                "<span style='color:#eefeff;font-size:11px;'>"
+                f"{safe}</span></div>"
+            )
+        self.chat_history.append(block)
+        scrollbar = self.chat_history.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+        if source == "text":
+            self.chat_panel.show()
+            if not self.conversation_button.isChecked():
+                self.conversation_button.setChecked(True)
+            if role == "user":
+                self.canvas.begin_request("conversation")
+            else:
+                self.canvas._append_route("respond")
 
     def _set_clean_view(self, enabled: bool) -> None:
         self.flow_panel.setVisible(not enabled)
