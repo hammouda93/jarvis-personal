@@ -170,6 +170,71 @@ def _window_identity_score(query: str, candidate: str) -> float:
     return 0.72 + (0.22 * (len(overlap) / max(1, len(union))))
 
 
+def _window_query_score(
+    query: str,
+    candidate_title: str,
+    *,
+    process: str = "",
+) -> float:
+    """Score a top-level window without collapsing web/app qualifiers.
+
+    Generic application discovery can safely accept candidate-in-query matches,
+    but window targeting needs stricter semantics. A request such as
+    "X Web" must not silently resolve to the desktop application "X".
+    """
+    wanted = normalize(query)
+    actual = normalize(candidate_title)
+    process_name = normalize(re.sub(r"(?i)\.exe$", "", process or ""))
+    if not wanted or not actual:
+        return 0.0
+    if wanted == actual:
+        return 1.0
+
+    wanted_tokens = {
+        token for token in wanted.split() if len(token) >= 2
+    }
+    actual_tokens = {
+        token for token in actual.split() if len(token) >= 2
+    }
+    if wanted_tokens and wanted_tokens <= actual_tokens:
+        base = 0.98
+    else:
+        overlap = wanted_tokens & actual_tokens
+        coverage = len(overlap) / max(1, len(wanted_tokens))
+        base = 0.58 + (0.28 * coverage) if overlap else 0.0
+
+    web_requested = bool(
+        {"web", "browser", "navigateur"} & wanted_tokens
+    )
+    browser_processes = {
+        "chrome",
+        "msedge",
+        "firefox",
+        "brave",
+        "opera",
+    }
+    browser_title_tokens = {
+        "chrome",
+        "edge",
+        "firefox",
+        "brave",
+        "opera",
+    }
+    is_browser = (
+        process_name in browser_processes
+        or bool(actual_tokens & browser_title_tokens)
+    )
+
+    if web_requested:
+        base = min(base, 0.78) if not is_browser else max(base, 0.94)
+
+    identity = _window_identity_score(query, candidate_title)
+    if web_requested and not is_browser:
+        identity = min(identity, 0.78)
+
+    return max(base, identity)
+
+
 def _window_by_title(title: str):
     target = (title or "").strip()
     if not target:
@@ -179,7 +244,14 @@ def _window_by_title(title: str):
         visible_only=True,
         top_level_only=True,
     )
-    ranked = _rank_wrappers(windows, target)
+    ranked = sorted(
+        (
+            (_window_query_score(target, _element_name(wrapper)), wrapper)
+            for wrapper in windows
+            if _is_visible(wrapper)
+        ),
+        key=lambda pair: -pair[0],
+    )
     if ranked and ranked[0][0] >= 0.82:
         return ranked[0][1]
 
@@ -750,7 +822,14 @@ def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
     if target:
         ranked = sorted(
             (
-                (_score_name(target, str(item.get("title") or "")), item)
+                (
+                    _window_query_score(
+                        target,
+                        str(item.get("title") or ""),
+                        process=str(item.get("process") or ""),
+                    ),
+                    item,
+                )
                 for item in candidates
             ),
             key=lambda pair: -pair[0],
