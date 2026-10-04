@@ -1162,8 +1162,9 @@ class NativeToolRegistry:
                 visual = observe_screen(
                     title=visual_title,
                     focus=focus or (
-                        "Describe les contrôles et zones utiles visibles pour la mission actuelle."
+                        "Identifie uniquement les contrôles utiles à la mission actuelle."
                     ),
+                    compact=True,
                 )
                 perception["vision_success"] = bool(visual.success)
                 if visual.success:
