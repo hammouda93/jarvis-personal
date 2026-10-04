@@ -1501,9 +1501,13 @@ class NativeToolRegistry:
             }
         )
         return type(result)(
-            result.success,
-            result.message,
-            json.dumps(detail, ensure_ascii=False, separators=(",", ":")),
+            success=result.success,
+            message=result.message,
+            detail=json.dumps(
+                detail,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
         )
 
     @staticmethod

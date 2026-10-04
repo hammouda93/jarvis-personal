@@ -23,6 +23,7 @@ from jarvis_agent.agent_runtime import (
     _visible_text,
     _actions_have_verified_proof,
     _looks_like_clear_operational_feedback,
+    _requested_action_capabilities,
 )
 from jarvis_agent.native_tools import AgentActionResult
 
@@ -1713,6 +1714,18 @@ class AgentRuntimeTests(unittest.TestCase):
             "call_inspect_protocol",
         )
 
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(
+            real_settings,
+            compatibility_baseline=False,
+            vision_enabled=True,
+            vision_actions_enabled=False,
+            operational_learning_enabled=False,
+            strict_proof_enabled=False,
+            focused_typing_fallback_enabled=False,
+        ),
+    )
     def test_groq_vision_mode_exposes_observation_but_not_visual_click(self):
         agent = FakeGroqAgent(FakeTools(), [])
         definitions = {

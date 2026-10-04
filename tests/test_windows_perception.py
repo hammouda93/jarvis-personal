@@ -835,27 +835,35 @@ class WindowsPerceptionTests(unittest.TestCase):
             "Visual Studio Code",
         )
 
+    @patch("jarvis_agent.windows_perception.time.sleep")
+    @patch("jarvis_agent.windows_perception._send_keys")
     @patch("jarvis_agent.windows_perception._snapshot_element")
-    def test_write_ui_element_types_into_combobox_fallback(
+    def test_write_ui_element_pastes_into_combobox_fallback(
         self,
         snapshot_mock,
+        send_keys_mock,
+        sleep_mock,
     ):
         combo = _FakeComboBox()
         snapshot_mock.return_value = combo
+        _FakeClipboard.value = "previous"
 
-        result = write_ui_element(
-            "",
-            "Sports et intelligence artificielle",
-            ref="e3",
-        )
+        with patch.dict(sys.modules, {"win32clipboard": _FakeClipboard}):
+            result = write_ui_element(
+                "",
+                "Sports et intelligence artificielle",
+                ref="e3",
+            )
 
         self.assertTrue(result.success)
         self.assertTrue(combo.focused)
         self.assertTrue(combo.clicked)
+        self.assertEqual(combo.typed, [])
         self.assertEqual(
-            combo.typed[-1],
-            "Sports et intelligence artificielle",
+            [call.args[0] for call in send_keys_mock.call_args_list],
+            ["^a", "^v"],
         )
+        self.assertEqual(_FakeClipboard.value, "previous")
 
     @patch("jarvis_agent.windows_perception._snapshot_element")
     def test_write_ui_element_rejects_plain_text_label(
