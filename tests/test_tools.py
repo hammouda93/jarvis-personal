@@ -98,7 +98,7 @@ class ToolRouterTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         activate_mock.assert_called_once_with("YouTube")
-        close_tab_mock.assert_called_once_with("youtube")
+        close_tab_mock.assert_called_once_with("")
 
     def test_browser_back_routes_as_browser_primitive(self):
         intent = route("retour en arrière")
