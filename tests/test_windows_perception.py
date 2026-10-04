@@ -447,6 +447,31 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertEqual(_FakeClipboard.value, "previous")
 
     @patch("jarvis_agent.windows_perception.time.sleep")
+    @patch("jarvis_agent.windows_perception._send_keys")
+    def test_control_append_pastes_exact_unicode_and_restores_clipboard(
+        self,
+        send_keys_mock,
+        sleep_mock,
+    ):
+        document = _FakeDocument("bonjour Jarvis")
+        _FakeClipboard.value = "previous"
+
+        with patch.dict(sys.modules, {"win32clipboard": _FakeClipboard}):
+            pasted = wp._paste_text_to_control(
+                document,
+                " heureux de vous revoir.",
+                append=True,
+            )
+
+        self.assertTrue(pasted)
+        self.assertTrue(document.focused)
+        self.assertEqual(
+            [call.args[0] for call in send_keys_mock.call_args_list],
+            ["^{END}", "^v"],
+        )
+        self.assertEqual(_FakeClipboard.value, "previous")
+
+    @patch("jarvis_agent.windows_perception.time.sleep")
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     def test_uia_native_retry_recovers_after_transient_winerror(
         self,

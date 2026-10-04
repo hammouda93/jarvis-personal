@@ -2443,10 +2443,10 @@ def _paste_text_to_control(
                     previous_text = win32clipboard.GetClipboardData(
                         win32clipboard.CF_UNICODETEXT
                     )
-            except Exception:
-                previous_text = None
             finally:
                 win32clipboard.CloseClipboard()
+        except Exception:
+            previous_text = None
 
         win32clipboard.OpenClipboard()
         try:
