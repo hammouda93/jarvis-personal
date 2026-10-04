@@ -1632,6 +1632,87 @@ class AgentRuntimeTests(unittest.TestCase):
             focused_typing_fallback_enabled=False,
         ),
     )
+    @patch(
+        "jarvis_agent.agent_runtime.settings",
+        replace(
+            real_settings,
+            compatibility_baseline=False,
+            vision_enabled=True,
+            vision_actions_enabled=False,
+        ),
+    )
+    def test_groq_tool_result_immediately_follows_tool_call_in_vision_mode(self):
+        class InspectTools(FakeTools):
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "inspect_active_window":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="inspection",
+                        detail=(
+                            '{"window":{"title":"Custom App"},'
+                            '"controls":[],'
+                            '"capabilities":{"writable":[],"actionable":[]},'
+                            '"snapshot":{"semantic_coverage":"insufficient",'
+                            '"vision_recommended":true}}'
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="ok",
+                    detail=str(arguments),
+                )
+
+        agent = FakeGroqAgent(
+            InspectTools(),
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_inspect_protocol",
+                            "name": "inspect_active_window",
+                            "arguments": '{"title":"Custom App"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Inspection terminée.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Inspecte Custom App.")
+
+        self.assertIn("terminée", result.text)
+        messages = agent.payloads[1]["messages"]
+        assistant_index = next(
+            i
+            for i, item in enumerate(messages)
+            if item.get("role") == "assistant"
+            and item.get("tool_calls")
+        )
+        self.assertEqual(
+            messages[assistant_index + 1].get("role"),
+            "tool",
+        )
+        self.assertEqual(
+            messages[assistant_index + 1].get("tool_call_id"),
+            "call_inspect_protocol",
+        )
+
     def test_groq_vision_mode_exposes_observation_but_not_visual_click(self):
         agent = FakeGroqAgent(FakeTools(), [])
         definitions = {
