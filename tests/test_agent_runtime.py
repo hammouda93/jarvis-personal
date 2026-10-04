@@ -23,6 +23,7 @@ from jarvis_agent.agent_runtime import (
     _visible_text,
     _actions_have_verified_proof,
     _completed_action_capabilities,
+    _requested_action_capabilities,
     _looks_like_clear_operational_feedback,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -2596,6 +2597,22 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(len(result.actions), 1)
         self.assertTrue(result.actions[0].success)
+
+    def test_conceptual_add_does_not_imply_ui_write(self):
+        self.assertNotIn(
+            "write_ui",
+            _requested_action_capabilities(
+                "Je veux aussi ajouter des paiements au projet Atlas."
+            ),
+        )
+
+    def test_add_text_still_requires_ui_write(self):
+        self.assertIn(
+            "write_ui",
+            _requested_action_capabilities(
+                "Ajoute du texte dans le document."
+            ),
+        )
 
     def test_action_promise_is_detected(self):
         self.assertTrue(
