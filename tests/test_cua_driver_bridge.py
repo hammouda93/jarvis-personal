@@ -31,6 +31,46 @@ class CuaDriverBridgeTests(unittest.TestCase):
             timeout_s=6.0,
         )
 
+    def test_launch_application_fronts_returned_window_when_supported(self):
+        bridge = CuaDriverBridge()
+        bridge._tools = {
+            "launch_app",
+            "bring_to_front",
+        }
+
+        with patch.object(bridge, "available", return_value=True), patch.object(
+            bridge,
+            "call",
+            side_effect=[
+                {
+                    "pid": 4242,
+                    "name": "WhatsApp",
+                    "windows": [
+                        {
+                            "window_id": 777,
+                            "z_index": 3,
+                            "title": "WhatsApp",
+                        }
+                    ],
+                },
+                {
+                    "now_fg_hwnd": 777,
+                },
+            ],
+        ) as call_mock:
+            result = bridge.launch_application("WhatsApp")
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.detail["foreground"])
+        self.assertEqual(call_mock.call_count, 2)
+        self.assertEqual(
+            call_mock.call_args_list[1].args,
+            (
+                "bring_to_front",
+                {"pid": 4242, "window_id": 777},
+            ),
+        )
+
     def test_launch_application_fails_closed_without_confirmed_pid(self):
         bridge = CuaDriverBridge()
 
