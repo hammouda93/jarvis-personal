@@ -112,6 +112,38 @@ class LiveMissionBrowserTests(unittest.TestCase):
             browser["window_title"],
         )
 
+    def test_desktop_open_after_browser_starts_new_mission(self):
+        self.tracker.record_direct(
+            "Ouvre YouTube",
+            "browser.open_url",
+            {"url": "https://www.youtube.com"},
+            success=True,
+            detail="https://www.youtube.com",
+        )
+        browser_mission = self.tracker.view().mission_id
+
+        action = SimpleNamespace(
+            name="open_file",
+            success=True,
+            detail="C:/Users/test/Downloads/CursorUserSetup.exe",
+        )
+        self.tracker.record_agent_turn(
+            "Ouvre l'installation Cursor",
+            [action],
+            "L'installateur est ouvert.",
+        )
+
+        desktop_view = self.tracker.view()
+        self.assertNotEqual(browser_mission, desktop_view.mission_id)
+        self.assertEqual(
+            self.tracker.context.expected_state["domain"],
+            "desktop",
+        )
+        self.assertEqual(
+            desktop_view.objective,
+            "Ouvre l'installation Cursor",
+        )
+
     def test_unrelated_non_browser_turn_is_not_forced_into_browser_context(self):
         self.tracker.record_direct(
             "Ouvre YouTube",
