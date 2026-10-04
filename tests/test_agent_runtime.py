@@ -3888,6 +3888,37 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_direct_local_browser_action_is_recorded_without_model_call(self):
+        agent = GroqResponsesAgent(FakeTools())
+        before = len(agent._messages)
+
+        agent.record_external_turn(
+            "Recherche Messi",
+            "Je recherche Messi sur YouTube.",
+            action_name="browser.search",
+            action_detail="https://www.youtube.com/results?search_query=messi",
+            success=True,
+        )
+
+        self.assertEqual(len(agent._messages), before + 2)
+        self.assertEqual(agent._messages[-2]["role"], "user")
+        self.assertEqual(agent._messages[-2]["content"], "Recherche Messi")
+        self.assertEqual(agent._messages[-1]["role"], "assistant")
+        self.assertIn("[LOCAL_ACTION] browser.search success=1", agent._messages[-1]["content"])
+        self.assertIn("youtube.com/results?search_query=messi", agent._messages[-1]["content"])
+
+    def test_browser_selection_rule_requires_real_inspection_before_enter(self):
+        from jarvis_agent.agent_runtime import _SYSTEM_INSTRUCTIONS
+
+        self.assertIn(
+            "N'utilise pas Enter comme substitut",
+            _SYSTEM_INSTRUCTIONS,
+        )
+        self.assertIn(
+            "inspecte une seconde fois la même fenêtre",
+            _SYSTEM_INSTRUCTIONS,
+        )
+
     def test_openai_loop_returns_function_result_then_continues(self):
         tools = FakeTools()
         agent = FakeOpenAIAgent(
