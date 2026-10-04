@@ -66,12 +66,14 @@ def _call_local_vision(
     image_bytes: bytes,
     *,
     prompt: str,
+    num_predict: int | None = None,
 ) -> tuple[str, float]:
     endpoint = _vision_endpoint()
     payload = {
         "model": settings.vision_model,
         "stream": False,
         "format": "json",
+        "keep_alive": "30m",
         "messages": [
             {
                 "role": "user",
@@ -81,7 +83,14 @@ def _call_local_vision(
         ],
         "options": {
             "temperature": 0,
-            "num_predict": max(128, int(settings.vision_num_predict)),
+            "num_predict": max(
+                96,
+                int(
+                    num_predict
+                    if num_predict is not None
+                    else settings.vision_num_predict
+                ),
+            ),
         },
     }
     request = urllib.request.Request(
@@ -121,6 +130,8 @@ def _normalized_box(value: Any) -> list[int] | None:
 
 def _capture_window_bytes(
     title: str | None = None,
+    *,
+    max_width: int | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     try:
         from PIL import ImageGrab
@@ -145,9 +156,16 @@ def _capture_window_bytes(
         all_screens=True,
     ).convert("RGB")
 
-    max_width = max(640, int(settings.vision_max_width))
-    if image.width > max_width:
-        ratio = max_width / float(image.width)
+    target_width = max(
+        640,
+        int(
+            max_width
+            if max_width is not None
+            else settings.vision_max_width
+        ),
+    )
+    if image.width > target_width:
+        ratio = target_width / float(image.width)
         image = image.resize(
             (max_width, max(1, int(image.height * ratio)))
         )
@@ -196,6 +214,7 @@ def observe_screen(
     *,
     title: str | None = None,
     focus: str = "",
+    compact: bool = False,
 ) -> ScreenObservation:
     if not settings.vision_enabled:
         return ScreenObservation(
@@ -213,7 +232,14 @@ def observe_screen(
         )
 
     try:
-        image_bytes, metadata = _capture_window_bytes(title)
+        image_bytes, metadata = _capture_window_bytes(
+            title,
+            max_width=(
+                min(1024, max(640, int(settings.vision_max_width)))
+                if compact
+                else None
+            ),
+        )
     except Exception as exc:
         return ScreenObservation(
             False,
@@ -222,16 +248,25 @@ def observe_screen(
         )
 
     question = (focus or "").strip()
-    prompt = (
-        "Tu es le capteur visuel local de Jarvis. Analyse uniquement ce qui est "
-        "réellement visible dans cette capture Windows. Ne déduis jamais un élément "
-        "caché. Réponds uniquement en JSON avec les clés: summary, visible_text, "
-        "important_regions, candidate_actions, targets, ambiguities. "
-        "targets doit contenir uniquement les contrôles clairement visibles et utiles, "
-        "chaque cible avec label, role, box_1000=[x1,y1,x2,y2] dans un repère normalisé "
-        "0..1000 relatif à la capture, et confidence entre 0 et 1. "
-        "N'invente pas de boîte si la cible n'est pas clairement localisable."
-    )
+    if compact:
+        prompt = (
+            "Analyse uniquement cette capture Windows pour la mission donnée. "
+            "Réponds uniquement en JSON compact avec: summary, targets, ambiguities. "
+            "targets contient seulement les contrôles visibles utiles à la mission, "
+            "avec label, role, box_1000=[x1,y1,x2,y2] et confidence. "
+            "Ne décris pas le décor et n'invente aucune cible."
+        )
+    else:
+        prompt = (
+            "Tu es le capteur visuel local de Jarvis. Analyse uniquement ce qui est "
+            "réellement visible dans cette capture Windows. Ne déduis jamais un élément "
+            "caché. Réponds uniquement en JSON avec les clés: summary, visible_text, "
+            "important_regions, candidate_actions, targets, ambiguities. "
+            "targets doit contenir uniquement les contrôles clairement visibles et utiles, "
+            "chaque cible avec label, role, box_1000=[x1,y1,x2,y2] dans un repère normalisé "
+            "0..1000 relatif à la capture, et confidence entre 0 et 1. "
+            "N'invente pas de boîte si la cible n'est pas clairement localisable."
+        )
     if question:
         prompt += f"\nObjectif précis à observer: {question[:700]}"
 
@@ -239,6 +274,11 @@ def observe_screen(
         content, elapsed = _call_local_vision(
             image_bytes,
             prompt=prompt,
+            num_predict=(
+                min(180, int(settings.vision_num_predict))
+                if compact
+                else None
+            ),
         )
     except Exception as exc:
         return ScreenObservation(
@@ -275,6 +315,7 @@ def observe_screen(
         "observation": content[:8000],
         "observation_json": parsed,
         "sensor": "visual",
+        "compact": bool(compact),
         "evidence_saved": bool(saved_path),
     }
     if saved_path:
