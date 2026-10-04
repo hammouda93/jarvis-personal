@@ -91,6 +91,14 @@ class AssistantV3FastPathTests(unittest.TestCase):
             )
         )
 
+    def test_compound_cursor_installation_stays_in_agent_until_continuation(self):
+        self.assertFalse(
+            AssistantWorker._is_simple_direct_action(
+                "Ouvre l'installation de Cursor dans Téléchargements et poursuis l'installation.",
+                ToolIntent("app.open", {"app": "cursor"}),
+            )
+        )
+
     def test_installer_request_stays_with_agent(self):
         self.assertFalse(
             AssistantWorker._is_simple_direct_action(
