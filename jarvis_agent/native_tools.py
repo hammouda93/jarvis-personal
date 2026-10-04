@@ -67,9 +67,10 @@ class NativeToolRegistry:
         self.knowledge = knowledge or AGENT_KNOWLEDGE
         self._last_app_hint = ""
         self._last_observed_window_title = ""
+        self._browser = None
 
     def ollama_tools(self) -> list[dict[str, Any]]:
-        return [
+        tools = [
             self._ollama(
                 "open_application",
                 "Trouve et ouvre une application de bureau installée sur Windows par son nom. Ne pas utiliser comme substitut à un contrôle déjà observé dans une application ouverte: si inspect_active_window montre la cible, agir sur sa ref. Ne pas utiliser pour ouvrir un site web: utiliser open_url.",
@@ -630,6 +631,95 @@ class NativeToolRegistry:
                 [],
             ),
         ]
+        if settings.browser_enabled and settings.browser_cdp_url:
+            tools[4:4] = self._browser_ollama_tools()
+        return tools
+
+    def _browser_ollama_tools(self) -> list[dict[str, Any]]:
+        return [
+            self._ollama(
+                "list_browser_pages",
+                "Liste les pages du navigateur contrôlé via CDP.",
+                {},
+                [],
+            ),
+            self._ollama(
+                "inspect_browser_page",
+                "Inspecte le contenu d'une page web via DOM et rôles d'accessibilité. Préfère cet outil à UIA ou à la vision pour le contenu des sites.",
+                {
+                    "page_ref": {
+                        "type": "string",
+                        "description": "Référence optionnelle de page; omettre s'il n'y a qu'une page.",
+                    }
+                },
+                [],
+            ),
+            self._ollama(
+                "activate_browser_page",
+                "Met au premier plan une page du navigateur contrôlé.",
+                {"page_ref": {"type": "string", "description": "Référence exacte de page."}},
+                ["page_ref"],
+            ),
+            self._ollama(
+                "write_browser_element",
+                "Écrit dans un champ DOM observé; la ref expire après mutation.",
+                {
+                    "page_ref": {"type": "string", "description": "Référence de page."},
+                    "ref": {"type": "string", "description": "Ref opaque bobsN:eM."},
+                    "text": {"type": "string", "description": "Texte à saisir."},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["replace", "append", "insert"],
+                        "description": "Mode d'écriture.",
+                    },
+                },
+                ["ref", "text"],
+            ),
+            self._ollama(
+                "click_browser_element",
+                "Clique un élément DOM observé via sa ref opaque.",
+                {
+                    "page_ref": {"type": "string", "description": "Référence de page."},
+                    "ref": {"type": "string", "description": "Ref opaque bobsN:eM."},
+                },
+                ["ref"],
+            ),
+            self._ollama(
+                "press_browser_element",
+                "Envoie une touche à un élément DOM observé, par exemple Enter.",
+                {
+                    "page_ref": {"type": "string", "description": "Référence de page."},
+                    "ref": {"type": "string", "description": "Ref opaque bobsN:eM."},
+                    "key": {"type": "string", "description": "Enter, Tab, Escape, etc."},
+                },
+                ["ref", "key"],
+            ),
+            self._ollama(
+                "scroll_browser_element",
+                "Fait défiler autour d'un élément DOM observé.",
+                {
+                    "page_ref": {"type": "string", "description": "Référence de page."},
+                    "ref": {"type": "string", "description": "Ref opaque bobsN:eM."},
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down"],
+                        "description": "Sens du défilement.",
+                    },
+                },
+                ["ref", "direction"],
+            ),
+        ]
+
+    def _browser_adapter(self):
+        if not settings.browser_enabled or not settings.browser_cdp_url:
+            return None
+        if self._browser is None:
+            from .browser_adapter import BrowserAdapter
+            self._browser = BrowserAdapter(
+                settings.browser_cdp_url,
+                timeout_s=settings.browser_timeout_s,
+            )
+        return self._browser
 
     def openai_tools(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
@@ -839,6 +929,65 @@ class NativeToolRegistry:
             if converted.success:
                 invalidate_ui_snapshot()
             return converted
+
+        if name in {
+            "list_browser_pages",
+            "inspect_browser_page",
+            "activate_browser_page",
+            "write_browser_element",
+            "click_browser_element",
+            "press_browser_element",
+            "scroll_browser_element",
+        }:
+            browser = self._browser_adapter()
+            if browser is None:
+                return self._error(name, "Le moteur DOM/CDP n'est pas activé.")
+            page_ref = str(args.get("page_ref", "")).strip()
+            try:
+                if name == "list_browser_pages":
+                    payload = {"pages": browser.pages()}
+                    message = "Pages navigateur observées."
+                elif name == "inspect_browser_page":
+                    payload = browser.observe(page_ref)
+                    message = "Page observée via DOM."
+                elif name == "activate_browser_page":
+                    payload = browser.activate(page_ref)
+                    message = "Page activée."
+                else:
+                    ref = str(args.get("ref", "")).strip()
+                    if not ref:
+                        return self._error(name, "La ref DOM est requise.")
+                    if name == "write_browser_element":
+                        operation = "write"
+                        options = {
+                            "text": str(args.get("text", "")),
+                            "mode": str(args.get("mode", "replace")).strip() or "replace",
+                        }
+                    elif name == "click_browser_element":
+                        operation, options = "click", {}
+                    elif name == "press_browser_element":
+                        operation = "key"
+                        options = {"key": str(args.get("key", "")).strip()}
+                    else:
+                        operation = "scroll"
+                        options = {
+                            "direction": str(args.get("direction", "down")).strip() or "down"
+                        }
+                    payload = browser.act(page_ref, ref, operation, options)
+                    message = "Action DOM exécutée."
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message=message,
+                    detail=json.dumps(payload, ensure_ascii=False),
+                )
+            except Exception as exc:
+                return AgentActionResult(
+                    name=name,
+                    success=False,
+                    message="Le moteur DOM/CDP n'a pas pu exécuter cette opération.",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
 
         if name in {"research_web", "search_web"}:
             query = str(args.get("query", "")).strip()
