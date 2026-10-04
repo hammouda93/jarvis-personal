@@ -186,12 +186,9 @@ class AssistantWorker(QObject):
         if not callable(recorder):
             return
         try:
-            assistant_context = spoken
-            if mission_block:
-                assistant_context += "\n" + mission_block
             recorder(
                 user_text,
-                assistant_context,
+                spoken,
                 action_name=intent.name,
                 action_detail=str(result.detail or ""),
                 success=bool(result.success),
