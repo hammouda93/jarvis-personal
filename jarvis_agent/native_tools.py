@@ -148,7 +148,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "inspect_active_window",
-                "Observe la fenêtre de travail active ou une fenêtre nommée et retourne une vue compacte et bornée de ses contrôles. Les contrôles ont des refs e1, e2... réutilisables immédiatement. Si le résultat indique minimized=true / win32_window_minimized, appeler activate_window puis réinspecter avant toute action UI.",
+                "Observe la fenêtre de travail active ou une fenêtre nommée et retourne une vue compacte et bornée de ses contrôles. Les contrôles ont des refs e1, e2... réutilisables immédiatement. Si minimized=true / win32_window_minimized, appeler activate_window puis réinspecter. Si snapshot.semantic_coverage=insufficient ou vision_recommended=true, cela signifie que UIA ne voit pas assez le contenu: ne pas conclure que la fonction n'existe pas et ne pas improviser des raccourcis clavier; utiliser un autre capteur local disponible (observe_screen) ou s'arrêter avec une limitation explicite.",
                 {
                     "title": {
                         "type": "string",
@@ -309,7 +309,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "press_key",
-                "Envoie une touche ou un raccourci clavier sûr à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End, Alt+Left/Alt+Right, Ctrl+S, Ctrl+Shift+S, Ctrl+F, Ctrl+L, Ctrl+C/V/A/Z/Y. Réinspecter ensuite si le raccourci peut modifier l'interface.",
+                "Envoie une touche ou un raccourci clavier sûr à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End, Alt+Left/Alt+Right, Ctrl+S, Ctrl+Shift+S, Ctrl+F, Ctrl+L, Ctrl+C/V/A/Z/Y. N'utilise pas un raccourci comme substitut à une perception insuffisante sauf si sa sémantique est réellement connue pour l'application ou explicitement demandée. Réinspecter ensuite si le raccourci peut modifier l'interface.",
                 {
                     "key": {
                         "type": "string",
