@@ -69,6 +69,74 @@ class NativeToolRegistry:
         self._last_observed_window_title = ""
         self._browser = None
 
+    @staticmethod
+    def _compact_observation(payload: dict[str, Any], limit: int = 24) -> dict[str, Any]:
+        value = dict(payload or {})
+        controls = [
+            dict(item)
+            for item in list(value.get("controls") or [])
+            if isinstance(item, dict)
+        ]
+        value["controls"] = controls[:limit]
+        if len(controls) > limit:
+            value["controls_omitted"] = len(controls) - limit
+        capabilities = dict(value.get("capabilities") or {})
+        for key, cap in (("writable", 12), ("actionable", 16)):
+            items = [
+                dict(item)
+                for item in list(capabilities.get(key) or [])
+                if isinstance(item, dict)
+            ]
+            capabilities[key] = items[:cap]
+        if capabilities:
+            value["capabilities"] = capabilities
+        if isinstance(value.get("visible_text"), list):
+            value["visible_text"] = value["visible_text"][:40]
+        value.pop("accessibility_tree", None)
+        return value
+
+    def _attach_windows_post_observation(
+        self,
+        action: AgentActionResult,
+    ) -> AgentActionResult:
+        if not action.success:
+            return action
+        try:
+            payload = json.loads(action.detail or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return action
+        if not isinstance(payload, dict) or payload.get("requires_fresh_inspection") is not True:
+            return action
+
+        observed = inspect_active_window(title=None)
+        if not observed.success:
+            payload["post_observation_error"] = observed.detail or observed.message
+            return AgentActionResult(
+                action.name,
+                action.success,
+                action.message,
+                json.dumps(payload, ensure_ascii=False),
+                action.end_session,
+                action.should_exit,
+            )
+        self._record_inspected_app(observed)
+        try:
+            post = json.loads(observed.detail or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            post = {}
+        if isinstance(post, dict) and post:
+            payload["post_observation"] = self._compact_observation(post)
+            payload["requires_fresh_inspection"] = False
+            payload["auto_reinspection"] = True
+        return AgentActionResult(
+            action.name,
+            action.success,
+            action.message,
+            json.dumps(payload, ensure_ascii=False),
+            action.end_session,
+            action.should_exit,
+        )
+
     def ollama_tools(self) -> list[dict[str, Any]]:
         tools = [
             self._ollama(
@@ -974,6 +1042,16 @@ class NativeToolRegistry:
                             "direction": str(args.get("direction", "down")).strip() or "down"
                         }
                     payload = browser.act(page_ref, ref, operation, options)
+                    fresh_page_ref = str(payload.get("page_ref") or page_ref)
+                    try:
+                        payload["post_observation"] = self._compact_observation(
+                            browser.observe(fresh_page_ref)
+                        )
+                        payload["auto_reinspection"] = True
+                    except Exception as post_exc:
+                        payload["post_observation_error"] = (
+                            f"{type(post_exc).__name__}: {post_exc}"
+                        )
                     message = "Action DOM exécutée."
                 return AgentActionResult(
                     name=name,
@@ -1121,12 +1199,13 @@ class NativeToolRegistry:
                     args.get("delivery_mode", "background")
                 ).strip() or "background",
             )
-            return AgentActionResult(
+            action = AgentActionResult(
                 name=name,
                 success=result.success,
                 message=result.message,
                 detail=result.detail,
             )
+            return self._attach_windows_post_observation(action)
 
         if name == "close_window":
             title = str(args.get("title", "")).strip() or None
@@ -1206,12 +1285,13 @@ class NativeToolRegistry:
         if name == "press_key":
             key = str(args.get("key", "")).strip()
             result = press_key(key)
-            return AgentActionResult(
+            action = AgentActionResult(
                 name=name,
                 success=result.success,
                 message=result.message,
                 detail=result.detail,
             )
+            return self._attach_windows_post_observation(action)
 
         if name == "msf_capabilities":
             result = MS_FOOTBALL_BRIDGE.call("list_capabilities")
