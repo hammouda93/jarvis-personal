@@ -12,6 +12,16 @@ from .mission_context_store import MissionContextStore
 from .tools import normalize
 
 
+_DESKTOP_ACTIONS = {
+    "app.open",
+    "folder.open",
+    "folder.open_named",
+    "file.open_named",
+    "open_application",
+    "open_file",
+    "open_folder",
+}
+
 _BROWSER_ACTIONS = {
     "browser.open_url",
     "browser.search",
@@ -180,7 +190,12 @@ class LiveMissionTracker:
         detail: str = "",
         response_text: str = "",
     ) -> str:
-        domain = "browser" if intent_name in _BROWSER_ACTIONS else ""
+        if intent_name in _BROWSER_ACTIONS:
+            domain = "browser"
+        elif intent_name in _DESKTOP_ACTIONS:
+            domain = "desktop"
+        else:
+            domain = ""
         context = self._ensure(user_text, domain=domain)
         context.status = MissionStatus.RUNNING if success else MissionStatus.BLOCKED
         context.current_step = str(intent_name)
@@ -240,8 +255,29 @@ class LiveMissionTracker:
         actions: tuple[Any, ...] | list[Any],
         response_text: str,
     ) -> str:
+        action_names = [
+            str(getattr(action, "name", "") or "")
+            for action in actions
+        ]
         if self.context is None:
-            return ""
+            if any(name in _BROWSER_ACTIONS for name in action_names):
+                self._new(user_text, domain="browser")
+            elif any(name in _DESKTOP_ACTIONS for name in action_names):
+                self._new(user_text, domain="desktop")
+            else:
+                return ""
+        elif (
+            str(self.context.expected_state.get("domain") or "") == "browser"
+            and any(name in _DESKTOP_ACTIONS for name in action_names)
+        ):
+            self._new(user_text, domain="desktop")
+        elif (
+            str(self.context.expected_state.get("domain") or "") == "desktop"
+            and any(name in _BROWSER_ACTIONS for name in action_names)
+        ):
+            self._new(user_text, domain="browser")
+
+        assert self.context is not None
         observed = dict(self.context.observed_state or {})
         browser = dict(observed.get("browser") or {})
         steps = list(observed.get("recent_steps") or [])
