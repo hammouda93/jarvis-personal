@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from .cua_driver_bridge import CUA_DRIVER, CuaElement, CuaWindowSnapshot
 from .tools import normalize
 
 
@@ -1058,6 +1059,14 @@ def _native_only_inspection(
             )
         ),
     }
+    if not minimized:
+        cua_result = _try_cua_inspection(
+            title=_SNAPSHOT_WINDOW_TITLE or None,
+            limit=36,
+        )
+        if cua_result is not None:
+            return cua_result
+
     return UIActionResult(
         True,
         f"Fenêtre détectée: {_SNAPSHOT_WINDOW_TITLE or 'sans titre'}.",
@@ -1234,6 +1243,194 @@ def _bounded_descendants(
     }
 
 
+
+
+def _cua_role_type(role: str) -> str:
+    normalized = normalize(role or "")
+    mapping = {
+        "button": "Button",
+        "check box": "CheckBox",
+        "checkbox": "CheckBox",
+        "combo box": "ComboBox",
+        "combobox": "ComboBox",
+        "edit": "Edit",
+        "editable text": "Edit",
+        "entry": "Edit",
+        "search box": "Edit",
+        "searchbox": "Edit",
+        "text field": "Edit",
+        "textfield": "Edit",
+        "textbox": "Edit",
+        "hyperlink": "Hyperlink",
+        "link": "Hyperlink",
+        "list item": "ListItem",
+        "listitem": "ListItem",
+        "menu item": "MenuItem",
+        "menuitem": "MenuItem",
+        "radio button": "RadioButton",
+        "radiobutton": "RadioButton",
+        "tab": "TabItem",
+        "tab item": "TabItem",
+        "tabitem": "TabItem",
+        "tree item": "TreeItem",
+        "treeitem": "TreeItem",
+        "document": "Document",
+        "text": "Text",
+    }
+    return mapping.get(normalized, role or "Element")
+
+
+def _cua_snapshot_payload(
+    snapshot: CuaWindowSnapshot,
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    """Project one Cua observation into Jarvis' compact ref contract."""
+    global _SNAPSHOT_ELEMENTS, _SNAPSHOT_WINDOW_TITLE
+
+    max_items = max(8, min(int(limit), 40))
+    elements = list(snapshot.elements)
+
+    selected: list[CuaElement] = []
+    groups = (
+        [item for item in elements if item.writable],
+        [item for item in elements if item.actionable],
+        [item for item in elements if item.label or item.value],
+    )
+    seen_tokens: set[str] = set()
+    for group in groups:
+        for item in group:
+            if item.token in seen_tokens:
+                continue
+            seen_tokens.add(item.token)
+            selected.append(item)
+            if len(selected) >= max_items:
+                break
+        if len(selected) >= max_items:
+            break
+
+    _SNAPSHOT_ELEMENTS = {}
+    _SNAPSHOT_WINDOW_TITLE = snapshot.title or snapshot.app_name
+    observation_id = _new_snapshot_id()
+
+    controls: list[dict[str, Any]] = []
+    writable_refs: list[dict[str, str]] = []
+    actionable_refs: list[dict[str, str]] = []
+    for index, element in enumerate(selected, start=1):
+        ref = f"e{index}"
+        _SNAPSHOT_ELEMENTS[ref] = element
+        ctype = _cua_role_type(element.role)
+        compact: dict[str, Any] = {
+            "ref": ref,
+            "type": ctype,
+            "enabled": (
+                element.enabled
+                if element.enabled is not None
+                else True
+            ),
+            "provider": "cua_driver",
+        }
+        if element.label:
+            compact["name"] = element.label[:160]
+        if element.value:
+            compact["value"] = element.value[:500]
+            if len(element.value) > 500:
+                compact["value_length"] = len(element.value)
+        if element.frame is not None:
+            compact["bounds"] = list(element.frame)
+        if element.writable:
+            compact["writable"] = True
+            writable_refs.append(
+                {
+                    "ref": ref,
+                    "label": (
+                        element.label
+                        or element.role
+                        or "champ"
+                    )[:120],
+                }
+            )
+        if element.actionable:
+            actionable_refs.append(
+                {
+                    "ref": ref,
+                    "label": (
+                        element.label
+                        or element.role
+                        or "contrôle"
+                    )[:120],
+                }
+            )
+        controls.append(compact)
+
+    return {
+        "observation_id": observation_id,
+        "window": {
+            "title": snapshot.title,
+            "app": snapshot.app_name,
+            "type": "Window",
+            "bounds": list(snapshot.bounds),
+            "pid": snapshot.pid,
+            "window_id": snapshot.window_id,
+        },
+        "controls": controls,
+        "capabilities": {
+            "writable": writable_refs[:16],
+            "actionable": actionable_refs[:24],
+        },
+        "snapshot": {
+            "provider": "cua_driver",
+            "semantic_coverage": "usable" if controls else "insufficient",
+            "total_interactive": sum(
+                1 for item in elements if item.actionable or item.writable
+            ),
+            "observed_interactive": len(elements),
+            "selected_interactive": sum(
+                1
+                for item in selected
+                if item.actionable or item.writable
+            ),
+            "tree_complete": not snapshot.truncated,
+            "truncated": snapshot.truncated,
+            "total_element_count": snapshot.total_element_count,
+            "returned_element_count": snapshot.returned_element_count,
+            "degraded_reason": snapshot.degraded_reason or None,
+            "vision_recommended": not bool(controls),
+        },
+        "fallback": "cua_driver",
+        "note": (
+            "Fallback structuré Cua Driver: utiliser ref + observation_id. "
+            "Les refs expirent après toute action ou nouvelle inspection."
+        ),
+    }
+
+
+def _try_cua_inspection(
+    *,
+    title: str | None,
+    limit: int,
+) -> UIActionResult | None:
+    """Use Cua Driver only when installed and native UIA is insufficient."""
+    if not CUA_DRIVER.available():
+        return None
+    try:
+        snapshot = CUA_DRIVER.inspect_window(
+            title,
+            max_elements=max(80, min(int(limit) * 6, 320)),
+            max_depth=8,
+            timeout_ms=2500,
+        )
+    except Exception:
+        return None
+
+    payload = _cua_snapshot_payload(snapshot, limit=limit)
+    if not payload.get("controls"):
+        return None
+    return UIActionResult(
+        True,
+        f"Fenêtre inspectée via Cua Driver: {_SNAPSHOT_WINDOW_TITLE or 'sans titre'}.",
+        _json(payload),
+    )
 
 def inspect_active_window(
     *,
@@ -1642,6 +1839,18 @@ def inspect_active_window(
             "action peut modifier l'interface; réinspecter ensuite."
         ),
     }
+    if (
+        payload["snapshot"]["semantic_coverage"] == "insufficient"
+        or not controls
+        or (not writable_refs and not actionable_refs)
+    ):
+        cua_result = _try_cua_inspection(
+            title=title or _SNAPSHOT_WINDOW_TITLE or None,
+            limit=limit,
+        )
+        if cua_result is not None:
+            return cua_result
+
     return UIActionResult(
         True,
         f"Fenêtre inspectée: {_SNAPSHOT_WINDOW_TITLE or 'sans titre'}.",
@@ -1799,6 +2008,26 @@ def click_ui_element(
                     _json(alternatives),
                 )
             return UIActionResult(False, f"Élément introuvable: {target}.")
+
+    if isinstance(wrapper, CuaElement):
+        source_observation_id = _SNAPSHOT_ID
+        outcome = CUA_DRIVER.click_element(
+            wrapper,
+            delivery_mode=delivery_mode,
+        )
+        invalidate_ui_snapshot()
+        detail = dict(outcome.detail)
+        detail.update(
+            {
+                "source_observation_id": source_observation_id or None,
+                "refs_invalidated": True,
+            }
+        )
+        return UIActionResult(
+            outcome.success,
+            outcome.message,
+            _json(detail),
+        )
 
     label = _element_name(wrapper) or _automation_id(wrapper) or ref or name
     try:
@@ -2222,6 +2451,34 @@ def write_ui_element(
                 _json(alternatives),
             )
         return UIActionResult(False, f"Champ introuvable: {target}.")
+
+    if isinstance(wrapper, CuaElement):
+        if not wrapper.writable:
+            return UIActionResult(
+                False,
+                f"L'élément {wrapper.label or ref or target} n'accepte pas la saisie directe.",
+                wrapper.role,
+            )
+        source_observation_id = _SNAPSHOT_ID
+        outcome = CUA_DRIVER.write_element(
+            wrapper,
+            value,
+            mode=normalized_mode,
+            delivery_mode=delivery_mode,
+        )
+        invalidate_ui_snapshot()
+        detail = dict(outcome.detail)
+        detail.update(
+            {
+                "source_observation_id": source_observation_id or None,
+                "refs_invalidated": True,
+            }
+        )
+        return UIActionResult(
+            outcome.success,
+            outcome.message,
+            _json(detail),
+        )
 
     control_type = _control_type(wrapper)
     if control_type not in {"Edit", "Document", "ComboBox"}:
