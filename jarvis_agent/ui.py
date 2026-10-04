@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -768,7 +767,7 @@ class StatusChip(QFrame):
     def __init__(self, title: str, detail: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("statusChip")
-        self.setMinimumWidth(142)
+        self.setMinimumWidth(116)
 
         self.dot = QLabel("●")
         self.dot.setObjectName("chipDot")
@@ -784,8 +783,8 @@ class StatusChip(QFrame):
         texts.addWidget(self.detail)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(11, 7, 12, 7)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 5, 10, 5)
+        layout.setSpacing(7)
         layout.addWidget(self.dot)
         layout.addLayout(texts)
 
@@ -801,7 +800,7 @@ class FlowPanel(QFrame):
         super().__init__(parent)
         self.setObjectName("flowPanel")
         self.setMinimumWidth(285)
-        self.setMaximumWidth(330)
+        self.setMaximumWidth(315)
 
         title = QLabel("Trajet de la demande")
         title.setObjectName("panelTitle")
@@ -810,13 +809,36 @@ class FlowPanel(QFrame):
         self.state.setObjectName("panelState")
 
         head = QHBoxLayout()
+        head.setSpacing(8)
         head.addWidget(title)
         head.addStretch(1)
         head.addWidget(self.state)
 
+        self.idle_card = QFrame()
+        self.idle_card.setObjectName("idleCard")
+        idle_kicker = QLabel("PERSONAL JARVIS PRÊT")
+        idle_kicker.setObjectName("idleKicker")
+        idle_title = QLabel("En attente d’une demande")
+        idle_title.setObjectName("idleTitle")
+        idle_help = QLabel(
+            "Le noyau reste en veille.\nDeux claquements pour parler."
+        )
+        idle_help.setObjectName("idleHelp")
+        idle_help.setWordWrap(True)
+
+        idle_layout = QVBoxLayout(self.idle_card)
+        idle_layout.setContentsMargins(15, 15, 15, 15)
+        idle_layout.setSpacing(6)
+        idle_layout.addWidget(idle_kicker)
+        idle_layout.addWidget(idle_title)
+        idle_layout.addWidget(idle_help)
+
+        self.steps_container = QFrame()
+        self.steps_container.setObjectName("stepsContainer")
         self._step_labels: list[QLabel] = []
-        steps = QVBoxLayout()
-        steps.setSpacing(5)
+        steps = QVBoxLayout(self.steps_container)
+        steps.setContentsMargins(0, 0, 0, 0)
+        steps.setSpacing(6)
         for _ in range(8):
             label = QLabel("")
             label.setObjectName("flowStep")
@@ -825,11 +847,15 @@ class FlowPanel(QFrame):
             self._step_labels.append(label)
             steps.addWidget(label)
 
+        self.module_line = QLabel("Module actif  —")
+        self.module_line.setObjectName("moduleLine")
+        self.module_line.hide()
+
         divider = QFrame()
         divider.setObjectName("divider")
         divider.setFrameShape(QFrame.HLine)
 
-        alternate_title = QLabel("Trajet alternatif")
+        alternate_title = QLabel("RECHERCHE EXTERNE")
         alternate_title.setObjectName("sectionTitle")
 
         alternate = QLabel("Réfléchir  →  Internet  →  Réfléchir")
@@ -837,25 +863,34 @@ class FlowPanel(QFrame):
         alternate.setWordWrap(True)
 
         alternate_help = QLabel(
-            "Recherche d'informations en arrière-plan si une source externe "
-            "est réellement nécessaire."
+            "Uniquement si une information externe est réellement nécessaire."
         )
         alternate_help.setObjectName("panelMuted")
         alternate_help.setWordWrap(True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
         layout.addLayout(head)
-        layout.addLayout(steps)
+        layout.addWidget(self.idle_card)
+        layout.addWidget(self.steps_container)
+        layout.addWidget(self.module_line)
         layout.addStretch(1)
         layout.addWidget(divider)
         layout.addWidget(alternate_title)
         layout.addWidget(alternate)
         layout.addWidget(alternate_help)
 
+        self.set_route(())
+
     def set_route(self, route: tuple[str, ...] | list[str]) -> None:
         visible = list(route)[-8:]
+        active_route = bool(visible)
+
+        self.idle_card.setVisible(not active_route)
+        self.steps_container.setVisible(active_route)
+        self.module_line.setVisible(active_route)
+
         for idx, label in enumerate(self._step_labels):
             if idx >= len(visible):
                 label.hide()
@@ -864,20 +899,30 @@ class FlowPanel(QFrame):
             if node is None:
                 label.hide()
                 continue
-            prefix = "●" if idx == len(visible) - 1 else "✓"
+
+            is_current = idx == len(visible) - 1
+            marker = "●" if is_current else "✓"
             label.setText(
                 f"{idx + 1:02d}   {node.label}\n"
-                f"      {node.subtitle}   {prefix}"
+                f"      {node.subtitle}   {marker}"
             )
-            label.setProperty("current", idx == len(visible) - 1)
+            label.setProperty("current", is_current)
             label.style().unpolish(label)
             label.style().polish(label)
             label.show()
 
-        self.state.setText("● En cours…" if visible else "● En attente")
+        if visible:
+            current = NODE_BY_KEY.get(visible[-1])
+            self.module_line.setText(
+                f"Module actif  {current.label if current else '—'}"
+            )
+            self.state.setText("● En cours")
+        else:
+            self.module_line.setText("Module actif  —")
+            self.state.setText("● En attente")
 
 
-class JarvisWindow(QWidget):
+class JarvisWindowclass JarvisWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Personal Jarvis")
@@ -974,38 +1019,30 @@ class JarvisWindow(QWidget):
         status_stack.addWidget(self.transcript_label)
         status_stack.addWidget(self.detail_label)
 
-        self.conversation_button = QPushButton("▣  Conversation")
-        self.conversation_button.setObjectName("modeButton")
-        self.conversation_button.setCheckable(True)
-        self.voice_button = QPushButton("◉  Voix")
+        self.voice_button = QPushButton("●  Voix active")
         self.voice_button.setObjectName("modeButton")
-        self.voice_button.setCheckable(True)
-        self.voice_button.setChecked(True)
+        self.voice_button.setProperty("active", True)
 
-        self.text_input = QLineEdit()
-        self.text_input.setObjectName("conversationInput")
-        self.text_input.setPlaceholderText(
-            "Conversation texte — interface prête; moteur vocal inchangé"
-        )
-        self.text_input.setReadOnly(True)
-        self.text_input.setToolTip(
-            "Cette branche modifie uniquement l'interface. "
-            "Le moteur de conversation texte n'est volontairement pas modifié."
+        self.conversation_button = QPushButton("Conversation texte  ·  bientôt")
+        self.conversation_button.setObjectName("futureButton")
+        self.conversation_button.setEnabled(False)
+        self.conversation_button.setToolTip(
+            "Le mode texte n'est pas encore connecté au runtime."
         )
 
-        self.send_button = QPushButton("➜")
-        self.send_button.setObjectName("sendButton")
-        self.send_button.setEnabled(False)
-        self.send_button.setToolTip(
-            "Envoi texte non connecté dans cette branche UI-only."
-        )
+        self.bottom_hint = QLabel("Deux claquements pour parler")
+        self.bottom_hint.setObjectName("bottomHint")
+        self.bottom_hint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        bottom = QHBoxLayout()
+        self.bottom_dock = QFrame()
+        self.bottom_dock.setObjectName("bottomDock")
+        bottom = QHBoxLayout(self.bottom_dock)
+        bottom.setContentsMargins(10, 8, 10, 8)
         bottom.setSpacing(8)
-        bottom.addWidget(self.conversation_button)
         bottom.addWidget(self.voice_button)
-        bottom.addWidget(self.text_input, 1)
-        bottom.addWidget(self.send_button)
+        bottom.addWidget(self.conversation_button)
+        bottom.addStretch(1)
+        bottom.addWidget(self.bottom_hint)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 18, 24, 18)
@@ -1013,149 +1050,187 @@ class JarvisWindow(QWidget):
         root.addLayout(header)
         root.addLayout(middle, 1)
         root.addLayout(status_stack)
-        root.addLayout(bottom)
+        root.addWidget(self.bottom_dock)
 
         self.setStyleSheet(
             """
             QWidget#root {
-                background: #020813;
-                color: #dff9ff;
+                background: #010712;
+                color: #e7fbff;
             }
             QLabel#brandTitle {
-                color: #f0fdff;
+                color: #effcff;
                 font-size: 20px;
                 font-weight: 650;
                 letter-spacing: 3px;
             }
             QLabel#brandTagline {
-                color: rgba(130, 215, 238, 205);
-                font-size: 10px;
+                color: rgba(116, 197, 221, 205);
+                font-size: 9px;
             }
             QFrame#statusChip {
-                background: rgba(4, 19, 35, 205);
-                border: 1px solid rgba(53, 141, 178, 90);
-                border-radius: 13px;
+                background: rgba(3, 15, 28, 120);
+                border: 1px solid rgba(55, 132, 163, 45);
+                border-radius: 11px;
             }
             QFrame#statusChip[active="true"] {
-                border: 1px solid rgba(80, 239, 245, 210);
-                background: rgba(3, 35, 49, 230);
+                background: rgba(3, 31, 43, 190);
+                border: 1px solid rgba(80, 231, 238, 145);
             }
             QLabel#chipDot {
-                color: #59f5da;
-                font-size: 12px;
+                color: #61efd8;
+                font-size: 9px;
             }
             QLabel#chipTitle {
-                color: rgba(232, 251, 255, 240);
-                font-size: 11px;
+                color: rgba(230, 250, 254, 236);
+                font-size: 9px;
                 font-weight: 600;
             }
             QLabel#chipDetail {
-                color: rgba(105, 179, 205, 190);
-                font-size: 9px;
+                color: rgba(96, 157, 181, 188);
+                font-size: 8px;
             }
             QPushButton#topButton,
             QPushButton#windowButton,
             QPushButton#modeButton,
-            QPushButton#sendButton {
-                color: rgba(209, 247, 255, 235);
-                background: rgba(4, 18, 33, 215);
-                border: 1px solid rgba(64, 151, 190, 95);
-                border-radius: 14px;
-                padding: 8px 13px;
+            QPushButton#futureButton {
+                color: rgba(207, 244, 250, 225);
+                background: rgba(3, 15, 27, 150);
+                border: 1px solid rgba(63, 137, 164, 65);
+                border-radius: 12px;
+                padding: 7px 11px;
             }
             QPushButton#topButton:hover,
-            QPushButton#modeButton:hover,
             QPushButton#windowButton:hover {
-                border-color: rgba(77, 229, 244, 180);
-                background: rgba(6, 32, 50, 235);
+                background: rgba(5, 29, 44, 210);
+                border-color: rgba(73, 213, 229, 145);
             }
-            QPushButton#topButton:checked,
-            QPushButton#modeButton:checked {
-                border-color: rgba(69, 239, 247, 230);
-                color: #dffeff;
-                background: rgba(4, 54, 69, 238);
+            QPushButton#topButton:checked {
+                color: #e7feff;
+                background: rgba(4, 45, 58, 210);
+                border-color: rgba(72, 229, 239, 180);
             }
             QPushButton#windowButton {
                 min-width: 22px;
                 max-width: 28px;
-                padding: 6px 4px;
-                border-radius: 10px;
-            }
-            QPushButton#sendButton:disabled {
-                color: rgba(90, 129, 145, 150);
-                border-color: rgba(49, 91, 110, 70);
+                padding: 5px 3px;
+                border-radius: 9px;
             }
             QFrame#flowPanel {
-                background: rgba(2, 15, 31, 225);
-                border: 1px solid rgba(54, 169, 208, 100);
-                border-radius: 18px;
+                background: rgba(2, 13, 27, 220);
+                border: 1px solid rgba(54, 160, 196, 84);
+                border-radius: 17px;
             }
             QLabel#panelTitle {
-                color: #ecfcff;
-                font-size: 15px;
+                color: #effcff;
+                font-size: 14px;
                 font-weight: 650;
             }
             QLabel#panelState {
-                color: #68efd6;
+                color: #6ae6cf;
+                font-size: 8px;
+            }
+            QFrame#idleCard {
+                background: rgba(4, 26, 42, 125);
+                border: 1px solid rgba(62, 146, 177, 62);
+                border-radius: 13px;
+            }
+            QLabel#idleKicker {
+                color: rgba(101, 226, 239, 220);
+                font-size: 8px;
+                font-weight: 650;
+                letter-spacing: 1px;
+            }
+            QLabel#idleTitle {
+                color: rgba(233, 252, 255, 240);
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel#idleHelp {
+                color: rgba(113, 161, 181, 185);
                 font-size: 9px;
+                line-height: 1.3;
+            }
+            QFrame#stepsContainer {
+                background: transparent;
+                border: none;
             }
             QLabel#flowStep {
-                color: rgba(160, 199, 217, 205);
-                background: rgba(1, 12, 24, 90);
+                color: rgba(150, 190, 207, 205);
+                background: rgba(1, 11, 22, 70);
+                border: 1px solid rgba(57, 113, 137, 32);
                 border-radius: 9px;
                 padding: 7px 9px;
-                font-size: 10px;
+                font-size: 9px;
             }
             QLabel#flowStep[current="true"] {
                 color: #e9fdff;
-                background: rgba(4, 47, 66, 190);
-                border: 1px solid rgba(78, 233, 247, 150);
+                background: rgba(4, 42, 58, 165);
+                border: 1px solid rgba(78, 228, 241, 125);
+            }
+            QLabel#moduleLine {
+                color: rgba(100, 207, 226, 205);
+                font-size: 8px;
+                padding: 2px 4px;
             }
             QLabel#sectionTitle {
-                color: rgba(141, 194, 215, 210);
-                font-size: 10px;
-                font-weight: 600;
+                color: rgba(116, 169, 190, 185);
+                font-size: 8px;
+                font-weight: 650;
+                letter-spacing: 1px;
             }
             QLabel#alternateFlow {
-                color: #85eaf4;
-                font-size: 11px;
+                color: rgba(130, 226, 235, 215);
+                font-size: 9px;
                 font-weight: 600;
-                padding: 6px 2px;
+                padding: 4px 0;
             }
             QLabel#panelMuted {
-                color: rgba(117, 158, 178, 180);
-                font-size: 9px;
+                color: rgba(94, 132, 149, 175);
+                font-size: 8px;
             }
             QFrame#divider {
-                color: rgba(77, 135, 160, 80);
-                background: rgba(77, 135, 160, 60);
+                color: rgba(69, 124, 147, 50);
+                background: rgba(69, 124, 147, 45);
                 max-height: 1px;
             }
             QLabel#liveStatus {
-                color: rgba(216, 249, 255, 240);
-                font-size: 15px;
+                color: rgba(222, 249, 253, 238);
+                font-size: 13px;
                 font-weight: 500;
             }
             QLabel#transcript {
-                color: rgba(124, 228, 247, 230);
-                font-size: 14px;
-                padding: 2px 16px;
+                color: rgba(112, 220, 238, 220);
+                font-size: 12px;
+                padding: 1px 14px;
             }
             QLabel#detail {
-                color: rgba(104, 154, 177, 190);
-                font-size: 9px;
+                color: rgba(87, 135, 154, 165);
+                font-size: 8px;
                 letter-spacing: 1px;
             }
-            QLineEdit#conversationInput {
-                color: rgba(215, 245, 250, 235);
-                background: rgba(3, 18, 34, 235);
-                border: 1px solid rgba(58, 134, 168, 90);
-                border-radius: 17px;
-                padding: 10px 15px;
-                selection-background-color: rgba(54, 214, 233, 120);
+            QFrame#bottomDock {
+                background: rgba(2, 13, 25, 190);
+                border: 1px solid rgba(52, 123, 151, 55);
+                border-radius: 16px;
             }
-            QLineEdit#conversationInput:focus {
-                border-color: rgba(69, 230, 242, 185);
+            QPushButton#modeButton {
+                color: #dffcff;
+                background: rgba(4, 48, 58, 190);
+                border-color: rgba(70, 226, 235, 150);
+                font-size: 9px;
+                font-weight: 600;
+            }
+            QPushButton#futureButton:disabled {
+                color: rgba(107, 137, 149, 145);
+                background: rgba(2, 15, 26, 120);
+                border-color: rgba(47, 85, 100, 48);
+                font-size: 9px;
+            }
+            QLabel#bottomHint {
+                color: rgba(103, 160, 181, 190);
+                font-size: 9px;
+                padding-right: 8px;
             }
             """
         )
@@ -1182,29 +1257,11 @@ class JarvisWindow(QWidget):
         self.min_button.clicked.connect(self.showMinimized)
         self.max_button.clicked.connect(self._toggle_maximize)
         self.close_button.clicked.connect(self.close)
-        self.voice_button.clicked.connect(lambda: self._set_mode("voice"))
-        self.conversation_button.clicked.connect(
-            lambda: self._set_mode("conversation")
-        )
 
         self._thread.start()
 
         if settings.ui_fullscreen:
             self.showFullScreen()
-
-    def _set_mode(self, mode: str) -> None:
-        conversation = mode == "conversation"
-        self.conversation_button.setChecked(conversation)
-        self.voice_button.setChecked(not conversation)
-        self.canvas.set_source_mode("conversation" if conversation else "voice")
-        if conversation:
-            self.text_input.setPlaceholderText(
-                "Conversation texte — prête visuellement (runtime inchangé)"
-            )
-        else:
-            self.text_input.setPlaceholderText(
-                "Mode voix actif · deux claquements pour parler"
-            )
 
     def _set_clean_view(self, enabled: bool) -> None:
         self.flow_panel.setVisible(not enabled)
