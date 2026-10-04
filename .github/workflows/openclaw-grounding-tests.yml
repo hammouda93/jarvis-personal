@@ -6,6 +6,7 @@ on:
       - feature/personal-jarvis-ui-v2-openclaw-grounding
       - feature/personal-jarvis-ui-v2-computer-use-recovery-v1
       - feature/visual-perception-fallback-v1
+      - feature/computer-use-fusion-v2
 
 jobs:
   focused-windows-tests:
@@ -30,4 +31,22 @@ jobs:
         env:
           JARVIS_CUA_DRIVER_ENABLED: "0"
         run: |
-          python -m unittest tests.test_cua_driver_bridge tests.test_windows_perception tests.test_native_tools tests.test_agent_runtime tests.test_screen_vision tests.test_assistant_v3 tests.test_ui_logging -v
+          python -m unittest tests.test_cua_driver_bridge tests.test_windows_perception tests.test_native_tools tests.test_agent_runtime tests.test_screen_vision tests.test_perception_router tests.test_computer_use_engine tests.test_kernel_foundations tests.test_architecture_extensions tests.test_assistant_v3 tests.test_ui_logging -v
+
+  unknown-browser-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Install optional browser test dependencies
+        run: |
+          python -m pip install python-dotenv pillow -r requirements-browser.txt
+          python -m playwright install --with-deps chromium
+      - name: Test fusion and a fresh unknown browser fixture
+        env:
+          JARVIS_COMPATIBILITY_BASELINE: "1"
+          JARVIS_CUA_DRIVER_ENABLED: "0"
+        run: python -m unittest tests.test_computer_use_engine tests.test_browser_adapter -v

@@ -158,6 +158,9 @@ class AssistantWorker(QObject):
     @Slot()
     def stop(self) -> None:
         self._stop.set()
+        cancel = getattr(self._agent, "cancel", None)
+        if callable(cancel):
+            cancel()
 
     def submit_text(self, text: str) -> bool:
         """Queue a typed turn without touching the agent from the UI thread."""
@@ -450,6 +453,7 @@ class AssistantWorker(QObject):
             source="agent_runtime",
             actions=turn.actions,
             response_text=turn.text,
+            success=getattr(turn, "goal_completed", None),
         )
 
         if turn.actions:
@@ -474,7 +478,12 @@ class AssistantWorker(QObject):
             self.log_line.emit("[SESSION] agent requested standby")
             return False
 
-        self._state(AssistantState.SUCCESS, "Prêt")
+        if getattr(turn, "mission_status", "") == "awaiting_approval":
+            self._state(AssistantState.ARMED, "Confirmation attendue")
+        elif getattr(turn, "goal_completed", None) is False:
+            self._state(AssistantState.ERROR, "Mission non vérifiée")
+        else:
+            self._state(AssistantState.SUCCESS, "Prêt")
         self._level(0.0)
         return True
 

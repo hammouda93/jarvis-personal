@@ -30,6 +30,7 @@ class EventKind(str, Enum):
     TOOL_REQUESTED = "tool.requested"
     TOOL_RESULT = "tool.result"
     OBSERVATION = "observation"
+    UI_STATE_TRANSITION = "ui.state_transition"
     PROOF = "proof"
     USER_FEEDBACK = "user.feedback"
     CORRECTION_CANDIDATE = "correction.candidate"
@@ -39,6 +40,7 @@ class EventKind(str, Enum):
     REPLAY_RESULT = "replay.result"
     MISSION_COMPLETED = "mission.completed"
     MISSION_FAILED = "mission.failed"
+    MISSION_BLOCKED = "mission.blocked"
 
 
 class KnowledgeScope(str, Enum):

@@ -67,9 +67,31 @@ class NativeToolRegistry:
         self.knowledge = knowledge or AGENT_KNOWLEDGE
         self._last_app_hint = ""
         self._last_observed_window_title = ""
+        self._computer_use = None
+
+    @property
+    def ui_controller(self):
+        if self._computer_use is None:
+            from .computer_use_controller import ComputerUseController
+            browser = None
+            if getattr(settings, "browser_enabled", False) is True and settings.browser_cdp_url:
+                from .browser_adapter import BrowserAdapter
+                browser = BrowserAdapter(settings.browser_cdp_url)
+            store = None
+            if getattr(settings, "structured_tracing_enabled", False) is True:
+                from .mission_context_store import MissionContextStore
+                store = MissionContextStore()
+            self._computer_use = ComputerUseController(browser=browser, store=store)
+        return self._computer_use
+
+    def begin_ui_mission(self, user_text: str, *, mission_id: str = "", log=None, resume: bool = False):
+        self.ui_controller.begin(user_text, mission_id=mission_id, log=log, resume=resume)
+
+    def ui_pending_verification(self) -> bool:
+        return self._computer_use is not None and self._computer_use.pending_verification()
 
     def ollama_tools(self) -> list[dict[str, Any]]:
-        return [
+        tools = [
             self._ollama(
                 "open_application",
                 "Trouve et ouvre une application de bureau installée sur Windows par son nom. Ne pas utiliser comme substitut à un contrôle déjà observé dans une application ouverte: si inspect_active_window montre la cible, agir sur sa ref. Ne pas utiliser pour ouvrir un site web: utiliser open_url.",
@@ -630,6 +652,18 @@ class NativeToolRegistry:
                 [],
             ),
         ]
+        if getattr(settings, "computer_use_enabled", False) is True:
+            from .computer_use_controller import ui_tool_definitions
+            # Legacy exact write and close primitives remain available. UI clicks
+            # on this branch use one generic action with explicit postconditions.
+            replaced = {"click_ui_element", "click_visual_target", "write_visual_target",
+                        "press_key", "type_text_active_window"}
+            tools = [x for x in tools if x["function"]["name"] not in replaced]
+            tools += ui_tool_definitions(
+                self._ollama, browser_available=getattr(settings, "browser_enabled", False) is True
+                and bool(getattr(settings, "browser_cdp_url", "")),
+            )
+        return tools
 
     def openai_tools(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
@@ -676,6 +710,19 @@ class NativeToolRegistry:
         arguments: dict[str, Any] | None,
         *,
         approved: bool = False,
+    ) -> AgentActionResult:
+        if getattr(settings, "computer_use_enabled", False) is True:
+            result = self.ui_controller.execute(
+                name, dict(arguments or {}),
+                lambda tool, args: self._execute_legacy(tool, args, approved=approved),
+            )
+            if name in {"observe_ui", "inspect_active_window", "observe_screen"} and result.success:
+                self._record_inspected_app(result)
+            return result
+        return self._execute_legacy(name, arguments, approved=approved)
+
+    def _execute_legacy(
+        self, name: str, arguments: dict[str, Any] | None, *, approved: bool = False,
     ) -> AgentActionResult:
         args = dict(arguments or {})
 

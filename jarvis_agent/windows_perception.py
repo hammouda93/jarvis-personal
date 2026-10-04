@@ -413,11 +413,46 @@ def _active_window():
 
 
 def _compact_window(wrapper: Any) -> dict[str, Any]:
-    return {
+    result = {
         "title": _element_name(wrapper),
         "type": _control_type(wrapper) or "Window",
         "bounds": list(_rect_tuple(wrapper)),
     }
+    try:
+        handle = int(getattr(wrapper, "handle", 0) or 0)
+        if handle:
+            result.update(_native_identity(handle))
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return result
+
+
+def _native_identity(handle: int) -> dict[str, Any]:
+    """Read-only native identity, with no COM import or process-global DPI change."""
+    result: dict[str, Any] = {"hwnd": int(handle)}
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        get_pid = user32.GetWindowThreadProcessId
+        get_pid.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        get_pid.restype = wintypes.DWORD
+        pid = wintypes.DWORD()
+        get_pid(wintypes.HWND(handle), ctypes.byref(pid))
+        result["pid"] = int(pid.value)
+        try:
+            import win32api
+            import win32process
+            process = win32api.OpenProcess(0x1000, False, int(pid.value))
+            try:
+                result["process_start"] = str(win32process.GetProcessTimes(process)["CreationTime"])
+            finally:
+                process.Close()
+        except Exception:
+            pass
+    except (AttributeError, OSError):
+        pass
+    return result
 
 
 def _control_value(wrapper: Any) -> str:
@@ -472,6 +507,18 @@ def _compact_control(ref: str, wrapper: Any) -> dict[str, Any]:
         "type": control_type,
         "enabled": _is_enabled(wrapper),
     }
+    try:
+        focused = wrapper.has_keyboard_focus()
+        if isinstance(focused, bool):
+            item["focused"] = focused
+    except Exception:
+        pass
+    try:
+        selected = wrapper.is_selected()
+        if isinstance(selected, bool):
+            item["selected"] = selected
+    except Exception:
+        pass
     if control_type in {"Edit", "Document", "ComboBox"}:
         item["writable"] = True
     name = _element_name(wrapper)
@@ -482,7 +529,7 @@ def _compact_control(ref: str, wrapper: Any) -> dict[str, Any]:
         item["id"] = automation_id[:100]
 
     value = _control_value(wrapper)
-    if value:
+    if value or control_type in {"Edit", "Document", "ComboBox"}:
         if control_type == "Hyperlink":
             item["target"] = value[:500]
         elif control_type in {"Edit", "Document", "ComboBox"}:
@@ -647,6 +694,7 @@ def _native_window_candidates(*, limit: int = 40) -> list[dict[str, Any]]:
             items.append(
                 {
                     "handle": handle,
+                    **_native_identity(handle),
                     "title": title[:180],
                     "process": _native_process_name(handle)[:120],
                     "bounds": bounds,
@@ -678,6 +726,8 @@ def _native_child_windows(
     if not parent:
         return []
 
+    if not hasattr(ctypes, "windll"):
+        return []
     user32 = ctypes.windll.user32
     items: list[dict[str, Any]] = []
     seen: set[int] = set()
@@ -2196,7 +2246,8 @@ def close_window(title: str | None = None) -> UIActionResult:
     return UIActionResult(
         True,
         f"Fenêtre fermée: {label}.",
-        "Fermeture vérifiée.",
+        _json({"verified": True, "window": {"title": label, "hwnd": handle},
+               "postcondition": "window_absent", "note": "Fermeture vérifiée."}),
     )
 
 
