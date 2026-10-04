@@ -72,7 +72,7 @@ class ComputerUseRuntime:
         self.delegate.warm_up(log=log)
 
     def run(self, user_text: str, *, log=None, phase=None):
-        from .agent_runtime import AgentTurnResult
+        from .agent_runtime import AgentTurnResult, _requested_action_capabilities
         request = normalized_text(user_text)
         approval = any(isinstance(getattr(self.delegate, key, None), dict) for key in (
             "_pending_function_approval", "_pending_mcp_approval"))
@@ -123,9 +123,12 @@ class ComputerUseRuntime:
             receipt = controller.receipts[0]
             words = normalized_text(controller.context.user_goal).split()
             compound = any(word in words for word in {
-                "envoie", "envoyer", "send", "cherche", "chercher", "search", "trouve", "find", "puis", "ensuite"})
-            expected_verb = bool(re.search(r"\b(ecris|ecrire|write|type|saisis|remplace|ferme|fermer|close)\b",
-                                         normalized_text(controller.context.user_goal)))
+                "envoie", "envoyer", "send", "cherche", "chercher", "search", "trouve", "find", "puis", "ensuite",
+                "et", "and", "then", "ouvre", "ouvrir", "open", "clique", "click", "navigate", "navigue"})
+            requested = _requested_action_capabilities(controller.context.user_goal)
+            expected_verb = ("write_ui" in requested if receipt.get("operation") == "write_ui_element" else
+                "close_tab" in requested if receipt.get("operation") == "close_tab" else
+                bool(re.search(r"\b(ferme|fermer|close)\b", normalized_text(controller.context.user_goal))))
             proven = bool(controller.pending and controller.pending.verdict and
                           controller.pending.verdict.passed and expected_verb and not compound and receipt.get("operation") in {
                               "write_ui_element", "close_tab", "close_window"})

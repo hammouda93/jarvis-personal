@@ -447,6 +447,19 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(result.goal_completed)
         self.assertNotIn("Mission terminée", result.text)
 
+    def test_single_native_receipt_does_not_complete_a_compound_mission(self):
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        registry=NativeToolRegistry()
+        registry._computer_use=self.controller
+        class Delegate:
+            def run(inner,text,**kwargs):
+                action=registry.execute("close_window",{"title":"Unknown surface"})
+                return AgentTurnResult("Tout est terminé",(action,))
+        with patch.object(registry,"_execute_legacy",return_value=AgentActionResult("close_window",True,"closed",'{"verified":true}')):
+            result=ComputerUseRuntime(Delegate(),registry).run("Ferme la fenêtre et ouvre le navigateur")
+        self.assertFalse(result.goal_completed)
+        self.assertEqual(result.mission_status,"inconclusive")
+
     def test_acknowledgement_never_calls_planner_or_tools(self):
         registry = NativeToolRegistry()
         delegate = Mock()

@@ -17,6 +17,8 @@ Base de développement : `feature/visual-perception-fallback-v1`, commit `e83558
 
 Il s'agit d'une première intégration du moteur et de son protocole de preuve. Les tests ne démontrent pas encore une maîtrise universelle des applications Windows ni la précision d'un modèle de vision sur la machine de l'utilisateur.
 
+Les objectifs composés de cette version sont vérifiés dans une même surface, avec les navigations explicitement reconnues du même onglet. Une mission traversant plusieurs applications nécessite l'extension suivante : prédicats scoped par surface et preuves indépendantes pour chaque surface. Le moteur ne contourne pas cette limite en acceptant une observation d'une autre fenêtre comme preuve.
+
 ## Architecture exécutée
 
 ```mermaid
