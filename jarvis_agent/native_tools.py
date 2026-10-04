@@ -715,12 +715,22 @@ class NativeToolRegistry:
                     return AgentActionResult(
                         name=name,
                         success=True,
-                        message=f"Application déjà ouverte; fenêtre réutilisée: {observed_title}.",
+                        message=(
+                            f"Application déjà ouverte; fenêtre réutilisée: "
+                            f"{observed_title}. La réutilisation de la fenêtre "
+                            "ne prouve pas qu'une action demandée à l'intérieur "
+                            "de l'application a été accomplie."
+                        ),
                         detail=json.dumps(
                             {
                                 "reused_existing_window": True,
                                 "target": target,
                                 "window": observed_title,
+                                "in_app_goal_completed": False,
+                                "next_step": (
+                                    "Inspecter la fenêtre et utiliser le contrôle "
+                                    "observé correspondant à l'objectif."
+                                ),
                                 "activation": existing.detail,
                             },
                             ensure_ascii=False,
