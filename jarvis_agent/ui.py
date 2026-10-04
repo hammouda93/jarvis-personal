@@ -777,9 +777,9 @@ class JarvisWindow(QWidget):
         brand.addWidget(title)
         brand.addWidget(tagline)
 
-        self.chip_cerebras = StatusChip("Cerebras", "Connecté")
-        self.chip_windows = StatusChip("Windows", "Disponible")
-        self.chip_msf = StatusChip("MS Football", "Prêt")
+        self.chip_cerebras = StatusChip("Cerebras", "En attente")
+        self.chip_windows = StatusChip("Windows", "En attente")
+        self.chip_msf = StatusChip("MS Football", "En attente")
         self.chip_research = StatusChip("Recherche arrière-plan", "En veille")
 
         chips = QHBoxLayout()
@@ -1130,6 +1130,42 @@ class JarvisWindow(QWidget):
 
     def _on_log(self, line: str) -> None:
         self.canvas.ingest_log(line)
+
+        text = str(line)
+        if text.startswith("[AI] provider="):
+            provider = re.search(r"provider=([^\\s]+)", text)
+            if provider:
+                value = provider.group(1).strip()
+                self.chip_cerebras.detail.setText(
+                    "Principal" if value == "cerebras" else value
+                )
+
+        if text.startswith("[AGENT] provider=cerebras"):
+            self.chip_cerebras.detail.setText("Actif")
+
+        call = re.search(r"\\[AGENT_TOOL\\] call=([^\\s]+)", text)
+        if call:
+            node = _tool_visual_node(call.group(1))
+            if node == "windows":
+                self.chip_windows.detail.setText("Actif")
+            elif node == "ms_football":
+                self.chip_msf.detail.setText("Actif")
+            elif node == "internet":
+                self.chip_research.detail.setText("Active")
+
+        result = re.search(
+            r"\\[AGENT_TOOL\\] result=([^\\s]+)\\s+success=(True|False)",
+            text,
+        )
+        if result:
+            node = _tool_visual_node(result.group(1))
+            detail = "Terminé" if result.group(2) == "True" else "Erreur"
+            if node == "windows":
+                self.chip_windows.detail.setText(detail)
+            elif node == "ms_football":
+                self.chip_msf.detail.setText(detail)
+            elif node == "internet":
+                self.chip_research.detail.setText(detail)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key_Escape:
