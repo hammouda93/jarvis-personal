@@ -673,12 +673,17 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertFalse(payload["perception"]["vision_attempted"])
         vision_mock.assert_not_called()
 
+    @patch(
+        "jarvis_agent.native_tools.settings",
+        replace(real_settings, vision_enabled=True),
+    )
     @patch("jarvis_agent.native_tools.observe_screen")
     @patch("jarvis_agent.native_tools.inspect_active_window")
     def test_inspect_interface_escalates_to_vision_once_when_structure_is_opaque(
         self,
         inspect_mock,
         vision_mock,
+        _settings_mock,
     ):
         inspect_mock.return_value = SimpleNamespace(
             success=True,
