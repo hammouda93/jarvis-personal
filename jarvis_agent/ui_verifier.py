@@ -12,7 +12,7 @@ CONDITION_KINDS = frozenset({
     "value_equals", "value_contains", "value_endswith", "text_present",
     "text_absent", "new_text", "target_present", "target_absent", "selected",
     "title_contains", "url_contains",
-    "focused",
+    "focused", "enabled",
 })
 
 
@@ -36,11 +36,15 @@ class Postcondition:
                 raise ValueError(f"{key} must be a string")
         result = cls(**value)
         if result.kind in {"value_equals", "value_contains", "value_endswith", "selected", "focused",
-                           "target_present", "target_absent"} and not (result.role or result.label):
+                           "enabled", "target_present", "target_absent"} and not (result.role or result.label):
             raise ValueError("A target-specific predicate needs a role or label")
         if result.kind in {"text_present", "text_absent", "new_text", "title_contains",
                            "url_contains", "value_contains", "value_endswith"} and not result.value.strip():
             raise ValueError("An empty string cannot prove a predicate")
+        if result.kind == "enabled" and result.value.strip().lower() not in {
+            "", "true", "false", "1", "0", "yes", "no",
+        }:
+            raise ValueError("enabled expects a boolean-like value")
         if any(len(getattr(result, key)) > 2000 for key in ("value", "role", "label", "region", "surface")):
             raise ValueError("Postcondition too large")
         return result
@@ -136,6 +140,9 @@ def _predicate(
         return entity.selected, [entity.ref], entity.selected
     if kind == "focused":
         return entity.focused, [entity.ref], entity.focused
+    if kind == "enabled":
+        expected = condition.value.strip().lower() not in {"false", "0", "no"}
+        return entity.enabled is expected, [entity.ref], entity.enabled
     if entity.value is None:
         return None, [entity.ref], None
     if kind == "value_equals":

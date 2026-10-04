@@ -70,6 +70,67 @@ def _result(name: str, success: bool, message: str, payload: dict[str, Any] | st
                              json.dumps(payload, ensure_ascii=False) if isinstance(payload, dict) else payload)
 
 
+_TARGET_SPECIFIC_CONDITIONS = frozenset({
+    "value_equals",
+    "value_contains",
+    "value_endswith",
+    "target_present",
+    "target_absent",
+    "selected",
+    "focused",
+    "enabled",
+})
+
+
+def _action_conditions(values: Any, target: UIEntity) -> tuple[Postcondition, ...]:
+    """Bind step-local shorthand to the exact target already resolved.
+
+    This does not weaken verification: missing role/label is inherited only
+    from the unique fresh target selected for this action. A legacy/planner
+    `enabled` field is expanded into its own typed predicate.
+    """
+    if not isinstance(values, list):
+        return parse_conditions(values)
+
+    expanded: list[dict[str, Any]] = []
+    for raw in values:
+        if not isinstance(raw, dict):
+            return parse_conditions(values)
+        item = dict(raw)
+        enabled = item.pop("enabled", None)
+
+        def bind_target(condition: dict[str, Any]) -> None:
+            if condition.get("kind") not in _TARGET_SPECIFIC_CONDITIONS:
+                return
+            if condition.get("role") or condition.get("label"):
+                return
+            if target.label:
+                condition["label"] = target.label
+            elif target.semantic_roles:
+                condition["role"] = target.semantic_roles[0]
+            elif target.technical_role:
+                condition["role"] = target.technical_role
+
+        bind_target(item)
+        expanded.append(item)
+
+        if enabled is not None:
+            if isinstance(enabled, bool):
+                expected = "true" if enabled else "false"
+            else:
+                expected = str(enabled).strip().lower()
+            enabled_condition: dict[str, Any] = {
+                "kind": "enabled",
+                "value": expected,
+            }
+            if item.get("surface"):
+                enabled_condition["surface"] = item["surface"]
+            bind_target(enabled_condition)
+            expanded.append(enabled_condition)
+
+    return parse_conditions(expanded)
+
+
 class ComputerUseController:
     def __init__(self, *, perception: PerceptionManager | None = None,
                  browser: Any = None, store: Any = None, surface_inventory: Callable[..., Any] | None = None,
@@ -493,7 +554,6 @@ class ComputerUseController:
         operation = str(args.get("operation") or "")
         if operation not in {"click", "write", "scroll", "key"}:
             raise ValueError("Unsupported UI operation")
-        conditions = parse_conditions(args.get("expected"))
         if not self.goal and (operation != "write" or self.receipts or not single_native_request(
             self.context.user_goal if self.context else "", "write_ui_element"
         )):
@@ -523,27 +583,55 @@ class ComputerUseController:
             if not seen.success:
                 return seen
             current = self.state.current
+        resolution = resolve_target(
+            intent,
+            current,
+            generation=self.state.generation,
+            max_age_s=float(settings.ui_target_max_age_s),
+        )
+        if resolution.status != "resolved":
+            self._emit(
+                "decision",
+                reason=resolution.reason,
+                candidates=resolution.candidates,
+            )
+            return _result(
+                "act_ui",
+                False,
+                "La cible n'est pas résolue de façon unique et fraîche.",
+                {"target_resolution": resolution.as_dict()},
+            )
+        target = resolution.target
+        conditions = _action_conditions(args.get("expected"), target)
+
         transition = None
         if args.get("expected_transition") is not None:
-            transition = ExpectedSurfaceTransition.from_dict(args["expected_transition"], current.scope,
-                                                              self._inventory(require_complete=True))
-            if any(x.surface != transition.surface or x.kind == "new_text" for x in conditions):
-                raise ValueError("Transition postconditions must name the destination surface and cannot prove new_text")
+            transition = ExpectedSurfaceTransition.from_dict(
+                args["expected_transition"],
+                current.scope,
+                self._inventory(require_complete=True),
+            )
+            if any(
+                x.surface != transition.surface or x.kind == "new_text"
+                for x in conditions
+            ):
+                raise ValueError(
+                    "Transition postconditions must name the destination surface "
+                    "and cannot prove new_text"
+                )
             if transition.kind == "bound_surface":
                 self.surfaces.get(transition.surface)
             elif transition.surface not in self.surfaces.future:
                 raise ValueError("TRANSITION_SURFACE_NOT_DECLARED")
         else:
             for condition in conditions:
-                if condition.surface and not self.surfaces.get(condition.surface).identity.same_binding(current.scope):
+                if (
+                    condition.surface
+                    and not self.surfaces.get(condition.surface)
+                    .identity.same_binding(current.scope)
+                ):
                     raise ValueError("POSTCONDITION_SURFACE_MISMATCH")
-        resolution = resolve_target(intent, current, generation=self.state.generation,
-                                    max_age_s=float(settings.ui_target_max_age_s))
-        if resolution.status != "resolved":
-            self._emit("decision", reason=resolution.reason, candidates=resolution.candidates)
-            return _result("act_ui", False, "La cible n'est pas résolue de façon unique et fraîche.",
-                           {"target_resolution": resolution.as_dict()})
-        target = resolution.target
+
         if target.sensor == "vision" and target.score < float(settings.vision_min_confidence):
             return _result("act_ui", False, "La cible visuelle est sous le seuil d'exécution.",
                            "VISUAL_SUPPORT_BELOW_THRESHOLD")

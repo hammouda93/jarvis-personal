@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from jarvis_agent.config import settings as real_settings
-from jarvis_agent.computer_use_controller import ComputerUseController
+from jarvis_agent.computer_use_controller import ComputerUseController, _action_conditions
 from jarvis_agent.computer_use_runtime import ComputerUseRuntime, compact_ui_tool_detail
 from jarvis_agent.event_journal import StructuredEventJournal
 from jarvis_agent.native_tools import AgentActionResult, NativeToolRegistry
@@ -49,6 +49,56 @@ def visual(**extra):
 
 def observation(controls=(), id="obs", **extra):
     return fuse_observation(payload(controls, **extra), None, observation_id=id)
+
+
+class ActionPostconditionContractTests(unittest.TestCase):
+    def test_cursor_style_selected_postcondition_binds_to_resolved_target(self):
+        target = UIEntity(
+            ref="obs2:e4",
+            native_ref="obs2:e4",
+            sensor="uia",
+            technical_role="RadioButton",
+            semantic_roles=("radio_button",),
+            label="Je comprends et j'accepte les termes du contrat de licence",
+            selected=False,
+            enabled=True,
+        )
+
+        conditions = _action_conditions(
+            [{"kind": "selected", "value": "true"}],
+            target,
+        )
+
+        self.assertEqual(len(conditions), 1)
+        self.assertEqual(conditions[0].kind, "selected")
+        self.assertEqual(conditions[0].label, target.label)
+
+    def test_enabled_shorthand_is_expanded_without_weakening_target_scope(self):
+        target = UIEntity(
+            ref="obs2:e7",
+            native_ref="obs2:e7",
+            sensor="uia",
+            technical_role="Button",
+            semantic_roles=("button",),
+            label="Suivant",
+            enabled=True,
+        )
+
+        conditions = _action_conditions(
+            [
+                {
+                    "kind": "target_present",
+                    "role": "Button",
+                    "label": "Suivant",
+                    "enabled": "true",
+                }
+            ],
+            target,
+        )
+
+        self.assertEqual([item.kind for item in conditions], ["target_present", "enabled"])
+        self.assertEqual(conditions[1].label, "Suivant")
+        self.assertEqual(conditions[1].value, "true")
 
 
 class PerceptionContractTests(unittest.TestCase):
