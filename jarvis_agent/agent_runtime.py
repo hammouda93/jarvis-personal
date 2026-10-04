@@ -487,6 +487,30 @@ def _requests_search_submission(text: str) -> bool:
     return has_search and has_submit
 
 
+def _requests_result_selection(text: str) -> bool:
+    """Detect selecting/opening an ordinal result already visible in a UI."""
+    normalized = normalize(text)
+    has_open = bool(
+        re.search(
+            r"\b(?:ouvre|ouvrir|selectionne|selectionner|clique|cliquer|"
+            r"choisis|choisir|open|select|click)\b",
+            normalized,
+        )
+    )
+    has_ordinal_target = bool(
+        re.search(
+            r"\b(?:premier|premiere|deuxieme|troisieme|quatrieme|"
+            r"1er|1ere|2e|3e|4e)\b",
+            normalized,
+        )
+        and re.search(
+            r"\b(?:resultat|resultats|video|videos|lien|liens|element|elements)\b",
+            normalized,
+        )
+    )
+    return has_open and has_ordinal_target
+
+
 def _looks_like_pseudo_tool_syntax(text: str) -> bool:
     """Detect model text that imitates tool calls instead of calling tools."""
     lower = (text or "").lower()
@@ -1248,6 +1272,23 @@ class OllamaToolAgent:
 
                 tool_started = time.perf_counter()
                 if (
+                    name == "press_key"
+                    and str(arguments.get("key", "")).strip().casefold()
+                    in {"enter", "return"}
+                    and _requests_result_selection(user_text)
+                    and not structured_inspection_seen
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La demande vise un résultat visible. Inspectez d'abord "
+                            "l'interface réelle et sélectionnez une cible observée "
+                            "avant d'envoyer Entrée."
+                        ),
+                        detail="result_selection_requires_inspection",
+                    )
+                elif (
                     name == "remember_information"
                     and not _is_explicit_memory_write_request(user_text)
                 ):
@@ -2398,6 +2439,7 @@ class GroqResponsesAgent:
         research_web_calls = 0
         visual_fallback_required = False
         visual_fallback_repair_attempted = False
+        structured_inspection_seen = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -2949,6 +2991,7 @@ class GroqResponsesAgent:
                     result.success
                     and name == "inspect_active_window"
                 ):
+                    structured_inspection_seen = True
                     visual_fallback_required = (
                         settings.vision_enabled
                         and _inspection_requests_visual_fallback(result)
@@ -3097,6 +3140,13 @@ class GroqResponsesAgent:
                             "le contrôle Search/Recherche visible. Si les résultats "
                             "sont visuellement ambigus et la vision est disponible, "
                             "utilise observe_screen."
+                        )
+                    elif result.detail == "result_selection_requires_inspection":
+                        recovery = (
+                            "La demande vise un résultat déjà visible. Inspecte "
+                            "d'abord la fenêtre réelle avec inspect_active_window. "
+                            "Choisis ensuite une ref correspondant au résultat demandé "
+                            "et utilise click_ui_element. N'utilise pas Enter sans cible."
                         )
                     elif (
                         result.detail
