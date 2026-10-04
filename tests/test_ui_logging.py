@@ -1,7 +1,15 @@
 import unittest
 from unittest.mock import patch
 
-from jarvis_agent.ui import NODE_BY_KEY, NODES, _safe_console_log, _tool_visual_node
+from jarvis_agent.ui import (
+    COMPACT_MIN_SIZE,
+    COMPACT_START_SIZE,
+    NODE_BY_KEY,
+    NODES,
+    NORMAL_MIN_SIZE,
+    _safe_console_log,
+    _tool_visual_node,
+)
 
 
 class _CP1252Stream:
@@ -44,6 +52,12 @@ class SafeConsoleLogTests(unittest.TestCase):
     def test_visual_nodes_have_unique_keys(self):
         keys = [node.key for node in NODES]
         self.assertEqual(len(keys), len(set(keys)))
+
+    def test_compact_window_is_materially_smaller_than_normal_layout(self):
+        self.assertLess(COMPACT_MIN_SIZE[0], NORMAL_MIN_SIZE[0])
+        self.assertLess(COMPACT_MIN_SIZE[1], NORMAL_MIN_SIZE[1])
+        self.assertGreaterEqual(COMPACT_START_SIZE[0], COMPACT_MIN_SIZE[0])
+        self.assertGreaterEqual(COMPACT_START_SIZE[1], COMPACT_MIN_SIZE[1])
 
     def test_text_conversation_is_available_visual_node(self):
         self.assertEqual(

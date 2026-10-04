@@ -56,6 +56,12 @@ def _safe_console_log(value: object) -> None:
         pass
 
 
+NORMAL_MIN_SIZE = (1180, 720)
+NORMAL_START_SIZE = (1500, 900)
+COMPACT_MIN_SIZE = (640, 420)
+COMPACT_START_SIZE = (760, 520)
+
+
 STATE_COLORS: dict[str, QColor] = {
     AssistantState.STARTING.value: QColor(63, 154, 196),
     AssistantState.CALIBRATING.value: QColor(72, 181, 205),
@@ -929,23 +935,28 @@ class JarvisWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Personal Jarvis")
-        self.setMinimumSize(1180, 720)
-        self.resize(1500, 900)
+        self.setMinimumSize(*NORMAL_MIN_SIZE)
+        self.resize(*NORMAL_START_SIZE)
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
         self.setObjectName("root")
         self._drag_position = None
         self._close_requested = False
         self._allow_close = False
+        self._compact_mode = False
+        self._normal_geometry = None
 
         self.canvas = PersonalJarvisCanvas(self)
         self.flow_panel = FlowPanel(self)
+        self.canvas.setMinimumSize(520, 360)
 
         title = QLabel("PERSONAL JARVIS")
         title.setObjectName("brandTitle")
+        self.brand_title = title
         tagline = QLabel(
             "Personal AI Agent réellement intelligent, généraliste, robuste et évolutif"
         )
         tagline.setObjectName("brandTagline")
+        self.brand_tagline = tagline
 
         brand = QVBoxLayout()
         brand.setContentsMargins(0, 0, 8, 0)
@@ -973,6 +984,13 @@ class JarvisWindow(QWidget):
         self.freeze_button.setObjectName("topButton")
         self.freeze_button.setCheckable(True)
 
+        self.compact_button = QPushButton("⇲  Compact")
+        self.compact_button.setObjectName("topButton")
+        self.compact_button.setCheckable(True)
+        self.compact_button.setToolTip(
+            "Réduire Jarvis pour voir les applications pendant les tests."
+        )
+
         self.min_button = QPushButton("—")
         self.min_button.setObjectName("windowButton")
         self.max_button = QPushButton("□")
@@ -984,6 +1002,7 @@ class JarvisWindow(QWidget):
         controls.setSpacing(6)
         controls.addWidget(self.clean_button)
         controls.addWidget(self.freeze_button)
+        controls.addWidget(self.compact_button)
         controls.addSpacing(6)
         controls.addWidget(self.min_button)
         controls.addWidget(self.max_button)
@@ -1351,6 +1370,7 @@ class JarvisWindow(QWidget):
 
         self.clean_button.toggled.connect(self._set_clean_view)
         self.freeze_button.toggled.connect(self._set_animations_frozen)
+        self.compact_button.toggled.connect(self._set_compact_mode)
         self.conversation_button.toggled.connect(self._set_text_panel)
         self.chat_send_button.clicked.connect(self._submit_text)
         self.chat_input.returnPressed.connect(self._submit_text)
@@ -1445,6 +1465,52 @@ class JarvisWindow(QWidget):
             if frozen
             else "Ⅱ  Figer les animations"
         )
+
+    def _set_compact_mode(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._compact_mode:
+            return
+
+        self._compact_mode = enabled
+        if enabled:
+            if not self.isMaximized() and not self.isFullScreen():
+                self._normal_geometry = self.geometry()
+            self.showNormal()
+            self.setMinimumSize(*COMPACT_MIN_SIZE)
+            self.canvas.hide()
+            self.flow_panel.hide()
+            self.brand_tagline.hide()
+            self.chip_msf.hide()
+            self.chip_research.hide()
+            self.clean_button.hide()
+            self.freeze_button.hide()
+            self.detail_label.hide()
+            self.transcript_label.hide()
+            if not self.conversation_button.isChecked():
+                self.conversation_button.setChecked(True)
+            else:
+                self.chat_panel.show()
+            self.resize(*COMPACT_START_SIZE)
+            self.compact_button.setText("⇱  Normal")
+            self.bottom_hint.setText("Mode compact · texte + voix disponibles")
+            self.chat_input.setFocus()
+        else:
+            self.setMinimumSize(*NORMAL_MIN_SIZE)
+            self.canvas.show()
+            if not self.clean_button.isChecked():
+                self.flow_panel.show()
+                self.detail_label.show()
+            self.brand_tagline.show()
+            self.chip_msf.show()
+            self.chip_research.show()
+            self.clean_button.show()
+            self.freeze_button.show()
+            self.transcript_label.show()
+            self.compact_button.setText("⇲  Compact")
+            if self._normal_geometry is not None:
+                self.setGeometry(self._normal_geometry)
+            else:
+                self.resize(*NORMAL_START_SIZE)
 
     def _toggle_maximize(self) -> None:
         if self.isMaximized():
