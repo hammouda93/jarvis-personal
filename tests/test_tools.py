@@ -8,6 +8,7 @@ from unittest.mock import patch
 from jarvis_agent.tools import (
     ToolIntent,
     _chrome_profile_directory,
+    _launch_chrome,
     _find_named_app,
     _find_named_file,
     _open_application,
@@ -281,6 +282,27 @@ class ToolRouterTests(unittest.TestCase):
                     _chrome_profile_directory(),
                     "Profile 3",
                 )
+
+
+    @patch("jarvis_agent.tools.subprocess.Popen")
+    @patch("jarvis_agent.tools._chrome_profile_directory")
+    @patch("jarvis_agent.tools._chrome_executable")
+    def test_jarvis_chrome_launch_enables_renderer_accessibility(
+        self,
+        executable_mock,
+        profile_mock,
+        popen_mock,
+    ):
+        executable_mock.return_value = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        profile_mock.return_value = "Profile 3"
+
+        ok = _launch_chrome(url="https://example.com")
+
+        self.assertTrue(ok)
+        args = popen_mock.call_args.args[0]
+        self.assertIn("--force-renderer-accessibility=complete", args)
+        self.assertIn("--profile-directory=Profile 3", args)
+        self.assertEqual(args[-1], "https://example.com")
 
     def test_unknown_is_safe(self):
         intent = route("supprime tous mes fichiers")
