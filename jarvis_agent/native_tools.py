@@ -148,7 +148,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "inspect_active_window",
-                "Observe la fenêtre de travail active ou une fenêtre nommée et retourne une vue compacte de ses contrôles. Les contrôles ont des refs e1, e2... réutilisables immédiatement pour cliquer ou écrire, même sans libellé.",
+                "Observe la fenêtre de travail active ou une fenêtre nommée et retourne une vue compacte et bornée de ses contrôles. Les contrôles ont des refs e1, e2... réutilisables immédiatement. Si le résultat indique minimized=true / win32_window_minimized, appeler activate_window puis réinspecter avant toute action UI.",
                 {
                     "title": {
                         "type": "string",
