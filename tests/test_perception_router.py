@@ -24,7 +24,7 @@ class HybridPerceptionTests(unittest.TestCase):
             },
             "snapshot": {
                 "semantic_coverage": "usable",
-                "vision_recommended": False,
+                "vision_recommended": True,
             },
         }
 
