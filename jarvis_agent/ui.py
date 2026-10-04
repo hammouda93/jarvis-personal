@@ -1049,7 +1049,7 @@ class JarvisWindow(QWidget):
         self.conversation_button.setObjectName("modeButton")
         self.conversation_button.setCheckable(True)
         self.conversation_button.setToolTip(
-            "Afficher le chat texte. La voix reste disponible."
+            "Passer en conversation texte : microphone coupé, réponses écrites et vocales."
         )
 
         self.chat_panel = QFrame()
@@ -1058,7 +1058,7 @@ class JarvisWindow(QWidget):
 
         chat_title = QLabel("CONVERSATION")
         chat_title.setObjectName("chatTitle")
-        chat_help = QLabel("Même contexte et mêmes outils que la voix · réponses texte silencieuses")
+        chat_help = QLabel("Même contexte et mêmes outils · micro coupé · réponses texte + voix")
         chat_help.setObjectName("chatHelp")
 
         chat_head = QHBoxLayout()
@@ -1384,12 +1384,20 @@ class JarvisWindow(QWidget):
             self.showFullScreen()
 
     def _set_text_panel(self, enabled: bool) -> None:
+        self._worker.set_text_mode(bool(enabled))
         self.chat_panel.setVisible(bool(enabled))
         self.conversation_button.setText(
-            "⌨  Masquer le chat" if enabled else "⌨  Conversation texte"
+            "🎤  Revenir à la voix"
+            if enabled
+            else "⌨  Conversation texte"
+        )
+        self.conversation_button.setToolTip(
+            "Réactiver le microphone et le réveil par double clap."
+            if enabled
+            else "Passer en conversation texte : micro coupé, réponses écrites et vocales."
         )
         self.bottom_hint.setText(
-            "Texte + voix disponibles"
+            "Micro coupé · écrivez votre demande · réponse texte et voix"
             if enabled
             else "Deux claquements pour parler"
         )
