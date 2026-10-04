@@ -497,6 +497,7 @@ class ControllerTests(unittest.TestCase):
         registry._computer_use = self.controller
         result = ComputerUseRuntime(Delegate(), registry).run("Cherche Salah")
         self.assertFalse(result.goal_completed)
+        self.assertEqual(result.mission_status, "inconclusive")
         self.assertNotIn("Mission terminée", result.text)
 
     def test_single_native_receipt_does_not_complete_a_compound_mission(self):

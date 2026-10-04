@@ -55,6 +55,77 @@ def compact_ui_tool_detail(detail: str, max_chars: int = 3500) -> str:
     return encoded
 
 
+def _read_only_user_request(text: str) -> bool:
+    value = normalized_text(text)
+    read_markers = (
+        "inspect",
+        "observe",
+        "regarde",
+        "decris",
+        "decrit",
+        "lis ",
+        "relis",
+        "que vois",
+        "qu est ce que tu vois",
+        "what do you see",
+        "describe",
+        "read ",
+        "list windows",
+        "liste les fenetres",
+    )
+    mutation_markers = (
+        "cherche",
+        "recherche",
+        "clique",
+        "click",
+        "ecris",
+        "écris",
+        "write",
+        "envoie",
+        "send",
+        "ferme",
+        "close",
+        "ouvre ",
+        "open ",
+        "installe",
+        "install",
+        "selectionne",
+        "sélectionne",
+    )
+    return any(marker in value for marker in read_markers) and not any(
+        marker in value for marker in mutation_markers
+    )
+
+
+def _launch_only_user_request(text: str) -> bool:
+    value = normalized_text(text)
+    launch = any(
+        marker in value
+        for marker in ("ouvre ", "ouvrir ", "lance ", "open ", "launch ")
+    )
+    if not launch:
+        return False
+    follow_up = (
+        " et ",
+        " puis ",
+        " ensuite ",
+        " cherche",
+        " recherche",
+        " ecris",
+        " écris",
+        " write",
+        " clique",
+        " click",
+        " inspect",
+        " verifie",
+        " vérifie",
+        " verify",
+        " installe",
+        " install",
+    )
+    return not any(marker in value for marker in follow_up)
+
+
 class ComputerUseRuntime:
     """Wrap any existing provider; Cerebras remains the planner."""
     def __init__(self, delegate: Any, tools: Any):
@@ -183,15 +254,23 @@ class ComputerUseRuntime:
             for action in actions
             if action.name in READ_TOOLS | MUTATION_TOOLS
         ]
-        read_only = bool(relevant_actions) and all(
-            action.name in READ_TOOLS for action in relevant_actions
+        read_only = (
+            _read_only_user_request(user_text)
+            and bool(relevant_actions)
+            and all(action.name in READ_TOOLS for action in relevant_actions)
         )
         launch_tools = {"open_application", "open_file", "open_folder", "open_url"}
-        launch_only = bool(relevant_actions) and all(
-            action.name in READ_TOOLS | launch_tools for action in relevant_actions
-        ) and any(
-            action.success and action.name in launch_tools
-            for action in relevant_actions
+        launch_only = (
+            _launch_only_user_request(user_text)
+            and bool(relevant_actions)
+            and all(
+                action.name in READ_TOOLS | launch_tools
+                for action in relevant_actions
+            )
+            and any(
+                action.success and action.name in launch_tools
+                for action in relevant_actions
+            )
         )
         blocked_goal_mutation = any(
             (not action.success)
