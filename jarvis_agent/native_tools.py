@@ -244,6 +244,11 @@ class NativeToolRegistry:
                         "type": "string",
                         "description": "Identifiant observation_id qui a produit ref.",
                     },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "description": "Laisser background par défaut. Utiliser foreground uniquement si un essai background a explicitement signalé qu'il ne pouvait pas agir.",
+                    },
                     "control_type": {
                         "type": "string",
                         "description": "Type UIA optionnel, par ex. Button, Hyperlink, MenuItem.",
@@ -297,6 +302,11 @@ class NativeToolRegistry:
                         "type": "string",
                         "enum": ["replace", "append", "insert"],
                         "description": "replace=remplacer tout; append=ajouter en conservant l'existant; insert=insérer au curseur.",
+                    },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "description": "Laisser background par défaut. Utiliser foreground uniquement après un refus explicite du mode background.",
                     },
                 },
                 ["text"],
@@ -919,6 +929,9 @@ class NativeToolRegistry:
                 ref=ref,
                 control_type=control_type,
                 observation_id=str(args.get("observation_id", "")).strip(),
+                delivery_mode=str(
+                    args.get("delivery_mode", "background")
+                ).strip() or "background",
             )
             return AgentActionResult(
                 name=name,
@@ -958,6 +971,9 @@ class NativeToolRegistry:
                 ref=ref,
                 mode=mode,
                 observation_id=str(args.get("observation_id", "")).strip(),
+                delivery_mode=str(
+                    args.get("delivery_mode", "background")
+                ).strip() or "background",
             )
             return AgentActionResult(
                 name=name,
