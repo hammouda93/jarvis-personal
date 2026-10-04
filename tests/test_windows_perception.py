@@ -582,6 +582,84 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertEqual(len(nodes), 4)
         self.assertEqual(meta["returned_nodes"], 4)
 
+
+    @patch("jarvis_agent.windows_perception._probe_child_uia_fragments")
+    @patch("jarvis_agent.windows_perception._bounded_descendants")
+    @patch("jarvis_agent.windows_perception._uia_window_from_handle")
+    @patch("jarvis_agent.windows_perception._native_window_is_minimized")
+    @patch("jarvis_agent.windows_perception._native_target_window")
+    def test_inspection_recovers_content_from_child_uia_fragment(
+        self,
+        native_mock,
+        minimized_mock,
+        attach_mock,
+        bounded_mock,
+        fragment_mock,
+    ):
+        native_mock.return_value = {
+            "handle": 4242,
+            "title": "Hybrid App",
+            "bounds": (100, 100, 1100, 900),
+        }
+        minimized_mock.return_value = False
+        attach_mock.return_value = _FakeSemanticWindow()
+
+        chrome_controls = [
+            _FakeControl("Minimize", "Button", (910, 100, 960, 140)),
+            _FakeControl("Maximize", "Button", (960, 100, 1010, 140)),
+            _FakeControl("Close", "Button", (1010, 100, 1060, 140)),
+            _FakeControl("Système", "MenuItem", (105, 105, 140, 138)),
+        ]
+        bounded_mock.return_value = (
+            chrome_controls,
+            {
+                "strategy": "iter_descendants",
+                "depth": 6,
+                "visited_nodes": 4,
+                "truncated": False,
+                "elapsed_seconds": 0.02,
+            },
+        )
+        fragment_mock.return_value = (
+            [
+                _FakeControl(
+                    "Search contacts",
+                    "Edit",
+                    (150, 210, 430, 250),
+                    automation_id="search",
+                )
+            ],
+            {
+                "strategy": "child_hwnd_fragments",
+                "candidate_hwnds": 2,
+                "attempted_roots": 1,
+                "returned_nodes": 1,
+                "elapsed_seconds": 0.03,
+                "roots": [],
+            },
+        )
+
+        result = inspect_active_window(title="Hybrid App")
+
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertEqual(
+            payload["snapshot"]["semantic_coverage"],
+            "usable",
+        )
+        self.assertEqual(
+            payload["snapshot"]["fragment_probe"]["strategy"],
+            "child_hwnd_fragments",
+        )
+        self.assertTrue(
+            any(
+                item.get("name") == "Search contacts"
+                and item.get("type") == "Edit"
+                for item in payload["controls"]
+            )
+        )
+        self.assertFalse(payload["snapshot"]["vision_recommended"])
+
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._window_by_title")
     @patch("jarvis_agent.windows_perception._native_window_is_minimized")
