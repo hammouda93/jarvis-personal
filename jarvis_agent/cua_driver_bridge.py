@@ -643,6 +643,77 @@ class CuaDriverBridge:
             pid = int(detail.get("pid") or detail.get("process_id") or 0)
         except (TypeError, ValueError):
             pid = 0
+
+        windows = [
+            item
+            for item in (detail.get("windows") or [])
+            if isinstance(item, dict)
+        ]
+
+        # Driver launches Windows apps without stealing focus. For Jarvis'
+        # explicit open_application primitive, fronting the target is the
+        # intended user-visible effect. If the window is still materializing,
+        # use bounded discovery instead of launching the app again.
+        if pid > 0 and not windows and "list_windows" in self._tools:
+            for attempt in range(3):
+                try:
+                    listed = self.call(
+                        "list_windows",
+                        {"pid": pid, "on_screen_only": False},
+                        timeout_s=2.0,
+                    )
+                    windows = [
+                        item
+                        for item in (listed.get("windows") or [])
+                        if isinstance(item, dict)
+                    ]
+                except Exception:
+                    windows = []
+                if windows:
+                    break
+                if attempt < 2:
+                    time.sleep(0.15)
+
+        foreground = False
+        foreground_error = ""
+        if pid > 0 and "bring_to_front" in self._tools:
+            target_window = None
+            if windows:
+                with_z = [
+                    item
+                    for item in windows
+                    if isinstance(item.get("z_index"), int)
+                ]
+                pool = with_z or windows
+                if with_z:
+                    target_window = max(
+                        pool,
+                        key=lambda item: int(item.get("z_index") or 0),
+                    )
+                else:
+                    target_window = pool[0]
+            bring_args: dict[str, Any] = {"pid": pid}
+            if target_window is not None:
+                try:
+                    window_id = int(target_window.get("window_id") or 0)
+                except (TypeError, ValueError):
+                    window_id = 0
+                if window_id > 0:
+                    bring_args["window_id"] = window_id
+            try:
+                front = self.call(
+                    "bring_to_front",
+                    bring_args,
+                    timeout_s=3.0,
+                )
+                foreground = bool(
+                    front.get("now_fg_hwnd")
+                    or front.get("success") is True
+                    or front.get("effect") == "confirmed"
+                )
+            except Exception as exc:
+                foreground_error = str(exc)[:400]
+
         success = pid > 0
         return CuaActionResult(
             success,
@@ -657,7 +728,9 @@ class CuaDriverBridge:
                 "pid": pid or None,
                 "name": detail.get("name"),
                 "bundle_id": detail.get("bundle_id"),
-                "windows": detail.get("windows") or [],
+                "windows": windows,
+                "foreground": foreground,
+                "foreground_error": foreground_error or None,
                 "raw": detail,
             },
         )
