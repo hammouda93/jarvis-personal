@@ -598,25 +598,16 @@ class CuaDriverBridge:
             ),
         )
 
-    def inspect_window(
+    def _snapshot_from_state(
         self,
-        title: str | None = None,
         *,
-        max_elements: int = 240,
-        max_depth: int = 8,
-        timeout_ms: int = 2500,
+        window: dict[str, Any],
+        state: dict[str, Any],
     ) -> CuaWindowSnapshot:
-        window = self._resolve_window(title)
         pid = int(window["pid"])
         window_id = int(window["window_id"])
-        state = self._read_window_state(
-            pid=pid,
-            window_id=window_id,
-            max_elements=max_elements,
-            max_depth=max_depth,
-            timeout_ms=timeout_ms,
-        )
         elements: list[CuaElement] = []
+
         for raw in state.get("elements") or []:
             if not isinstance(raw, dict):
                 continue
@@ -656,17 +647,35 @@ class CuaDriverBridge:
                 )
             )
 
-        bounds_raw = window.get("bounds") or {}
+        bounds_raw = (
+            state.get("window_bounds")
+            if isinstance(state.get("window_bounds"), dict)
+            else window.get("bounds")
+        ) or {}
         try:
             left = int(round(float(bounds_raw.get("x") or 0)))
             top = int(round(float(bounds_raw.get("y") or 0)))
-            width = int(round(float(bounds_raw.get("width") or 0)))
-            height = int(round(float(bounds_raw.get("height") or 0)))
+            width = int(
+                round(
+                    float(
+                        bounds_raw.get("width", bounds_raw.get("w"))
+                        or 0
+                    )
+                )
+            )
+            height = int(
+                round(
+                    float(
+                        bounds_raw.get("height", bounds_raw.get("h"))
+                        or 0
+                    )
+                )
+            )
             bounds = (left, top, left + width, top + height)
         except (TypeError, ValueError):
             bounds = (0, 0, 0, 0)
 
-        snapshot = CuaWindowSnapshot(
+        return CuaWindowSnapshot(
             pid=pid,
             window_id=window_id,
             title=str(
@@ -684,98 +693,60 @@ class CuaDriverBridge:
             truncated=bool(state.get("truncated")),
             total_element_count=int(
                 state.get("total_element_count")
+                or state.get("element_count")
                 or len(elements)
             ),
             returned_element_count=int(
                 state.get("returned_element_count")
                 or len(elements)
             ),
-            degraded_reason=str(state.get("degraded_reason") or "")[:500],
+            degraded_reason=str(
+                state.get("degraded_reason") or ""
+            )[:500],
             snapshot_id=str(state.get("snapshot_id") or "")[:160],
             capture_id=str(state.get("capture_id") or "")[:160],
-        )        if not snapshot.has_meaningful_content:
-            # OpenClaw/Cua Driver's Windows workflow retries one fresh window
-            # snapshot when the accessibility surface is sparse. A second
-            # sparse snapshot is preserved as truthful evidence; we do not
-            # invent keyboard shortcuts or pretend content was found.
-            retry_state = self._read_window_state(
+        )
+
+    def inspect_window(
+        self,
+        title: str | None = None,
+        *,
+        max_elements: int = 240,
+        max_depth: int = 8,
+        timeout_ms: int = 1400,
+    ) -> CuaWindowSnapshot:
+        window = self._resolve_window(title)
+        pid = int(window["pid"])
+        window_id = int(window["window_id"])
+
+        state = self._read_window_state(
+            pid=pid,
+            window_id=window_id,
+            max_elements=max_elements,
+            max_depth=max_depth,
+            timeout_ms=timeout_ms,
+        )
+        snapshot = self._snapshot_from_state(
+            window=window,
+            state=state,
+        )
+
+        if not snapshot.has_meaningful_content:
+            # Cua/OpenClaw's Windows loop takes one fresh read when the
+            # accessibility surface is sparse. The second read replaces the
+            # first snapshot and therefore its tokens; only the final snapshot
+            # escapes this method.
+            state = self._read_window_state(
                 pid=pid,
                 window_id=window_id,
                 max_elements=max_elements,
                 max_depth=max_depth,
                 timeout_ms=timeout_ms,
             )
-            if retry_state != state:
-                state = retry_state
-                elements = []
-                for raw in state.get("elements") or []:
-                    if not isinstance(raw, dict):
-                        continue
-                    token = str(raw.get("element_token") or "").strip()
-                    if not token:
-                        continue
-                    actions = tuple(
-                        str(item)
-                        for item in (raw.get("actions") or [])
-                        if str(item or "").strip()
-                    )
-                    elements.append(
-                        CuaElement(
-                            token=token,
-                            pid=pid,
-                            window_id=window_id,
-                            role=str(raw.get("role") or "")[:120],
-                            label=str(
-                                raw.get("label")
-                                or raw.get("title")
-                                or raw.get("name")
-                                or ""
-                            )[:300],
-                            value=str(raw.get("value") or "")[:1000],
-                            enabled=(
-                                bool(raw["enabled"])
-                                if raw.get("enabled") is not None
-                                else None
-                            ),
-                            selected=(
-                                bool(raw["selected"])
-                                if raw.get("selected") is not None
-                                else None
-                            ),
-                            actions=actions,
-                            frame=self._element_frame(raw.get("frame")),
-                        )
-                    )
-                snapshot = CuaWindowSnapshot(
-                    pid=pid,
-                    window_id=window_id,
-                    title=str(
-                        state.get("window_title")
-                        or window.get("title")
-                        or ""
-                    )[:300],
-                    app_name=str(
-                        state.get("app_name")
-                        or window.get("app_name")
-                        or ""
-                    )[:200],
-                    bounds=bounds,
-                    elements=tuple(elements),
-                    truncated=bool(state.get("truncated")),
-                    total_element_count=int(
-                        state.get("total_element_count")
-                        or len(elements)
-                    ),
-                    returned_element_count=int(
-                        state.get("returned_element_count")
-                        or len(elements)
-                    ),
-                    degraded_reason=str(
-                        state.get("degraded_reason") or ""
-                    )[:500],
-                    snapshot_id=str(state.get("snapshot_id") or "")[:160],
-                    capture_id=str(state.get("capture_id") or "")[:160],
-                )
+            snapshot = self._snapshot_from_state(
+                window=window,
+                state=state,
+            )
 
         return snapshot
 
