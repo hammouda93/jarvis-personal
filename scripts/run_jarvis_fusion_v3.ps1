@@ -1,6 +1,6 @@
 param(
     [string]$LogPath = "",
-    [int]$CdpPort = 9222,
+    [int]$CdpPort = 0,
     [switch]$EnableDomBrowser
 )
 
@@ -36,6 +36,22 @@ if ($EnableDomBrowser) {
 
     $browserProfile = Join-Path $env:LOCALAPPDATA "PersonalJarvis\BrowserProfile"
     New-Item -ItemType Directory -Force -Path $browserProfile | Out-Null
+
+    # Reuse the resilient launch pattern from the MS Football Performance
+    # Playwright agent: reserve a free localhost CDP port per session.
+    if ($CdpPort -le 0) {
+        $listener = [System.Net.Sockets.TcpListener]::new(
+            [System.Net.IPAddress]::Loopback,
+            0
+        )
+        $listener.Start()
+        try {
+            $CdpPort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+        } finally {
+            $listener.Stop()
+        }
+    }
+
     $endpoint = "http://127.0.0.1:$CdpPort"
     $debugJson = "$endpoint/json/version"
     $ready = $false
@@ -43,8 +59,13 @@ if ($EnableDomBrowser) {
     if (-not $ready) {
         Start-Process -FilePath $chrome -ArgumentList @(
             "--remote-debugging-port=$CdpPort",
+            "--remote-debugging-address=127.0.0.1",
             "--user-data-dir=$browserProfile",
             "--force-renderer-accessibility=complete",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-mode",
+            "--start-maximized",
             "about:blank"
         )
         for ($i=0; $i -lt 20; $i++) {
@@ -69,7 +90,8 @@ if ($EnableDomBrowser) {
 
 Write-Host "Personal Agent Runtime Fusion V3"
 if ($EnableDomBrowser) {
-    Write-Host "  browser=DOM/CDP isolated profile $endpoint"
+    Write-Host "  browser=DOM/CDP persistent profile $endpoint"
+    Write-Host "  browser_profile=$browserProfile"
 } else {
     Write-Host "  browser=normal Chrome profile (last used profile)"
 }
