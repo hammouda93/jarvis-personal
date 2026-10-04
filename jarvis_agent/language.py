@@ -48,13 +48,18 @@ def tool_message(
             return f"الوقت الآن {hhmm}." if hhmm else "هذا هو الوقت الحالي."
         return result.message
 
-    if intent.name == "browser.search" and result.success:
+    if intent.name in {"browser.search", "browser.search_site"} and result.success:
         query = str(intent.args.get("query", "")).strip()
+        if intent.name == "browser.search_site" and lang == "fr":
+            return result.message
         if lang == "en":
             return f"I'm searching for {query}."
         if lang == "ar":
             return f"سأبحث عن {query}."
-        return f"Je recherche {query}."
+        return result.message or f"Je recherche {query}."
+
+    if intent.name in {"browser.close_tab", "browser.back"} and result.success:
+        return result.message
 
     if result.success:
         if intent.name == "assistant.stop":
