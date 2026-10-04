@@ -25,10 +25,10 @@ jobs:
       - name: Compile changed runtime modules
         shell: pwsh
         run: |
-          python -m py_compile jarvis_agent/cua_driver_bridge.py jarvis_agent/windows_perception.py jarvis_agent/screen_vision.py jarvis_agent/ui_geometry.py jarvis_agent/ui_observation.py jarvis_agent/browser_adapter.py jarvis_agent/native_tools.py jarvis_agent/agent_runtime.py jarvis_agent/audio.py jarvis_agent/assistant_v3.py jarvis_agent/ui.py
+          python -m py_compile jarvis_agent/cua_driver_bridge.py jarvis_agent/windows_perception.py jarvis_agent/screen_vision.py jarvis_agent/ui_geometry.py jarvis_agent/ui_observation.py jarvis_agent/browser_adapter.py jarvis_agent/live_mission.py jarvis_agent/native_tools.py jarvis_agent/agent_runtime.py jarvis_agent/audio.py jarvis_agent/assistant_v3.py jarvis_agent/ui.py
       - name: Run focused unit tests
         shell: pwsh
         env:
           JARVIS_CUA_DRIVER_ENABLED: "0"
         run: |
-          python -m unittest tests.test_cua_driver_bridge tests.test_windows_perception tests.test_native_tools tests.test_agent_runtime tests.test_screen_vision tests.test_assistant_v3 tests.test_ui_logging tests.test_browser_dom_contract tests.test_text_input_mode_v3 -v
+          python -m unittest tests.test_cua_driver_bridge tests.test_windows_perception tests.test_native_tools tests.test_agent_runtime tests.test_screen_vision tests.test_assistant_v3 tests.test_ui_logging tests.test_browser_dom_contract tests.test_text_input_mode_v3 tests.test_live_mission -v
