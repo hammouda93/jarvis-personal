@@ -865,13 +865,12 @@ def _bounded_descendants(
 
     iterator_factory = getattr(window, "iter_descendants", None)
     if callable(iterator_factory):
-        try:
-            iterator = iterator_factory(
-                depth=max(1, int(max_depth)),
-                cache_enable=True,
-            )
-        except TypeError:
-            iterator = iterator_factory(depth=max(1, int(max_depth)))
+        # Keep this call compatible with the pywinauto 0.6.x family used by
+        # Jarvis. Some releases forward unknown kwargs such as cache_enable
+        # into IUIA.build_condition(), which rejects them. Depth-bounded
+        # iteration provides the important performance win without relying on
+        # that version-sensitive cache keyword.
+        iterator = iterator_factory(depth=max(1, int(max_depth)))
 
         try:
             for wrapper in iterator:
