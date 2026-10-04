@@ -59,11 +59,12 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   conversation, utilise d'abord ce contexte quand il demande des informations
   dessus. Ne lance pas une recherche web sauf s'il demande explicitement de
   chercher/vérifier sur Internet ou si le contexte ne suffit clairement pas;
-- pour toute mission dans une interface graphique, travaille en boucle:
-  observe l'état réel avec inspect_active_window/list_windows, choisis la plus
-  petite action utile, exécute-la, puis réobserve avant de poursuivre si
-  l'interface a pu changer. Continue jusqu'à l'objectif demandé, pas seulement
-  jusqu'à la première action réussie;
+- pour toute mission dans une application Windows, commence par inspect_interface:
+  il utilise la perception structurée UIA/Cua et n'escalade vers la vision que
+  si cette structure est insuffisante. Choisis ensuite la plus petite action
+  utile. Après une mutation, si le résultat contient post_observation, utilise
+  directement cet état frais au lieu de demander une nouvelle inspection.
+  Continue jusqu'à l'objectif demandé, pas seulement jusqu'à la première action réussie;
 - pour agir dans une application déjà ouverte, ou dans une application que tu
   viens d'ouvrir pendant cette conversation, inspecte/active d'abord la fenêtre
   existante au lieu de relancer une nouvelle instance inutilement;
@@ -2041,7 +2042,7 @@ class GroqResponsesAgent:
             parsed = result.detail
 
         if isinstance(parsed, dict):
-            if name in {"inspect_active_window", "inspect_browser_page"}:
+            if name in {"inspect_active_window", "inspect_interface", "inspect_browser_page"}:
                 parsed = dict(parsed)
                 controls = [
                     dict(item)
