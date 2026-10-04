@@ -708,6 +708,8 @@ def _native_only_inspection(
     item: dict[str, Any],
     *,
     uia_error: str,
+    fallback: str = "win32_window_only",
+    minimized: bool = False,
 ) -> UIActionResult:
     """Return useful window perception even when its UIA tree is unavailable."""
     global _SNAPSHOT_ELEMENTS, _SNAPSHOT_WINDOW_TITLE
@@ -717,12 +719,18 @@ def _native_only_inspection(
     payload = {
         "window": _native_compact_window(item),
         "controls": [],
-        "fallback": "win32_window_only",
+        "fallback": str(fallback or "win32_window_only"),
+        "minimized": bool(minimized),
         "uia_error": str(uia_error or "")[:300],
         "note": (
-            "La fenêtre est identifiée par Win32, mais son arbre UI Automation "
-            "n'est pas disponible. Les actions par ref nécessitent une nouvelle "
-            "inspection UIA."
+            "La fenêtre est réduite. Activez/restaurez-la avant une inspection "
+            "UIA détaillée."
+            if minimized
+            else (
+                "La fenêtre est identifiée par Win32, mais son arbre UI Automation "
+                "n'est pas disponible. Les actions par ref nécessitent une nouvelle "
+                "inspection UIA."
+            )
         ),
     }
     return UIActionResult(
@@ -824,6 +832,93 @@ def _nearest_text_label(
     return candidates[0][1][:160]
 
 
+def _native_window_is_minimized(item: dict[str, Any] | None) -> bool:
+    """Return True when a resolved Win32 top-level window is iconic/minimized."""
+    if not item:
+        return False
+    try:
+        import ctypes
+
+        handle = int(item.get("handle") or 0)
+        return bool(handle and ctypes.windll.user32.IsIconic(handle))
+    except Exception:
+        return False
+
+
+def _bounded_descendants(
+    window: Any,
+    *,
+    max_depth: int = 6,
+    max_nodes: int = 240,
+    time_budget_s: float = 3.0,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Traverse a bounded slice of a UIA subtree.
+
+    Full UIA descendant enumeration can be extremely expensive for Chromium /
+    WebView applications. Prefer incremental traversal so a huge accessibility
+    tree cannot monopolize a Jarvis turn.
+    """
+    started = time.perf_counter()
+    items: list[Any] = []
+    truncated = False
+    strategy = "iter_descendants"
+
+    iterator_factory = getattr(window, "iter_descendants", None)
+    if callable(iterator_factory):
+        try:
+            iterator = iterator_factory(
+                depth=max(1, int(max_depth)),
+                cache_enable=True,
+            )
+        except TypeError:
+            iterator = iterator_factory(depth=max(1, int(max_depth)))
+
+        try:
+            for wrapper in iterator:
+                items.append(wrapper)
+                if len(items) >= max(1, int(max_nodes)):
+                    truncated = True
+                    break
+                if time.perf_counter() - started >= max(0.25, float(time_budget_s)):
+                    truncated = True
+                    break
+        except Exception:
+            if items:
+                truncated = True
+            else:
+                raise
+    else:
+        strategy = "descendants_depth"
+        descendants = getattr(window, "descendants")
+        try:
+            items = list(
+                descendants(
+                    depth=max(1, int(max_depth)),
+                    cache_enable=True,
+                )
+            )
+        except TypeError:
+            try:
+                items = list(descendants(depth=max(1, int(max_depth))))
+            except TypeError:
+                strategy = "legacy_descendants"
+                items = list(descendants())
+        if len(items) > max_nodes:
+            items = items[:max_nodes]
+            truncated = True
+
+    elapsed = time.perf_counter() - started
+    return items, {
+        "strategy": strategy,
+        "depth": int(max_depth),
+        "max_nodes": int(max_nodes),
+        "visited_nodes": len(items),
+        "truncated": bool(truncated),
+        "elapsed_seconds": round(elapsed, 3),
+    }
+
+
+
 def inspect_active_window(
     *,
     title: str | None = None,
@@ -841,10 +936,34 @@ def inspect_active_window(
     native_item: dict[str, Any] | None = None
     uia_error = ""
 
-    try:
-        window = _window_by_title(title) if title else _active_window()
-    except Exception as exc:
-        uia_error = str(exc)
+    # Named inspections prefer Win32 resolution first. This avoids expensive
+    # top-level UIA enumeration and gives us a stable HWND for modern packaged
+    # / Chromium applications.
+    if title:
+        try:
+            native_item = _native_target_window(title)
+        except Exception as exc:
+            uia_error = str(exc)
+
+        if native_item is not None and _native_window_is_minimized(native_item):
+            return _native_only_inspection(
+                native_item,
+                uia_error="Fenêtre réduite; inspection UIA détaillée différée.",
+                fallback="win32_window_minimized",
+                minimized=True,
+            )
+
+        if native_item is not None:
+            try:
+                window = _uia_window_from_handle(int(native_item["handle"]))
+            except Exception as exc:
+                uia_error = str(exc)
+
+    if window is None:
+        try:
+            window = _window_by_title(title) if title else _active_window()
+        except Exception as exc:
+            uia_error = str(exc)
 
     # UI Automation top-level enumeration can intermittently fail with
     # WinError 6 when a window disappears. Resolve the HWND with Win32, then
@@ -868,6 +987,13 @@ def inspect_active_window(
                 )
 
             if native_item is not None:
+                if _native_window_is_minimized(native_item):
+                    return _native_only_inspection(
+                        native_item,
+                        uia_error="Fenêtre réduite; inspection UIA détaillée différée.",
+                        fallback="win32_window_minimized",
+                        minimized=True,
+                    )
                 try:
                     window = _uia_window_from_handle(
                         int(native_item["handle"])
@@ -905,8 +1031,9 @@ def inspect_active_window(
                 uia_error=combined,
             )
 
+    traversal_meta: dict[str, Any] = {}
     try:
-        descendants = window.descendants()
+        descendants, traversal_meta = _bounded_descendants(window)
     except Exception as exc:
         first_desc_error = exc
 
@@ -934,7 +1061,7 @@ def inspect_active_window(
                     attempts=3,
                     delay_s=0.12,
                 )
-                descendants = window.descendants()
+                descendants, traversal_meta = _bounded_descendants(window)
             except Exception:
                 descendants = None
 
@@ -1115,6 +1242,7 @@ def inspect_active_window(
             "actionable": actionable_refs[:24],
         },
         "snapshot": {
+            "traversal": traversal_meta,
             "total_interactive": len(interactive),
             "selected_interactive": sum(
                 1 for item in selected if item in interactive
