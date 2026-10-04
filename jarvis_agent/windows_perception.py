@@ -45,6 +45,34 @@ _TEXT_TYPES = {"Document", "Text"}
 
 _SNAPSHOT_ELEMENTS: dict[str, Any] = {}
 _SNAPSHOT_WINDOW_TITLE = ""
+_SNAPSHOT_ID = ""
+_SNAPSHOT_SEQUENCE = 0
+
+
+def _new_snapshot_id() -> str:
+    global _SNAPSHOT_ID, _SNAPSHOT_SEQUENCE
+    _SNAPSHOT_SEQUENCE += 1
+    _SNAPSHOT_ID = f"obs{_SNAPSHOT_SEQUENCE}"
+    return _SNAPSHOT_ID
+
+
+def invalidate_ui_snapshot(*, preserve_window_title: bool = True) -> None:
+    """Expire element refs after UI state or focus changes."""
+    global _SNAPSHOT_ELEMENTS, _SNAPSHOT_ID, _SNAPSHOT_WINDOW_TITLE
+    _SNAPSHOT_ELEMENTS = {}
+    _SNAPSHOT_ID = ""
+    if not preserve_window_title:
+        _SNAPSHOT_WINDOW_TITLE = ""
+
+
+def _observation_matches(observation_id: str) -> bool:
+    """Refs are valid only inside the exact observation that minted them."""
+    requested = (observation_id or "").strip()
+    return bool(
+        requested
+        and _SNAPSHOT_ID
+        and requested == _SNAPSHOT_ID
+    )
 
 
 @dataclass(frozen=True)
@@ -1011,7 +1039,9 @@ def _native_only_inspection(
 
     _SNAPSHOT_ELEMENTS = {}
     _SNAPSHOT_WINDOW_TITLE = str(item.get("title") or "").strip()
+    observation_id = _new_snapshot_id()
     payload = {
+        "observation_id": observation_id,
         "window": _native_compact_window(item),
         "controls": [],
         "fallback": str(fallback or "win32_window_only"),
@@ -1502,6 +1532,7 @@ def inspect_active_window(
 
     _SNAPSHOT_ELEMENTS = {}
     _SNAPSHOT_WINDOW_TITLE = _element_name(window)
+    observation_id = _new_snapshot_id()
 
     controls: list[dict[str, Any]] = []
     writable_refs: list[dict[str, str]] = []
@@ -1552,6 +1583,7 @@ def inspect_active_window(
         controls.append(compact)
 
     payload = {
+        "observation_id": observation_id,
         "window": _compact_window(window),
         "controls": controls,
         "capabilities": {
@@ -1606,7 +1638,8 @@ def inspect_active_window(
         "fallback": "win32_handle_to_uia" if native_item is not None else None,
         "note": (
             "Utiliser ref pour un contrôle sans nom. "
-            "Les refs restent valables jusqu'à la prochaine inspection."
+            "Les refs appartiennent à observation_id et expirent dès qu'une "
+            "action peut modifier l'interface; réinspecter ensuite."
         ),
     }
     return UIActionResult(
@@ -1713,7 +1746,9 @@ def _find_active_element(
     return ranked[0][1], names
 
 
-def _snapshot_element(ref: str):
+def _snapshot_element(ref: str, *, observation_id: str = ""):
+    if not _observation_matches(observation_id):
+        return None
     key = (ref or "").strip().lower()
     return _SNAPSHOT_ELEMENTS.get(key)
 
@@ -1723,17 +1758,26 @@ def click_ui_element(
     *,
     ref: str = "",
     control_type: str | None = None,
+    observation_id: str = "",
+    delivery_mode: str = "background",
 ) -> UIActionResult:
     wrapper = None
     alternatives: list[str] = []
 
     if ref:
-        wrapper = _snapshot_element(ref)
+        wrapper = _snapshot_element(ref, observation_id=observation_id)
         if wrapper is None:
             return UIActionResult(
                 False,
                 "Référence UI inconnue ou expirée. Inspectez à nouveau la fenêtre.",
-                ref,
+                _json(
+                    {
+                        "ref": ref,
+                        "requested_observation_id": observation_id or None,
+                        "current_observation_id": _SNAPSHOT_ID or None,
+                        "stale_ref": True,
+                    }
+                ),
             )
     else:
         target = (name or "").strip()
@@ -1766,10 +1810,19 @@ def click_ui_element(
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'activer {label}.", str(exc))
 
+    source_observation_id = _SNAPSHOT_ID
+    invalidate_ui_snapshot()
     return UIActionResult(
         True,
         f"Élément activé: {label}.",
-        "Action envoyée. Réinspecter si le résultat visuel final est important.",
+        _json(
+            {
+                "activated": label,
+                "source_observation_id": source_observation_id or None,
+                "refs_invalidated": True,
+                "requires_fresh_inspection": True,
+            }
+        ),
     )
 
 
@@ -1796,7 +1849,12 @@ def activate_window(title: str) -> UIActionResult:
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'activer la fenêtre {label}.", str(exc))
 
-    return UIActionResult(True, f"Fenêtre activée: {label}.", label)
+    invalidate_ui_snapshot()
+    return UIActionResult(
+        True,
+        f"Fenêtre activée: {label}.",
+        _json({"window": label, "refs_invalidated": True}),
+    )
 
 
 def close_window(title: str | None = None) -> UIActionResult:
@@ -1821,6 +1879,7 @@ def close_window(title: str | None = None) -> UIActionResult:
     except Exception as exc:
         return UIActionResult(False, f"Impossible de fermer {label}.", str(exc))
 
+    invalidate_ui_snapshot()
     time.sleep(0.25)
     try:
         remaining = _desktop().windows(
@@ -1977,6 +2036,7 @@ def close_tab(name: str = "") -> UIActionResult:
             str(exc),
         )
 
+    invalidate_ui_snapshot()
     time.sleep(0.20)
 
     try:
@@ -2108,6 +2168,8 @@ def write_ui_element(
     *,
     ref: str = "",
     mode: str = "replace",
+    observation_id: str = "",
+    delivery_mode: str = "background",
 ) -> UIActionResult:
     target = (name or "").strip()
     value = str(text or "")
@@ -2125,12 +2187,19 @@ def write_ui_element(
     alternatives: list[str] = []
 
     if ref:
-        wrapper = _snapshot_element(ref)
+        wrapper = _snapshot_element(ref, observation_id=observation_id)
         if wrapper is None:
             return UIActionResult(
                 False,
                 "Référence UI inconnue ou expirée. Inspectez à nouveau la fenêtre.",
-                ref,
+                _json(
+                    {
+                        "ref": ref,
+                        "requested_observation_id": observation_id or None,
+                        "current_observation_id": _SNAPSHOT_ID or None,
+                        "stale_ref": True,
+                    }
+                ),
             )
     else:
         if len(normalize(target)) < 2:
@@ -2235,6 +2304,8 @@ def write_ui_element(
     else:
         verified = bool(after) and value in after
 
+    source_observation_id = _SNAPSHOT_ID
+    invalidate_ui_snapshot()
     return UIActionResult(
         True,
         f"Texte saisi dans {label}.",
@@ -2245,6 +2316,9 @@ def write_ui_element(
                 "before": before[:500],
                 "value": after[:500],
                 "value_length": len(after),
+                "source_observation_id": source_observation_id or None,
+                "refs_invalidated": True,
+                "requires_fresh_inspection": not verified,
             }
         ),
     )
@@ -2417,11 +2491,17 @@ def press_key(key: str) -> UIActionResult:
         _send_keys(sequence)
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'envoyer la touche {key}.", str(exc))
+    source_observation_id = _SNAPSHOT_ID
+    invalidate_ui_snapshot()
     return UIActionResult(
         True,
         f"Touche envoyée: {key}.",
-        (
-            f"Touche envoyée: {key}. Effet final non vérifié; "
-            "réinspecter l'interface avant d'affirmer un changement."
+        _json(
+            {
+                "key": key,
+                "source_observation_id": source_observation_id or None,
+                "refs_invalidated": True,
+                "requires_fresh_inspection": True,
+            }
         ),
     )
