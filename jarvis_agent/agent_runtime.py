@@ -125,8 +125,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   top-level entière et ne doit jamais être utilisé comme substitut;
 - après click_ui_element, write_ui_element, press_key, close_window, close_tab ou toute
   action qui peut modifier l'écran, n'affirme jamais que l'interface a changé
-  comme prévu sans l'avoir vérifié avec inspect_active_window ou list_windows
-  lorsque le résultat final compte;
+  comme prévu sans preuve. Si le résultat d'outil contient post_observation,
+  cette observation fraîche est déjà la réinspection locale: utilise ses refs
+  et son état directement au lieu d'appeler inspect_active_window une seconde fois.
+  Sinon utilise inspect_active_window ou list_windows lorsque le résultat final compte;
 - si l'utilisateur a demandé plusieurs étapes dans une seule phrase, exécute
   toutes les étapes explicitement demandées avant de répondre. Ne demande pas
   "voulez-vous que je..." pour une étape déjà demandée;
@@ -2962,7 +2964,10 @@ class GroqResponsesAgent:
                     "write_visual_target",
                     "press_key",
                 }:
-                    ui_verification_required = True
+                    detail_payload = _action_detail_dict(result)
+                    ui_verification_required = not bool(
+                        detail_payload.get("post_observation")
+                    )
                 elif (
                     settings.strict_proof_enabled
                     and result.success
