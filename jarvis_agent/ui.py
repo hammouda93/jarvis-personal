@@ -114,7 +114,7 @@ TOOL_NODE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^msf_"), "ms_football"),
     (
         re.compile(
-            r"^(open_application|app\.|inspect_active_window|observe_screen|"
+            r"^(open_application|app\.|inspect_interface|inspect_active_window|observe_screen|"
             r"click_ui_element|click_visual_target|write_ui_element|"
             r"write_visual_target|type_text_active_window|press_key|"
             r"close_window|close_tab|folder\.|open_file)"
