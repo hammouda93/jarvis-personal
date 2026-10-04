@@ -46,6 +46,8 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertTrue(result.success)
         payload = json.loads(result.detail)
         self.assertTrue(payload["reused_existing_window"])
+        self.assertFalse(payload["in_app_goal_completed"])
+        self.assertIn("Inspecter", payload["next_step"])
         activate_mock.assert_called_once_with(
             "*Bonjour Jarvis – Bloc-notes"
         )
