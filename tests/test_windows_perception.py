@@ -792,6 +792,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             "",
             "Sports et intelligence artificielle",
             ref="e3",
+            observation_id="obs-test",
         )
 
         self.assertTrue(result.success)
@@ -813,6 +814,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             "",
             "bonjour Jarvis",
             ref="e7",
+            observation_id="obs-test",
         )
 
         self.assertFalse(result.success)
@@ -874,6 +876,7 @@ class WindowsPerceptionTests(unittest.TestCase):
             " Test après texte existant",
             ref="e7",
             mode="append",
+            observation_id="obs-test",
         )
 
         self.assertTrue(result.success)
