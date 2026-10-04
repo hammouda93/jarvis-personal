@@ -331,9 +331,17 @@ def _requested_action_capabilities(text: str) -> set[str]:
     required: set[str] = set()
 
     explicit_write = re.search(
-        r"\b(?:ecris|ecrire|saisis|saisir|tape|taper|ajoute|ajouter|"
+        r"\b(?:ecris|ecrire|saisis|saisir|tape|taper|"
         r"insere|inserer|remplace|remplacer|write|type|append|insert|replace)\b",
         normalized,
+    )
+    contextual_add_write = (
+        re.search(r"\b(?:ajoute|ajouter)\b", normalized)
+        and re.search(
+            r"\b(?:texte|text|contenu|document|champ|message|valeur|"
+            r"ligne|mot|phrase|editeur|editor|fichier|file)\b",
+            normalized,
+        )
     )
     # French STT can turn imperative "écris" into the noun "écrivain".
     # Accept it only at the start of an instruction or after a sequencing word
@@ -342,7 +350,7 @@ def _requested_action_capabilities(text: str) -> set[str]:
         r"(?:^|\b(?:et|puis|ensuite)\s+)ecrivain\b",
         normalized,
     )
-    if explicit_write or stt_write:
+    if explicit_write or contextual_add_write or stt_write:
         required.add("write_ui")
 
     close_requested = re.search(
