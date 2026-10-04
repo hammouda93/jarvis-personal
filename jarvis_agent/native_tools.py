@@ -74,6 +74,10 @@ class NativeToolRegistry:
                     "name": {
                         "type": "string",
                         "description": "Nom de l'application, par ex. VLC Media Player, Chrome, Cursor.",
+                    },
+                    "new_instance": {
+                        "type": "boolean",
+                        "description": "Mettre true uniquement si l'utilisateur demande explicitement une nouvelle instance. Sinon une fenêtre déjà ouverte est réutilisée.",
                     }
                 },
                 ["name"],
@@ -672,6 +676,25 @@ class NativeToolRegistry:
 
         if name == "open_application":
             target = str(args.get("name", "")).strip()
+            new_instance = bool(args.get("new_instance", False))
+
+            if not new_instance and self._safe_target(target):
+                existing = activate_window(target)
+                if existing.success:
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message=f"Application déjà ouverte; fenêtre réutilisée: {target}.",
+                        detail=json.dumps(
+                            {
+                                "reused_existing_window": True,
+                                "target": target,
+                                "activation": existing.detail,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+
             learned = self._open_from_learned_profile(target)
             if learned is not None:
                 return self._convert(name, learned)
