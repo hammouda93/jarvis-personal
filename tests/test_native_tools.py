@@ -61,7 +61,6 @@ class NativeToolRegistryTests(unittest.TestCase):
         self,
         execute_mock,
         activate_mock,
-        _settings_mock,
     ):
         # First launch establishes the app identity independently of persistent
         # operational learning.
@@ -120,6 +119,33 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertTrue(result.success)
         activate_mock.assert_not_called()
         execute_mock.assert_called()
+
+    @patch("jarvis_agent.native_tools.CUA_DRIVER")
+    @patch("jarvis_agent.native_tools.execute")
+    def test_generic_app_prefers_cua_native_launch_when_available(
+        self,
+        execute_mock,
+        cua_mock,
+    ):
+        cua_mock.launch_application.return_value = SimpleNamespace(
+            success=True,
+            message="Application lancée via Cua Driver: WhatsApp.",
+            detail={
+                "provider": "cua_driver",
+                "application": "WhatsApp",
+                "pid": 4242,
+            },
+        )
+
+        result = self.registry.execute(
+            "open_application",
+            {"name": "WhatsApp"},
+        )
+
+        self.assertTrue(result.success)
+        self.assertIn("cua_driver", result.detail)
+        cua_mock.launch_application.assert_called_once_with("WhatsApp")
+        execute_mock.assert_not_called()
 
     @patch("jarvis_agent.native_tools.execute")
     def test_unknown_named_app_uses_generic_discovery(self, execute_mock):
