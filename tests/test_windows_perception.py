@@ -12,6 +12,8 @@ from jarvis_agent.windows_perception import (
     write_ui_element,
     _bounded_descendants,
     _control_value,
+    _probe_child_uia_fragments,
+    _system_chrome_only,
     _native_target_window,
     _uia_window_from_native_with_retry,
     _score_name,
@@ -68,6 +70,54 @@ class _FakeLegacyDescWindow:
             raise TypeError("cache_enable unsupported")
         return ["legacy-node-1", "legacy-node-2"]
 
+
+
+class _FakeControl:
+    def __init__(
+        self,
+        name,
+        control_type,
+        bounds,
+        automation_id="",
+        visible=True,
+    ):
+        self._name = name
+        self._visible = visible
+        self._bounds = bounds
+        self.element_info = SimpleNamespace(
+            name=name,
+            control_type=control_type,
+            automation_id=automation_id,
+        )
+
+    def window_text(self):
+        return self._name
+
+    def rectangle(self):
+        left, top, right, bottom = self._bounds
+        return SimpleNamespace(
+            left=left,
+            top=top,
+            right=right,
+            bottom=bottom,
+        )
+
+    def is_visible(self):
+        return self._visible
+
+    def is_enabled(self):
+        return True
+
+
+class _FakeSemanticWindow(_FakeControl):
+    handle = 4242
+
+    def __init__(self):
+        super().__init__(
+            "Hybrid App",
+            "Window",
+            (100, 100, 1100, 900),
+        )
 
 
 class _FakeTab:
@@ -443,6 +493,94 @@ class WindowsPerceptionTests(unittest.TestCase):
         self.assertEqual(meta["strategy"], "descendants_depth")
         self.assertEqual(window.calls[0]["depth"], 4)
         self.assertNotIn("cache_enable", window.calls[0])
+
+
+    def test_system_chrome_only_detects_shallow_titlebar_snapshot(self):
+        window = _FakeSemanticWindow()
+        controls = [
+            _FakeControl("Minimize", "Button", (910, 100, 960, 140)),
+            _FakeControl("Maximize", "Button", (960, 100, 1010, 140)),
+            _FakeControl("Close", "Button", (1010, 100, 1060, 140)),
+            _FakeControl("Système", "MenuItem", (105, 105, 140, 138)),
+        ]
+
+        self.assertTrue(
+            _system_chrome_only(
+                window,
+                controls,
+                [],
+                [],
+            )
+        )
+
+    def test_system_chrome_only_rejects_real_content_control(self):
+        window = _FakeSemanticWindow()
+        controls = [
+            _FakeControl("Minimize", "Button", (910, 100, 960, 140)),
+            _FakeControl("Search", "Edit", (160, 220, 460, 260)),
+        ]
+
+        self.assertFalse(
+            _system_chrome_only(
+                window,
+                controls,
+                [],
+                [],
+            )
+        )
+
+    @patch("jarvis_agent.windows_perception._bounded_descendants")
+    @patch("jarvis_agent.windows_perception._uia_window_from_handle")
+    @patch("jarvis_agent.windows_perception._native_child_windows")
+    def test_child_hwnd_fragment_probe_merges_structured_uia_roots(
+        self,
+        child_mock,
+        attach_mock,
+        bounded_mock,
+    ):
+        child_mock.return_value = [
+            {
+                "handle": 501,
+                "title": "",
+                "class_name": "WebViewHost",
+                "bounds": (100, 150, 1100, 900),
+                "area": 750000,
+            },
+            {
+                "handle": 502,
+                "title": "",
+                "class_name": "ContentBridge",
+                "bounds": (120, 180, 1080, 880),
+                "area": 672000,
+            },
+        ]
+        roots = [
+            _FakeControl("", "Pane", (100, 150, 1100, 900)),
+            _FakeControl("", "Pane", (120, 180, 1080, 880)),
+        ]
+        attach_mock.side_effect = roots
+        bounded_mock.side_effect = [
+            (
+                [_FakeControl("Search", "Edit", (150, 210, 440, 250))],
+                {"truncated": False, "elapsed_seconds": 0.02},
+            ),
+            (
+                [_FakeControl("Conversation", "ListItem", (150, 300, 500, 350))],
+                {"truncated": False, "elapsed_seconds": 0.03},
+            ),
+        ]
+
+        nodes, meta = _probe_child_uia_fragments(
+            {"handle": 4242},
+            max_roots=4,
+            max_nodes_per_root=20,
+            time_budget_s=2.0,
+        )
+
+        self.assertEqual(meta["strategy"], "child_hwnd_fragments")
+        self.assertEqual(meta["attempted_roots"], 2)
+        self.assertEqual(len(nodes), 4)
+        self.assertEqual(meta["returned_nodes"], 4)
 
     @patch("jarvis_agent.windows_perception._uia_window_from_handle")
     @patch("jarvis_agent.windows_perception._window_by_title")
