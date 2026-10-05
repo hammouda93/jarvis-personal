@@ -113,9 +113,15 @@ class ToolRouterTests(unittest.TestCase):
         self.assertEqual(site, "YouTube")
         self.assertIn("youtube.com/results?search_query=messi", url)
 
+    @patch("jarvis_agent.tools._navigate_current_browser_tab")
     @patch("jarvis_agent.tools._open_browser_url")
-    def test_plain_search_reuses_last_youtube_context(self, open_mock):
+    def test_plain_search_reuses_last_youtube_context_in_current_tab(
+        self,
+        open_mock,
+        navigate_mock,
+    ):
         open_mock.return_value = True
+        navigate_mock.return_value = True
         with patch("jarvis_agent.tools._LAST_BROWSER_URL", ""):
             opened = execute(
                 ToolIntent(
@@ -132,10 +138,11 @@ class ToolRouterTests(unittest.TestCase):
 
         self.assertTrue(opened.success)
         self.assertTrue(searched.success)
-        self.assertEqual(open_mock.call_count, 2)
+        open_mock.assert_called_once_with("https://www.youtube.com")
+        navigate_mock.assert_called_once()
         self.assertIn(
             "youtube.com/results?search_query=messi",
-            open_mock.call_args_list[-1].args[0],
+            navigate_mock.call_args.args[0],
         )
         self.assertIn("YouTube", searched.message)
 
