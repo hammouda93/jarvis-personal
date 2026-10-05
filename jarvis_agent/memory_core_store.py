@@ -64,6 +64,15 @@ class MemoryCoreStore(LocalMemory):
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS memory_semantic_admission (
+                    memory_id INTEGER PRIMARY KEY,
+                    provenance TEXT NOT NULL,
+                    admitted_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS memory_semantic_state (
                     memory_id INTEGER PRIMARY KEY,
                     raw_hash TEXT NOT NULL,
@@ -82,6 +91,38 @@ class MemoryCoreStore(LocalMemory):
                 "CREATE INDEX IF NOT EXISTS idx_semantic_memory "
                 "ON memory_semantic_facts(memory_id, status)"
             )
+
+    def mark_admission(
+        self,
+        memory_id: int,
+        *,
+        provenance: str,
+    ) -> None:
+        if self.get_memory(memory_id) is None:
+            raise KeyError(f"memory_not_found:{memory_id}")
+        value = str(provenance or "").strip() or "legacy"
+        admitted_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_semantic_admission(
+                    memory_id, provenance, admitted_at
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(memory_id) DO UPDATE SET
+                    provenance=excluded.provenance,
+                    admitted_at=excluded.admitted_at
+                """,
+                (int(memory_id), value, admitted_at),
+            )
+
+    def memory_provenance(self, memory_id: int) -> str:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT provenance FROM memory_semantic_admission "
+                "WHERE memory_id = ?",
+                (int(memory_id),),
+            ).fetchone()
+        return str(row[0]) if row else ""
 
     def get_memory(self, memory_id: int) -> MemoryItem | None:
         with closing(self._connect()) as conn:
@@ -187,6 +228,11 @@ class MemoryCoreStore(LocalMemory):
         raw_hash = _hash_raw(item.content)
         projected_at = datetime.now(timezone.utc).isoformat()
         facts = list(projections)
+        if provenance == "explicit":
+            self.mark_admission(
+                memory_id,
+                provenance="explicit",
+            )
 
         with self._connect() as conn:
             conn.execute(
@@ -391,12 +437,20 @@ class MemoryCoreStore(LocalMemory):
                 "SELECT status, COUNT(*) FROM memory_semantic_state "
                 "GROUP BY status"
             ).fetchall()
+            admission_rows = conn.execute(
+                "SELECT provenance, COUNT(*) "
+                "FROM memory_semantic_admission GROUP BY provenance"
+            ).fetchall()
         return {
             "raw_memories": raw_count,
             "semantic_facts": fact_count,
             "projection_states": {
                 str(row[0]): int(row[1])
                 for row in status_rows
+            },
+            "admissions": {
+                str(row[0]): int(row[1])
+                for row in admission_rows
             },
         }
 
