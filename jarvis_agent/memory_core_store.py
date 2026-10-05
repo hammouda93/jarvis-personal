@@ -99,6 +99,22 @@ class MemoryCoreStore(LocalMemory):
             created_at=str(row[3]),
         )
 
+    def all_memories(self) -> list[MemoryItem]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT id, content, tags, created_at "
+                "FROM memories ORDER BY id ASC"
+            ).fetchall()
+        return [
+            MemoryItem(
+                id=int(row[0]),
+                content=str(row[1]),
+                tags=str(row[2]),
+                created_at=str(row[3]),
+            )
+            for row in rows
+        ]
+
     def recent_memories(self, *, limit: int = 20) -> list[MemoryItem]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
