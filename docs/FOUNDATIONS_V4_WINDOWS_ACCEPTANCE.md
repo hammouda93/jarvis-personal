@@ -34,6 +34,32 @@ réelles. Le Memory Core ferme ses propres connexions via un adapter.
 L'ancien test STT qui patchait un champ frozen remplace désormais la référence
 de module par `dataclasses.replace`, avec les mêmes assertions.
 
+## Launcher live V4
+
+Pour éviter toute confusion avec l'ancien profil CDP de Fusion V3, utiliser le
+launcher V4 pour les tests conversationnels. Il active seulement les adapters
+demandés et force l'ancien `JARVIS_BROWSER_ENABLED=0` lorsque Browser Core est
+actif.
+
+Exemples :
+
+```powershell
+# Mémoire uniquement
+.\scripts\run_jarvis_foundations_v4.ps1 -MemoryCore
+
+# Browser Core dans le vrai profil Chrome déjà pairé
+.\scripts\run_jarvis_foundations_v4.ps1 -MemoryCore -BrowserCore
+
+# Computer Grounding
+.\scripts\run_jarvis_foundations_v4.ps1 -MemoryCore -ComputerCore
+
+# Tous les adapters V4
+.\scripts\run_jarvis_foundations_v4.ps1 -All
+```
+
+Ne pas utiliser `-EnableDomBrowser` avec ce launcher : il appartient à l'ancien
+Browser Adapter Playwright/CDP sur profil séparé.
+
 ## Memory Core : sous-processus et UI utilisateur
 
 Chaque commande lance un nouveau processus, sans appel au LLM :
@@ -172,7 +198,19 @@ Les modules runtime ne contiennent ni ce nom ni un workflow WhatsApp.
 {"tool":"computer_observe","arguments":{"window_id":"HWND_REEL"}}
 {"tool":"computer_verify","arguments":{"window_id":"HWND_REEL","condition":{"text":"CONTACT_EXACT","region":"header"}}}
 {"tool":"computer_find","arguments":{"type":"edit"}}
-{"tool":"computer_write","arguments":{"ref":"REF_COMPOSER_PROUVE","text":"MESSAGE_TEST_AUTORISE","context":{"text":"CONTACT_EXACT","region":"header"}}}
+```
+
+Si aucun contrôle éditable n'est exposé mais que l'OCR montre clairement le
+libellé/placeholder du composer, ne pas écrire dans la ref OCR. Utiliser le
+probe de focus : il clique uniquement pour donner le focus puis demande à
+Windows quel contrôle UIA a réellement reçu ce focus. Une nouvelle ref writable
+n'est créée que si Windows prouve un vrai `Edit/ComboBox` éditable dans la même
+fenêtre.
+
+```json
+{"tool":"computer_find","arguments":{"text":"TEXTE_VISIBLE_DU_COMPOSER","exact":false}}
+{"tool":"computer_focus_probe","arguments":{"ref":"REF_OCR_DU_COMPOSER"}}
+{"tool":"computer_write","arguments":{"ref":"REF_EDIT_PROMUE","text":"MESSAGE_TEST_AUTORISE","context":{"text":"CONTACT_EXACT","region":"header"}}}
 {"tool":"computer_verify","arguments":{"window_id":"HWND_REEL","condition":{"value":"MESSAGE_TEST_AUTORISE","type":"edit"}}}
 {"tool":"computer_find","arguments":{"type":"edit"}}
 {"tool":"computer_press","arguments":{"ref":"REF_COMPOSER_FRAICHE","key":"Enter","context":{"text":"CONTACT_EXACT","region":"header"}}}
@@ -188,9 +226,11 @@ La console enregistre captures et JSONL. Refaire avec un deuxième contact chois
 par l'utilisateur et un message distinct. Les refs desktop expirent après 5 s ;
 réobserver si la préparation manuelle a pris plus longtemps.
 
-Un label OCR reste `type=text`, sans droit d'écriture. Un composer complètement
-opaque nécessite un modèle local qui prouve type/bbox/focus ; sans preuve le
-moteur refuse l'écriture. Le modèle est optionnel et doit déjà être installé :
+Un label OCR reste `type=text`, sans droit d'écriture. Le
+`computer_focus_probe` peut le promouvoir uniquement si Windows expose ensuite
+un vrai contrôle UIA focalisé et éditable dans la même fenêtre. Si même le
+contrôle focalisé reste opaque, un modèle local qualifié reste nécessaire pour
+prouver type/bbox/focus ; sans preuve le moteur refuse l'écriture. Le modèle est optionnel et doit déjà être installé :
 
 ```powershell
 $env:JARVIS_GROUNDING_MODEL = 'MODELE_LOCAL_QUALIFIE'

@@ -152,6 +152,80 @@ class ComputerGrounding:
                                      else text.casefold() in e["text"].casefold()))]
         return {"matches": matches, "unique": len(matches) == 1}
 
+    def focus_probe(self, ref):
+        """Focus a grounded visual target and promote it only if Windows proves
+        that the resulting focused control is genuinely editable.
+
+        OCR/model semantics never grant write permission by themselves. This
+        probe performs only the focus click, then asks the accessibility layer
+        for the actual focused control and returns a fresh writable ref only
+        when that independent evidence is available.
+        """
+        if ref not in self._refs:
+            raise RuntimeError("stale_grounding_ref")
+        element, identity, captured, digest = self._refs[ref]
+        if time.monotonic() - captured > self.freshness_s:
+            raise RuntimeError("grounding_ref_expired")
+        window_id = identity["window_id"]
+        if self.backend.identity(window_id) != identity:
+            raise RuntimeError("grounding_window_changed")
+        if element.confidence < 0.7:
+            raise RuntimeError("grounding_confidence_too_low")
+        if element.sensor != "uia":
+            self.backend.require_foreground(window_id)
+            point_guard = getattr(self.backend, "require_point", None)
+            if point_guard:
+                point_guard(window_id, element.bbox)
+            current = self.backend.capture(window_id)
+            if digest and patch_hash(current, element.bbox, identity["bounds"]) != digest:
+                raise RuntimeError("visual_target_changed")
+
+        # Consume the original visual refs before dispatch. If focus changes but
+        # the provider disconnects, the caller must re-observe instead of retrying
+        # the same possibly-mutating click.
+        self._refs.clear()
+        try:
+            proven = self.backend.focus_probe(window_id, element)
+        except Exception as exc:
+            raise RuntimeError(
+                "computer_focus_outcome_unknown_requires_verification: " + str(exc)
+            ) from exc
+
+        if not isinstance(proven, dict) or not proven.get("writable"):
+            raise RuntimeError("focused_editable_control_not_proven")
+        box = tuple(proven.get("bbox") or ())
+        if not valid_box(box):
+            raise RuntimeError("focused_editable_control_invalid_bounds")
+        if self.backend.identity(window_id) != identity:
+            raise RuntimeError("grounding_window_changed")
+
+        promoted = GroundedElement(
+            "g:" + uuid.uuid4().hex,
+            str(proven.get("text") or ""),
+            box,
+            str(proven.get("type") or "edit").lower(),
+            1.0,
+            "uia_focus",
+            str(proven.get("native_ref") or ""),
+            writable=True,
+            actionable=True,
+            focused=True,
+            value=proven.get("value"),
+            confidence_source="focused_accessibility_provider",
+            region=str(proven.get("region") or ""),
+        )
+        self._refs[promoted.ref] = (
+            promoted,
+            identity,
+            time.monotonic(),
+            "",
+        )
+        return {
+            "verified": True,
+            "postcondition": "focused_editable_control",
+            "element": asdict(promoted),
+        }
+
     def act(self, ref, operation, *, text="", key="", expected=None, context=None):
         if ref not in self._refs:
             raise RuntimeError("stale_grounding_ref")
@@ -173,12 +247,30 @@ class ComputerGrounding:
             current_view = self.observe(window_id)
             if not self.verify(context,observation=current_view):
                 raise RuntimeError("required_view_context_not_verified")
-            candidates = [item for item in current_view["elements"] if
-                          item["sensor"] == e.sensor and item["text"] == e.text and
-                          item["type"] == e.type and tuple(item["bbox"]) == e.bbox]
-            if len(candidates) != 1:
-                raise RuntimeError("target_changed_during_context_verification")
-        if e.sensor != "uia":
+            if e.sensor == "uia_focus":
+                focused = self.backend.focused_editable(window_id)
+                if (
+                    not focused.get("writable")
+                    or str(focused.get("native_ref") or "") != e.native_ref
+                    or tuple(focused.get("bbox") or ()) != e.bbox
+                ):
+                    raise RuntimeError(
+                        "target_changed_during_context_verification"
+                    )
+            else:
+                candidates = [
+                    item
+                    for item in current_view["elements"]
+                    if item["sensor"] == e.sensor
+                    and item["text"] == e.text
+                    and item["type"] == e.type
+                    and tuple(item["bbox"]) == e.bbox
+                ]
+                if len(candidates) != 1:
+                    raise RuntimeError(
+                        "target_changed_during_context_verification"
+                    )
+        if e.sensor not in {"uia", "uia_focus"}:
             self.backend.require_foreground(window_id)
             point_guard = getattr(self.backend,"require_point",None)
             if point_guard:
@@ -308,15 +400,86 @@ class WindowsGroundingBackend:
         identity = self.identity(window_id)
         return png_from_image(ImageGrab.grab(bbox=tuple(identity["bounds"]), all_screens=True).convert("RGB"))
 
+    def _focused_wrapper(self, window_id):
+        from pywinauto.uia_defines import IUIA
+        from pywinauto.controls.uiawrapper import UIAWrapper
+        from pywinauto.uia_element_info import UIAElementInfo
+
+        focused = UIAWrapper(UIAElementInfo(IUIA().iuia.GetFocusedElement()))
+        try:
+            top = int(focused.top_level_parent().handle)
+        except Exception as exc:
+            raise RuntimeError("focused_control_window_unknown") from exc
+        if top != int(window_id):
+            raise RuntimeError("focused_control_outside_target_window")
+        return focused
+
+    def focused_editable(self, window_id):
+        """Return independently proven focused editability without clicking."""
+        from . import windows_perception as win
+
+        self.require_foreground(window_id)
+        focused = self._focused_wrapper(window_id)
+        control_type = win._control_type(focused)
+        base = {
+            "writable": False,
+            "type": control_type,
+            "text": win._element_name(focused),
+            "bbox": list(win._rect_tuple(focused)),
+        }
+        if control_type not in {"Edit", "ComboBox"}:
+            return base
+
+        try:
+            pattern = focused.iface_value
+            if bool(pattern.CurrentIsReadOnly):
+                return base
+            value = str(pattern.CurrentValue or "")
+        except Exception:
+            return base
+
+        return {
+            **base,
+            "writable": True,
+            "native_ref": json.dumps(
+                list(focused.element_info.runtime_id or ())
+            ),
+            "value": value,
+            "focused": True,
+        }
+
+    def focus_probe(self, window_id, element):
+        """Focus a visual target, then prove editability from the focused UIA control."""
+        from pywinauto import mouse
+
+        self.require_foreground(window_id)
+        self.require_point(window_id, element.bbox)
+        x, y = (
+            (element.bbox[0] + element.bbox[2]) / 2,
+            (element.bbox[1] + element.bbox[3]) / 2,
+        )
+        mouse.click(coords=(round(x), round(y)))
+        time.sleep(0.05)
+        self.require_foreground(window_id)
+        return self.focused_editable(window_id)
+
     def act(self, window_id, element, operation, *, text="", key=""):
         from . import windows_perception as win
-        if element.sensor == "uia":
-            window = win._desktop().window(handle=int(window_id)).wrapper_object()
-            wrappers, _ = win._bounded_descendants(window, time_budget_s=1, max_nodes=300)
-            candidates = [w for w in wrappers if json.dumps(list(w.element_info.runtime_id or ())) == element.native_ref]
-            if len(candidates) != 1:
-                raise RuntimeError("uia_target_no_longer_unique")
-            target = candidates[0]
+        if element.sensor in {"uia", "uia_focus"}:
+            if element.sensor == "uia_focus":
+                target = self._focused_wrapper(window_id)
+                runtime_id = json.dumps(list(target.element_info.runtime_id or ()))
+                if not element.native_ref or runtime_id != element.native_ref:
+                    raise RuntimeError("focused_uia_target_changed")
+                if tuple(win._rect_tuple(target)) != element.bbox:
+                    raise RuntimeError("focused_uia_target_changed")
+            else:
+                window = win._desktop().window(handle=int(window_id)).wrapper_object()
+                wrappers, _ = win._bounded_descendants(window, time_budget_s=1, max_nodes=300)
+                candidates = [w for w in wrappers if json.dumps(list(w.element_info.runtime_id or ())) == element.native_ref]
+                if len(candidates) != 1:
+                    raise RuntimeError("uia_target_no_longer_unique")
+                target = candidates[0]
             if (win._element_name(target) != element.text or tuple(win._rect_tuple(target)) != element.bbox
                     or not win._is_visible(target) or not win._is_enabled(target)):
                 raise RuntimeError("uia_target_changed")

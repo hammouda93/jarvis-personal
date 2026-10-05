@@ -115,6 +115,116 @@ class MemoryCoreTests(unittest.TestCase):
             self.assertEqual(search(self.memory,query),[])
         self.assertEqual(relevance("film","profil"),0)
 
+    def test_conversational_prefix_explicit_write_is_intercepted_before_llm(self):
+        result = self.runtime.run(
+            'ok je veux que tu memorise que je veux regarder le film "Gladiator"'
+        )
+
+        self.assertEqual(
+            [action.name for action in result.actions],
+            ["remember_information"],
+        )
+        self.assertEqual(self.llm.calls, 0)
+        self.assertIn(
+            "Gladiator",
+            search(self.memory, "films que je veux regarder")[0].content,
+        )
+
+    def test_compound_legacy_memory_does_not_cross_match_unrelated_clauses(self):
+        self.memory.remember(
+            "Films à regarder: Inception, Avatar; Tests: test 1, test 3"
+        )
+        self.memory.remember("mon film test est Arrival.")
+
+        matches = search(self.memory, "Quel est mon film test ?")
+
+        self.assertEqual(len(matches), 1)
+        self.assertIn("Arrival", matches[0].content)
+
+    def test_collection_recall_returns_all_relevant_watchlist_memories(self):
+        self.memory.remember("Film à regarder : Inception")
+        self.memory.remember(
+            "Films à regarder: Inception, Avatar; Tests: test 1, test 3"
+        )
+
+        result = self.runtime.run(
+            "Quels sont les films que je veux regarder ?"
+        )
+
+        self.assertIn("Inception", result.text)
+        self.assertIn("Avatar", result.text)
+        self.assertNotIn("Laquelle", result.text)
+        self.assertEqual(self.llm.calls, 0)
+
+    def test_distinct_film_roles_are_preserved_without_cross_contamination(self):
+        self.memory.remember("Mon film test est Arrival.")
+        self.memory.remember("Je veux regarder le film Inception")
+
+        test_film = self.runtime.run("Quel est mon film test ?")
+        self.assertIn("Arrival", test_film.text)
+        self.assertNotIn("Inception", test_film.text)
+
+        watchlist = self.runtime.run(
+            "Quels sont les films que je veux regarder ?"
+        )
+        self.assertIn("Inception", watchlist.text)
+        self.assertNotIn("Arrival", watchlist.text)
+
+    def test_duplicate_fact_does_not_create_false_ambiguity(self):
+        self.memory.remember("Mon film test est Arrival.")
+        self.memory.remember("mon film test est Arrival")
+        result = self.runtime.run("Quel est mon film test ?")
+
+        self.assertIn("Arrival", result.text)
+        self.assertNotIn("Plusieurs informations", result.text)
+
+    def test_generic_film_paraphrase_can_be_disambiguated_by_followup(self):
+        self.memory.remember("Mon film test est Arrival")
+        self.memory.remember("Je veux regarder le film Inception")
+
+        ambiguous = self.runtime.run(
+            "Quel est le nom du film dont je t'ai parlé ?"
+        )
+        self.assertIn("Arrival", ambiguous.text)
+        self.assertIn("Inception", ambiguous.text)
+
+        resolved = self.runtime.run("film de test")
+        self.assertIn("Arrival", resolved.text)
+        self.assertNotIn("Inception", resolved.text)
+        self.assertEqual(self.llm.calls, 0)
+
+    def test_explicit_local_memory_inspection_lists_distinct_persistent_facts(self):
+        self.memory.remember("Mon film test est Arrival.")
+        self.memory.remember("mon film test est Arrival")
+        self.memory.remember("Je veux regarder le film Inception")
+
+        result = self.runtime.run(
+            "Qu'est-ce que t'as dans ta mémoire locale ?"
+        )
+
+        self.assertEqual(
+            [action.name for action in result.actions],
+            ["list_memory_information"],
+        )
+        self.assertEqual(result.text.count("Arrival"), 1)
+        self.assertIn("Inception", result.text)
+        self.assertEqual(self.llm.calls, 0)
+
+    def test_date_personal_question_routes_to_memory_recall(self):
+        self.memory.remember(
+            "Le 09/10/2026 j'ai rendez-vous avec le médecin"
+        )
+
+        result = self.runtime.run(
+            "quesque j'ai a faire le 09/10/2026"
+        )
+
+        self.assertIn("médecin", result.text)
+        self.assertEqual(
+            [action.name for action in result.actions],
+            ["recall_information"],
+        )
+
     def test_conflicting_facts_require_clarification(self):
         self.memory.remember("Mon film est Arrival")
         self.memory.remember("Mon film est Inception")
@@ -159,6 +269,32 @@ class BrowserContractTests(unittest.TestCase):
                         ("navigate",{"url":"file:///C:/secret"}),
                         ("download",{"url":"https://user:password@example.com"})]:
             with self.assertRaises(ValueError): core.call(op,**args)
+
+    def test_browser_transport_reports_unavailable_before_dispatch(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "bridge.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "port": 47653,
+                        "token": "test-token",
+                        "extension_id": "a" * 32,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            transport = NativeBrowserTransport(config, timeout_s=0.2)
+            with patch(
+                "jarvis_agent.browser_core.socket.create_connection",
+                side_effect=ConnectionRefusedError("offline"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "browser_bridge_unavailable",
+                ):
+                    transport.request("list_tabs", {})
 
     def test_native_host_auth_expiry_and_no_replay(self):
         host = NativeHost({"token":"test"},io.BytesIO(),io.BytesIO())
@@ -216,9 +352,47 @@ class ReplayDesktop:
         from jarvis_agent.fast_grounding import png_from_image
         self.require_foreground(window_id)
         return png_from_image(Image.new("RGB",(300,200),"white"))
+    def focus_probe(self,window_id,e):
+        self.actions.append((e,"focus_probe",{}))
+        self.controls = [{
+            "ref": "[9, 9, 9]",
+            "name": "Message",
+            "type": "Edit",
+            "writable": True,
+            "actionable": True,
+            "focused": True,
+            "bounds": [10,120,290,180],
+            "value": "",
+        }]
+        return {
+            "writable": True,
+            "native_ref": "[9, 9, 9]",
+            "text": "Message",
+            "type": "Edit",
+            "bbox": [10,120,290,180],
+            "value": "",
+            "focused": True,
+        }
+
+    def focused_editable(self,window_id):
+        if not self.controls:
+            return {"writable":False}
+        item = self.controls[0]
+        return {
+            "writable": bool(item.get("writable")),
+            "native_ref": item.get("ref",""),
+            "text": item.get("name",""),
+            "type": item.get("type",""),
+            "bbox": item.get("bounds",[]),
+            "value": item.get("value"),
+            "focused": bool(item.get("focused")),
+        }
+
     def act(self,window_id,e,operation,**args):
         self.actions.append((e,operation,args))
-        if operation == "write": self.controls[0]["value"] = args["text"]
+        if operation == "write":
+            if self.controls:
+                self.controls[0]["value"] = args["text"]
         return True
 
 
@@ -241,6 +415,79 @@ class GroundingReplayTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,"editable_target_not_proven"):
             self.core.act(e["ref"],"write",text="hello")
         self.assertEqual(self.backend.actions,[])
+
+    def test_visual_label_requires_focus_probe_before_write(self):
+        observed = self.core.observe("101")["elements"][0]
+
+        with self.assertRaisesRegex(RuntimeError,"editable_target_not_proven"):
+            self.core.act(observed["ref"],"write",text="hello")
+
+        # A separate focus probe may promote the visual label only after the
+        # backend proves that Windows focused a genuine editable control.
+        promoted = self.core.focus_probe(
+            self.core.observe("101")["elements"][0]["ref"]
+        )
+        self.assertTrue(promoted["verified"])
+        edit = promoted["element"]
+        self.assertEqual(edit["sensor"],"uia_focus")
+        self.assertTrue(edit["writable"])
+
+        written = self.core.act(
+            edit["ref"],
+            "write",
+            text="hello",
+        )
+        self.assertTrue(written["verified"])
+        self.assertEqual(self.backend.controls[0]["value"],"hello")
+
+    def test_promoted_editor_survives_exact_header_context_verification(self):
+        original_focus_probe = self.backend.focus_probe
+
+        def focus_with_header(window_id, element):
+            result = original_focus_probe(window_id, element)
+            self.backend.controls.append(
+                {
+                    "ref": "header",
+                    "name": "Exact Person",
+                    "type": "Heading",
+                    "writable": False,
+                    "actionable": False,
+                    "focused": False,
+                    "bounds": [10,10,180,40],
+                    "value": None,
+                    "region": "header",
+                }
+            )
+            return result
+
+        self.backend.focus_probe = focus_with_header
+        visual_ref = self.core.observe("101")["elements"][0]["ref"]
+        promoted = self.core.focus_probe(visual_ref)["element"]
+
+        result = self.core.act(
+            promoted["ref"],
+            "write",
+            text="private draft",
+            context={"text":"Exact Person","region":"header"},
+        )
+
+        self.assertTrue(result["verified"])
+        self.assertEqual(self.backend.controls[0]["value"],"private draft")
+
+    def test_visual_focus_probe_refuses_unproven_editability(self):
+        self.backend.focus_probe = lambda *args, **kwargs: {
+            "writable": False,
+            "type": "Text",
+            "text": "Message",
+            "bbox": [10,120,290,180],
+        }
+        ref = self.core.observe("101")["elements"][0]["ref"]
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "focused_editable_control_not_proven",
+        ):
+            self.core.focus_probe(ref)
 
     def test_focus_change_prevents_visual_action(self):
         e = self.core.observe("101")["elements"][0]
@@ -299,6 +546,33 @@ class GroundingReplayTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,"confidence_too_low"):
             self.core.act(obs["elements"][0]["ref"],"click")
 
+    def test_foundation_tools_expose_focus_probe_when_computer_core_exists(self):
+        class Delegate:
+            def ollama_tools(self):
+                return []
+
+            @staticmethod
+            def _ollama(name, description, properties, required):
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required,
+                        },
+                    },
+                }
+
+        adapter = FoundationToolAdapter(Delegate(), computer=self.core)
+        names = {
+            item["function"]["name"]
+            for item in adapter.ollama_tools()
+        }
+        self.assertIn("computer_focus_probe", names)
+
     def test_browser_scope_blocks_windows_input(self):
         class Forbidden:
             def execute(self,*args,**kwargs): raise AssertionError("OS path must not run")
@@ -346,6 +620,87 @@ class GroundingReplayTests(unittest.TestCase):
         result=adapter.execute("computer_click",{"ref":fresh_ref})
         self.assertIn("verification_before",result.detail)
         self.assertEqual(len(self.backend.actions),1)
+
+
+class RuntimePreflightTests(unittest.TestCase):
+    def test_live_preflight_rejects_codex_dependency_overlay_paths(self):
+        from unittest.mock import patch
+        from jarvis_agent.runtime_preflight import _live_path_contamination
+
+        with patch(
+            "jarvis_agent.runtime_preflight.sys.path",
+            [
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main",
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main\\.cache\\foundation-test-deps",
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main\\.venv\\Lib\\site-packages",
+            ],
+        ):
+            contaminated = _live_path_contamination()
+
+        self.assertEqual(
+            contaminated,
+            [
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main\\.cache\\foundation-test-deps"
+            ],
+        )
+
+
+    def test_windows_automation_python_gate_allows_memory_only_legacy_runtime(self):
+        from jarvis_agent.runtime_preflight import (
+            _windows_automation_python_compatible,
+        )
+
+        ok, reason = _windows_automation_python_compatible((3, 9, 0))
+
+        self.assertFalse(ok)
+        self.assertIn("Python >=3.10.10", reason)
+
+    def test_windows_automation_python_gate_accepts_modern_runtime(self):
+        from jarvis_agent.runtime_preflight import (
+            _windows_automation_python_compatible,
+        )
+
+        ok, reason = _windows_automation_python_compatible((3, 12, 0))
+
+        self.assertTrue(ok)
+        self.assertEqual(reason, "")
+
+
+class FoundationPromptTests(unittest.TestCase):
+    def test_browser_core_prompt_uses_only_current_browser_primitives(self):
+        from unittest.mock import patch
+        from jarvis_agent.agent_runtime import _effective_system_instructions
+        with patch.dict(
+            os.environ,
+            {
+                "JARVIS_BROWSER_CORE_ENABLED": "1",
+                "JARVIS_COMPUTER_CORE_ENABLED": "0",
+            },
+            clear=False,
+        ):
+            prompt = _effective_system_instructions()
+
+        self.assertIn("browser_list_tabs", prompt)
+        self.assertIn("browser_observe_dom", prompt)
+        self.assertIn("browser_verify", prompt)
+        self.assertIn("Ne substitue jamais une", prompt)
+
+    def test_computer_core_prompt_requires_focus_probe_before_opaque_write(self):
+        from unittest.mock import patch
+        from jarvis_agent.agent_runtime import _effective_system_instructions
+        with patch.dict(
+            os.environ,
+            {
+                "JARVIS_BROWSER_CORE_ENABLED": "0",
+                "JARVIS_COMPUTER_CORE_ENABLED": "1",
+            },
+            clear=False,
+        ):
+            prompt = _effective_system_instructions()
+
+        self.assertIn("computer_focus_probe", prompt)
+        self.assertIn("vrai contrôle UIA focalisé", prompt)
+        self.assertIn("n'affirme jamais qu'un message a été envoyé", prompt)
 
 
 class FoundationRuntimeTests(unittest.TestCase):

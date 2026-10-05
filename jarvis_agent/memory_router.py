@@ -14,11 +14,49 @@ from .memory_retrieval import normalize, relevance, terms
 
 
 _WRITE = re.compile(
-    r"^(?:s'il te plait[, ]*|please[, ]*)?"
+    r"^(?:(?:ok|oui|d'accord|daccord|okay)[, ]*)?"
+    r"(?:(?:je (?:veux|voudrais|souhaite) que tu|i (?:want|would like) you to)\s+)?"
+    r"(?:s'il te plait[, ]*|please[, ]*)?"
     r"(?:memorise(?:z)?|retiens|retenez|souviens-toi|souvenez-vous|"
     r"(?:garde[z]?|conserve[z]?) (?:en (?:memoire|tete)|a l'esprit)|"
     r"remember|memorize|memorise|(?:save|keep) (?:in )?(?:memory|mind))"
     r"\s*(?:que\s+|that\s+|:\s*)?(.+)$", re.DOTALL)
+
+_MEMORY_LIST = re.compile(
+    r"^(?:(?:qu[' ]?est[- ]?ce que|quest[- ]?ce que|quesque|quoi|what)|"
+    r"(?:montre|liste|affiche|show|list))"
+    r".*\b(?:memoire|memory)\b"
+)
+
+_RECALL_CLARIFICATION_BLOCK = re.compile(
+    r"^(?:ouvre|ouvrir|open|ferme|fermer|close|ecris|ecrire|write|"
+    r"envoie|envoyer|send|recherche|chercher|search|lance|lancer|run)\b"
+)
+
+
+def _is_collection_query(value: str) -> bool:
+    text = normalize(value)
+    return bool(
+        re.search(
+            r"\b(?:quels|quelles|lesquels|lesquelles|mes|tous|toutes|"
+            r"which|all)\b",
+            text,
+        )
+        and re.search(
+            r"\b(?:films?|projets?|reunions?|rendezvous|adresses?|"
+            r"emails?|preferences?|souvenirs?|memoires?|"
+            r"movies?|projects?|meetings?|addresses?|memories?)\b",
+            text,
+        )
+    )
+
+
+def _looks_like_recall_clarification(value: str) -> bool:
+    text = normalize(value.strip())
+    if not text or _RECALL_CLARIFICATION_BLOCK.match(text):
+        return False
+    informative = terms(value)
+    return 0 < len(informative) <= 6
 
 
 @dataclass(frozen=True)
@@ -46,9 +84,12 @@ class MemoryRouter:
             if not content or normalize(content) in {"que", "that"} or text.endswith("?") or re.search(r"\b(?:puis|ensuite|then)\b", text):
                 return MemoryDecision("clarify", reason="ambiguous_memory_write")
             return MemoryDecision("write", content, "explicit_user_write")
+        if _MEMORY_LIST.match(text):
+            return MemoryDecision("list", reason="explicit_memory_inspection")
         question = "?" in text or re.match(
             r"^(?:quel|quelle|quels|quelles|qui|quand|ou|what|which|who|when|where|"
-            r"c'est quoi|tu te (?:rappelles|souviens)|tu (?:sais|connais|peux me rappeler)|"
+            r"c'est quoi|qu'est[- ]?ce que|quest[- ]?ce que|quesque|"
+            r"tu te (?:rappelles|souviens)|tu (?:sais|connais|peux me rappeler)|"
             r"(?:peux|pourrais)[ -]tu me (?:rappeler|dire)|dis-moi|donne-moi (?:le|la|les)|"
             r"rappelle-moi|do you remember|can you (?:remind|tell) me|te souviens)", text)
         personal = re.search(r"\b(?:mon|ma|mes|moi|je|j'|my|mine|i|me)\b", text)
@@ -67,12 +108,14 @@ class MemoryRoutingRuntime:
         self.router = MemoryRouter()
         self.connector_resolver = connector_resolver
         self._session: list[str] = []
+        self._pending_recall_query = ""
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
 
     def reset(self):
         self._session.clear()
+        self._pending_recall_query = ""
         self.delegate.reset()
 
     def warm_up(self, *, log=None):
@@ -99,9 +142,20 @@ class MemoryRoutingRuntime:
         if begin:
             begin(user_text)
         decision = self.router.decide(user_text)
+        if (
+            decision.kind == "pass"
+            and self._pending_recall_query
+            and _looks_like_recall_clarification(user_text)
+        ):
+            decision = MemoryDecision(
+                "recall",
+                f"{self._pending_recall_query} {user_text}",
+                "recall_clarification",
+            )
         if log:
             log(f"[MEMORY_ROUTER] route={decision.kind} reason={decision.reason}")
         if decision.kind == "pass":
+            self._pending_recall_query = ""
             result = self.delegate.run(user_text, log=log, phase=phase)
             self._record(user_text)
             return result
@@ -110,6 +164,29 @@ class MemoryRoutingRuntime:
             phase("acting")
         if decision.kind == "clarify":
             reply = "Quelle information exacte souhaitez-vous mémoriser ?"
+        elif decision.kind == "list":
+            result = self.tools.execute(
+                "list_memory_information",
+                {"limit": 20},
+            )
+            actions.append(result)
+            try:
+                data = json.loads(result.detail) if result.success else []
+                candidates = [
+                    str(row["content"])
+                    for row in data
+                    if isinstance(row, dict) and row.get("content")
+                ]
+            except (ValueError, TypeError, KeyError):
+                candidates = []
+            if candidates:
+                reply = (
+                    "Dans ma mémoire locale, j'ai notamment : "
+                    + " ; ".join(candidates)
+                )
+            else:
+                reply = "Je n'ai aucune information dans la mémoire locale."
+            self._pending_recall_query = ""
         elif decision.kind == "write":
             result = self.tools.execute("remember_information", {"content": decision.content})
             actions.append(result)
@@ -117,13 +194,21 @@ class MemoryRoutingRuntime:
             if result.success:
                 self._session.append(decision.content)
                 self._session = self._session[-32:]
+            self._pending_recall_query = ""
         else:
-            candidates = [fact for fact in reversed(self._session)
-                          if relevance(user_text, fact) >= 0.85]
+            recall_query = decision.content or user_text
+            candidates = [
+                fact
+                for fact in reversed(self._session)
+                if relevance(recall_query, fact) >= 0.85
+            ]
             source = "session"
             if not candidates:
                 source = "persistent"
-                result = self.tools.execute("recall_information", {"query": user_text})
+                result = self.tools.execute(
+                    "recall_information",
+                    {"query": recall_query},
+                )
                 actions.append(result)
                 try:
                     data = json.loads(result.detail) if result.success else []
@@ -137,17 +222,33 @@ class MemoryRoutingRuntime:
             if not candidates and self.connector_resolver:
                 source = "connector"
                 try:
-                    candidates = [str(fact) for fact in self.connector_resolver(user_text)
-                                  if relevance(user_text, str(fact)) >= 0.85]
+                    candidates = [
+                        str(fact)
+                        for fact in self.connector_resolver(recall_query)
+                        if relevance(recall_query, str(fact)) >= 0.85
+                    ]
                 except Exception:
                     source = "connector_unavailable"
             candidates = list(dict.fromkeys(candidates))
-            if not terms(user_text) or not candidates:
+            if not terms(recall_query) or not candidates:
                 reply = "Je n'ai pas cette information. Pouvez-vous me la préciser ?"
+                self._pending_recall_query = recall_query
+            elif len(candidates) > 1 and _is_collection_query(recall_query):
+                reply = (
+                    "Informations correspondantes : "
+                    + " ; ".join(candidates[:8])
+                )
+                self._pending_recall_query = ""
             elif len(candidates) > 1:
-                reply = "Plusieurs informations correspondent : " + " ; ".join(candidates[:3]) + ". Laquelle est actuelle ?"
+                reply = (
+                    "Plusieurs informations correspondent : "
+                    + " ; ".join(candidates[:3])
+                    + ". Laquelle voulez-vous préciser ?"
+                )
+                self._pending_recall_query = recall_query
             else:
                 reply = candidates[0]
+                self._pending_recall_query = ""
             if log:
                 log(f"[MEMORY_ROUTER] source={source} hits={len(candidates)}")
         self.record_external_turn(user_text, reply)

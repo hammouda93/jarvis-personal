@@ -36,7 +36,8 @@ _BROWSER_FIELDS = {
 }
 _OS_MUTATIONS = {"press_key", "type_text_active_window", "write_ui_element", "click_ui_element",
                  "write_visual_target", "click_visual_target", "close_window", "close_tab",
-                 "computer_click", "computer_write", "computer_press", "computer_shortcut"}
+                 "computer_click", "computer_write", "computer_press", "computer_shortcut",
+                 "computer_focus_probe"}
 
 
 class FoundationToolAdapter:
@@ -93,6 +94,7 @@ class FoundationToolAdapter:
             for op, names, required in (
                 ("observe", ["window_id"], ["window_id"]),
                 ("find", ["text", "type", "exact"], []),
+                ("focus_probe", ["ref"], ["ref"]),
                 ("click", ["ref", "expected"], ["ref"]),
                 ("write", ["ref", "text", "expected", "context"], ["ref", "text"]),
                 ("press", ["ref", "key", "expected", "context"], ["ref", "key"]),
@@ -155,12 +157,20 @@ class FoundationToolAdapter:
             elif name == "recall_information" and self.memory:
                 from .memory_retrieval import search
                 payload = [asdict(item) for item in search(self.memory, str(args.get("query", "")))]
+            elif name == "list_memory_information" and self.memory:
+                from .memory_retrieval import list_recent
+                payload = [asdict(item) for item in list_recent(
+                    self.memory,
+                    limit=int(args.get("limit", 20) or 20),
+                )]
             elif name.startswith("computer_") and self.computer:
                 op = name[9:]
                 if op == "observe":
                     payload = self.computer.observe(args["window_id"])
                 elif op == "find":
                     payload = self.computer.find(**args)
+                elif op == "focus_probe":
+                    payload = self.computer.focus_probe(args["ref"])
                 elif op == "verify":
                     observation = self.computer.observe(args["window_id"])
                     payload = {"verified": self.computer.verify(args["condition"], observation=observation),
