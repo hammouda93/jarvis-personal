@@ -18,6 +18,22 @@ def _hash_raw(value: str) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
+def _entities_json(values) -> str:
+    ordered = sorted(
+        {
+            str(item).strip()
+            for item in values or ()
+            if str(item).strip()
+        },
+        key=lambda item: item.casefold(),
+    )
+    return json.dumps(
+        ordered,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
 class _ClosingConnection(sqlite3.Connection):
     def __exit__(self, *args):
         try:
@@ -273,11 +289,7 @@ class MemoryCoreStore(LocalMemory):
                             ensure_ascii=False,
                             sort_keys=True,
                         ),
-                        json.dumps(
-                            list(projection.entities),
-                            ensure_ascii=False,
-                            sort_keys=True,
-                        ),
+                        _entities_json(projection.entities),
                         projection.scope,
                         projection.cardinality,
                         float(projection.confidence),
@@ -299,10 +311,8 @@ class MemoryCoreStore(LocalMemory):
                         ensure_ascii=False,
                         sort_keys=True,
                     )
-                    entities_json = json.dumps(
-                        list(projection.entities),
-                        ensure_ascii=False,
-                        sort_keys=True,
+                    entities_json = _entities_json(
+                        projection.entities
                     )
                     conn.execute(
                         """
