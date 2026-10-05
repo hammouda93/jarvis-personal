@@ -2627,6 +2627,69 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("corrigerai", result.text)
 
+    def test_trusted_session_grounding_carries_opened_file_to_followup(self):
+        agent = FakeGroqAgent(
+            FakeTools(),
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je poursuis l'installation.",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+        )
+        opened_path = (
+            r"C:\Users\salah\Downloads\CursorUserSetup-x64-3.22.12.exe"
+        )
+        agent._remember_session_grounding(
+            "open_file",
+            {"name": "Cursor", "within": "Téléchargements"},
+            AgentActionResult(
+                name="open_file",
+                success=True,
+                message="opened",
+                detail=opened_path,
+            ),
+        )
+
+        agent.run("Procède à l'installation.")
+
+        system_prompt = agent.payloads[0]["messages"][0]["content"]
+        self.assertIn("TRUSTED SESSION GROUNDING", system_prompt)
+        self.assertIn(opened_path, system_prompt)
+        self.assertIn("opened_file_request: Cursor", system_prompt)
+        self.assertIn("Do not invent a replacement filename/path.", system_prompt)
+
+    def test_reset_clears_trusted_session_grounding(self):
+        agent = FakeGroqAgent(FakeTools(), [])
+        agent._remember_session_grounding(
+            "open_file",
+            {"name": "Cursor"},
+            AgentActionResult(
+                name="open_file",
+                success=True,
+                message="opened",
+                detail=r"C:\Downloads\CursorUserSetup.exe",
+            ),
+        )
+
+        agent.reset()
+        agent._refresh_session_grounding_prompt()
+
+        self.assertEqual(agent._session_grounding, {})
+        self.assertNotIn(
+            "TRUSTED SESSION GROUNDING",
+            agent._messages[0]["content"],
+        )
+
     def test_groq_blocks_persistent_recall_for_current_session_question(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
