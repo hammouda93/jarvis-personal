@@ -1,0 +1,3135 @@
+{
+  "base": "5004532",
+  "files": [
+    {
+      "path": ".env.example",
+      "sha256": "c349186e20d2edf461556fb0e69bf3a81b9cb8d2dc58f1d748e1cffd27264efa",
+      "bytes": 4835
+    },
+    {
+      "path": ".github/workflows/openclaw-grounding-tests.yml",
+      "sha256": "c475f1799f414fc92a6644e9bde5dccd4229ce7e2f05ca932b67b5144dd82aac",
+      "bytes": 1653
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "f9a068026c4c3410d2bf547518500d269318c2d33f2e583ed058435ae36eee38",
+      "bytes": 88
+    },
+    {
+      "path": "README.md",
+      "sha256": "d151d6c55282695c3b3af6068df1c00b4d3e3922351e501730adfc8de46ce6ca",
+      "bytes": 3518
+    },
+    {
+      "path": "README_VOICE_UI_V1.md",
+      "sha256": "b92b2d5da5bb046e0c2019660f024011178ae5c901c675851ae3f47416c5c184",
+      "bytes": 9930
+    },
+    {
+      "path": "connectors.example.json",
+      "sha256": "c6bbd8819c9390053dfc0daa2341ed47d2f5ba07baff56f37e104b7b2142a984",
+      "bytes": 661
+    },
+    {
+      "path": "docs/JARVIS_AIOS_FOUNDATIONS.md",
+      "sha256": "f502d4d6300c3de558eed24691e14690016d986989ad36d93d66e455e75d8263",
+      "bytes": 21785
+    },
+    {
+      "path": "docs/JARVIS_LOCAL_LEARNING.md",
+      "sha256": "7a4c967885b36f3f047a9b159b487a7f71ef873ee8f9241364f1ff9c492cd352",
+      "bytes": 5146
+    },
+    {
+      "path": "jarvis.py",
+      "sha256": "f78a334c07071c8b96abdce7559e78c59f65af3132299eb9bea776320e189ecc",
+      "bytes": 37855,
+      "symbols": [
+        "block_samples",
+        "rms_mono",
+        "_input_devices",
+        "_resolve_input_device_index",
+        "_probe_input_max_rms",
+        "_choose_input_device",
+        "_elevenlabs_pcm_sample_rate",
+        "elevenlabs_env_config",
+        "_jarvis_welcome_cache_dir",
+        "_jarvis_welcome_cache_path",
+        "_play_pcm_wav_file",
+        "_save_pcm_wav_file",
+        "say_jarvis_welcome",
+        "play_song",
+        "_chrome_executable",
+        "_win32_sorted_monitor_rects",
+        "_chrome_monitor_top_left",
+        "_chrome_monitor_bounds",
+        "_chrome_monitor_pixel_size",
+        "_chrome_window_size",
+        "_chrome_site_user_data_dir",
+        "_chrome_new_window_wait_timeout_s",
+        "_chrome_top_level_browser_hwnds_win32",
+        "_wait_new_chrome_hwnd_win32",
+        "_chrome_snap_window_to_monitor_win32",
+        "_open_url_in_chrome",
+        "open_claude_in_chrome",
+        "open_binance_btc_in_chrome",
+        "_cursor_executable",
+        "_cursor_largest_main_hwnd_win32",
+        "_cursor_foreground_hwnd_win32",
+        "_cursor_send_f11_fullscreen_win32",
+        "_focus_existing_cursor_window_win32",
+        "run_double_clap_actions",
+        "open_cursor_window",
+        "main",
+        "RECT",
+        "_cb",
+        "_enum",
+        "_enum"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/__init__.py",
+      "sha256": "3ebb00fe39320c0669a285c986ae3f12680a53c0bfb433ca5eac8e6df57bf01c",
+      "bytes": 61,
+      "symbols": [],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/agent_core.py",
+      "sha256": "8ee07609074761e5c12ba2362f613d620afd10dfbce7056dd14be281c9f36d7c",
+      "bytes": 6520,
+      "symbols": [
+        "CoreResult",
+        "AgentCore",
+        "final_intent",
+        "final_result",
+        "__init__",
+        "reset_session",
+        "context_text",
+        "handle",
+        "_execute_mission",
+        "_mission_summary",
+        "_record"
+      ],
+      "internal_imports": [
+        "mission",
+        "planner",
+        "registry",
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/agent_factory.py",
+      "sha256": "e35911e272e222cbdd85bea4d9be65c71b6e41afd9e9f7e7fe021669d6519dcb",
+      "bytes": 6992,
+      "symbols": [
+        "AgentLifecycle",
+        "AgentInstance",
+        "AgentProcess",
+        "AgentFactory",
+        "run",
+        "__init__",
+        "register_builder",
+        "manifest",
+        "_active_count",
+        "spawn",
+        "execute",
+        "suspend",
+        "resume",
+        "terminate",
+        "get",
+        "children"
+      ],
+      "internal_imports": [
+        "capability_registry",
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/agent_knowledge.py",
+      "sha256": "1c0f31d3a64592bf9f42a4c90326170abedb717dd2296afb100c812e4069abc3",
+      "bytes": 31735,
+      "symbols": [
+        "_knowledge_root",
+        "_default_db_path",
+        "_now",
+        "_json",
+        "_load_json",
+        "_normalize",
+        "_tokens",
+        "_redact",
+        "_clean_list",
+        "Skill",
+        "Lesson",
+        "AppProfile",
+        "SkillRun",
+        "AgentKnowledgeStore",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "_clamp_confidence",
+        "upsert_skill",
+        "get_skill",
+        "record_lesson",
+        "upsert_app_profile",
+        "record_run",
+        "relevant_context",
+        "clear_operational_knowledge",
+        "stats",
+        "export_snapshot",
+        "_sanitize_json",
+        "_skill_from_row",
+        "_lesson_from_row",
+        "_profile_from_row",
+        "_run_from_row",
+        "skill_to_dict",
+        "lesson_to_dict",
+        "profile_to_dict",
+        "run_to_dict",
+        "score"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/agent_knowledge_adapter.py",
+      "sha256": "f3d1600fb7e5d6c818b2db96e45f4d7c5d09caec65b2b9b3e61189e5f77eeb69",
+      "bytes": 9221,
+      "symbols": [
+        "LegacyAgentKnowledgeBackend",
+        "__init__",
+        "_identity",
+        "search",
+        "upsert"
+      ],
+      "internal_imports": [
+        "agent_knowledge",
+        "kernel_contracts",
+        "knowledge_broker"
+      ]
+    },
+    {
+      "path": "jarvis_agent/agent_router.py",
+      "sha256": "917756890f43ee083f595b1329f9fb80a8d464b0c3f0fb6ac801fa73a336403d",
+      "bytes": 11759,
+      "symbols": [
+        "AgentRouteDecision",
+        "AgentRoutingContext",
+        "ContextualAgentRouteDecision",
+        "_context_contains_any",
+        "CapabilityAgentRouter",
+        "as_dict",
+        "__init__",
+        "route",
+        "route_contextual"
+      ],
+      "internal_imports": [
+        "capability_registry"
+      ]
+    },
+    {
+      "path": "jarvis_agent/agent_runtime.py",
+      "sha256": "563dc2532452aeb551dac4a0b823cf6ad367260108d31ff35b79c1bbd29e92d9",
+      "bytes": 149181,
+      "symbols": [
+        "_effective_system_instructions",
+        "AgentTurnResult",
+        "AgentRuntime",
+        "AgentRuntimeUnavailable",
+        "_looks_like_internal_reasoning",
+        "_looks_like_action_promise",
+        "_requested_action_capabilities",
+        "_completed_action_capabilities",
+        "_missing_requested_action_capabilities",
+        "_requests_tab_close",
+        "_requests_search_submission",
+        "_requests_result_selection",
+        "_looks_like_pseudo_tool_syntax",
+        "_looks_like_unnecessary_followup",
+        "_is_explicit_memory_write_request",
+        "_looks_like_clear_operational_feedback",
+        "_action_detail_dict",
+        "_inspection_requests_visual_fallback",
+        "_actions_have_verified_proof",
+        "_operational_knowledge_message",
+        "_record_operational_run",
+        "_blocked_memory_write_result",
+        "_blocked_persistent_recall_for_current_context",
+        "_looks_like_memory_permission_prompt",
+        "_is_explicit_web_request",
+        "_query_matches_recent_user_context",
+        "_blocked_contextual_web_search_result",
+        "_blocked_visible_web_search_result",
+        "_blocked_research_budget_result",
+        "_looks_mostly_english",
+        "_visible_text",
+        "_filter_optional_ollama_tools",
+        "_filter_optional_openai_tools",
+        "OllamaToolAgent",
+        "OpenAIResponsesAgent",
+        "GroqResponsesAgent",
+        "CerebrasResponsesAgent",
+        "build_agent_runtime",
+        "run",
+        "record_external_turn",
+        "reset",
+        "warm_up",
+        "__init__",
+        "reset",
+        "record_external_turn",
+        "warm_up",
+        "_post",
+        "run",
+        "_trim_history",
+        "__init__",
+        "reset",
+        "warm_up",
+        "_post",
+        "_tool_definitions",
+        "run",
+        "_response_text",
+        "__init__",
+        "reset",
+        "_clean_grounding_value",
+        "_remember_session_grounding",
+        "_remember_external_grounding",
+        "_refresh_session_grounding_prompt",
+        "record_external_turn",
+        "warm_up",
+        "_get_client",
+        "_looks_like_msf_followup",
+        "_msf_tool_names_for_text",
+        "_tool_definitions",
+        "_is_ms_football_request",
+        "_chat",
+        "_append_assistant_message",
+        "_compact_tool_content",
+        "_trim_history",
+        "run",
+        "__init__",
+        "_get_client",
+        "_should_try_secondary",
+        "_chat_via_groq_fallback",
+        "_chat",
+        "browser_priority"
+      ],
+      "internal_imports": [
+        "agent_knowledge",
+        "config",
+        "connectors",
+        "native_tools",
+        "tools",
+        "event_journal",
+        "tracing_runtime",
+        "tracing_runtime"
+      ]
+    },
+    {
+      "path": "jarvis_agent/approval_manager.py",
+      "sha256": "cbe6fe4db3892cb98d0b3c81fcb951a8f97ee201a9440d867d0ce7e139645d6c",
+      "bytes": 8599,
+      "symbols": [
+        "ApprovalStatus",
+        "ApprovalRequest",
+        "_default_path",
+        "HumanApprovalManager",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "create",
+        "_refresh_expiry",
+        "get",
+        "resolve",
+        "consume",
+        "pending",
+        "_row_to_request"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/assistant.py",
+      "sha256": "0e8c6e129a955f80a70e395b3c2557b627b096065479fd4076ce04dc1937e4a0",
+      "bytes": 6948,
+      "symbols": [
+        "AssistantWorker",
+        "__init__",
+        "_state",
+        "_level",
+        "_speak",
+        "stop",
+        "run"
+      ],
+      "internal_imports": [
+        "audio",
+        "config",
+        "states",
+        "stt",
+        "tools",
+        "tts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/assistant_v2.py",
+      "sha256": "666075742ebb3c85bc3aa53f7f442059520bbc3c482f2aa6e5f5c468addfc6fe",
+      "bytes": 10239,
+      "symbols": [
+        "AssistantWorker",
+        "__init__",
+        "_state",
+        "_level",
+        "_speak",
+        "_core_phase",
+        "stop",
+        "_listen_turn",
+        "run"
+      ],
+      "internal_imports": [
+        "agent_core",
+        "audio",
+        "config",
+        "language",
+        "recognition",
+        "states",
+        "stt",
+        "tools",
+        "tts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/assistant_v3.py",
+      "sha256": "66e02f4119e215c8f9d2effba818d44428d6fffeb879d9747156b3c6b45ddbcc",
+      "bytes": 32998,
+      "symbols": [
+        "TextTurnInbox",
+        "InputModeGate",
+        "VoiceCaptureInterrupt",
+        "AssistantWorker",
+        "__init__",
+        "submit",
+        "pop_nowait",
+        "pending",
+        "__init__",
+        "snapshot",
+        "set_text_mode",
+        "voice_allowed",
+        "__init__",
+        "is_set",
+        "__init__",
+        "_state",
+        "_level",
+        "_speak",
+        "_agent_phase",
+        "stop",
+        "submit_text",
+        "set_text_mode",
+        "_apply_input_mode",
+        "_deliver_reply",
+        "_shadow_observe",
+        "_handle_lifecycle",
+        "_is_simple_direct_action",
+        "_update_surface_context",
+        "_record_direct_agent_context",
+        "_handle_simple_direct_action",
+        "_process_user_text",
+        "_listen_turn",
+        "run"
+      ],
+      "internal_imports": [
+        "agent_runtime",
+        "audio",
+        "config",
+        "language",
+        "recognition",
+        "states",
+        "stt",
+        "tools",
+        "tts",
+        "shadow_kernel_runtime"
+      ]
+    },
+    {
+      "path": "jarvis_agent/audio.py",
+      "sha256": "12a25ce835e9445403dcbc598d95ee5aaae443e7eac9c9848914b699e989c804",
+      "bytes": 10905,
+      "symbols": [
+        "rms_mono",
+        "normalized_level",
+        "_audio_devices",
+        "_resolve_device",
+        "input_device_index",
+        "output_device_index",
+        "block_samples",
+        "wait_for_double_clap",
+        "record_utterance",
+        "save_temp_wav"
+      ],
+      "internal_imports": [
+        "config"
+      ]
+    },
+    {
+      "path": "jarvis_agent/background_web_research.py",
+      "sha256": "1e61a17742f56da9b394d191f804784b512705184c31971518caec91ae16906e",
+      "bytes": 6466,
+      "symbols": [
+        "ResearchResult",
+        "BackgroundWebResearch",
+        "as_dict",
+        "__init__",
+        "research",
+        "_groq_browser_search"
+      ],
+      "internal_imports": [
+        "config"
+      ]
+    },
+    {
+      "path": "jarvis_agent/brain.py",
+      "sha256": "08db7c8719f54a950627628b1798fdfb7f6ad98bc9f08bbc91ccdb93c349c309",
+      "bytes": 14551,
+      "symbols": [
+        "AgentDecision",
+        "ToolDecisionValidation",
+        "AIProvider",
+        "AIProviderUnavailable",
+        "OllamaProvider",
+        "_contains_any",
+        "_explicit_action_requested",
+        "_tool_arguments_are_grounded",
+        "_candidate_intent",
+        "validate_tool_decision",
+        "decision_to_intent",
+        "build_ai_provider",
+        "decide",
+        "remember_tool_result",
+        "__init__",
+        "_post",
+        "decide",
+        "_remember_answer",
+        "remember_tool_result"
+      ],
+      "internal_imports": [
+        "config",
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/browser_adapter.py",
+      "sha256": "8fcecee1bdf75e96f17d64a1d2a898cd56855ea9942379931ddf0605950bee76",
+      "bytes": 25454,
+      "symbols": [
+        "BrowserAdapter",
+        "__init__",
+        "_call",
+        "_worker",
+        "pages",
+        "observe",
+        "activate",
+        "capture",
+        "act",
+        "act_visual",
+        "close",
+        "opener_ref",
+        "watch_popup",
+        "navigated"
+      ],
+      "internal_imports": [
+        "ui_geometry",
+        "ui_observation"
+      ]
+    },
+    {
+      "path": "jarvis_agent/capabilities.py",
+      "sha256": "d170f2e37201c3a9ef9de01b7ed3ef36ca28ed75115b3d8eb76c6f0e8decf789",
+      "bytes": 5195,
+      "symbols": [
+        "MissingCapability",
+        "detect_missing_capability",
+        "confirmation_prompt",
+        "is_affirmative",
+        "is_negative",
+        "message"
+      ],
+      "internal_imports": [
+        "language",
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/capability_registry.py",
+      "sha256": "e6f49fb07fdd05ba9578523f076d647c02c27dfecc7476d9a772d96daaa0c13c",
+      "bytes": 11087,
+      "symbols": [
+        "RegisteredCapability",
+        "CapabilityRegistry",
+        "build_default_registry",
+        "__init__",
+        "register_agent",
+        "get_agent",
+        "get_capability",
+        "agents",
+        "capabilities",
+        "providers_for",
+        "tool_allowed"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/component_registry.py",
+      "sha256": "93ba657db990c4ba5198b754d55ed696045aec7dcf6f1f1b6f8958a36d564866",
+      "bytes": 7208,
+      "symbols": [
+        "ComponentSpec",
+        "ComponentRegistry",
+        "build_default_component_registry",
+        "__init__",
+        "register",
+        "get",
+        "all",
+        "_normalized",
+        "_matches",
+        "for_paths",
+        "for_tags"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/config.py",
+      "sha256": "244cd1cf3359740f143fef3bddbcdaf5722cf40b1b13f47b613c2ce5c99a0474",
+      "bytes": 11062,
+      "symbols": [
+        "_float",
+        "_int",
+        "_bool",
+        "Settings"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/connector_gateway.py",
+      "sha256": "6953488df5bde7d5aee846db7ae0ae440d3ac3943f1fa788832ce6408c14fee5",
+      "bytes": 3993,
+      "symbols": [
+        "ConnectorResult",
+        "ConnectorAdapter",
+        "ConnectorGateway",
+        "execute",
+        "__init__",
+        "register_adapter",
+        "available_backends",
+        "execute"
+      ],
+      "internal_imports": [
+        "connector_registry",
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/connector_registry.py",
+      "sha256": "5775f6368d262d468ec632bd0fffeba9363c1034b4db539dcbd4002090d0e5f9",
+      "bytes": 8198,
+      "symbols": [
+        "ConnectorBackend",
+        "ConnectorCapability",
+        "ConnectorSpec",
+        "ConnectorRegistry",
+        "build_default_connector_registry",
+        "as_dict",
+        "as_dict",
+        "__init__",
+        "register",
+        "get",
+        "all",
+        "supports",
+        "choose_backend"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/connectors.py",
+      "sha256": "65f77e772a4b2acb5bcd0db8618f1e89933ec37e2420b2e38ce247abd0c1bea4",
+      "bytes": 6610,
+      "symbols": [
+        "MCPConnector",
+        "ConnectorRegistry",
+        "from_mapping",
+        "openai_tool",
+        "__init__",
+        "load",
+        "openai_tools",
+        "status"
+      ],
+      "internal_imports": [
+        "config"
+      ]
+    },
+    {
+      "path": "jarvis_agent/context_broker.py",
+      "sha256": "941d32c286144e6c759ba817235aa0a937faf632d8138c503c0bde5954406202",
+      "bytes": 4140,
+      "symbols": [
+        "ContextItem",
+        "ContextSelection",
+        "ContextBroker",
+        "token_estimate",
+        "__init__",
+        "mission_item",
+        "select"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/context_injector.py",
+      "sha256": "6378a91287dba77abcb6d5b11601bac3a0b5109994042179e2a68e76474f8800",
+      "bytes": 4316,
+      "symbols": [
+        "AgentContextRequest",
+        "AgentContextResult",
+        "AgentContextInjector",
+        "as_dict",
+        "__init__",
+        "build"
+      ],
+      "internal_imports": [
+        "capability_registry",
+        "context_broker",
+        "kernel_contracts",
+        "knowledge_broker",
+        "knowledge_policy",
+        "mission_context_store"
+      ]
+    },
+    {
+      "path": "jarvis_agent/correction_store.py",
+      "sha256": "c72780dc6ae31539e34608a5ae7ffd35591cb8229d238c0e54a74f3ac45e9a0f",
+      "bytes": 8071,
+      "symbols": [
+        "_default_path",
+        "CorrectionCandidateStore",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "put",
+        "get",
+        "validate",
+        "mark_promoted",
+        "pending",
+        "_row"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/cua_driver_bridge.py",
+      "sha256": "7d0da2c465bb3a8a212b096120c0a04281ff80943def90ee9f3323c9543c64e6",
+      "bytes": 37264,
+      "symbols": [
+        "CuaElement",
+        "CuaWindowSnapshot",
+        "CuaActionResult",
+        "CuaDriverToolError",
+        "CuaDriverBridge",
+        "writable",
+        "actionable",
+        "has_meaningful_content",
+        "__init__",
+        "__init__",
+        "last_error",
+        "executable",
+        "available",
+        "_read_stdout",
+        "_drain_stderr",
+        "_start_locked",
+        "_write_locked",
+        "_notify_locked",
+        "_request_locked",
+        "_call_locked",
+        "call",
+        "_window_score",
+        "_resolve_window",
+        "_element_frame",
+        "_read_window_state",
+        "launch_application",
+        "inspect_window",
+        "click_element",
+        "write_element",
+        "close"
+      ],
+      "internal_imports": [
+        "config",
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/dev_supervisor.py",
+      "sha256": "fceca2036b17383615884e82ce22dacfd7ea45245945bc3bd804fb18aa5e28cb",
+      "bytes": 3084,
+      "symbols": [
+        "FailureKind",
+        "FailureAssessment",
+        "candidate_from_assessment",
+        "validation_destination",
+        "as_dict"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/event_bus.py",
+      "sha256": "a25bdeb3d6c341fed29242cd3e182c179fd498567a95ee7fafad037f25bed8f0",
+      "bytes": 2536,
+      "symbols": [
+        "BusEvent",
+        "MissionEventBus",
+        "__init__",
+        "subscribe",
+        "unsubscribe",
+        "publish",
+        "subscriber_counts"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/event_journal.py",
+      "sha256": "9b3f91ef6299b6169bd4be90d770297ec52ca1d8db964266d77ea54c77f724d3",
+      "bytes": 10103,
+      "symbols": [
+        "_default_path",
+        "_safe_value",
+        "StructuredEventJournal",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "create_mission",
+        "append_event",
+        "set_status",
+        "finish_mission",
+        "mission_trace",
+        "recent_missions",
+        "stats"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/execution_managers.py",
+      "sha256": "0bc7a96a62ab13d4f266271f3ceadc437c7ece029e022dc2d7bf56f4493bac90",
+      "bytes": 14346,
+      "symbols": [
+        "ManagerExecutionResult",
+        "ExecutionManager",
+        "ToolExecutionManager",
+        "ConnectorExecutionManager",
+        "MemoryExecutionManager",
+        "StorageExecutionManager",
+        "TestExecutionManager",
+        "ReplayExecutionManager",
+        "CallbackExecutionManager",
+        "ExecutionManagerRegistry",
+        "execute",
+        "__init__",
+        "execute",
+        "__init__",
+        "execute",
+        "__init__",
+        "_principal",
+        "execute",
+        "__init__",
+        "execute",
+        "__init__",
+        "execute",
+        "__init__",
+        "execute",
+        "__init__",
+        "execute",
+        "__init__",
+        "register",
+        "get",
+        "execute"
+      ],
+      "internal_imports": [
+        "connector_gateway",
+        "kernel_contracts",
+        "knowledge_broker",
+        "tool_gateway",
+        "workspace_storage",
+        "regression_runner",
+        "replay_sandbox"
+      ]
+    },
+    {
+      "path": "jarvis_agent/headless.py",
+      "sha256": "dad317b63b480531f3508a25b0234293c5ed4b7cba105d126586723871dc500a",
+      "bytes": 3220,
+      "symbols": [
+        "run_headless",
+        "level",
+        "status"
+      ],
+      "internal_imports": [
+        "audio",
+        "config",
+        "language",
+        "recognition",
+        "stt",
+        "tools",
+        "tts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/incident_bundle.py",
+      "sha256": "b2599abeb432e2d2a960a9c6ecb5d6614f5790c6a1d11f4cb66fbdb4f30d8302",
+      "bytes": 4621,
+      "symbols": [
+        "IncidentBundle",
+        "IncidentBundleBuilder",
+        "__init__",
+        "_select",
+        "build"
+      ],
+      "internal_imports": [
+        "component_registry",
+        "event_journal"
+      ]
+    },
+    {
+      "path": "jarvis_agent/kernel_cli.py",
+      "sha256": "3e796d252027d139893667d251edb428457a5e0db89d6fc60fba3f967c499dbe",
+      "bytes": 7219,
+      "symbols": [
+        "_parser",
+        "main"
+      ],
+      "internal_imports": [
+        "approval_manager",
+        "capability_registry",
+        "connector_registry",
+        "component_registry",
+        "correction_store",
+        "event_journal",
+        "incident_bundle",
+        "kernel_request_store",
+        "mission_context_store",
+        "config",
+        "model_catalog",
+        "model_telemetry",
+        "regression_registry"
+      ]
+    },
+    {
+      "path": "jarvis_agent/kernel_contracts.py",
+      "sha256": "421325e247b5647513450c18364e1e83b1c32ba9f0a4266dad85663af3a10ad4",
+      "bytes": 6928,
+      "symbols": [
+        "MissionStatus",
+        "EventKind",
+        "KnowledgeScope",
+        "PromotionTarget",
+        "RiskLevel",
+        "SharingPolicy",
+        "SyscallKind",
+        "SyscallStatus",
+        "CapabilitySpec",
+        "AgentManifest",
+        "MissionContext",
+        "KnowledgeIdentity",
+        "KernelRequest",
+        "KernelResponse",
+        "CorrectionCandidate",
+        "as_dict",
+        "as_dict",
+        "as_dict",
+        "as_dict",
+        "as_dict",
+        "as_dict",
+        "as_dict"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/kernel_dispatcher.py",
+      "sha256": "f7a3f929e7f959e96eadc11839ae9c604cf17f0224be48cc7b8ee1ae35f07fee",
+      "bytes": 2663,
+      "symbols": [
+        "DispatchResult",
+        "KernelDispatcher",
+        "as_dict",
+        "__init__",
+        "run_once",
+        "drain"
+      ],
+      "internal_imports": [
+        "execution_managers",
+        "kernel_contracts",
+        "kernel_service"
+      ]
+    },
+    {
+      "path": "jarvis_agent/kernel_policy.py",
+      "sha256": "995844c18832da98e1eb49dc396084e5990aca6e5376c71556fa1f069db7574c",
+      "bytes": 2698,
+      "symbols": [
+        "AuthorizationDecision",
+        "KernelPolicy",
+        "__init__",
+        "authorize"
+      ],
+      "internal_imports": [
+        "capability_registry",
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/kernel_request_store.py",
+      "sha256": "4a42f3b781348ca226f114123a9d646d6d651fbc06d0ada05b3e9300cae1b3aa",
+      "bytes": 8133,
+      "symbols": [
+        "_default_path",
+        "KernelRequestStore",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "put",
+        "mark",
+        "_request",
+        "by_status",
+        "recovery_required",
+        "for_mission",
+        "get"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/kernel_service.py",
+      "sha256": "1cd410679fc1565f97298ce7e746bd4249012bd63814b620b880417ff34a184f",
+      "bytes": 12815,
+      "symbols": [
+        "KernelSubmission",
+        "JarvisKernel",
+        "__init__",
+        "_emit",
+        "submit",
+        "resolve_approval",
+        "next_request",
+        "restore_pending_approvals",
+        "restore_queued_requests",
+        "recovery_required_requests",
+        "complete"
+      ],
+      "internal_imports": [
+        "approval_manager",
+        "event_bus",
+        "event_journal",
+        "kernel_contracts",
+        "kernel_policy",
+        "mission_scheduler",
+        "kernel_request_store"
+      ]
+    },
+    {
+      "path": "jarvis_agent/kernel_stack.py",
+      "sha256": "4dda9f0ef3293adc7cbff8cc67cdb6fc5b709ae0ec3ab6ee23c65f34b706ff95",
+      "bytes": 5743,
+      "symbols": [
+        "PassiveKernelStack",
+        "build_passive_kernel_stack"
+      ],
+      "internal_imports": [
+        "agent_factory",
+        "agent_knowledge",
+        "agent_knowledge_adapter",
+        "agent_router",
+        "approval_manager",
+        "capability_registry",
+        "connector_gateway",
+        "context_broker",
+        "context_injector",
+        "correction_store",
+        "event_bus",
+        "event_journal",
+        "execution_managers",
+        "kernel_dispatcher",
+        "kernel_request_store",
+        "kernel_service",
+        "knowledge_broker",
+        "mission_context_store",
+        "mission_orchestrator",
+        "model_catalog",
+        "model_router",
+        "model_telemetry",
+        "task_graph_store",
+        "tool_gateway",
+        "config"
+      ]
+    },
+    {
+      "path": "jarvis_agent/knowledge_broker.py",
+      "sha256": "4db9386e42a034fe6267c8fa52d0b799000869a77ea18932c966806cb0ebf3af",
+      "bytes": 4048,
+      "symbols": [
+        "ScopedKnowledgeRecord",
+        "ScopedKnowledgeBackend",
+        "KnowledgeBroker",
+        "InMemoryKnowledgeBackend",
+        "search",
+        "upsert",
+        "__init__",
+        "scope_key",
+        "search",
+        "write",
+        "__init__",
+        "search",
+        "upsert"
+      ],
+      "internal_imports": [
+        "kernel_contracts",
+        "knowledge_policy",
+        "write_barrier"
+      ]
+    },
+    {
+      "path": "jarvis_agent/knowledge_cli.py",
+      "sha256": "c340d151ccf8e53af0a7aa926d58f772625746d315170034fac607036ebee278",
+      "bytes": 2267,
+      "symbols": [
+        "main"
+      ],
+      "internal_imports": [
+        "agent_knowledge"
+      ]
+    },
+    {
+      "path": "jarvis_agent/knowledge_policy.py",
+      "sha256": "fe1462dd60a0dfdf5c8813bd31d8c0cfb051186b1b3d2ea1e9f6c0cca93056a9",
+      "bytes": 4436,
+      "symbols": [
+        "KnowledgePrincipal",
+        "KnowledgeAccessPolicy",
+        "can_read",
+        "can_write"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/language.py",
+      "sha256": "f17ddd49c31649b6667d1680855b583b30843da10c7ae2721402b6ededf5c417",
+      "bytes": 6808,
+      "symbols": [
+        "normalize_language",
+        "tool_message",
+        "repeat_prompt",
+        "no_speech_prompt",
+        "cancellation_prompt",
+        "ai_unavailable_prompt",
+        "capability_unavailable_prompt",
+        "action_mismatch_prompt"
+      ],
+      "internal_imports": [
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/llm_manager.py",
+      "sha256": "c3e91cf58905000b3f4267d93cd671e957cbe1b0931ffbbbf40fb065dd921dbb",
+      "bytes": 7721,
+      "symbols": [
+        "LLMAdapter",
+        "LLMExecutionAttempt",
+        "RoutedLLMExecutionManager",
+        "generate",
+        "__init__",
+        "register_adapter",
+        "execute"
+      ],
+      "internal_imports": [
+        "execution_managers",
+        "kernel_contracts",
+        "model_router",
+        "model_telemetry"
+      ]
+    },
+    {
+      "path": "jarvis_agent/local_rpc_security.py",
+      "sha256": "94d50ec8636e9bdea8d739f072c906df23a67daac1f13b3835f2463c61d3e767",
+      "bytes": 1899,
+      "symbols": [
+        "LocalRPCPolicy",
+        "CapabilityTokenAuthority",
+        "validate_host",
+        "__init__",
+        "issue",
+        "revoke",
+        "authorize",
+        "describe"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/mcp_connector_adapter.py",
+      "sha256": "55d50adf3c60eecb58eef3c1b8fa9eb68c4d3a197c51374b41338c97565f4eb5",
+      "bytes": 2339,
+      "symbols": [
+        "MCPTransport",
+        "MCPConnectorAdapter",
+        "call_tool",
+        "execute"
+      ],
+      "internal_imports": [
+        "connector_gateway",
+        "connector_registry"
+      ]
+    },
+    {
+      "path": "jarvis_agent/memory.py",
+      "sha256": "7b12ef30f1af80b4b0d9b77abdff380de6cb4ba9f28d73cc199af45acc796d2a",
+      "bytes": 4256,
+      "symbols": [
+        "_default_db_path",
+        "MemoryItem",
+        "LocalMemory",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "remember",
+        "search"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/mission.py",
+      "sha256": "728ea7399e43a58d56b3700e4bcbd9719ac7564ab554a514f34f75abe13880ad",
+      "bytes": 5170,
+      "symbols": [
+        "MissionStatus",
+        "StepStatus",
+        "MissionStep",
+        "Mission",
+        "MissionOutcome",
+        "MissionEngine",
+        "final_step",
+        "success",
+        "success",
+        "__init__",
+        "execute",
+        "_skip_remaining"
+      ],
+      "internal_imports": [
+        "registry",
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/mission_context_store.py",
+      "sha256": "b0f4c1a362bef72324ffc17c7c7052d1e0aae33c265b29a90956884a46272554",
+      "bytes": 7042,
+      "symbols": [
+        "_default_path",
+        "MissionContextStore",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "_payload",
+        "save",
+        "load",
+        "list_resumable",
+        "mark_status"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/mission_orchestrator.py",
+      "sha256": "7048161d19857e295b1b4045eced11bcdc7412f1c0d5f86b6c2de477a4ea5679",
+      "bytes": 11107,
+      "symbols": [
+        "OrchestrationStep",
+        "MissionOrchestrator",
+        "__init__",
+        "register",
+        "graph",
+        "_kind_for",
+        "dispatch_ready",
+        "resolve_approval",
+        "complete_request",
+        "restore_runtime_state",
+        "resumable"
+      ],
+      "internal_imports": [
+        "kernel_contracts",
+        "kernel_service",
+        "mission_context_store",
+        "task_graph",
+        "task_graph_store"
+      ]
+    },
+    {
+      "path": "jarvis_agent/mission_scheduler.py",
+      "sha256": "206e66c178a9c2c28aa6666da93950916bebf5629115d52ee2c3e662f388721c",
+      "bytes": 10489,
+      "symbols": [
+        "_QueueItem",
+        "ScheduledRequest",
+        "MissionScheduler",
+        "__init__",
+        "set_concurrency_limit",
+        "set_resource_limit",
+        "_resource_has_capacity",
+        "_agent_has_capacity",
+        "submit",
+        "next_request",
+        "cancel",
+        "complete",
+        "get",
+        "snapshot"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/mission_semantics.py",
+      "sha256": "9573b8a18a6596c613201455638bcdad500a0249ab4f9251dc4009c060b69af5",
+      "bytes": 4422,
+      "symbols": [
+        "MissionStepState",
+        "MissionEntity",
+        "MissionStep",
+        "MissionContract",
+        "as_dict",
+        "as_dict",
+        "validate",
+        "entity_map",
+        "completion_requirements",
+        "as_dict",
+        "visit"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/model_catalog.py",
+      "sha256": "749e0d57ff511cc4b1e37650a43aa0c37b206cd68723cc4e2866c375d9dbe7f5",
+      "bytes": 4084,
+      "symbols": [
+        "CatalogEntry",
+        "CurrentModelCatalog",
+        "__init__",
+        "entries",
+        "configured_candidates"
+      ],
+      "internal_imports": [
+        "config",
+        "model_router"
+      ]
+    },
+    {
+      "path": "jarvis_agent/model_router.py",
+      "sha256": "826d0c8c3738d6e3acd6937e97445d1341b3f399b0a889a52f4bc05e657dc31d",
+      "bytes": 6287,
+      "symbols": [
+        "ModelCandidate",
+        "RouteRequest",
+        "RouteDecision",
+        "_CircuitState",
+        "LightweightModelRouter",
+        "__init__",
+        "note_failure",
+        "note_success",
+        "_estimated_cost",
+        "route"
+      ],
+      "internal_imports": [
+        "model_telemetry"
+      ]
+    },
+    {
+      "path": "jarvis_agent/model_telemetry.py",
+      "sha256": "0dcdf3d0e74530f522d7e327f602990df7651147bd60df6b8536ddc03f9c3049",
+      "bytes": 5572,
+      "symbols": [
+        "_default_path",
+        "ModelTelemetryStore",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "record",
+        "summary",
+        "stats"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/ms_football_bridge.py",
+      "sha256": "268a0be36c29b860b7b036475a1155078ad8c5406dc9d4037038255d2c47d731",
+      "bytes": 3380,
+      "symbols": [
+        "MSFootballBridgeResult",
+        "MSFootballBridge",
+        "__init__",
+        "available",
+        "call"
+      ],
+      "internal_imports": [
+        "config"
+      ]
+    },
+    {
+      "path": "jarvis_agent/native_tools.py",
+      "sha256": "bcd067e961a326581e99335b0b0e0c11a160c490f32f88fbc8fec97e5c734e8e",
+      "bytes": 79092,
+      "symbols": [
+        "AgentActionResult",
+        "NativeToolRegistry",
+        "as_json",
+        "__init__",
+        "_web_window_title_hint",
+        "_resolve_web_window_title",
+        "_compact_observation",
+        "_attach_windows_post_observation",
+        "ollama_tools",
+        "_browser_ollama_tools",
+        "_browser_adapter",
+        "openai_tools",
+        "_ollama",
+        "requires_confirmation",
+        "execute",
+        "_open_from_learned_profile",
+        "_record_app_launch",
+        "_record_inspected_app",
+        "_recover_stale_write",
+        "_safe_target",
+        "_convert",
+        "_error"
+      ],
+      "internal_imports": [
+        "agent_knowledge",
+        "background_web_research",
+        "config",
+        "cua_driver_bridge",
+        "memory",
+        "ms_football_bridge",
+        "screen_vision",
+        "tools",
+        "windows_perception",
+        "browser_adapter"
+      ]
+    },
+    {
+      "path": "jarvis_agent/perception_router.py",
+      "sha256": "74944f6c9272ffb10d30819c7397ac1b8d17b9d55766b826ef6ed1c0a308a762",
+      "bytes": 4703,
+      "symbols": [
+        "_json_object",
+        "_uia_needs_visual_fallback",
+        "_compact_visual_observation",
+        "inspect_window_hybrid"
+      ],
+      "internal_imports": [
+        "config",
+        "screen_vision",
+        "windows_perception"
+      ]
+    },
+    {
+      "path": "jarvis_agent/planner.py",
+      "sha256": "2a1aa6339a3f2cbda3f90bcd6a78832924c505fd56cd2abc71488ee43efb1e28",
+      "bytes": 7270,
+      "symbols": [
+        "PlannedStep",
+        "PlanDecision",
+        "Planner",
+        "PlannerUnavailable",
+        "OllamaPlanner",
+        "build_planner",
+        "plan",
+        "__init__",
+        "_system_prompt",
+        "plan"
+      ],
+      "internal_imports": [
+        "config",
+        "registry"
+      ]
+    },
+    {
+      "path": "jarvis_agent/plugin_loader.py",
+      "sha256": "b3ca1b4869ed8f20caea532bdc1e541a2067d7cd86338dae96213674000ea96a",
+      "bytes": 2057,
+      "symbols": [
+        "PluginRecord",
+        "PluginCatalog",
+        "__init__",
+        "add_manifest",
+        "load_json_file",
+        "get",
+        "all",
+        "enabled_for_agent"
+      ],
+      "internal_imports": [
+        "plugin_manifest"
+      ]
+    },
+    {
+      "path": "jarvis_agent/plugin_manifest.py",
+      "sha256": "23645f3e19c35a813d1d49140f8940d25bde288b5c99ce52d0775e5e77f45b29",
+      "bytes": 5415,
+      "symbols": [
+        "PluginManifest",
+        "from_dict",
+        "validate",
+        "as_dict"
+      ],
+      "internal_imports": [
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/plugin_policy.py",
+      "sha256": "ed2008c66c065502162d21b7e18adaf03e07eca7883f436d4bd7e5f6675a918b",
+      "bytes": 2637,
+      "symbols": [
+        "PluginPermissionDecision",
+        "PluginPermissionPolicy",
+        "tool",
+        "connector",
+        "network_url",
+        "file_path"
+      ],
+      "internal_imports": [
+        "plugin_manifest"
+      ]
+    },
+    {
+      "path": "jarvis_agent/promotion_gate.py",
+      "sha256": "704c3d060455dd1a243a735a6ee85d259d9af007e0ae81cd67e02112830ea9ed",
+      "bytes": 4158,
+      "symbols": [
+        "PromotionDecision",
+        "CorrectionPromotionGate",
+        "as_dict",
+        "evaluate"
+      ],
+      "internal_imports": [
+        "dev_supervisor",
+        "kernel_contracts",
+        "supervisor_validation"
+      ]
+    },
+    {
+      "path": "jarvis_agent/recognition.py",
+      "sha256": "bb551cc8b174ca3722eab49731f848148a7ac2d29fdf00520f54ce3c5c698038",
+      "bytes": 6388,
+      "symbols": [
+        "_is_pc_action",
+        "_language_code",
+        "_candidate_score",
+        "_needs_multilingual_retry",
+        "recognize_command"
+      ],
+      "internal_imports": [
+        "config",
+        "stt",
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/registry.py",
+      "sha256": "88bf7bc5cb4e4390fb3b7cdadd7a87f5c31487083cd2872ff1bc9ed0874db891",
+      "bytes": 7582,
+      "symbols": [
+        "CapabilitySpec",
+        "PreparedTool",
+        "ToolRegistry",
+        "__init__",
+        "specs",
+        "catalog_for_prompt",
+        "prepare",
+        "_safe_named_target"
+      ],
+      "internal_imports": [
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/regression_registry.py",
+      "sha256": "17e4a42d4cbf2ec641d7ce488acbc15a1fb4cf8ac2bdf5d0c98e51f1bab9779d",
+      "bytes": 6724,
+      "symbols": [
+        "RegressionSpec",
+        "RegressionRegistry",
+        "_path_matches",
+        "build_default_regression_registry",
+        "as_dict",
+        "__init__",
+        "register",
+        "get",
+        "all",
+        "select"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/regression_runner.py",
+      "sha256": "40c10671934470a0bf4f7b475e14dc0cfacd7e3455b10b7edb2e030f4563b4e3",
+      "bytes": 4257,
+      "symbols": [
+        "RegressionRunResult",
+        "RegressionRunner",
+        "__init__",
+        "_argv",
+        "run",
+        "run_many"
+      ],
+      "internal_imports": [
+        "regression_registry"
+      ]
+    },
+    {
+      "path": "jarvis_agent/replay_adapter.py",
+      "sha256": "696ee6635e1c393f96d0e60ade8d18f72de799f9586555188d7de80c67e0f34d",
+      "bytes": 2764,
+      "symbols": [
+        "ReplayTransport",
+        "MCPReplaySandboxAdapter",
+        "call",
+        "reset",
+        "start_recording",
+        "execute",
+        "observe",
+        "evaluate",
+        "stop_recording"
+      ],
+      "internal_imports": [
+        "replay_sandbox"
+      ]
+    },
+    {
+      "path": "jarvis_agent/replay_sandbox.py",
+      "sha256": "019d127f852712e0317b8044b19582d0a976e4aed228805d60910547d3141176",
+      "bytes": 5380,
+      "symbols": [
+        "ReplayStatus",
+        "ReplayAction",
+        "ReplayPlan",
+        "ReplayResult",
+        "ReplaySandbox",
+        "ReplayRunner",
+        "as_dict",
+        "as_dict",
+        "as_dict",
+        "reset",
+        "start_recording",
+        "execute",
+        "observe",
+        "evaluate",
+        "stop_recording",
+        "__init__",
+        "run"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/scoped_knowledge_store.py",
+      "sha256": "5668481bd1ed855a5987874bd09f6b7b6306f7cfe291c61f13d08bdb5a2d18d4",
+      "bytes": 6091,
+      "symbols": [
+        "_default_path",
+        "SQLiteScopedKnowledgeBackend",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "upsert",
+        "search"
+      ],
+      "internal_imports": [
+        "kernel_contracts",
+        "knowledge_broker"
+      ]
+    },
+    {
+      "path": "jarvis_agent/screen_vision.py",
+      "sha256": "3b8d471b40e147e76605bedb09a8f15e33fefc9fc2faee46a20a38c03e0370fe",
+      "bytes": 18632,
+      "symbols": [
+        "ScreenObservation",
+        "_vision_endpoint",
+        "_is_local_endpoint",
+        "_extract_json_object",
+        "_call_local_vision",
+        "_normalized_box",
+        "_capture_window_bytes",
+        "_save_debug_evidence",
+        "observe_screen",
+        "locate_visual_target",
+        "click_visual_target",
+        "write_visual_target"
+      ],
+      "internal_imports": [
+        "config",
+        "windows_perception"
+      ]
+    },
+    {
+      "path": "jarvis_agent/secret_provider.py",
+      "sha256": "6940bdb7b7ca24786b3f9e38ffba7b12faa1cc209b4ae2f1dca49ef62a9eaf6f",
+      "bytes": 3830,
+      "symbols": [
+        "SecretRef",
+        "SecretProvider",
+        "EnvironmentSecretProvider",
+        "WindowsCredentialSecretProvider",
+        "CompositeSecretProvider",
+        "default_secret_provider",
+        "safe_id",
+        "get",
+        "__init__",
+        "get",
+        "__init__",
+        "target_name",
+        "get",
+        "__init__",
+        "get"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/shadow_kernel_cli.py",
+      "sha256": "7e04867db10fdb1d91cf17a949ee5614976c39612fa66732d85c19c2539ab346",
+      "bytes": 3184,
+      "symbols": [
+        "_parser",
+        "_graph_payload",
+        "main"
+      ],
+      "internal_imports": [
+        "config",
+        "kernel_contracts",
+        "shadow_kernel_runtime"
+      ]
+    },
+    {
+      "path": "jarvis_agent/shadow_kernel_runtime.py",
+      "sha256": "22d99aab7de521947e74624a3eb5f0cd92ca77d54c82c16d00e97507da584d76",
+      "bytes": 21879,
+      "symbols": [
+        "_default_shadow_dir",
+        "ShadowObservation",
+        "ShadowSupervisorAssessment",
+        "KernelShadowObserver",
+        "as_dict",
+        "__init__",
+        "from_settings",
+        "_candidate_agents",
+        "_text_agent_hint",
+        "_mission_agent_hint",
+        "_infer_domain",
+        "_infer_application",
+        "_routing_capabilities",
+        "_routing_permissions",
+        "_supervisor_assessment",
+        "_action_payload",
+        "observe_turn",
+        "observe_agent_turn",
+        "observe_direct_turn"
+      ],
+      "internal_imports": [
+        "agent_router",
+        "config",
+        "kernel_contracts",
+        "kernel_stack",
+        "task_graph"
+      ]
+    },
+    {
+      "path": "jarvis_agent/states.py",
+      "sha256": "dde024dc94d83a9cac7ab2344b247e1eed7aa39e98efb7fa47f13bc22caa77fa",
+      "bytes": 1040,
+      "symbols": [
+        "AssistantState"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/stt.py",
+      "sha256": "b65a4cfda5e981b7f1ca9a5ea56f04c7efc8cf3b65f32f97652c73456d5492eb",
+      "bytes": 10508,
+      "symbols": [
+        "TranscriptResult",
+        "_stt_grounding_prompt",
+        "LocalWhisperSTT",
+        "GroqWhisperSTT",
+        "build_stt",
+        "__init__",
+        "_get_model",
+        "_dedupe_exact_repeat",
+        "_hallucination_reason",
+        "_repetition_reason",
+        "_decode",
+        "transcribe",
+        "__init__",
+        "_normalize_language",
+        "_get_client",
+        "_metric_from_segments",
+        "transcribe"
+      ],
+      "internal_imports": [
+        "audio",
+        "config",
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/supervisor_planner.py",
+      "sha256": "6407f61ec4f0d92a5dfcc5a7405996b8e8eb2dc0cf29cdaf81e81120bdcd9f02",
+      "bytes": 3110,
+      "symbols": [
+        "SupervisorPlan",
+        "SupervisorPlanner",
+        "__init__",
+        "plan"
+      ],
+      "internal_imports": [
+        "component_registry",
+        "dev_supervisor",
+        "kernel_contracts",
+        "regression_registry"
+      ]
+    },
+    {
+      "path": "jarvis_agent/supervisor_validation.py",
+      "sha256": "c107366b77ac4acac390c26d2fc1d562f40bc0585cccc3f2c32a24bbddc33bf8",
+      "bytes": 2446,
+      "symbols": [
+        "SupervisorValidationState",
+        "SupervisorValidationGate",
+        "as_dict",
+        "evaluate"
+      ],
+      "internal_imports": [
+        "kernel_contracts",
+        "supervisor_planner"
+      ]
+    },
+    {
+      "path": "jarvis_agent/task_graph.py",
+      "sha256": "a941c5f872b4514b6a1e37e84466d21953fc18ad8d54421f5b12fccfcdab8d87",
+      "bytes": 5568,
+      "symbols": [
+        "TaskStatus",
+        "TaskNode",
+        "MissionTaskGraph",
+        "__init__",
+        "add",
+        "get",
+        "nodes",
+        "_validate_acyclic",
+        "unresolved_dependencies",
+        "ready",
+        "mark_running",
+        "mark_completed",
+        "mark_failed",
+        "pause_for_user",
+        "pause_for_external",
+        "cancel_downstream",
+        "summary",
+        "visit"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/task_graph_store.py",
+      "sha256": "b415fabad206b80c1ba13347fdb717b2f05b2b4ea21e4a840978e70ac1d01fc6",
+      "bytes": 4496,
+      "symbols": [
+        "_default_path",
+        "TaskGraphStore",
+        "__init__",
+        "_connect",
+        "_init_db",
+        "_serialize",
+        "save",
+        "load",
+        "delete"
+      ],
+      "internal_imports": [
+        "task_graph"
+      ]
+    },
+    {
+      "path": "jarvis_agent/tool_gateway.py",
+      "sha256": "2cc759ae016ecf2e77bd8bc440a49d12120d2cd1ef6bf1f24808e52ff8429fb3",
+      "bytes": 2293,
+      "symbols": [
+        "ToolGatewayResult",
+        "ScopedToolGateway",
+        "__init__",
+        "register_tool",
+        "execute"
+      ],
+      "internal_imports": [
+        "capability_registry"
+      ]
+    },
+    {
+      "path": "jarvis_agent/tools.py",
+      "sha256": "1fe5e127adb9d06d6b5b09500924a4b9610a898f7b67747a2f69c883b957bce2",
+      "bytes": 44864,
+      "symbols": [
+        "ToolIntent",
+        "ToolResult",
+        "_remember_browser_url",
+        "_browser_window_hint",
+        "_contextual_site_search_url",
+        "_explicit_site_search_url",
+        "normalize",
+        "_search_query_from_command",
+        "route",
+        "_spawn",
+        "_chrome_candidates",
+        "_chrome_executable",
+        "_chrome_profile_directory",
+        "_launch_chrome",
+        "_open_browser_url",
+        "_navigate_current_browser_url",
+        "_open_application",
+        "_normalize_path_name",
+        "_app_search_roots",
+        "application_speech_hints",
+        "_app_binary_roots",
+        "_find_named_app",
+        "_file_search_roots",
+        "_find_named_file",
+        "_folder_search_roots",
+        "_find_named_folder",
+        "execute",
+        "consider",
+        "consider",
+        "activity"
+      ],
+      "internal_imports": [
+        "windows_app_discovery",
+        "windows_perception",
+        "windows_perception",
+        "windows_perception"
+      ]
+    },
+    {
+      "path": "jarvis_agent/tracing_runtime.py",
+      "sha256": "9851e3dde80c49611ea189d1b3b23a9329ffd7c415803fec70e57ce1d52c0d50",
+      "bytes": 5944,
+      "symbols": [
+        "TracingToolRegistry",
+        "StructuredTracingRuntime",
+        "__init__",
+        "__getattr__",
+        "knowledge",
+        "set_mission",
+        "execute",
+        "__init__",
+        "reset",
+        "warm_up",
+        "run"
+      ],
+      "internal_imports": [
+        "event_journal",
+        "kernel_contracts"
+      ]
+    },
+    {
+      "path": "jarvis_agent/tts.py",
+      "sha256": "334e88b1da67b092869c552f7baef7c8719f5b2196d568cf1b80b3dec21ec417",
+      "bytes": 6893,
+      "symbols": [
+        "ElevenLabsTTS",
+        "__init__",
+        "_pcm_sample_rate",
+        "_cache_path",
+        "_load_cached",
+        "_save_wav",
+        "_play",
+        "_speak_windows",
+        "speak"
+      ],
+      "internal_imports": [
+        "audio",
+        "config"
+      ]
+    },
+    {
+      "path": "jarvis_agent/ui.py",
+      "sha256": "8176e83bd2165aba4cbc55165f5df26150129f5d84159edc3108ad28eaaaa79b",
+      "bytes": 58792,
+      "symbols": [
+        "_safe_console_log",
+        "VisualNode",
+        "_tool_visual_node",
+        "PersonalJarvisCanvas",
+        "StatusChip",
+        "FlowPanel",
+        "JarvisWindow",
+        "run_ui",
+        "__init__",
+        "route",
+        "set_animations_frozen",
+        "set_source_mode",
+        "begin_request",
+        "_append_route",
+        "set_state",
+        "set_audio_level",
+        "set_transcript",
+        "ingest_detail",
+        "ingest_log",
+        "_tick",
+        "_accent",
+        "_node_center",
+        "_draw_background",
+        "_draw_orbits",
+        "_draw_core",
+        "_edge_path",
+        "_draw_connections",
+        "_draw_node",
+        "paintEvent",
+        "__init__",
+        "set_active",
+        "__init__",
+        "set_route",
+        "__init__",
+        "_set_text_panel",
+        "_submit_text",
+        "_on_conversation_message",
+        "_set_clean_view",
+        "_set_animations_frozen",
+        "_set_compact_mode",
+        "_toggle_maximize",
+        "_on_route_changed",
+        "_on_state",
+        "_on_transcript",
+        "_on_detail",
+        "_on_log",
+        "keyPressEvent",
+        "mousePressEvent",
+        "mouseMoveEvent",
+        "mouseReleaseEvent",
+        "_on_worker_thread_finished",
+        "closeEvent"
+      ],
+      "internal_imports": [
+        "assistant_v3",
+        "config",
+        "states"
+      ]
+    },
+    {
+      "path": "jarvis_agent/ui_geometry.py",
+      "sha256": "531494e3621ad9ba246d5459de36887ec15df5fa31c7941907ed9b64aad7a9dc",
+      "bytes": 3888,
+      "symbols": [
+        "valid_rect",
+        "normalized_box",
+        "CaptureGeometry",
+        "intersection_over_union",
+        "__post_init__",
+        "physical_crop",
+        "box_to_screen",
+        "click_point",
+        "from_metadata"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/ui_observation.py",
+      "sha256": "5bd305a3fbee9ec993742e6d667da4114968da99c2308b0272c9240a036a20b6",
+      "bytes": 6655,
+      "symbols": [
+        "utc_now",
+        "object_detail",
+        "SurfaceIdentity",
+        "UIEntity",
+        "UIObservation",
+        "same_binding",
+        "has_stable_identity",
+        "ref",
+        "same_surface",
+        "as_dict",
+        "from_payload",
+        "as_dict",
+        "as_dict",
+        "fingerprint"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/windows_app_discovery.py",
+      "sha256": "5f7d6b370908bee8a77abe6341b753ec6379810d9550058217849373ed3f3f14",
+      "bytes": 10113,
+      "symbols": [
+        "WindowsAppCandidate",
+        "_normalize",
+        "_score_name",
+        "_default_powershell_runner",
+        "_start_apps",
+        "installed_start_app_names",
+        "discover_start_apps",
+        "_registry_app_paths",
+        "discover_app_paths",
+        "resolve_registered_app",
+        "launch_registered_app",
+        "launch_kind",
+        "as_dict"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/windows_perception.py",
+      "sha256": "a8351d25ca911a683499b264a2ea18aee0346d022273709d7586d925b98bbd15",
+      "bytes": 89218,
+      "symbols": [
+        "_desktop",
+        "_send_keys",
+        "_new_snapshot_id",
+        "invalidate_ui_snapshot",
+        "_snapshot_ref",
+        "_remember_ref_descriptor",
+        "ui_ref_descriptor",
+        "UIActionResult",
+        "_rect_tuple",
+        "_element_name",
+        "_control_type",
+        "_automation_id",
+        "_is_visible",
+        "_is_enabled",
+        "_is_internal_automation_title",
+        "_is_assistant_window",
+        "_title_app_hint",
+        "_window_identity_tokens",
+        "_window_identity_score",
+        "_window_query_score",
+        "_window_by_title",
+        "_active_window",
+        "_compact_window",
+        "_control_value",
+        "_compact_control",
+        "_json",
+        "_native_visible_windows",
+        "_native_process_name",
+        "_native_window_candidates",
+        "_native_child_windows",
+        "_system_chrome_only",
+        "_probe_child_uia_fragments",
+        "_native_target_window",
+        "_uia_window_from_handle",
+        "_uia_window_from_native_with_retry",
+        "_native_compact_window",
+        "_native_only_inspection",
+        "list_windows",
+        "_nearest_text_label",
+        "_native_window_is_minimized",
+        "_bounded_descendants",
+        "_cua_role_type",
+        "_cua_snapshot_payload",
+        "_try_cua_inspection",
+        "inspect_active_window",
+        "_score_name",
+        "_rank_wrappers",
+        "_find_active_element",
+        "_snapshot_element",
+        "click_ui_element",
+        "activate_window",
+        "close_window",
+        "_is_selected_tab",
+        "close_tab",
+        "_editable_target",
+        "_paste_text_to_control",
+        "_type_text_into_focused_control",
+        "write_ui_element",
+        "type_text_active_window",
+        "press_key",
+        "callback",
+        "callback",
+        "callback",
+        "consume_wrappers",
+        "inside_content",
+        "visual_order",
+        "visible_top_tabs"
+      ],
+      "internal_imports": [
+        "cua_driver_bridge",
+        "tools"
+      ]
+    },
+    {
+      "path": "jarvis_agent/workspace_storage.py",
+      "sha256": "4392588f9afbb3839fcb023a2b2075796735aa0424f08f3d15a2d3c3a0b0b09e",
+      "bytes": 3916,
+      "symbols": [
+        "_default_root",
+        "WorkspaceArtifact",
+        "WorkspaceStorage",
+        "__init__",
+        "_validate_id",
+        "workspace_path",
+        "_target",
+        "ensure",
+        "write_text",
+        "read_text",
+        "list_files",
+        "reset"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "jarvis_agent/write_barrier.py",
+      "sha256": "81478972ad5ea79ba36936197fc0389a3faa56c1b391a5b69b03c3b1edd8580a",
+      "bytes": 2320,
+      "symbols": [
+        "ScopedWriteBarrier",
+        "__init__",
+        "begin_write",
+        "finish_write",
+        "snapshot",
+        "pending_through",
+        "wait_for_snapshot"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "requirements-browser.txt",
+      "sha256": "f843a37d1d1ca95ca061b581bc4bdf0407e1bf7273443a745a302696b4af8ca2",
+      "bytes": 72
+    },
+    {
+      "path": "requirements.txt",
+      "sha256": "2ed15563c3b1e4b629dc566580abbae5f7338974ea49b9ef9725f1802546c023",
+      "bytes": 188
+    },
+    {
+      "path": "run_jarvis.py",
+      "sha256": "f2a4c4f9517549681a18a5485836ed56e48f46dd5e2f0b40b6ce6b8f5a069bce",
+      "bytes": 646,
+      "symbols": [
+        "_configure_console_streams"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "run_voice.py",
+      "sha256": "a562981a3f4d471a54739b11e11c5461a30662573d76f212ab6eadd3a40136d5",
+      "bytes": 176,
+      "symbols": [],
+      "internal_imports": []
+    },
+    {
+      "path": "scripts/run_architecture_foundations_validation.ps1",
+      "sha256": "14c5857fe56680fc4a8a092398fe00300c51c2e9f1a6caf9d579715b08500b22",
+      "bytes": 3205
+    },
+    {
+      "path": "scripts/run_baseline_regression.ps1",
+      "sha256": "203de140d4dde31d48cfb6346baeb22f6abf9d331bd709cf86395c53af75770d",
+      "bytes": 2471
+    },
+    {
+      "path": "scripts/run_jarvis_cua.ps1",
+      "sha256": "a15827b52f2a5e2294a4403a137a8b9884ee3fb848ac3648d143e50c5ca6a462",
+      "bytes": 972
+    },
+    {
+      "path": "scripts/run_jarvis_fusion_v3.ps1",
+      "sha256": "d3f6583d566c02ac013847e4302863960c2b9d3b5f08e8dc59ed91cfb5b6b7ba",
+      "bytes": 4424
+    },
+    {
+      "path": "scripts/run_jarvis_hybrid.ps1",
+      "sha256": "71c0120922115ad90d4e10326ee598f6bc8351bd58f06922147e251dc47470fc",
+      "bytes": 825
+    },
+    {
+      "path": "scripts/run_jarvis_logged.ps1",
+      "sha256": "0ca77d3cd3ec38dfc418d2a16e54866449aeae2320a150176d9324219afc2685",
+      "bytes": 542
+    },
+    {
+      "path": "scripts/run_jarvis_perception.ps1",
+      "sha256": "c3ff1d2c325fbb2a70df6e5f35c76921b026420bd24141c9dd16bbc8ba15cd85",
+      "bytes": 2342
+    },
+    {
+      "path": "scripts/run_learning_diagnostics.ps1",
+      "sha256": "bf99f6023e94a5e414fa70afa6cfd3b01a60ca6412d0e22d9daae87a5bb05fdb",
+      "bytes": 2459
+    },
+    {
+      "path": "scripts/run_post_fix_validation.ps1",
+      "sha256": "a899c4f8ee587948d8a17d09cfdf667636f6136c4e4d3bb56c60780be2410863",
+      "bytes": 904
+    },
+    {
+      "path": "scripts/run_runtime_foundation_validation.ps1",
+      "sha256": "e3e2d7f6bffe8d7220e877819bf012c94b5343047fe42483dfb39d8d9d9429e1",
+      "bytes": 2100
+    },
+    {
+      "path": "scripts/run_vision_validation.ps1",
+      "sha256": "d1a9f957e7bf17d6b6aec1cdfbebd3d631eb01d46116e388a72442edb60716da",
+      "bytes": 2437
+    },
+    {
+      "path": "tests/test_agent_core.py",
+      "sha256": "66c25016883398724e923cfa8457d149427fd1a172eb3ade49bf66ca6cfbbbcc",
+      "bytes": 3566,
+      "symbols": [
+        "FakePlanner",
+        "AgentCoreTests",
+        "__init__",
+        "plan",
+        "test_direct_intent_becomes_a_mission",
+        "test_planner_can_create_multi_step_mission",
+        "test_clarification_keeps_objective_in_context",
+        "test_reset_session_clears_short_term_context"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_agent_knowledge.py",
+      "sha256": "f6194c94e2b37f8858319714a44e10a49b3890d6a251892cec3ffbe66c607587",
+      "bytes": 7386,
+      "symbols": [
+        "AgentKnowledgeStoreTests",
+        "setUp",
+        "tearDown",
+        "test_store_is_separate_and_persistent",
+        "test_skill_upsert_versions_and_merges",
+        "test_lesson_repeated_feedback_increases_evidence",
+        "test_app_profile_merges_observations",
+        "test_relevant_context_returns_matching_skill_lesson_and_app",
+        "test_record_run_keeps_structured_proof",
+        "test_export_redacts_common_secrets_and_user_path",
+        "test_clear_operational_knowledge_keeps_store_usable",
+        "test_export_is_valid_json"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_agent_runtime.py",
+      "sha256": "7841bda92d6e74aa5f84d31982012473ea32563eee94a8985c35a0619f73b49e",
+      "bytes": 147344,
+      "symbols": [
+        "FakeKnowledge",
+        "FakeTools",
+        "FakeOllamaAgent",
+        "FakeOpenAIAgent",
+        "FakeGroqAgent",
+        "AgentRuntimeTests",
+        "__init__",
+        "relevant_context",
+        "record_run",
+        "__init__",
+        "ollama_tools",
+        "openai_tools",
+        "requires_confirmation",
+        "execute",
+        "__init__",
+        "_post",
+        "__init__",
+        "_post",
+        "__init__",
+        "_response_from_dict",
+        "_chat",
+        "test_pseudo_tool_syntax_is_detected",
+        "test_groq_repairs_pseudo_tool_text_into_real_call",
+        "test_groq_skips_extra_inspection_when_write_self_verifies",
+        "test_groq_verifies_ui_after_write_before_concluding",
+        "test_groq_baseline_hides_new_learning_and_vision_tools",
+        "test_groq_repairs_write_goal_after_only_opening_application",
+        "test_groq_unverified_write_does_not_satisfy_write_goal",
+        "test_groq_repairs_write_goal_for_stt_ecrivain_variant",
+        "test_groq_blocks_window_close_when_user_requested_tab",
+        "test_groq_blocks_window_close_for_stt_anglais_variant",
+        "test_groq_blocked_close_triggers_dialog_inspection",
+        "test_groq_search_submission_reuses_current_ui_instead_of_reopening_site",
+        "test_groq_requires_reinspection_between_ui_mutations",
+        "test_groq_resumes_deferred_ui_action_after_fresh_inspection",
+        "test_compact_inspection_preserves_capability_refs",
+        "test_browser_compaction_prioritizes_content_before_navigation",
+        "test_groq_tool_result_immediately_follows_tool_call_in_vision_mode",
+        "test_groq_switches_to_visual_sensor_after_insufficient_inspection",
+        "test_groq_vision_mode_exposes_observation_but_not_visual_click",
+        "test_groq_visual_write_satisfies_write_goal_after_verification",
+        "test_groq_visual_click_requires_after_state_verification",
+        "test_verified_proof_requires_mutation_and_after_state",
+        "test_clear_operational_feedback_detector",
+        "test_groq_blocks_skill_learning_without_verified_proof",
+        "test_groq_allows_skill_learning_after_verified_ui_mutation",
+        "test_groq_blocks_feedback_lesson_without_user_correction",
+        "test_groq_injects_relevant_local_knowledge_ephemerally",
+        "test_groq_learning_checkpoint_saves_reusable_verified_workflow",
+        "test_groq_feedback_checkpoint_saves_generic_lesson",
+        "test_trusted_session_grounding_carries_opened_file_to_followup",
+        "test_reset_clears_trusted_session_grounding",
+        "test_groq_blocks_persistent_recall_for_current_session_question",
+        "test_persistent_recall_guard_ignores_prior_memory_write_request",
+        "test_persistent_recall_guard_ignores_prior_recall_question",
+        "test_groq_hides_persistent_memory_write_tool_on_ordinary_turn",
+        "test_groq_exposes_persistent_memory_write_tool_on_explicit_request",
+        "test_memory_permission_prompt_is_detected",
+        "test_groq_does_not_ask_to_persist_ordinary_conversation_fact",
+        "test_memory_write_requires_explicit_user_request",
+        "test_groq_blocks_unsolicited_persistent_memory_write",
+        "test_groq_allows_explicit_persistent_memory_write",
+        "test_conceptual_addition_does_not_require_ui_write",
+        "test_adding_text_still_requires_ui_write",
+        "test_compound_open_and_search_requires_site_search_completion",
+        "test_visible_search_url_satisfies_open_and_search_goal",
+        "test_insufficient_structured_inspection_requests_visual_fallback",
+        "test_insufficient_snapshot_skips_vision_when_write_target_is_available",
+        "test_action_promise_is_detected",
+        "test_unnecessary_followup_is_detected",
+        "test_english_drift_is_detected",
+        "test_hidden_thinking_is_never_spoken",
+        "test_regular_answer_is_preserved",
+        "test_ollama_native_loop_executes_multiple_tools_then_answers",
+        "test_ollama_conversation_context_survives_next_turn",
+        "test_openai_mcp_approval_can_resume_after_yes",
+        "test_cerebras_secondary_failover_matches_quota_and_service_errors",
+        "test_cerebras_provider_uses_gpt_oss_and_no_groq_browser_tool",
+        "test_groq_provider_uses_gpt_oss_chat_tools",
+        "test_groq_repairs_ms_football_turn_when_first_reply_has_no_tool",
+        "test_groq_leaves_msf_domain_after_clear_general_topic_switch",
+        "test_groq_keeps_msf_domain_for_video_followup",
+        "test_recent_msf_grounding_does_not_skip_new_followup_query",
+        "test_groq_hides_msf_tools_from_regular_turns",
+        "test_recent_project_name_matches_temporary_context",
+        "test_groq_keeps_project_context_across_fifteen_followups",
+        "test_groq_blocks_web_search_for_recent_conversation_project",
+        "test_groq_allows_explicit_web_search_for_recent_project_name",
+        "test_groq_blocks_visible_search_when_user_did_not_request_browser",
+        "test_groq_can_research_in_background_after_recoverable_failure",
+        "test_groq_semantic_reset_tool_clears_temporary_context",
+        "test_groq_keeps_conversation_history_locally",
+        "test_sensitive_local_function_waits_for_user_approval",
+        "test_result_selection_blocks_blind_enter_until_real_inspection",
+        "test_direct_local_browser_action_is_recorded_without_model_call",
+        "test_browser_selection_rule_requires_real_inspection_before_enter",
+        "test_openai_loop_returns_function_result_then_continues",
+        "VerifiedWriteTools",
+        "VerifiedRepairTools",
+        "EventuallyVerifiedTools",
+        "VerifiedRepairTools",
+        "VerifiedTabTools",
+        "VerifiedTabTools",
+        "BlockedCloseTools",
+        "InspectTools",
+        "PerceptionTools",
+        "VisualWriteTools",
+        "VisualTools",
+        "VerifiedTools",
+        "LearningTools",
+        "RecoveryTools",
+        "execute",
+        "execute",
+        "__init__",
+        "execute",
+        "execute",
+        "execute",
+        "execute",
+        "execute",
+        "execute",
+        "execute",
+        "execute",
+        "execute",
+        "execute",
+        "execute",
+        "execute"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_architecture_extensions.py",
+      "sha256": "6cc83fc9032b6a2ba43280129a384dd9461757e219d32f227519674f3211171a",
+      "bytes": 46422,
+      "symbols": [
+        "ArchitectureExtensionTests",
+        "test_existing_agent_knowledge_projects_into_user_scoped_kernel_memory",
+        "test_kernel_dispatcher_closes_scheduler_manager_response_loop",
+        "test_local_rpc_policy_is_loopback_only",
+        "test_model_catalog_describes_current_providers_without_routing",
+        "test_core_feedback_cannot_be_promoted_as_automatic_memory",
+        "test_user_preference_can_only_promote_after_evidence_and_validation",
+        "test_passive_kernel_stack_builds_without_touching_live_runtime",
+        "test_kernel_shadow_observes_live_turn_without_dispatching",
+        "test_kernel_shadow_resolves_shared_windows_tools_from_mission_context",
+        "test_kernel_shadow_resolves_shared_browser_tools_from_goal_context",
+        "test_kernel_shadow_keeps_recovered_agent_turn_completed",
+        "test_kernel_shadow_records_direct_fast_path_without_rerouting",
+        "test_semantic_mission_contract_keeps_entities_steps_and_evidence_separate",
+        "test_contextual_agent_router_general_behavior_matrix",
+        "test_contextual_agent_router_uses_continuity_and_marks_real_ambiguity",
+        "test_kernel_shadow_routes_ms_football_by_explicit_domain",
+        "test_kernel_shadow_marks_true_shared_tool_ambiguity_for_review",
+        "test_capability_token_cannot_authorize_undeclared_capability"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_assistant_v3.py",
+      "sha256": "69bfd6307ab68d8a3a1ded86e191fe11a489671c37075d50a52a251d5c7e9fef",
+      "bytes": 5292,
+      "symbols": [
+        "TextTurnInboxTests",
+        "AssistantV3FastPathTests",
+        "test_text_inbox_is_fifo_and_signals_pending_state",
+        "test_text_inbox_rejects_empty_messages",
+        "test_simple_youtube_open_uses_direct_path",
+        "test_simple_chrome_open_uses_direct_path",
+        "test_compound_youtube_search_uses_direct_site_search",
+        "test_close_tab_uses_direct_browser_primitive",
+        "test_browser_back_uses_direct_browser_primitive",
+        "test_ambiguous_search_after_desktop_app_stays_with_agent",
+        "test_explicit_web_search_ignores_desktop_surface_context",
+        "test_contextual_search_on_browser_surface_keeps_browser_fast_path",
+        "test_in_app_search_stays_with_agent",
+        "test_in_app_video_selection_stays_with_agent",
+        "test_compound_cursor_installation_stays_in_agent_until_continuation",
+        "test_installer_request_stays_with_agent",
+        "test_compound_command_stays_with_agent"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_background_web_research.py",
+      "sha256": "737839d3ada440cc8bb3338ff63e1e53561d07b9f16b91a97422169fb0f39bea",
+      "bytes": 3114,
+      "symbols": [
+        "_FakeHTTPResponse",
+        "BackgroundWebResearchTests",
+        "__init__",
+        "__enter__",
+        "__exit__",
+        "read",
+        "test_groq_research_is_server_side_and_returns_evidence",
+        "test_missing_provider_fails_without_opening_user_browser"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_brain.py",
+      "sha256": "d1cf71e7bd0f0030dc4bbe27e865afb383df86bfbf665ec08b1e65adb53fddb6",
+      "bytes": 5227,
+      "symbols": [
+        "BrainSafetyTests",
+        "test_general_question_is_not_a_pc_action",
+        "test_ai_can_request_search_when_user_explicitly_asks",
+        "test_ai_tool_is_blocked_without_explicit_action_request",
+        "test_ai_cannot_open_unapproved_application",
+        "test_ai_cannot_turn_downloads_request_into_cursor",
+        "test_ai_can_open_downloads_when_grounded",
+        "test_ai_time_tool_accepts_joined_stt_variant",
+        "test_youtube_name_without_open_requires_confirmation",
+        "test_wrong_app_for_request_is_ungrounded",
+        "test_english_open_youtube_is_explicit",
+        "test_arabic_open_youtube_is_explicit",
+        "test_vague_named_app_target_is_rejected",
+        "test_ai_cannot_use_non_http_url"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_browser_dom_contract.py",
+      "sha256": "ca30f113b1a5d6567f5c3c093ee63eafab9701fe84e716072a0b013d8507a8b7",
+      "bytes": 1549,
+      "symbols": [
+        "BrowserDomContractTests",
+        "test_invalid_cdp_endpoint_is_rejected",
+        "test_browser_tools_hidden_when_disabled",
+        "test_browser_tools_exposed_when_enabled"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_capabilities.py",
+      "sha256": "c3e1094c26f2bd041b9857b28f0aa0c3c9a1362474a67d13087949a06e21dfe3",
+      "bytes": 1401,
+      "symbols": [
+        "CapabilityTests",
+        "test_youtube_confirmation_is_precise",
+        "test_vlc_is_left_to_generic_app_discovery",
+        "test_detect_whatsapp_missing_capability",
+        "test_detect_weather_missing_capability",
+        "test_confirmation_yes_no"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_connectors.py",
+      "sha256": "7b9f8f27d633f4f89f9f8e6913cc65a77d55cf3e06b8c5eaedd14927bff5a89f",
+      "bytes": 2857,
+      "symbols": [
+        "ConnectorRegistryTests",
+        "test_remote_mcp_tool_reads_token_from_environment",
+        "test_authenticated_connector_is_hidden_when_token_missing",
+        "test_registry_loads_local_json_without_inline_secret",
+        "test_plain_http_remote_server_is_rejected"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_cua_driver_bridge.py",
+      "sha256": "203b7eedc9298c134b5fa2d6a5f4a4dfcb40447af569377472d5c69777466f32",
+      "bytes": 6731,
+      "symbols": [
+        "CuaDriverBridgeTests",
+        "test_launch_application_uses_driver_native_catalog",
+        "test_launch_application_fronts_returned_window_when_supported",
+        "test_launch_application_fails_closed_without_confirmed_pid",
+        "test_text_field_with_set_value_is_writable",
+        "test_button_is_actionable",
+        "test_replace_prefers_set_value_when_advertised",
+        "test_append_uses_observed_value_with_set_value",
+        "test_transport_success_without_effect_is_not_action_success",
+        "test_background_refusal_preserves_escalation_evidence"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_dialog_capabilities.py",
+      "sha256": "228f8d04ee6d1f2818d9d19350e826ff5123d3ea87ceb6aeebbfad7aa954c748",
+      "bytes": 3635,
+      "symbols": [
+        "_FakeControl",
+        "_FakeDialogWindow",
+        "DialogCapabilityTests",
+        "__init__",
+        "window_text",
+        "rectangle",
+        "is_visible",
+        "is_enabled",
+        "get_value",
+        "__init__",
+        "window_text",
+        "rectangle",
+        "descendants",
+        "test_dialog_snapshot_keeps_lower_writable_field_and_save_button"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_kernel_foundations.py",
+      "sha256": "dd930dd7501fc584181ca141da8287cbae5093f1fe3c40fd0298656bf68a1976",
+      "bytes": 81334,
+      "symbols": [
+        "KernelFoundationTests",
+        "test_event_journal_records_ordered_trace_and_redacts_secrets",
+        "test_write_barrier_waits_only_for_snapshot_writes",
+        "test_agent_registry_enforces_declared_tool_boundaries",
+        "test_connector_registry_prefers_api_then_mcp_then_ui",
+        "test_connector_gateway_enforces_confirmation_and_backend_priority",
+        "test_dev_supervisor_candidate_stays_pending_until_validation",
+        "test_regression_registry_selects_tests_by_changed_path",
+        "test_mission_context_store_round_trips_and_detects_conflict",
+        "test_knowledge_policy_is_fail_closed_by_user_and_agent",
+        "test_knowledge_broker_applies_scope_isolation_and_write_barrier",
+        "test_scheduler_prioritizes_then_preserves_fifo",
+        "test_scheduler_enforces_per_agent_concurrency_limit",
+        "test_approval_manager_is_persistent_and_single_use",
+        "test_kernel_policy_enforces_agent_capability_and_tool_permissions",
+        "test_replay_runner_is_backend_neutral_and_evaluates_final_state",
+        "test_context_broker_keeps_required_mission_and_respects_budget",
+        "test_model_router_uses_telemetry_and_circuit_breaker_without_wiring_live",
+        "test_plugin_manifest_rejects_unsafe_high_risk_defaults",
+        "test_event_bus_isolates_failing_observers",
+        "test_correction_candidate_requires_validation_before_promotion",
+        "test_passive_kernel_requires_approval_then_queues_exact_request",
+        "test_task_graph_separates_dependencies_from_resource_scheduler",
+        "test_supervisor_planner_selects_regressions_and_keeps_user_scope",
+        "test_component_registry_finds_smallest_known_code_surfaces",
+        "test_agent_factory_requires_trusted_builder_and_tracks_children",
+        "test_tool_gateway_denies_cross_agent_tool_use",
+        "test_execution_manager_registry_dispatches_by_syscall_kind",
+        "test_persistent_scoped_knowledge_backend_keeps_identity_metadata",
+        "test_plugin_catalog_validates_metadata_without_importing_entrypoint",
+        "test_mcp_replay_adapter_translates_backend_neutrally",
+        "test_mission_orchestrator_dispatches_dependencies_and_persists_completion",
+        "test_task_graph_store_restores_completed_and_pending_dependencies",
+        "test_kernel_request_store_restores_only_safe_queued_requests",
+        "test_kernel_request_store_tracks_live_passive_kernel_lifecycle",
+        "test_scheduler_enforces_resource_class_limit_independently_of_agent",
+        "test_incident_bundle_collects_feedback_tools_and_code_surface",
+        "test_context_injector_respects_user_partition_agent_scopes_and_budget",
+        "test_passive_llm_manager_falls_back_after_adapter_failure",
+        "test_orchestrator_restores_queued_request_mapping_after_restart",
+        "test_plugin_permission_policy_is_fail_closed",
+        "test_mcp_connector_adapter_uses_explicit_capability_mapping_only",
+        "test_windows_credential_provider_reads_only_exact_target",
+        "test_storage_manager_is_sandboxed_to_workspace_root",
+        "test_regression_runner_refuses_unknown_test_id_without_subprocess",
+        "test_test_execution_manager_uses_allowlisted_runner_contract",
+        "test_replay_execution_manager_translates_kernel_payload_to_plan",
+        "test_supervisor_validation_gate_requires_all_evidence_before_user_validation",
+        "test_structured_tracing_runtime_records_tool_args_without_reasoning",
+        "test_kernel_restores_pending_approval_mapping_after_restart",
+        "test_kernel_policy_rejects_agent_supplied_internal_approval_marker",
+        "test_connector_execution_trusts_only_kernel_approval_marker",
+        "test_memory_execution_manager_enforces_scoped_writes_and_blocks_core",
+        "test_model_telemetry_summarizes_provider_health_passively",
+        "complete",
+        "FakeAdapter",
+        "FakeSandbox",
+        "good",
+        "bad",
+        "FakeAgent",
+        "FakeTransport",
+        "Adapter",
+        "Transport",
+        "FakeWin32Cred",
+        "FakeRunner",
+        "FakeReplayRunner",
+        "Action",
+        "Tools",
+        "Result",
+        "Runtime",
+        "FakeAdapter",
+        "execute",
+        "__init__",
+        "reset",
+        "start_recording",
+        "execute",
+        "observe",
+        "evaluate",
+        "stop_recording",
+        "run",
+        "__init__",
+        "call",
+        "__init__",
+        "generate",
+        "__init__",
+        "call_tool",
+        "CredRead",
+        "run_many",
+        "__init__",
+        "run",
+        "__init__",
+        "execute",
+        "__init__",
+        "reset",
+        "warm_up",
+        "run",
+        "execute"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_language.py",
+      "sha256": "daf42da48547ca2100e3255e3ac2118222c692627cbcdb929edcd298770a3a73",
+      "bytes": 1264,
+      "symbols": [
+        "LanguageTests",
+        "test_normalize_supported_languages",
+        "test_tool_success_english",
+        "test_tool_success_arabic",
+        "test_search_arabic"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_memory.py",
+      "sha256": "627283f5e2aca69ba64f04509961bd001c4eeb248a7295eb93273410efb6eab4",
+      "bytes": 2049,
+      "symbols": [
+        "LocalMemoryTests",
+        "test_remember_and_recall",
+        "test_multiword_query_requires_all_significant_terms",
+        "test_recall_ignores_common_question_words",
+        "test_unknown_memory_returns_empty"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_mission.py",
+      "sha256": "2d4dcf97662c898db8f644bde33adbd9da7611cbb88858c717b571d5a59b713f",
+      "bytes": 2528,
+      "symbols": [
+        "MissionEngineTests",
+        "setUp",
+        "test_multi_step_mission_runs_in_order",
+        "test_failure_stops_remaining_steps",
+        "test_planner_app_open_vlc_is_canonicalized"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_native_tools.py",
+      "sha256": "ff537cc9b40d224f7710b8d04de3688bb429b80271ab4d13321c9a83e6c36bdc",
+      "bytes": 28977,
+      "symbols": [
+        "NativeToolRegistryTests",
+        "setUp",
+        "tearDown",
+        "test_open_application_reuses_only_previously_observed_window",
+        "test_session_app_identity_reuses_localized_observed_window_with_learning_off",
+        "test_open_application_new_instance_bypasses_observed_window_reuse",
+        "test_generic_app_prefers_cua_native_launch_when_available",
+        "test_unknown_named_app_uses_generic_discovery",
+        "test_learned_app_profile_is_reused_before_rescanning_windows",
+        "test_known_app_failure_falls_back_to_generic_discovery",
+        "test_notepad_alias_uses_known_app_path",
+        "test_open_file_uses_generic_file_discovery",
+        "test_executable_name_is_not_fuzzy_opened_as_application",
+        "test_named_folder_keeps_parent_scope",
+        "test_vague_application_is_blocked",
+        "test_registry_exposes_generic_file_open_and_write_modes",
+        "test_registry_exposes_operational_knowledge_tools",
+        "test_research_web_never_opens_visible_browser",
+        "test_open_web_search_is_the_explicit_visible_browser_primitive",
+        "test_close_tab_routes_separately_from_close_window",
+        "test_web_open_disambiguates_whatsapp_web_from_desktop",
+        "test_opening_desktop_app_clears_web_surface_hint",
+        "test_observe_screen_routes_to_local_visual_sensor",
+        "test_click_visual_target_routes_to_local_visual_action",
+        "test_write_visual_target_routes_to_local_visual_action",
+        "test_inspection_retries_recent_app_identity_after_localized_title_miss",
+        "test_stale_write_auto_reinspects_when_writable_target_is_unambiguous",
+        "test_click_attaches_fresh_post_observation_without_model_round",
+        "test_inspect_interface_keeps_structured_path_when_usable",
+        "test_inspect_interface_escalates_to_vision_once_when_structure_is_opaque",
+        "test_verified_skill_tool_writes_to_injected_local_store",
+        "test_feedback_lesson_tool_writes_to_injected_local_store",
+        "test_search_agent_knowledge_returns_matching_context",
+        "test_successful_app_open_updates_local_app_profile",
+        "test_tool_result_is_json_for_model_observation"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_perception_router.py",
+      "sha256": "be5f70240bd63fea9035c2db631f5f77f0ae47458a6ac820176b010c0267a421",
+      "bytes": 5444,
+      "symbols": [
+        "HybridPerceptionTests",
+        "test_usable_uia_does_not_trigger_vision",
+        "test_insufficient_uia_uses_local_vision",
+        "test_baseline_or_disabled_vision_preserves_uia_only",
+        "test_empty_structured_snapshot_requests_visual_fallback"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_recognition_retry.py",
+      "sha256": "65a40a6562c75d531fa3222684d2c237efa959a4b797261f0f2e688c6d6eaec1",
+      "bytes": 1500,
+      "symbols": [
+        "FakeSTT",
+        "RecognitionRetryTests",
+        "__init__",
+        "transcribe",
+        "test_weak_fixed_french_retries_auto_and_prefers_grounded_action"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_registry.py",
+      "sha256": "77f0c3d4ef0a919143b2d40a7e5ad5798df6c48b35176698c8a866db112294bd",
+      "bytes": 1333,
+      "symbols": [
+        "ToolRegistryTests",
+        "setUp",
+        "test_unknown_app_becomes_generic_app_discovery",
+        "test_vague_app_target_is_rejected",
+        "test_named_folder_keeps_parent_scope",
+        "test_internal_folder_prompt_is_registered"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_screen_vision.py",
+      "sha256": "7301c84da55d65724f12c86ee36c8fb34b05cd6d5f7ba1808c7a04d23b2b2e25",
+      "bytes": 13489,
+      "symbols": [
+        "_FakeHTTPResponse",
+        "_FakeClipboard",
+        "ScreenVisionTests",
+        "__init__",
+        "__enter__",
+        "__exit__",
+        "read",
+        "OpenClipboard",
+        "CloseClipboard",
+        "IsClipboardFormatAvailable",
+        "GetClipboardData",
+        "EmptyClipboard",
+        "SetClipboardText",
+        "test_remote_vision_endpoint_is_blocked_in_local_only_mode",
+        "test_local_vision_returns_structured_observation",
+        "test_compact_observation_uses_smaller_capture_and_output_budget",
+        "test_visual_target_localization_returns_normalized_box",
+        "test_visual_click_maps_normalized_box_to_window_coordinates",
+        "test_visual_click_rejects_low_confidence_target",
+        "test_visual_write_targets_field_then_pastes_text",
+        "test_visual_observation_fails_closed_on_non_json_response",
+        "test_capture_failure_is_returned_as_tool_failure",
+        "test_capture_resize_uses_configured_width_when_optional_width_is_none",
+        "FakeImage",
+        "__init__",
+        "convert",
+        "resize",
+        "save"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_stt.py",
+      "sha256": "7b6aea5111b55f8f8f153ead72b0d01dd63f8cd011c3e3e6ffd147d4dccc6e50",
+      "bytes": 978,
+      "symbols": [
+        "STTGuardTests",
+        "test_grounding_prompt_includes_installed_app_names",
+        "test_punctuation_only_transcript_is_rejected",
+        "test_normal_short_confirmation_is_not_rejected"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_stt_filters.py",
+      "sha256": "1fb9afe5584ad0f8688b6da33ca94500f381e585d19e520fafc1f8439147141b",
+      "bytes": 625,
+      "symbols": [
+        "STTFilterTests",
+        "test_amara_subtitle_hallucination_is_rejected",
+        "test_normal_sentence_is_not_hallucination"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_text_input_mode_v3.py",
+      "sha256": "03bc06856935fe024a73464785f97dd8403f1773f10f789c97091c0f956101fe",
+      "bytes": 3069,
+      "symbols": [
+        "TextInputModeV3Tests",
+        "setUp",
+        "test_typed_turn_keeps_text_provenance_and_spoken_reply",
+        "test_text_mode_never_starts_microphone_pipeline",
+        "finish"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_tools.py",
+      "sha256": "c016eae8d97ba0b5fdfb00f329b14b216abb90cc293737803906c2159612a009",
+      "bytes": 15169,
+      "symbols": [
+        "ToolRouterTests",
+        "test_open_youtube",
+        "test_open_notepad_routes_to_known_app",
+        "test_open_vscode",
+        "test_time",
+        "test_time_variant",
+        "test_search_web_suffix",
+        "test_search_web_prefix",
+        "test_compound_youtube_search_routes_as_one_deterministic_site_search",
+        "test_close_named_tab_routes_as_browser_primitive",
+        "test_close_tab_reactivates_youtube_before_using_historical_primitive",
+        "test_browser_back_routes_as_browser_primitive",
+        "test_youtube_context_builds_youtube_search_url",
+        "test_plain_search_reuses_last_youtube_context",
+        "test_explicit_internet_search_ignores_youtube_context",
+        "test_search_without_subject_requests_followup",
+        "test_open_snipping_tool",
+        "test_sleep_session",
+        "test_time_joined_stt_variant",
+        "test_downloads_misheard_as_chargements",
+        "test_downloads_misheard_oufre",
+        "test_a_plus_sleeps_session",
+        "test_close_jarvis",
+        "test_misheard_auvre_youtube",
+        "test_named_folder_directly",
+        "test_vague_folder_request_asks_followup",
+        "test_nested_named_folder",
+        "test_named_file_finds_recent_downloaded_installer",
+        "test_start_apps_discovers_packaged_app_by_display_name",
+        "test_named_app_launches_registered_windows_app",
+        "test_named_app_does_not_match_short_exe_substring",
+        "test_named_app_rejects_short_executable_contained_in_long_unknown_name",
+        "test_named_app_discovers_matching_executable",
+        "test_cursor_falls_back_to_dynamic_windows_discovery",
+        "test_notepad_uses_system_candidates",
+        "test_chrome_last_used_profile_is_discovered",
+        "test_jarvis_chrome_launch_enables_renderer_accessibility",
+        "test_unknown_is_safe",
+        "runner"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_ui_logging.py",
+      "sha256": "87b7fb12b770f72dbfda95bb16e32a197720d29f58640346266444c6b8011092",
+      "bytes": 2272,
+      "symbols": [
+        "_CP1252Stream",
+        "SafeConsoleLogTests",
+        "__init__",
+        "write",
+        "flush",
+        "test_unicode_log_does_not_crash_cp1252_console",
+        "test_visual_route_maps_tools_without_changing_tool_behavior",
+        "test_unknown_tool_stays_in_reasoning_visual_node",
+        "test_visual_nodes_have_unique_keys",
+        "test_compact_window_is_materially_smaller_than_normal_layout",
+        "test_text_conversation_is_available_visual_node"
+      ],
+      "internal_imports": []
+    },
+    {
+      "path": "tests/test_windows_perception.py",
+      "sha256": "7762fa7463bf9f5902acaed9e6a3627d30b5028ddd8bb765f4e6260ab0591ec2",
+      "bytes": 44015,
+      "symbols": [
+        "_FakeRect",
+        "_FakeWindow",
+        "_FakeBoundedWindow",
+        "_FakeLegacyDescWindow",
+        "_FakeControl",
+        "_FakeSemanticWindow",
+        "_FakeTab",
+        "_FakeTabWindow",
+        "_FakeComboBox",
+        "_FakeText",
+        "_FakeDocument",
+        "_FakeNoValuePatternDocument",
+        "_FakeClipboard",
+        "WindowsPerceptionTests",
+        "window_text",
+        "rectangle",
+        "descendants",
+        "__init__",
+        "iter_descendants",
+        "__init__",
+        "descendants",
+        "__init__",
+        "window_text",
+        "rectangle",
+        "is_visible",
+        "is_enabled",
+        "__init__",
+        "__init__",
+        "window_text",
+        "is_visible",
+        "is_selected",
+        "click_input",
+        "rectangle",
+        "__init__",
+        "window_text",
+        "descendants",
+        "rectangle",
+        "__init__",
+        "window_text",
+        "rectangle",
+        "is_visible",
+        "is_enabled",
+        "descendants",
+        "set_focus",
+        "click_input",
+        "type_keys",
+        "window_text",
+        "rectangle",
+        "is_visible",
+        "is_enabled",
+        "descendants",
+        "set_focus",
+        "click_input",
+        "type_keys",
+        "__init__",
+        "window_text",
+        "get_value",
+        "rectangle",
+        "is_visible",
+        "is_enabled",
+        "descendants",
+        "set_focus",
+        "set_edit_text",
+        "iface_value",
+        "window_text",
+        "legacy_properties",
+        "OpenClipboard",
+        "CloseClipboard",
+        "IsClipboardFormatAvailable",
+        "GetClipboardData",
+        "EmptyClipboard",
+        "SetClipboardText",
+        "setUp",
+        "tearDown",
+        "test_window_identity_matches_localized_setup_titles",
+        "test_close_tab_ignores_page_internal_tabitems",
+        "test_close_named_tab_recovers_browser_when_jarvis_is_foreground",
+        "test_close_named_tab_does_not_use_close_window",
+        "test_focused_window_typing_fallback_pastes_text",
+        "test_focused_typing_can_preserve_existing_child_focus",
+        "test_control_append_pastes_exact_unicode_and_restores_clipboard",
+        "test_uia_native_retry_recovers_after_transient_winerror",
+        "test_control_value_tolerates_missing_uia_value_pattern",
+        "test_bounded_descendants_stops_before_full_tree",
+        "test_bounded_descendants_legacy_fallback_avoids_cache_keyword",
+        "test_system_chrome_only_detects_shallow_titlebar_snapshot",
+        "test_system_chrome_only_rejects_real_content_control",
+        "test_child_hwnd_fragment_probe_merges_structured_uia_roots",
+        "test_inspection_recovers_content_from_child_uia_fragment",
+        "test_named_inspection_returns_fast_native_snapshot_when_minimized",
+        "test_named_inspection_prefers_stable_native_handle",
+        "test_inspection_uses_cua_when_no_active_uia_window",
+        "test_inspection_recovers_from_uia_enumeration_failure",
+        "test_inspection_returns_native_window_when_uia_attach_fails",
+        "test_title_app_hint_survives_changing_browser_page",
+        "test_write_ui_element_pastes_into_combobox_fallback",
+        "test_write_ui_element_rejects_plain_text_label",
+        "test_web_window_query_does_not_collapse_to_desktop_app",
+        "test_window_score_ignores_hyphen_typography",
+        "test_native_target_ignores_internal_cua_overlay",
+        "test_press_key_allows_safe_browser_back_navigation",
+        "test_press_key_allows_safe_save_shortcut",
+        "test_native_target_matches_localized_title_by_process_identity",
+        "test_append_fallback_pastes_exact_unicode_text",
+        "test_append_write_preserves_existing_document_text",
+        "test_title_app_hint_handles_windows_en_dash",
+        "test_exact_ui_label_scores_highest",
+        "test_partial_ui_label_is_usable",
+        "test_unrelated_ui_label_scores_low",
+        "test_native_registry_exposes_perception_tools",
+        "test_ui_tools_accept_snapshot_refs_and_named_inspection",
+        "test_click_ref_expires_after_mutating_action",
+        "test_click_rejects_unbound_short_ref",
+        "test_click_rejects_ref_from_different_observation",
+        "test_cua_chrome_only_snapshot_recommends_vision",
+        "test_cua_content_snapshot_keeps_structured_path_usable",
+        "test_cua_fallback_projects_fresh_grounded_refs",
+        "test_cua_click_uses_snapshot_token_and_invalidates_ref",
+        "test_cua_write_preserves_background_first_policy",
+        "test_inspection_result_reaches_model",
+        "Clickable",
+        "Clickable",
+        "Clickable",
+        "window_text",
+        "set_focus",
+        "invoke",
+        "window_text",
+        "window_text"
+      ],
+      "internal_imports": []
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "evidence_kind": "real_windows_ocr_on_fixture_not_desktop_acceptance",
+  "runs": [
+    {
+      "wall_seconds": 0.32148189999998067,
+      "elements": [
+        {
+          "text": "Generic Person - Search - Message",
+          "bbox": [
+            32.0,
+            46.0,
+            569.0,
+            78.0
+          ],
+          "type": "text",
+          "confidence": 0.75,
+          "confidence_source": "heuristic_no_native_ocr_score",
+          "focused": false
+        }
+      ],
+      "seconds": 0.17374539999991612,
+      "provider": "windows_ocr"
+    },
+    {
+      "wall_seconds": 0.2622605999999905,
+      "elements": [
+        {
+          "text": "Generic Person - Search - Message",
+          "bbox": [
+            32.0,
+            46.0,
+            569.0,
+            78.0
+          ],
+          "type": "text",
+          "confidence": 0.75,
+          "confidence_source": "heuristic_no_native_ocr_score",
+          "focused": false
+        }
+      ],
+      "seconds": 0.11993749999965075,
+      "provider": "windows_ocr"
+    },
+    {
+      "wall_seconds": 0.2655446999997366,
+      "elements": [
+        {
+          "text": "Generic Person - Search - Message",
+          "bbox": [
+            32.0,
+            46.0,
+            569.0,
+            78.0
+          ],
+          "type": "text",
+          "confidence": 0.75,
+          "confidence_source": "heuristic_no_native_ocr_score",
+          "focused": false
+        }
+      ],
+      "seconds": 0.12191699999993943,
+      "provider": "windows_ocr"
+    },
+    {
+      "wall_seconds": 0.2666380000000572,
+      "elements": [
+        {
+          "text": "Generic Person - Search - Message",
+          "bbox": [
+            32.0,
+            46.0,
+            569.0,
+            78.0
+          ],
+          "type": "text",
+          "confidence": 0.75,
+          "confidence_source": "heuristic_no_native_ocr_score",
+          "focused": false
+        }
+      ],
+      "seconds": 0.1197199999996883,
+      "provider": "windows_ocr"
+    },
+    {
+      "wall_seconds": 0.2702527999999802,
+      "elements": [
+        {
+          "text": "Generic Person - Search - Message",
+          "bbox": [
+            32.0,
+            46.0,
+            569.0,
+            78.0
+          ],
+          "type": "text",
+          "confidence": 0.75,
+          "confidence_source": "heuristic_no_native_ocr_score",
+          "focused": false
+        }
+      ],
+      "seconds": 0.12106099999982689,
+      "provider": "windows_ocr"
+    }
+  ],
+  "max_seconds": 0.32148189999998067
+}

@@ -1,0 +1,269 @@
+"""Opt-in tool adapter: preserve the checkpoint registry/installer engine.
+
+Browser missions cannot enter any Windows keyboard/mouse fallback. Page data
+cannot set the mission scope; only user input and successful local actions can.
+"""
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import asdict
+
+
+def enabled(name):
+    return os.getenv(name, "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_BROWSER_PROPS = {
+    "tab_id": {"type": "integer"}, "url": {"type": "string"},
+    "ref": {"type": "string"}, "text": {"type": "string"},
+    "type": {"type": "string"}, "exact": {"type": "boolean"},
+    "mode": {"type": "string", "enum": ["replace", "append"]},
+    "key": {"type": "string"}, "title": {"type": "string"},
+    "download_id": {"type": "integer"},
+}
+_BROWSER_FIELDS = {
+    "list_tabs": ([], []), "get_active_tab": ([], []),
+    "activate_tab": (["tab_id"], ["tab_id"]), "navigate": (["url", "tab_id"], ["url"]),
+    "observe_dom": (["tab_id"], ["tab_id"]),
+    "find": (["tab_id", "text", "type", "exact"], ["tab_id"]),
+    "click": (["tab_id", "ref"], ["tab_id", "ref"]),
+    "write": (["tab_id", "ref", "text", "mode"], ["tab_id", "ref", "text"]),
+    "press": (["tab_id", "ref", "key"], ["tab_id", "ref", "key"]),
+    "back": (["tab_id"], ["tab_id"]), "forward": (["tab_id"], ["tab_id"]),
+    "close_tab": (["tab_id"], ["tab_id"]), "download": (["url"], ["url"]),
+    "verify": (["tab_id", "text", "url", "title", "download_id"], []),
+}
+_OS_MUTATIONS = {"press_key", "type_text_active_window", "write_ui_element", "click_ui_element",
+                 "write_visual_target", "click_visual_target", "close_window", "close_tab",
+                 "computer_click", "computer_write", "computer_press", "computer_shortcut"}
+
+
+class FoundationToolAdapter:
+    def __init__(self, delegate, *, browser=None, computer=None, memory=None):
+        self.delegate = delegate
+        self.browser, self.computer, self.memory = browser, computer, memory
+        self.browser_mode = False
+        self.current_user_text = ""
+        self.pending_verification = set()
+        self.uncertain_scopes = set()
+
+    def __getattr__(self, name):
+        return getattr(self.delegate, name)
+
+    def begin_turn(self, user_text):
+        import re
+        self.current_user_text = user_text
+        if not self.browser:
+            return
+        from .tools import route
+        intent = route(user_text)
+        if intent.name.startswith("browser.") or (intent.name == "app.open" and intent.args.get("app") == "chrome"):
+            self.browser_mode = True
+            return
+        if intent.name in {"app.open", "app.open_named"}:
+            self.browser_mode = False
+            return
+        # Missing context errs toward blocking OS input. Scope remains browser
+        # through continuation turns until an explicit other-app request.
+        if re.search(r"https?://|\b(?:chrome|browser|navigateur|onglet|tab|site|web)\b", user_text, re.I):
+            self.browser_mode = True
+        elif re.search(r"\b(?:ouvre|ouvrir|open|inspecte|inspect)\b.*\b(?:application|app|exe|installateur|installer|fenetre|window)\b", user_text, re.I):
+            self.browser_mode = False
+
+    def ollama_tools(self):
+        tools = self.delegate.ollama_tools()
+        if self.browser:
+            legacy = {"list_browser_pages", "inspect_browser_page", "activate_browser_page",
+                      "write_browser_element", "click_browser_element", "press_browser_element",
+                      "scroll_browser_element", "open_web_search", "close_tab"}
+            tools = [t for t in tools if t["function"]["name"] not in legacy and
+                     not (self.browser_mode and t["function"]["name"] in _OS_MUTATIONS)]
+            for op, (fields, required) in _BROWSER_FIELDS.items():
+                tools.append(self.delegate._ollama("browser_" + op,
+                    "Primitive générique dans le vrai profil Chrome. tab_id/ref doivent provenir d'une observation. "
+                    "Après click/press/navigation, utilisez browser_verify avec une postcondition explicite.",
+                    {field: _BROWSER_PROPS[field] for field in fields}, required))
+        if self.computer:
+            fields = {"window_id": {"type": "string"}, "ref": {"type": "string"},
+                      "text": {"type": "string"}, "type": {"type": "string"},
+                      "key": {"type": "string"}, "exact": {"type": "boolean"},
+                      "expected": {"type": "object"}, "condition": {"type": "object"}}
+            fields["context"] = {"type":"object"}
+            for op, names, required in (
+                ("observe", ["window_id"], ["window_id"]),
+                ("find", ["text", "type", "exact"], []),
+                ("click", ["ref", "expected"], ["ref"]),
+                ("write", ["ref", "text", "expected", "context"], ["ref", "text"]),
+                ("press", ["ref", "key", "expected", "context"], ["ref", "key"]),
+                ("shortcut", ["window_id", "key"], ["window_id", "key"]),
+                ("verify", ["window_id", "condition"], ["window_id", "condition"])):
+                if self.browser_mode and "computer_" + op in _OS_MUTATIONS:
+                    continue
+                tools.append(self.delegate._ollama("computer_" + op,
+                    "Grounding générique UIA/OCR local. Références opaques obligatoires. "
+                    "Aucune affirmation de réussite sans postcondition vérifiée.",
+                    {field: fields[field] for field in names}, required))
+        return tools
+
+    def openai_tools(self):
+        return [{"type": "function", "name": t["function"]["name"],
+                 "description": t["function"]["description"],
+                 "parameters": t["function"]["parameters"], "strict": False}
+                for t in self.ollama_tools()]
+
+    def requires_confirmation(self, name):
+        if name.startswith(("browser_", "computer_")):
+            return False
+        return self.delegate.requires_confirmation(name)
+
+    def execute(self, name, arguments, *, approved=False):
+        from .native_tools import AgentActionResult
+        args = dict(arguments or {})
+        try:
+            if name == "open_url" or (name.startswith("browser_") and name[8:] in {"navigate", "click", "write", "press", "back", "forward", "close_tab", "download"}):
+                if ("browser", args.get("tab_id")) in self.uncertain_scopes or ("browser", None) in self.uncertain_scopes:
+                    raise RuntimeError("unknown_action_requires_verification_before_another_mutation")
+            if name.startswith("computer_") and name[9:] in {"click", "write", "press", "shortcut"} and self.computer:
+                window = (self.computer._observation or {}).get("window", {})
+                if ("computer", args.get("window_id", window.get("window_id"))) in self.uncertain_scopes:
+                    raise RuntimeError("unknown_action_requires_verification_before_another_mutation")
+            if name == "save_verified_skill" and self.pending_verification:
+                raise RuntimeError("core_actions_still_require_verification")
+            if self.browser and self.browser_mode and name in _OS_MUTATIONS:
+                raise RuntimeError("browser_mission_requires_tab_scoped_primitives")
+            if self.browser and name == "open_url":
+                payload = self.browser.navigate(args.get("url", ""))
+                self.browser_mode = True
+            elif self.browser and name == "open_application" and str(args.get("name", "")).casefold() in {
+                    "chrome", "google chrome", "browser", "navigateur"}:
+                active = self.browser.get_active_tab()
+                payload = self.browser.activate_tab(active["tab_id"])
+                self.browser_mode = True
+            elif name.startswith("browser_") and self.browser:
+                payload = self.browser.call(name[8:], **args)
+                self.browser_mode = True
+            elif self.browser and name in {"open_web_search", "close_tab"}:
+                raise RuntimeError("use_generic_browser_primitives_with_observed_tab_id")
+            elif name == "remember_information" and self.memory:
+                from .memory_router import MemoryRouter
+                if MemoryRouter().decide(self.current_user_text).kind != "write":
+                    raise RuntimeError("persistent_write_requires_explicit_user_request")
+                item = self.memory.remember(str(args.get("content", "")), tags=str(args.get("tags", "")))
+                return AgentActionResult(name=name, success=True, message="Information mémorisée localement.",
+                                         detail=f"memory_id={item.id}")
+            elif name == "recall_information" and self.memory:
+                from .memory_retrieval import search
+                payload = [asdict(item) for item in search(self.memory, str(args.get("query", "")))]
+            elif name.startswith("computer_") and self.computer:
+                op = name[9:]
+                if op == "observe":
+                    payload = self.computer.observe(args["window_id"])
+                elif op == "find":
+                    payload = self.computer.find(**args)
+                elif op == "verify":
+                    observation = self.computer.observe(args["window_id"])
+                    payload = {"verified": self.computer.verify(args["condition"], observation=observation),
+                               "post_observation": observation}
+                elif op == "shortcut":
+                    payload = self.computer.shortcut(args["window_id"],args["key"])
+                else:
+                    ref = args.pop("ref")
+                    payload = self.computer.act(ref, op, **args)
+            else:
+                if name == "open_application" and self.browser:
+                    if self.browser_mode:
+                        from .tools import route
+                        if route(self.current_user_text).name.startswith("browser."):
+                            raise RuntimeError("browser_mission_requires_browser_navigate")
+                    self.browser_mode = False
+                return self.delegate.execute(name, arguments, approved=approved)
+            if isinstance(payload,dict):
+                scope = ("browser", (payload.get("tab") or {}).get("tab_id",args.get("tab_id"))) if self.browser and (
+                    name.startswith("browser_") or name == "open_url" or "tab" in payload) else ("computer",args.get("window_id") or
+                    ((payload.get("post_observation") or {}).get("window") or {}).get("window_id"))
+                if "download_id" in payload:
+                    scope = ("browser_download",payload["download_id"])
+                payload["scope"] = scope
+                mutating = name in {"open_url", "browser_navigate", "browser_click", "browser_write", "browser_press",
+                    "browser_back", "browser_forward", "browser_close_tab", "browser_download",
+                    "computer_click", "computer_write", "computer_press", "computer_shortcut"}
+                if mutating and payload.get("verified") is not True:
+                    self.pending_verification.add(scope)
+                if payload.get("verified") is True and (mutating or name.endswith("_verify")):
+                    self.pending_verification.discard(scope)
+                    self.uncertain_scopes.discard(scope)
+            # A dispatched action is a successful tool invocation, but not
+            # proof of the user's goal. Never encourage retry of a sent action.
+            success = not isinstance(payload, dict) or payload.get("verified") is not False or bool(payload.get("dispatched"))
+            return AgentActionResult(name=name, success=success,
+                message="Opération exécutée." if success else "Action exécutée ; résultat à vérifier explicitement.",
+                detail=json.dumps(payload, ensure_ascii=False))
+        except Exception as exc:
+            if self.browser and ("outcome_unknown" in str(exc) or isinstance(exc, TimeoutError)):
+                scope = ("browser", args.get("tab_id"))
+                self.pending_verification.add(scope)
+                self.uncertain_scopes.add(scope)
+            if self.computer and "computer_outcome_unknown" in str(exc):
+                scope = ("computer", ((self.computer._observation or {}).get("window") or {}).get("window_id"))
+                self.pending_verification.add(scope)
+                self.uncertain_scopes.add(scope)
+            return AgentActionResult(name=name, success=False, message="Fondation : opération non validée.",
+                                     detail=f"{type(exc).__name__}: {exc}")
+
+
+class FoundationRuntime:
+    def __init__(self, delegate, tools):
+        self.delegate, self.tools = delegate, tools
+
+    def __getattr__(self, name):
+        return getattr(self.delegate, name)
+
+    def run(self, user_text, *, log=None, phase=None):
+        self.tools.begin_turn(user_text)
+        result = self.delegate.run(user_text, log=log, phase=phase)
+        if self.tools.pending_verification:
+            from dataclasses import replace
+            return replace(result,text="Des actions ont été envoyées, mais leur résultat reste à vérifier dans l'interface.")
+        return result
+
+    def record_external_turn(self, user_text, assistant_text, **kwargs):
+        self.tools.begin_turn(user_text)
+        method = getattr(self.delegate, "record_external_turn", None)
+        if method:
+            method(user_text, assistant_text, **kwargs)
+
+    def reset(self):
+        self.tools.browser_mode = False
+        self.tools.pending_verification.clear()
+        self.tools.uncertain_scopes.clear()
+        self.delegate.reset()
+
+    def warm_up(self, *, log=None):
+        self.delegate.warm_up(log=log)
+
+
+def build_foundation_tools(delegate):
+    browser = computer = memory = None
+    if enabled("JARVIS_MEMORY_CORE_ENABLED"):
+        from .memory import LOCAL_MEMORY
+        from .memory_core_store import MemoryCoreStore
+        memory = MemoryCoreStore(LOCAL_MEMORY.db_path)
+    if enabled("JARVIS_BROWSER_CORE_ENABLED"):
+        from .browser_core import BrowserCore, NativeBrowserTransport
+        config = os.getenv("JARVIS_BROWSER_BRIDGE_CONFIG", "")
+        if not config:
+            raise RuntimeError("JARVIS_BROWSER_BRIDGE_CONFIG_required")
+        browser = BrowserCore(NativeBrowserTransport(config))
+    if enabled("JARVIS_COMPUTER_CORE_ENABLED"):
+        from .computer_grounding import ComputerGrounding, WindowsGroundingBackend
+        from .fast_grounding import bounded_detect
+        budget = min(5, max(0.5,float(os.getenv("JARVIS_GROUNDING_BUDGET_S", "3"))))
+        model = os.getenv("JARVIS_GROUNDING_MODEL", "")
+        endpoint = os.getenv("JARVIS_GROUNDING_ENDPOINT", "http://127.0.0.1:11434/api/chat")
+        visual = lambda png, remaining: bounded_detect(png, timeout_s=min(2,remaining))
+        element_model = ((lambda png, remaining: bounded_detect(png, provider="model", timeout_s=remaining,
+                          endpoint=endpoint, model=model)) if model else None)
+        computer = ComputerGrounding(WindowsGroundingBackend(focus_verifier=element_model), visual=visual,
+                                     element_model=element_model, budget_s=budget)
+    return FoundationToolAdapter(delegate, browser=browser, computer=computer, memory=memory)

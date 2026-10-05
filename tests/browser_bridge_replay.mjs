@@ -1,0 +1,180 @@
+/* Synthetic Chrome API/DOM replays. These are not real Chrome acceptance. */
+import {test, beforeEach} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
+
+globalThis.crypto ??= webcrypto;
+const tabs = new Map();
+const operations = [];
+let domItems = [];
+let observed = new Map();
+let failMouseRelease = false;
+const event = () => ({addListener(){}});
+globalThis.chrome = {
+  tabs:{
+    async query(filter){return [...tabs.values()].filter(t=>!filter.active || t.active)},
+    async get(id){if(!tabs.has(id)) throw Error('unknown_tab');return {...tabs.get(id)}},
+    async create({url}){const tab={id:100+tabs.size,windowId:9,active:true,title:'New',url};tabs.set(tab.id,tab);return tab},
+    async update(id,change){Object.assign(tabs.get(id),change); operations.push(['tab_update',id,change]); return tabs.get(id)},
+    async remove(id){operations.push(['remove',id]);tabs.delete(id)},
+    async goBack(id){operations.push(['back',id])}, async goForward(id){operations.push(['forward',id])},
+    onRemoved:event(),onUpdated:event()
+  },
+  windows:{async update(id,args){operations.push(['window_update',id,args])},async get(id){return{id,focused:true}}},
+  scripting:{async executeScript(options){
+    operations.push(['scripting',options.target]);
+    if(options.files) return [];
+    const [method,args] = options.args;
+    if(method === 'observe'){
+      const controls=domItems.map(item=>({...item,ref:crypto.randomUUID()}));
+      observed = new Map(controls.map(c=>[c.ref,c]));
+      return [{documentId:'doc-'+options.target.tabId,frameId:0,result:{controls,visible_text:'Observed header',truncated:false}}];
+    }
+    if(method === 'prepare'){
+      if(!observed.has(args[0])) throw Error('stale_browser_ref');
+      return [{result:{type:'textbox'}}];
+    }
+    if(method === 'preparePointer'){
+      if(!observed.has(args[0])) throw Error('stale_browser_ref');
+      return [{result:{x:40,y:15}}];
+    }
+    if(method === 'invalidate'){observed.clear();return []}
+    if(method === 'act'){
+      if(!observed.has(args[0])) throw Error('stale_browser_ref');
+      operations.push(['dom_action',options.target.tabId,args]);
+      observed.clear();return [{result:{dispatched:true,verified:args[1] === 'write'}}];
+    }
+    throw Error('unexpected_dom_method');
+  }},
+  debugger:{async attach(target){operations.push(['attach',target])},
+    async sendCommand(target,method,args){
+      operations.push(['cdp',target,method,args]);
+      if(failMouseRelease && args.type==='mouseReleased') throw Error('transport_lost');
+    },
+    async detach(target){operations.push(['detach',target])}},
+  downloads:{async download(args){operations.push(['download',args]);return 77},
+    async search({id}){return id===77?[{id,state:'complete'}]:[]}},
+  action:{onClicked:event()},runtime:{onStartup:event(),onInstalled:event()}
+};
+const source = fs.readFileSync('extensions/personal-ai-browser-bridge/service_worker.js','utf8');
+const {action,OPERATIONS} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+function request(operation,args={}){return action({id:crypto.randomUUID(),version:1,operation,arguments:args,deadline_ms:Date.now()+5000})}
+beforeEach(()=>{
+  tabs.clear();operations.length=0;observed.clear();
+  failMouseRelease=false;
+  tabs.set(1,{id:1,windowId:9,active:true,title:'Browser One',url:'https://one.example/'});
+  tabs.set(2,{id:2,windowId:10,active:false,title:'Browser Two',url:'https://two.example/'});
+  domItems=[{text:'Search',type:'searchbox',writable:true,bbox:[1,2,80,30]},
+            {text:'Exact Person',type:'link',bbox:[1,40,80,60]},
+            {text:'Exact Person Other',type:'link',bbox:[1,70,100,90]}];
+});
+test('all required generic primitives are present',()=>{
+  assert.equal(OPERATIONS.size,14);
+});
+test('several tabs and activate target in different window',async()=>{
+  assert.equal((await request('list_tabs')).length,2);
+  assert.equal((await request('get_active_tab')).tab_id,1);
+  const result=await request('activate_tab',{tab_id:2});
+  assert.equal(result.verified,true);
+  assert(operations.some(x=>x[0]==='window_update'&&x[1]===10));
+});
+test('exact find avoids contact/result prefix confusion',async()=>{
+  const result=await request('find',{tab_id:1,text:'Exact Person',exact:true});
+  assert.equal(result.matches.length,1);
+  assert.equal(result.matches[0].text,'Exact Person');
+});
+test('cross-tab ref is rejected before any mutation',async()=>{
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  await assert.rejects(request('write',{tab_id:2,ref,text:'wrong'}),/cross_tab/);
+  assert(!operations.some(x=>x[0]==='dom_action'));
+});
+test('refs expire after mutation and after reobservation',async()=>{
+  let ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  await request('write',{tab_id:1,ref,text:'hello'});
+  await assert.rejects(request('write',{tab_id:1,ref,text:'again'}),/cross_tab/);
+  ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  await request('observe_dom',{tab_id:1});
+  await assert.rejects(request('click',{tab_id:1,ref}),/cross_tab/);
+});
+test('Chrome Input is targeted by tabId regardless of nonbrowser OS focus',async()=>{
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  const result=await request('press',{tab_id:1,ref,key:'Enter'});
+  assert.equal(result.verified,false);
+  const inputs=operations.filter(x=>x[0]==='cdp');
+  assert.equal(inputs.length,2);
+  assert(inputs.every(x=>x[1].tabId===1));
+});
+test('top frame click uses trusted Chrome Input bound to the observed tab',async()=>{
+  const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
+  const result=await request('click',{tab_id:1,ref});
+  assert.equal(result.trusted,true);
+  assert.equal(result.verified,false);
+  const inputs=operations.filter(x=>x[0]==='cdp');
+  assert.deepEqual(inputs.map(x=>x[3].type),['mousePressed','mouseReleased']);
+  assert(inputs.every(x=>x[1].tabId===1));
+  assert(!operations.some(x=>x[0]==='dom_action'));
+});
+test('partial pointer failure reports unknown outcome and consumes reference',async()=>{
+  const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
+  failMouseRelease=true;
+  await assert.rejects(request('click',{tab_id:1,ref}),/outcome_unknown/);
+  await assert.rejects(request('click',{tab_id:1,ref}),/cross_tab/);
+  assert.equal(operations.filter(x=>x[0]==='cdp').length,2);
+});
+test('expired action never starts',async()=>{
+  await assert.rejects(action({version:1,operation:'close_tab',arguments:{tab_id:1},deadline_ms:0}),/expired/);
+  assert(tabs.has(1));
+});
+test('close only selected tab; history and verification are explicit',async()=>{
+  await request('back',{tab_id:1});await request('forward',{tab_id:1});
+  const proof=await request('verify',{tab_id:1,text:'missing header'});
+  assert.equal(proof.verified,false);
+  const closed=await request('close_tab',{tab_id:1});
+  assert.equal(closed.verified,true);assert(tabs.has(2));
+  await assert.rejects(request('verify',{tab_id:2}),/postcondition/);
+});
+test('internal and credentialed URLs are refused',async()=>{
+  for(const url of ['file:///C:/private','chrome://settings','https://user:secret@example.com'])
+    await assert.rejects(request('navigate',{url}),/http_https/);
+});
+test('download dispatch requires separate completion proof',async()=>{
+  const start=await request('download',{url:'https://one.example/file.txt'});
+  assert.equal(start.verified,false);
+  assert.equal((await request('verify',{download_id:77})).verified,true);
+  assert.equal((await request('verify',{download_id:99})).verified,false);
+});
+
+function fakeDOM(){
+  class Input {
+    constructor(){this.tagName='INPUT';this.type='text';this.attributes={'aria-label':'Search'};this.rect={left:5,top:5,right:100,bottom:30,width:95,height:25};
+      this.labels=[];this.isConnected=true;this.readOnly=false;this.disabled=false;this._value='';this.events=[];}
+    getAttribute(key){return this.attributes[key]??null} querySelector(){return null}
+    getBoundingClientRect(){return this.rect} matches(){return true}
+    contains(other){return this===other} getRootNode(){return document}
+    focus(){document.activeElement=this} click(){this.clicked=true}
+    dispatchEvent(e){this.events.push(e.type)}
+    get value(){return this._value} set value(v){this._value=v}
+  }
+  const input=new Input();
+  const document={activeElement:null,body:{innerText:'visible'},querySelectorAll(){return[input]},
+    getElementById(){return null},elementFromPoint(){return input}};
+  const sandbox={document,crypto:webcrypto,HTMLInputElement:Input,HTMLTextAreaElement:class{},innerWidth:300,innerHeight:200,
+    getComputedStyle(){return{visibility:'visible',display:'block',opacity:'1'}},Event:class{constructor(type){this.type=type}},
+    InputEvent:class{constructor(type){this.type=type}}};
+  vm.runInNewContext(fs.readFileSync('extensions/personal-ai-browser-bridge/dom_bridge.js','utf8'),sandbox);
+  return{bridge:sandbox.__personalAIBridge,input,document};
+}
+test('DOM references bind actual node; write verifies Unicode and expires',()=>{
+  const {bridge,input}=fakeDOM();const ref=bridge.observe().controls[0].ref;
+  assert.equal(bridge.act(ref,'write',{text:'été عربي'}).verified,true);
+  assert.equal(input.value,'été عربي');assert(input.events.includes('input'));
+  assert.throws(()=>bridge.act(ref,'write',{text:'late'}),/stale/);
+});
+test('DOM relocation and disabled controls block mutations',()=>{
+  const {bridge,input}=fakeDOM();let ref=bridge.observe().controls[0].ref;
+  input.rect.left+=20;assert.throws(()=>bridge.act(ref,'click',{}),/changed/);
+  ref=bridge.observe().controls[0].ref;input.disabled=true;
+  assert.throws(()=>bridge.act(ref,'write',{text:'no'}),/changed/);
+});

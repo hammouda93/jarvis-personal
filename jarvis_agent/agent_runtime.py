@@ -419,9 +419,24 @@ def _completed_action_capabilities(
     completed: set[str] = set()
     browser_search_written = False
     ui_search_written = False
+    core_search_submitted = False
+    core_search_scope = None
     for action in actions:
         if not action.success:
             continue
+        if action.name.startswith(("browser_", "computer_")):
+            payload = _action_detail_dict(action)
+            if action.name in {"browser_write", "computer_write"} and payload.get("verified") is True:
+                completed.add("write_ui")
+            if action.name == "browser_close_tab" and payload.get("verified") is True:
+                completed.add("close_tab")
+            if action.name == "browser_write" and payload.get("verified") is True:
+                browser_search_written = True
+                core_search_scope = payload.get("scope")
+            if browser_search_written and action.name in {"browser_press", "browser_click"} and payload.get("dispatched"):
+                core_search_submitted = True
+            if core_search_submitted and action.name == "browser_verify" and payload.get("verified") is True and payload.get("scope") == core_search_scope:
+                completed.add("site_search")
         if action.name == "open_web_search":
             completed.add("site_search")
         elif action.name == "open_url":
@@ -660,6 +675,28 @@ def _actions_have_verified_proof(
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
 ) -> bool:
     if not actions:
+        return False
+    core_mutations = {"browser_navigate", "browser_click", "browser_write", "browser_press", "browser_back",
+                      "browser_forward", "browser_close_tab", "browser_download", "computer_click",
+                      "computer_write", "computer_press", "computer_shortcut"}
+    core_actions = [a for a in actions if a.name in core_mutations]
+    if core_actions:
+        last = max(i for i,a in enumerate(actions) if a.name in core_mutations)
+        action = actions[last]
+        if not action.success:
+            return False
+        detail = _action_detail_dict(action)
+        if detail.get("verified") is True:
+            return True
+        tab = (detail.get("tab") or {}).get("tab_id")
+        scope = detail.get("scope")
+        for proof in actions[last+1:]:
+            payload = _action_detail_dict(proof)
+            if proof.name in {"browser_verify", "computer_verify"} and proof.success and payload.get("verified") is True:
+                observed_tab = ((payload.get("observation") or {}).get("tab") or {}).get("tab_id")
+                if (scope is not None and scope == payload.get("scope")) or (
+                        scope is None and (tab is None or tab == observed_tab)):
+                    return True
         return False
 
     operational_actions = [
@@ -3627,6 +3664,13 @@ def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
 
     tools = NATIVE_TOOLS
+    from .foundation_tools import enabled, build_foundation_tools, FoundationRuntime
+    foundation_tools = None
+    if any(enabled(name) for name in (
+        "JARVIS_MEMORY_CORE_ENABLED", "JARVIS_BROWSER_CORE_ENABLED", "JARVIS_COMPUTER_CORE_ENABLED"
+    )):
+        foundation_tools = build_foundation_tools(tools)
+        tools = foundation_tools
     tracing_tools = None
     journal = None
     if settings.structured_tracing_enabled:
@@ -3638,7 +3682,7 @@ def build_agent_runtime() -> AgentRuntime:
 
         journal = StructuredEventJournal()
         tracing_tools = TracingToolRegistry(
-            NATIVE_TOOLS,
+            tools,
             journal=journal,
         )
         tools = tracing_tools
@@ -3655,6 +3699,13 @@ def build_agent_runtime() -> AgentRuntime:
         raise AgentRuntimeUnavailable(
             f"Agent provider non pris en charge: {settings.agent_provider}"
         )
+
+    if foundation_tools is not None:
+        runtime = FoundationRuntime(runtime, foundation_tools)
+        if enabled("JARVIS_MEMORY_CORE_ENABLED"):
+            from .memory_router import MemoryRoutingRuntime
+            from .memory_connectors import MEMORY_CONNECTORS
+            runtime = MemoryRoutingRuntime(runtime, tools, connector_resolver=MEMORY_CONNECTORS)
 
     if tracing_tools is not None and journal is not None:
         from .tracing_runtime import StructuredTracingRuntime

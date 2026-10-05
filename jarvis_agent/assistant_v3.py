@@ -497,6 +497,12 @@ class AssistantWorker(QObject):
         user_text: str,
         intent: ToolIntent,
     ) -> bool:
+        # Opt-in Browser Core owns browser intents; the historical fast path
+        # uses OS input and cannot provide tab-scoped isolation.
+        from .foundation_tools import enabled
+        if enabled("JARVIS_BROWSER_CORE_ENABLED") and (intent.name.startswith("browser.") or
+                (intent.name == "app.open" and str(intent.args.get("app", "")).lower() == "chrome")):
+            return False
         if not self._is_simple_direct_action(
             user_text,
             intent,
@@ -573,6 +579,9 @@ class AssistantWorker(QObject):
         if self._pending_direct_follow_up:
             follow_up = self._pending_direct_follow_up
             self._pending_direct_follow_up = ""
+            from .foundation_tools import enabled
+            if follow_up == "search_query" and enabled("JARVIS_BROWSER_CORE_ENABLED"):
+                follow_up = "foundation_browser_query"
             if follow_up == "search_query":
                 follow_intent = ToolIntent("browser.search", {"query": user_text})
             elif follow_up == "folder_name":

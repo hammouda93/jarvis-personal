@@ -1,10 +1,12 @@
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 import numpy as np
 
 from jarvis_agent.recognition import recognize_command
 from jarvis_agent.stt import TranscriptResult
+from jarvis_agent.config import settings
 
 
 class FakeSTT:
@@ -34,7 +36,9 @@ class RecognitionRetryTests(unittest.TestCase):
             no_speech_probability=0.02,
         )
         fake = FakeSTT([primary, retry])
-        with patch("jarvis_agent.recognition.settings.stt_language", "fr"):
+        # Settings is frozen. Replace the test's module reference, not a field
+        # of the immutable production object; retain the original assertion.
+        with patch("jarvis_agent.recognition.settings", replace(settings, stt_language="fr")):
             transcript, intent = recognize_command(
                 fake,
                 np.zeros(10, dtype=np.float32),
