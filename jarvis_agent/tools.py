@@ -19,6 +19,7 @@ from .windows_app_discovery import (
     installed_start_app_names,
     launch_registered_app,
     resolve_registered_app,
+    score_application_name,
 )
 
 
@@ -758,16 +759,7 @@ def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
         name = _normalize_path_name(path.stem)
         if not name:
             return
-        if wanted == name:
-            score = 1.0
-        elif (
-            len(wanted) >= 5
-            and len(name) >= 4
-            and (wanted in name or name in wanted)
-        ):
-            score = 0.94
-        else:
-            score = difflib.SequenceMatcher(None, wanted, name).ratio()
+        score = score_application_name(wanted, name)
         if score >= 0.80:
             scored.append((score, path))
 
