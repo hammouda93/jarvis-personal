@@ -160,6 +160,32 @@ class BrowserContractTests(unittest.TestCase):
                         ("download",{"url":"https://user:password@example.com"})]:
             with self.assertRaises(ValueError): core.call(op,**args)
 
+    def test_browser_transport_reports_unavailable_before_dispatch(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "bridge.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "port": 47653,
+                        "token": "test-token",
+                        "extension_id": "a" * 32,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            transport = NativeBrowserTransport(config, timeout_s=0.2)
+            with patch(
+                "jarvis_agent.browser_core.socket.create_connection",
+                side_effect=ConnectionRefusedError("offline"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "browser_bridge_unavailable",
+                ):
+                    transport.request("list_tabs", {})
+
     def test_native_host_auth_expiry_and_no_replay(self):
         host = NativeHost({"token":"test"},io.BytesIO(),io.BytesIO())
         host.ready.set()
