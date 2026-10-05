@@ -2919,6 +2919,32 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertFalse(_inspection_requests_visual_fallback(usable))
 
+    def test_insufficient_snapshot_skips_vision_when_write_target_is_available(self):
+        action = AgentActionResult(
+            name="inspect_active_window",
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "capabilities": {
+                        "writable": [{"ref": "obs1:e7"}],
+                        "actionable": [],
+                    },
+                    "snapshot": {
+                        "semantic_coverage": "insufficient",
+                        "vision_recommended": True,
+                    },
+                }
+            ),
+        )
+
+        self.assertFalse(
+            _inspection_requests_visual_fallback(
+                action,
+                "Écris TEST dans le document.",
+            )
+        )
+
     def test_action_promise_is_detected(self):
         self.assertTrue(
             _looks_like_action_promise(
