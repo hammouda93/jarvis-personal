@@ -86,9 +86,12 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   cela signifie que le capteur UIA n'expose pas assez le contenu de l'application:
   ce n'est jamais une preuve que la fonction ou le contrôle demandé n'existe pas.
   N'improvise pas une séquence de raccourcis clavier pour compenser une perception
-  insuffisante. Essaie d'abord les autres méthodes locales structurées disponibles;
-  si observe_screen est disponible, utilise-le comme second capteur, sinon explique
-  honnêtement la limite plutôt que d'agir à l'aveugle;
+  insuffisante. Essaie d'abord les autres méthodes locales structurées disponibles.
+  Pour une demande explicite de recherche dans une application, si
+  search_application est disponible, préfère cet outil: il n'utilise que des
+  raccourcis natifs déclarés et vérifie la fenêtre cible avant de saisir. Si aucune
+  capacité structurée ou déclarée ne convient et que observe_screen est disponible,
+  utilise alors la vision comme second capteur; sinon explique honnêtement la limite;
 - une ref e1/e2/e10 est uniquement un identifiant temporaire de contrôle,
   jamais un rang métier ("premier résultat", "cinquième vidéo", etc.). Pour une
   demande ordinale, utilise les noms, positions, types et targets réellement
@@ -865,6 +868,34 @@ def _is_explicit_web_request(text: str) -> bool:
         "search", "look up", "online",
     )
     return any(marker in normalized for marker in markers)
+
+
+def _continues_explicit_web_request(
+    text: str,
+    messages: list[dict[str, Any]],
+) -> bool:
+    normalized = normalize(text)
+    continuation = normalized in {
+        "ok vas y",
+        "vas y",
+        "continue",
+        "continues",
+        "poursuis",
+        "procede",
+        "procedes",
+        "go ahead",
+    }
+    if not continuation:
+        return False
+
+    user_texts = [
+        str(item.get("content") or "")
+        for item in messages
+        if item.get("role") == "user"
+    ]
+    # The current request is normally already appended to the local history.
+    prior = user_texts[-2] if len(user_texts) >= 2 else ""
+    return bool(prior and _is_explicit_web_request(prior))
 
 
 def _query_matches_recent_user_context(
@@ -2760,9 +2791,11 @@ class GroqResponsesAgent:
                                 "La dernière inspection structurée indique que la "
                                 "couverture sémantique est insuffisante. N'en conclus "
                                 "pas que la cible n'existe pas et ne répète pas la même "
-                                "inspection. Utilise maintenant observe_screen sur la "
-                                "même fenêtre comme second capteur visuel, avec un focus "
-                                "lié à la mission actuelle."
+                                "inspection. Si la mission demande une recherche dans "
+                                "l'application et que search_application est disponible, "
+                                "utilise d'abord cette capacité déclarée. Sinon utilise "
+                                "observe_screen sur la même fenêtre comme second capteur "
+                                "visuel, avec un focus lié à la mission actuelle."
                             ),
                         }
                     )
@@ -3143,6 +3176,7 @@ class GroqResponsesAgent:
                         "write_visual_target",
                         "write_ui_element",
                         "press_key",
+                        "search_application",
                         "close_window",
                         "close_tab",
                     }
@@ -3239,6 +3273,10 @@ class GroqResponsesAgent:
                 elif (
                     name in {"research_web", "search_web"}
                     and not _is_explicit_web_request(user_text)
+                    and not _continues_explicit_web_request(
+                        user_text,
+                        self._messages,
+                    )
                     and not any(not action.success for action in actions)
                     and _query_matches_recent_user_context(
                         str(arguments.get("query", "")),
@@ -3283,6 +3321,7 @@ class GroqResponsesAgent:
                         "write_visual_target",
                         "write_ui_element",
                         "press_key",
+                        "search_application",
                         "close_window",
                         "close_tab",
                     }
@@ -3300,6 +3339,7 @@ class GroqResponsesAgent:
                         "write_visual_target",
                         "write_ui_element",
                         "press_key",
+                        "search_application",
                         "close_window",
                         "close_tab",
                     }

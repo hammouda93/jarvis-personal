@@ -19,6 +19,7 @@ from jarvis_agent.agent_runtime import (
     _is_explicit_memory_write_request,
     _looks_like_memory_permission_prompt,
     _query_matches_recent_user_context,
+    _continues_explicit_web_request,
     _looks_mostly_english,
     _visible_text,
     _actions_have_verified_proof,
@@ -2695,6 +2696,24 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn(
             "TRUSTED SESSION GROUNDING",
             agent._messages[0]["content"],
+        )
+
+    def test_short_confirmation_continues_prior_explicit_web_request(self):
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "user",
+                "content": "Recherche sur Internet la version actuelle de Python.",
+            },
+            {
+                "role": "assistant",
+                "content": "La recherche a échoué, voulez-vous que je réessaie ?",
+            },
+            {"role": "user", "content": "ok vas y"},
+        ]
+
+        self.assertTrue(
+            _continues_explicit_web_request("ok vas y", messages)
         )
 
     def test_groq_blocks_persistent_recall_for_current_session_question(self):

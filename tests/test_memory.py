@@ -50,6 +50,23 @@ class LocalMemoryTests(unittest.TestCase):
             self.assertEqual(len(results), 1)
             self.assertIn("golf", results[0].content.lower())
 
+    def test_recall_generic_title_question_prefers_latest_matching_memory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memory = LocalMemory(Path(tmp) / "memory.sqlite3")
+            memory.remember(
+                "Nom du film à regarder ultérieurement",
+                tags="film",
+            )
+            memory.remember(
+                "Mon film test est Arrival",
+                tags="film test",
+            )
+
+            results = memory.search("quel est le nom de mon film")
+
+            self.assertGreaterEqual(len(results), 1)
+            self.assertEqual(results[0].content, "Mon film test est Arrival")
+
     def test_unknown_memory_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
             memory = LocalMemory(Path(tmp) / "memory.sqlite3")

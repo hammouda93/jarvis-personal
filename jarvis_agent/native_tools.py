@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -18,7 +19,15 @@ from .screen_vision import (
     observe_screen,
     write_visual_target,
 )
-from .tools import ToolIntent, ToolResult, execute, normalize
+from .tools import (
+    ToolIntent,
+    ToolResult,
+    _contextual_site_search_url,
+    _explicit_site_search_url,
+    _remember_browser_url,
+    execute,
+    normalize,
+)
 from .windows_perception import (
     activate_window,
     click_ui_element,
@@ -57,6 +66,14 @@ class AgentActionResult:
         )
 
 
+_DECLARED_APP_SEARCH_SHORTCUTS = {
+    # WhatsApp Help Center (Windows): Extended search = Alt+K.
+    # Keep application-specific accelerators isolated here rather than
+    # hard-coding them in generic perception or planner logic.
+    "whatsapp": "altk",
+}
+
+
 class NativeToolRegistry:
     """Small set of generic capabilities exposed to the AI model.
 
@@ -70,6 +87,14 @@ class NativeToolRegistry:
         self._last_observed_window_title = ""
         self._last_web_title_hint = ""
         self._browser = None
+
+    @staticmethod
+    def can_search_application(title: str) -> bool:
+        normalized_title = normalize(str(title or ""))
+        return any(
+            app_key in normalized_title
+            for app_key in _DECLARED_APP_SEARCH_SHORTCUTS
+        )
 
     @staticmethod
     def _web_window_title_hint(url: str) -> str:
@@ -451,6 +476,21 @@ class NativeToolRegistry:
                     },
                 },
                 ["text"],
+            ),
+            self._ollama(
+                "search_application",
+                "Recherche dans une application de bureau en utilisant uniquement un raccourci de recherche déclaré pour cette application. Utilise ce mécanisme avant la vision lorsque UIA/Cua n'expose aucun champ de recherche. L'outil échoue s'il n'existe pas de raccourci déclaré, il ne devine jamais une combinaison clavier.",
+                {
+                    "title": {
+                        "type": "string",
+                        "description": "Nom ou titre de l'application cible.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Texte à rechercher dans l'application.",
+                    },
+                },
+                ["title", "query"],
             ),
             self._ollama(
                 "press_key",
@@ -847,6 +887,113 @@ class NativeToolRegistry:
             )
         return self._browser
 
+    def execute_direct_browser_intent(self, intent: ToolIntent) -> ToolResult:
+        """Execute deterministic browser fast-paths through CDP when enabled.
+
+        The legacy Windows/browser path remains untouched when CDP is disabled.
+        This prevents a CDP session from accidentally sending keyboard input to
+        whichever non-browser window currently owns focus.
+        """
+        browser = self._browser_adapter()
+        if browser is None:
+            return execute(intent)
+
+        try:
+            if intent.name == "browser.open_url":
+                url = str(intent.args.get("url") or "").strip()
+                payload = browser.navigate(url)
+                _remember_browser_url(str(payload.get("url") or url))
+                return ToolResult(True, "C'est fait.", json.dumps(payload, ensure_ascii=False))
+
+            if intent.name == "browser.search":
+                query = str(intent.args.get("query") or "").strip()
+                if not query:
+                    return ToolResult(
+                        True,
+                        "Que voulez-vous rechercher ?",
+                        "En attente du sujet de recherche",
+                        follow_up="search_query",
+                    )
+                scope = str(intent.args.get("scope") or "context").strip().casefold()
+                url = ""
+                site_name = ""
+                if scope != "web":
+                    url, site_name = _contextual_site_search_url(query)
+                if not url:
+                    import urllib.parse
+                    url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
+                    site_name = "Google"
+                payload = browser.navigate(url)
+                _remember_browser_url(str(payload.get("url") or url))
+                return ToolResult(
+                    True,
+                    f"Je recherche {query} sur {site_name}.",
+                    json.dumps(payload, ensure_ascii=False),
+                )
+
+            if intent.name == "browser.search_site":
+                site = str(intent.args.get("site") or "").strip()
+                query = str(intent.args.get("query") or "").strip()
+                url, site_name = _explicit_site_search_url(site, query)
+                if not url:
+                    return ToolResult(
+                        False,
+                        f"Je n'ai pas de recherche directe fiable pour {site or 'ce site'}.",
+                        site,
+                    )
+                payload = browser.navigate(url)
+                _remember_browser_url(str(payload.get("url") or url))
+                return ToolResult(
+                    True,
+                    f"Je recherche {query} sur {site_name}.",
+                    json.dumps(payload, ensure_ascii=False),
+                )
+
+            if intent.name == "browser.back":
+                payload = browser.back()
+                _remember_browser_url(str(payload.get("url") or ""))
+                return ToolResult(
+                    True,
+                    "Je reviens à la page précédente.",
+                    json.dumps(payload, ensure_ascii=False),
+                )
+
+            if intent.name == "browser.close_tab":
+                target = normalize(str(intent.args.get("name") or ""))
+                pages = browser.pages()
+                chosen = None
+                if target:
+                    matches = [
+                        item for item in pages
+                        if target in normalize(
+                            f"{item.get('title','')} {item.get('url','')}"
+                        )
+                    ]
+                    if len(matches) == 1:
+                        chosen = matches[0]
+                if chosen is None and len(pages) == 1:
+                    chosen = pages[0]
+                if chosen is None:
+                    return ToolResult(
+                        False,
+                        "Je ne peux pas identifier un onglet unique à fermer.",
+                        json.dumps({"pages": pages}, ensure_ascii=False),
+                    )
+                payload = browser.close_page(str(chosen.get("page_ref") or ""))
+                return ToolResult(
+                    True,
+                    "L'onglet a été fermé.",
+                    json.dumps(payload, ensure_ascii=False),
+                )
+        except Exception as exc:
+            return ToolResult(
+                False,
+                "Le navigateur contrôlé n'a pas pu exécuter cette action.",
+                f"{type(exc).__name__}: {exc}",
+            )
+
+        return execute(intent)
+
     def openai_tools(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
         for item in self.ollama_tools():
@@ -1049,6 +1196,29 @@ class NativeToolRegistry:
             url = str(args.get("url", "")).strip()
             if not url.startswith(("https://", "http://")):
                 return self._error(name, "URL non autorisée ou invalide.")
+
+            browser = self._browser_adapter()
+            if browser is not None:
+                try:
+                    payload = browser.navigate(url)
+                    _remember_browser_url(str(payload.get("url") or url))
+                    self._last_web_title_hint = self._web_window_title_hint(url)
+                    self._last_app_hint = "Google Chrome"
+                    invalidate_ui_snapshot()
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="Page ouverte dans le navigateur contrôlé.",
+                        detail=json.dumps(payload, ensure_ascii=False),
+                    )
+                except Exception as exc:
+                    return AgentActionResult(
+                        name=name,
+                        success=False,
+                        message="Le navigateur DOM/CDP n'a pas pu ouvrir cette page.",
+                        detail=f"{type(exc).__name__}: {exc}",
+                    )
+
             converted = self._convert(
                 name,
                 execute(ToolIntent("browser.open_url", {"url": url})),
@@ -1077,7 +1247,38 @@ class NativeToolRegistry:
                     payload = {"pages": browser.pages()}
                     message = "Pages navigateur observées."
                 elif name == "inspect_browser_page":
-                    payload = browser.observe(page_ref)
+                    try:
+                        payload = browser.observe(page_ref)
+                    except ValueError as exc:
+                        if "stale_or_unknown_page" not in str(exc):
+                            raise
+                        pages = browser.pages()
+                        hint = normalize(self._last_web_title_hint)
+                        site_label = normalize(
+                            self._last_web_title_hint.split(" - ", 1)[0]
+                        )
+                        matches = [
+                            item
+                            for item in pages
+                            if (
+                                hint
+                                and hint in normalize(str(item.get("title") or ""))
+                            )
+                            or (
+                                site_label
+                                and site_label in normalize(
+                                    f"{item.get('title','')} {item.get('url','')}"
+                                )
+                            )
+                        ]
+                        if len(matches) == 1:
+                            page_ref = str(matches[0].get("page_ref") or "")
+                        elif len(pages) == 1:
+                            page_ref = str(pages[0].get("page_ref") or "")
+                        else:
+                            raise
+                        payload = browser.observe(page_ref)
+                        payload["stale_page_ref_recovered"] = True
                     message = "Page observée via DOM."
                 elif name == "activate_browser_page":
                     payload = browser.activate(page_ref)
@@ -1416,6 +1617,80 @@ class NativeToolRegistry:
                 success=result.success,
                 message=result.message,
                 detail=result.detail,
+            )
+
+        if name == "search_application":
+            title = str(args.get("title", "")).strip() or self._last_app_hint
+            query = str(args.get("query", "")).strip()
+            if not title or not query:
+                return self._error(
+                    name,
+                    "L'application cible et la recherche sont requises.",
+                )
+
+            normalized_title = normalize(title)
+            shortcut = next(
+                (
+                    value
+                    for app_key, value in _DECLARED_APP_SEARCH_SHORTCUTS.items()
+                    if app_key in normalized_title
+                ),
+                "",
+            )
+            if not shortcut:
+                return AgentActionResult(
+                    name=name,
+                    success=False,
+                    message=(
+                        "Aucun raccourci de recherche fiable n'est déclaré "
+                        "pour cette application."
+                    ),
+                    detail="app_search_shortcut_not_declared",
+                )
+
+            activation = activate_window(title)
+            if not activation.success:
+                return AgentActionResult(
+                    name=name,
+                    success=False,
+                    message="Impossible d'activer l'application cible.",
+                    detail=activation.detail,
+                )
+
+            focused = press_key(shortcut)
+            if not focused.success:
+                return AgentActionResult(
+                    name=name,
+                    success=False,
+                    message="Impossible d'ouvrir la recherche native.",
+                    detail=focused.detail,
+                )
+            time.sleep(0.12)
+
+            typed = type_text_active_window(
+                query,
+                title=title,
+                mode="replace",
+                reactivate=False,
+            )
+            return AgentActionResult(
+                name=name,
+                success=typed.success,
+                message=(
+                    f"Recherche « {query} » saisie dans {title}."
+                    if typed.success
+                    else typed.message
+                ),
+                detail=json.dumps(
+                    {
+                        "application": title,
+                        "query": query,
+                        "shortcut": shortcut,
+                        "typed": bool(typed.success),
+                        "typing_detail": typed.detail,
+                    },
+                    ensure_ascii=False,
+                ),
             )
 
         if name == "press_key":

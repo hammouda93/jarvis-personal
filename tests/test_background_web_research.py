@@ -80,6 +80,64 @@ class BackgroundWebResearchTests(unittest.TestCase):
         "jarvis_agent.background_web_research.settings",
         replace(
             real_settings,
+            groq_api_key="test-key",
+            groq_browser_search=True,
+            groq_agent_model="openai/gpt-oss-120b",
+        ),
+    )
+    @patch("jarvis_agent.background_web_research.urllib.request.urlopen")
+    def test_groq_responses_browser_search_is_primary_invisible_provider(
+        self,
+        urlopen_mock,
+    ):
+        urlopen_mock.return_value = _FakeHTTPResponse(
+            {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "Python 3.x is current.",
+                                "annotations": [
+                                    {
+                                        "type": "url_citation",
+                                        "url": "https://www.python.org/downloads/",
+                                        "title": "Python downloads",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+        result = BackgroundWebResearch().research(
+            "current version of Python"
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            result.provider,
+            "groq_responses_browser_search",
+        )
+        self.assertIn("Python", result.answer)
+        self.assertTrue(result.evidence)
+
+        request = urlopen_mock.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/responses"))
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(
+            payload["tools"],
+            [{"type": "browser_search"}],
+        )
+        self.assertEqual(payload["tool_choice"], "required")
+
+    @patch(
+        "jarvis_agent.background_web_research.settings",
+        replace(
+            real_settings,
             groq_api_key="",
             groq_browser_search=True,
         ),

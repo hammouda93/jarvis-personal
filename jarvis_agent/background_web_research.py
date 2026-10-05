@@ -53,9 +53,14 @@ class BackgroundWebResearch:
             )
 
         if settings.groq_browser_search and settings.groq_api_key:
-            result = self._groq_browser_search(query)
+            # Prefer Groq's current Responses API contract for built-in browser
+            # search. Keep Chat Completions as a compatibility fallback.
+            result = self._groq_responses_browser_search(query)
             if result.success:
                 return result
+            fallback = self._groq_browser_search(query)
+            if fallback.success:
+                return fallback
             return result
 
         return ResearchResult(
@@ -63,6 +68,121 @@ class BackgroundWebResearch:
             provider="none",
             query=query,
             error="no_background_research_provider_configured",
+        )
+
+    def _groq_responses_browser_search(self, query: str) -> ResearchResult:
+        base = str(settings.groq_base_url or "").rstrip("/")
+        url = base + "/responses"
+        payload = {
+            "model": settings.groq_agent_model or "openai/gpt-oss-120b",
+            "input": query,
+            "tool_choice": "required",
+            "tools": [{"type": "browser_search"}],
+            "reasoning": {"effort": "low"},
+        }
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {settings.groq_api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.timeout_s,
+            ) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                detail = ""
+            return ResearchResult(
+                success=False,
+                provider="groq_responses_browser_search",
+                query=query,
+                error=f"http_{exc.code}:{detail[:800]}",
+            )
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            return ResearchResult(
+                success=False,
+                provider="groq_responses_browser_search",
+                query=query,
+                error=f"{type(exc).__name__}:{str(exc)[:500]}",
+            )
+
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return ResearchResult(
+                success=False,
+                provider="groq_responses_browser_search",
+                query=query,
+                error="invalid_json_response",
+            )
+
+        texts: list[str] = []
+        evidence: list[dict[str, Any]] = []
+        for item in data.get("output") or []:
+            if not isinstance(item, dict):
+                continue
+            for part in item.get("content") or []:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") in {"output_text", "text"}:
+                    value = str(part.get("text") or "").strip()
+                    if value:
+                        texts.append(value)
+                for annotation in part.get("annotations") or []:
+                    if not isinstance(annotation, dict):
+                        continue
+                    url_value = (
+                        annotation.get("url")
+                        or (annotation.get("url_citation") or {}).get("url")
+                    )
+                    title = (
+                        annotation.get("title")
+                        or (annotation.get("url_citation") or {}).get("title")
+                    )
+                    if url_value:
+                        evidence.append(
+                            {
+                                "title": str(title or "")[:300],
+                                "url": str(url_value)[:1200],
+                            }
+                        )
+            for result in item.get("search_results") or []:
+                if isinstance(result, dict) and result.get("url"):
+                    evidence.append(
+                        {
+                            key: result.get(key)
+                            for key in ("title", "url", "snippet", "content", "published")
+                            if result.get(key) is not None
+                        }
+                    )
+
+        content = "\n".join(texts).strip()
+        if not content:
+            content = str(data.get("output_text") or "").strip()
+        if not content:
+            return ResearchResult(
+                success=False,
+                provider="groq_responses_browser_search",
+                query=query,
+                evidence=tuple(evidence[:12]),
+                error="empty_research_answer",
+            )
+
+        return ResearchResult(
+            success=True,
+            provider="groq_responses_browser_search",
+            query=query,
+            answer=content[:16000],
+            evidence=tuple(evidence[:12]),
         )
 
     def _groq_browser_search(self, query: str) -> ResearchResult:

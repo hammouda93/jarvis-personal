@@ -514,9 +514,11 @@ def _navigate_current_browser_url(url: str) -> bool:
         )
 
         hint = _browser_window_hint()
-        activation = activate_window(hint)
+        target_title = hint
+        activation = activate_window(target_title)
         if not activation.success and hint != "Google Chrome":
-            activation = activate_window("Google Chrome")
+            target_title = "Google Chrome"
+            activation = activate_window(target_title)
         if not activation.success:
             return False
 
@@ -526,6 +528,7 @@ def _navigate_current_browser_url(url: str) -> bool:
 
         typed = type_text_active_window(
             url,
+            title=target_title,
             mode="replace",
             reactivate=False,
         )

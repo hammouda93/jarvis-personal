@@ -96,6 +96,7 @@ class LocalMemory:
             "ils", "elles", "sur", "dans", "avec", "pour", "et", "ou",
             "au", "aux", "me", "te", "se", "moi", "toi", "rappelle",
             "rappelles", "souviens", "remember", "what", "which", "the",
+            "nom", "name", "titre", "title",
             "a", "an", "of", "about", "my", "your",
         }
         words = [word for word in raw_words if word not in stopwords]
