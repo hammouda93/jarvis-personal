@@ -345,7 +345,26 @@ class GroundingReplayTests(unittest.TestCase):
             self.core.act(obs["elements"][0]["ref"],"click")
 
     def test_foundation_tools_expose_focus_probe_when_computer_core_exists(self):
-        adapter = FoundationToolAdapter(None, computer=self.core)
+        class Delegate:
+            def ollama_tools(self):
+                return []
+
+            @staticmethod
+            def _ollama(name, description, properties, required):
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required,
+                        },
+                    },
+                }
+
+        adapter = FoundationToolAdapter(Delegate(), computer=self.core)
         names = {
             item["function"]["name"]
             for item in adapter.ollama_tools()
