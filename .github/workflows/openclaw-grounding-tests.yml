@@ -38,3 +38,9 @@ jobs:
           JARVIS_CUA_DRIVER_ENABLED: "0"
         run: |
           python -m unittest tests.test_cua_driver_bridge tests.test_windows_perception tests.test_native_tools tests.test_agent_runtime tests.test_screen_vision tests.test_assistant_v3 tests.test_ui_logging tests.test_browser_dom_contract tests.test_text_input_mode_v3 tests.test_tools -v
+      - name: Run full checkpoint regression
+        shell: pwsh
+        env:
+          JARVIS_CUA_DRIVER_ENABLED: "0"
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\\scripts\\run_checkpoint_full_validation.ps1 -SkipCompile
