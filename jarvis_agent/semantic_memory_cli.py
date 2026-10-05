@@ -196,6 +196,10 @@ def main(argv: list[str] | None = None) -> int:
     inspect.add_argument("--limit", type=int, default=50)
     inspect.add_argument("--active-only", action="store_true")
 
+    query = sub.add_parser("query")
+    query.add_argument("text")
+    query.add_argument("--limit", type=int, default=12)
+
     reindex = sub.add_parser("reindex")
     reindex.add_argument("--force", action="store_true")
     reindex.add_argument("--retry-errors", action="store_true")
@@ -224,6 +228,79 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             allow_cloud=args.allow_cloud,
         )
+        if args.command == "query":
+            engine = SemanticMemoryEngine(store, interpreter)
+            interpreted = engine.interpret_turn(
+                args.text,
+                log=lambda line: print(line),
+            )
+            payload = {
+                "ok": True,
+                "operation": interpreted.operation,
+                "confidence": interpreted.confidence,
+                "reason": interpreted.reason,
+                "query": (
+                    {
+                        "subject": interpreted.query.subject,
+                        "relation": interpreted.query.relation,
+                        "object_hint": interpreted.query.object_hint,
+                        "qualifiers": interpreted.query.qualifiers,
+                        "entities": list(interpreted.query.entities),
+                        "scope": interpreted.query.scope,
+                        "answer_mode": interpreted.query.answer_mode,
+                        "exact_terms": list(interpreted.query.exact_terms),
+                        "confidence": interpreted.query.confidence,
+                    }
+                    if interpreted.query is not None
+                    else None
+                ),
+                "session_facts": [
+                    {
+                        "subject": fact.subject,
+                        "relation": fact.relation,
+                        "value": fact.value,
+                        "kind": fact.kind,
+                        "qualifiers": fact.qualifiers,
+                        "entities": list(fact.entities),
+                        "scope": fact.scope,
+                        "cardinality": fact.cardinality,
+                        "confidence": fact.confidence,
+                    }
+                    for fact in interpreted.session_facts
+                ],
+            }
+            if interpreted.operation == "recall" and interpreted.query is not None:
+                resolution = engine.resolve(
+                    interpreted.query,
+                    log=lambda line: print(line),
+                )
+                payload["resolution"] = {
+                    "status": resolution.get("status"),
+                    "mode": resolution.get("mode"),
+                    "effective_relation": resolution.get(
+                        "effective_relation"
+                    ),
+                    "hits": [
+                        {
+                            "memory_id": hit.fact.memory_id,
+                            "fact_id": hit.fact.fact_id,
+                            "relation": hit.fact.projection.relation,
+                            "value": hit.fact.projection.value,
+                            "entities": list(hit.fact.projection.entities),
+                            "qualifiers": hit.fact.projection.qualifiers,
+                            "score": hit.score,
+                            "components": hit.components,
+                            "status": hit.fact.status,
+                            "provenance": hit.fact.provenance,
+                        }
+                        for hit in list(resolution.get("hits") or [])[
+                            : max(1, min(int(args.limit), 50))
+                        ]
+                    ],
+                }
+            _print(payload)
+            return 0
+
         payload = reindex_semantic(
             store,
             interpreter,
