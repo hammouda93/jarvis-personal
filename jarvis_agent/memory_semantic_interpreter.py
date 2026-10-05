@@ -40,7 +40,7 @@ memory and query must be null.
 
 For recall, return a query with:
 subject, canonical English snake_case relation, object_hint, qualifiers,
-scope, answer_mode (single|collection|timeline), exact_terms and confidence.
+entities, scope, answer_mode (single|collection|timeline), exact_terms and confidence.
 Preserve dates/IDs literally in qualifiers/exact_terms.
 
 For inspect, query can be null.
@@ -60,6 +60,7 @@ Return exactly:
     "relation":"canonical_english_snake_case",
     "object_hint":"",
     "qualifiers":{},
+    "entities":[],
     "scope":"global",
     "answer_mode":"single|collection|timeline",
     "exact_terms":[],
@@ -72,6 +73,7 @@ Return exactly:
       "value":"...",
       "kind":"fact|preference|intention|event|project|decision|constraint|relationship|observation",
       "qualifiers":{},
+      "entities":[],
       "scope":"global",
       "cardinality":"single|collection|history|unknown",
       "confidence":0.0
@@ -91,7 +93,12 @@ memory index. Return JSON only. You have no tools and cannot mutate state.
 
 For every raw memory item, project zero or more independent semantic facts.
 Each fact contains subject, canonical English snake_case relation, value,
-kind, qualifiers, scope, cardinality and confidence.
+kind, qualifiers, entities, scope, cardinality and confidence.
+
+entities is a list of concrete people, projects, organizations, products,
+places or named concepts explicitly present in the raw memory. Do not invent
+entities. Use stable surface names; entity linking is a retrieval signal, not
+an instruction to merge unrelated facts.
 
 kind is one of fact, preference, intention, event, project, decision,
 constraint, relationship, observation.
@@ -109,15 +116,17 @@ Input is an object with:
 
 Return:
 {"items":[{"memory_id":1,"facts":[{"subject":"user","relation":"...",
-"value":"...","kind":"fact","qualifiers":{},"scope":"global",
-"cardinality":"unknown","confidence":0.0}]}]}
+"value":"...","kind":"fact","qualifiers":{},"entities":[],
+"scope":"global","cardinality":"unknown","confidence":0.0}]}]}
 """
 
 
 _REFINE_SYSTEM = """You refine an existing personal-memory query after the user
 provides a clarification. Return JSON only. Keep existing constraints unless
 the clarification changes them. Return subject, canonical English snake_case
-relation, object_hint, qualifiers, scope, answer_mode, exact_terms, confidence.
+relation, object_hint, qualifiers, entities, scope, answer_mode, exact_terms,
+confidence. Preserve entity constraints from the previous query unless the
+clarification changes them.
 Do not answer the memory question.
 """
 
