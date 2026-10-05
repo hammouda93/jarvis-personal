@@ -282,6 +282,17 @@ class SemanticMemoryHit:
     components: dict[str, float]
 
 
+_EXACT_QUALIFIER_KEYS = {
+    "date",
+    "datetime",
+    "start_at",
+    "end_at",
+    "id",
+    "account_id",
+    "reference_id",
+}
+
+
 def _qualifier_score(query: MemoryQueryFrame, fact: MemoryProjection) -> float:
     if not query.qualifiers:
         return 1.0
@@ -294,6 +305,8 @@ def _qualifier_score(query: MemoryQueryFrame, fact: MemoryProjection) -> float:
         actual_norm = normalize_text(actual)
         if wanted_norm == actual_norm:
             scores.append(1.0)
+        elif key in _EXACT_QUALIFIER_KEYS:
+            return 0.0
         else:
             scores.append(semantic_key_similarity(wanted_norm, actual_norm))
     return sum(scores) / max(1, len(scores))
