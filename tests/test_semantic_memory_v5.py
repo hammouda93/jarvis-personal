@@ -204,6 +204,7 @@ class SemanticProviderFallbackTests(unittest.TestCase):
         interpreter = FallbackInterpreter(
             provider="cerebras",
             model="cerebras-model",
+            allow_cloud=True,
         )
         result = interpreter.interpret_turn("hello")
 
@@ -228,7 +229,10 @@ class SemanticProviderFallbackTests(unittest.TestCase):
             ):
                 raise RuntimeError(provider + " down")
 
-        interpreter = FailedInterpreter(provider="cerebras")
+        interpreter = FailedInterpreter(
+            provider="cerebras",
+            allow_cloud=True,
+        )
 
         with self.assertRaisesRegex(
             RuntimeError,
@@ -241,6 +245,43 @@ class SemanticProviderFallbackTests(unittest.TestCase):
             interpreter.last_attempts,
             ("cerebras", "groq"),
         )
+
+
+class SemanticMemoryPrivacyTests(unittest.TestCase):
+    def test_cloud_semantic_provider_requires_explicit_permission(self):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "semantic_memory_cloud_provider_requires_explicit_opt_in",
+        ):
+            ModelSemanticMemoryInterpreter(
+                provider="cerebras",
+                allow_cloud=False,
+            )
+
+    def test_explicit_cloud_permission_allows_cloud_provider_construction(self):
+        interpreter = ModelSemanticMemoryInterpreter(
+            provider="cerebras",
+            allow_cloud=True,
+        )
+
+        self.assertEqual(interpreter.provider, "cerebras")
+        self.assertTrue(interpreter.allow_cloud)
+
+    def test_auto_cloud_agent_becomes_local_semantic_provider_without_opt_in(self):
+        from dataclasses import replace
+        from jarvis_agent.config import settings as real_settings
+
+        with patch(
+            "jarvis_agent.memory_semantic_interpreter.settings",
+            replace(real_settings, agent_provider="cerebras"),
+        ):
+            interpreter = ModelSemanticMemoryInterpreter(
+                provider="auto",
+                allow_cloud=False,
+            )
+
+        self.assertEqual(interpreter.provider, "ollama")
+        self.assertFalse(interpreter.allow_cloud)
 
 
 class SemanticMemoryStoreTests(unittest.TestCase):
