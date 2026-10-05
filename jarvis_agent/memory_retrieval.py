@@ -25,9 +25,11 @@ dit dire peux peut pourrais besoin information informations donne avais deja
 memorise retenu aime aimes aimer prefere preferee preferees preferes favori
 favorite favoris favorites bien encore maintenant what which the of about my
 your i you is are was name called tell do does did remember recall favorite
-favourite like liked love have has that it to in please know said saved test
+favourite like liked love have has that it to in please know said saved
 prochain prochaine prochaines prochains next prevu prevue scheduled quand when
-where memorisee memorises memorisees memoriser""".split())
+where memorisee memorises memorisees memoriser dont parle parler parlee parlees
+demande demandes demander demandee demandees asked ask mentionne mentionner
+mentionnee mentionnees evoque evoquer evoquee evoquees""".split())
 _STOP.update({"connais", "connait", "sait", "pourrais", "can", "remind", "donne", "reminds"})
 _CONCEPTS = {
     "movie": "film", "movies": "film", "films": "film",
@@ -73,4 +75,48 @@ def search(memory, query: str, *, limit: int = 5):
             if score:
                 scored.append((score, int(row[0]), MemoryItem(*row)))
     scored.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
-    return [entry[2] for entry in scored[:max(1, min(int(limit), 20))]]
+
+    # Keep the newest instance of an identical remembered fact, but preserve
+    # distinct facts in the same broad topic (e.g. "film test = Arrival" and
+    # "film to watch = Inception"). Repeated explicit writes must not manufacture
+    # artificial ambiguity.
+    unique = []
+    seen = set()
+    for score, memory_id, item in scored:
+        key = normalize(item.content).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+        if len(unique) >= max(1, min(int(limit), 20)):
+            break
+    return unique
+
+
+def list_recent(memory, *, limit: int = 20):
+    """Return newest distinct persistent facts without pretending a search query.
+
+    This is used only for an explicit user request to inspect their local memory.
+    It deliberately does not expose hidden model/session state.
+    """
+    from .memory import MemoryItem
+
+    rows = []
+    with closing(memory._connect()) as connection:
+        rows = connection.execute(
+            "SELECT id, content, tags, created_at "
+            "FROM memories ORDER BY id DESC LIMIT 200"
+        ).fetchall()
+
+    result = []
+    seen = set()
+    for row in rows:
+        item = MemoryItem(*row)
+        key = normalize(item.content).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+        if len(result) >= max(1, min(int(limit), 50)):
+            break
+    return result
