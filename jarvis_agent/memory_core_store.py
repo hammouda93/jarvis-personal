@@ -271,9 +271,12 @@ class MemoryCoreStore(LocalMemory):
     ) -> list[SemanticFactRecord]:
         clauses = ["f.status = ?"]
         params: list[object] = [status]
-        if scope and scope != "global":
-            clauses.append("f.scope IN (?, 'global')")
-            params.append(scope)
+        if scope:
+            if scope == "global":
+                clauses.append("f.scope = 'global'")
+            else:
+                clauses.append("f.scope IN (?, 'global')")
+                params.append(scope)
         sql = (
             "SELECT f.fact_id, f.memory_id, f.ordinal, f.subject, f.relation, "
             "f.object_value, f.kind, f.qualifiers_json, f.scope, "
