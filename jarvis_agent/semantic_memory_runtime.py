@@ -434,6 +434,17 @@ class SemanticMemoryRuntime:
             )
         self._session_facts = self._session_facts[-64:]
 
+    @staticmethod
+    def _memory_action(name: str, payload: dict[str, Any]):
+        from .native_tools import AgentActionResult
+
+        return AgentActionResult(
+            name=name,
+            success=True,
+            message="Memory Core V5",
+            detail=json.dumps(payload, ensure_ascii=False),
+        )
+
     def _result(self, text: str, actions=()):
         from .agent_runtime import AgentTurnResult
 
@@ -579,8 +590,16 @@ class SemanticMemoryRuntime:
                     for item in self.engine.store.recent_memories(limit=30)
                 ],
             }
+            action = self._memory_action(
+                "semantic_memory_inspect",
+                {
+                    "count": len(resolution["items"]),
+                    "source": "persistent",
+                },
+            )
             return self._result(
-                self._inspection_reply(resolution["items"])
+                self._inspection_reply(resolution["items"]),
+                (action,),
             )
 
         if intent.operation == "write":
@@ -664,8 +683,16 @@ class SemanticMemoryRuntime:
             except Exception:
                 external = []
             if external:
+                action = self._memory_action(
+                    "semantic_memory_connector_recall",
+                    {
+                        "source": "connector",
+                        "count": len(external[:8]),
+                    },
+                )
                 return self._result(
-                    " ; ".join(str(item) for item in external[:8])
+                    " ; ".join(str(item) for item in external[:8]),
+                    (action,),
                 )
 
         reply, pending = self._reply_from_resolution(resolution)
@@ -676,4 +703,25 @@ class SemanticMemoryRuntime:
                 f"{resolution.get('status')} relation={query.relation} "
                 f"mode={query.answer_mode}"
             )
-        return self._result(reply)
+        hit_payload = []
+        for hit in list(resolution.get("hits") or [])[:8]:
+            hit_payload.append(
+                {
+                    "memory_id": hit.fact.memory_id,
+                    "fact_id": hit.fact.fact_id,
+                    "relation": hit.fact.projection.relation,
+                    "provenance": hit.fact.provenance,
+                    "score": round(hit.score, 4),
+                }
+            )
+        action = self._memory_action(
+            "semantic_memory_recall",
+            {
+                "status": resolution.get("status"),
+                "relation": query.relation,
+                "scope": query.scope,
+                "answer_mode": query.answer_mode,
+                "hits": hit_payload,
+            },
+        )
+        return self._result(reply, (action,))
