@@ -49,6 +49,42 @@ def _remember_browser_url(url: str) -> None:
         _LAST_BROWSER_URL = value
 
 
+def clear_browser_context() -> None:
+    global _LAST_BROWSER_URL
+    _LAST_BROWSER_URL = ""
+
+
+def has_contextual_browser_scope() -> bool:
+    return bool(str(_LAST_BROWSER_URL or "").strip())
+
+
+def _navigate_current_browser_tab(url: str) -> bool:
+    """Navigate the currently selected browser tab without spawning a new tab."""
+    from .windows_perception import activate_window, press_key, type_text_active_window
+
+    hint = _browser_window_hint()
+    activation = activate_window(hint)
+    if not activation.success and hint != "Google Chrome":
+        activation = activate_window("Google Chrome")
+    if not activation.success:
+        return False
+
+    if not press_key("ctrll").success:
+        return False
+    written = type_text_active_window(
+        url,
+        title="",
+        mode="insert",
+        activate_target=False,
+    )
+    if not written.success:
+        return False
+    if not press_key("enter").success:
+        return False
+    _remember_browser_url(url)
+    return True
+
+
 def _browser_window_hint(context_url: str = "") -> str:
     raw = str(context_url or _LAST_BROWSER_URL or "").strip()
     try:
@@ -1091,7 +1127,12 @@ def execute(intent: ToolIntent) -> ToolResult:
         if not url:
             url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
             site_name = "Google"
-        ok = _open_browser_url(url)
+        reuse_current_tab = scope != "web" and has_contextual_browser_scope()
+        ok = (
+            _navigate_current_browser_tab(url)
+            if reuse_current_tab
+            else _open_browser_url(url)
+        )
         if ok:
             _remember_browser_url(url)
         message = (
