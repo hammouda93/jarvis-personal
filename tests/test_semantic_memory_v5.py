@@ -974,6 +974,90 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
             "Doctor A",
         )
 
+    def test_timeline_orders_by_event_time_not_memory_insertion_time(self):
+        store, _, engine = self.make_engine(
+            {
+                "later inserted first": (
+                    projection(
+                        "project_milestone",
+                        "Launch",
+                        kind="event",
+                        qualifiers={"date": "2026-12-01"},
+                        cardinality="history",
+                    ),
+                ),
+                "earlier inserted second": (
+                    projection(
+                        "project_milestone",
+                        "Prototype",
+                        kind="event",
+                        qualifiers={"date": "2026-10-01"},
+                        cardinality="history",
+                    ),
+                ),
+            }
+        )
+        store.remember("later inserted first")
+        store.remember("earlier inserted second")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="project_milestone",
+                answer_mode="timeline",
+                raw_text="show milestone timeline",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            [
+                hit.fact.projection.value
+                for hit in result["hits"]
+            ],
+            ["Prototype", "Launch"],
+        )
+
+    def test_temporal_qualifier_mismatch_is_exact_not_fuzzy(self):
+        store, _, engine = self.make_engine(
+            {
+                "day one": (
+                    projection(
+                        "appointment",
+                        "A",
+                        kind="event",
+                        qualifiers={"date": "2026-10-09"},
+                    ),
+                ),
+                "day two": (
+                    projection(
+                        "appointment",
+                        "B",
+                        kind="event",
+                        qualifiers={"date": "2026-10-10"},
+                    ),
+                ),
+            }
+        )
+        store.remember("day one")
+        store.remember("day two")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="appointment",
+                qualifiers={"date": "2026-10-09"},
+                answer_mode="single",
+                raw_text="appointment on target date",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            result["hits"][0].fact.projection.value,
+            "A",
+        )
+
     def test_duplicate_semantic_fact_does_not_create_ambiguity(self):
         store, _, engine = self.make_engine(
             {
