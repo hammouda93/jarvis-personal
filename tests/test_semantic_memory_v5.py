@@ -8,7 +8,10 @@ from unittest.mock import patch
 from jarvis_agent.agent_runtime import AgentTurnResult
 from jarvis_agent.foundation_tools import FoundationToolAdapter
 from jarvis_agent.memory_core_store import MemoryCoreStore
-from jarvis_agent.memory_semantic_interpreter import SemanticMemoryInterpreter
+from jarvis_agent.memory_semantic_interpreter import (
+    ModelSemanticMemoryInterpreter,
+    SemanticMemoryInterpreter,
+)
 from jarvis_agent.semantic_memory import (
     MemoryProjection,
     MemoryQueryFrame,
@@ -161,6 +164,79 @@ class ToolSchemaDelegate:
                 },
             },
         }
+
+
+class SemanticProviderFallbackTests(unittest.TestCase):
+    def test_cerebras_failure_falls_back_to_groq_with_provider_native_model(self):
+        class FallbackInterpreter(ModelSemanticMemoryInterpreter):
+            def _provider_chain(self):
+                return ("cerebras", "groq")
+
+            def _model_for(self, provider):
+                return {
+                    "cerebras": "cerebras-model",
+                    "groq": "groq-model",
+                }[provider]
+
+            def _chat_openai_compatible(
+                self,
+                provider,
+                system,
+                user,
+            ):
+                if provider == "cerebras":
+                    raise RuntimeError("primary unavailable")
+                return json.dumps(
+                    {
+                        "operation": "pass",
+                        "write_text": "",
+                        "query": None,
+                        "session_facts": [],
+                        "confidence": 0.99,
+                        "reason": "ordinary conversation",
+                    }
+                )
+
+        interpreter = FallbackInterpreter(
+            provider="cerebras",
+            model="cerebras-model",
+        )
+        result = interpreter.interpret_turn("hello")
+
+        self.assertEqual(result.operation, "pass")
+        self.assertEqual(interpreter.last_provider, "groq")
+        self.assertEqual(interpreter.last_model, "groq-model")
+        self.assertEqual(
+            interpreter.last_attempts,
+            ("cerebras", "groq"),
+        )
+
+    def test_all_semantic_providers_failure_is_explicit_and_traceable(self):
+        class FailedInterpreter(ModelSemanticMemoryInterpreter):
+            def _provider_chain(self):
+                return ("cerebras", "groq")
+
+            def _chat_openai_compatible(
+                self,
+                provider,
+                system,
+                user,
+            ):
+                raise RuntimeError(provider + " down")
+
+        interpreter = FailedInterpreter(provider="cerebras")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "semantic_memory_all_providers_failed",
+        ):
+            interpreter.interpret_turn("hello")
+
+        self.assertEqual(interpreter.last_provider, "")
+        self.assertEqual(
+            interpreter.last_attempts,
+            ("cerebras", "groq"),
+        )
 
 
 class SemanticMemoryStoreTests(unittest.TestCase):
