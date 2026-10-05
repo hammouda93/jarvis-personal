@@ -46,12 +46,21 @@ def projection(
 class FixtureInterpreter(SemanticMemoryInterpreter):
     parser_version = "fixture-semantic-v1"
 
-    def __init__(self, *, turns=None, projections=None, refinements=None):
+    def __init__(
+        self,
+        *,
+        turns=None,
+        projections=None,
+        refinements=None,
+        alignments=None,
+    ):
         self.turns = dict(turns or {})
         self.projections = dict(projections or {})
         self.refinements = dict(refinements or {})
+        self.alignments = dict(alignments or {})
         self.project_calls = 0
         self.turn_calls = 0
+        self.project_catalogs = []
 
     def interpret_turn(self, user_text):
         self.turn_calls += 1
@@ -64,8 +73,9 @@ class FixtureInterpreter(SemanticMemoryInterpreter):
             ),
         )
 
-    def project_batch(self, items):
+    def project_batch(self, items, *, relation_catalog=()):
         self.project_calls += 1
+        self.project_catalogs.append(tuple(relation_catalog))
         return {
             memory_id: tuple(self.projections.get(text, ()))
             for memory_id, text in items
@@ -75,6 +85,22 @@ class FixtureInterpreter(SemanticMemoryInterpreter):
         return self.refinements.get(
             (previous.relation, clarification),
             previous,
+        )
+
+    def align_query_relation(self, query, relation_catalog):
+        target = self.alignments.get(query.relation)
+        if not target or target not in set(relation_catalog):
+            return query
+        return MemoryQueryFrame(
+            subject=query.subject,
+            relation=target,
+            object_hint=query.object_hint,
+            qualifiers=query.qualifiers,
+            scope=query.scope,
+            answer_mode=query.answer_mode,
+            exact_terms=query.exact_terms,
+            raw_text=query.raw_text,
+            confidence=query.confidence,
         )
 
 
@@ -755,6 +781,83 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
 
         self.assertNotEqual(item.scope, "global")
         self.assertIn("مشروع", item.scope)
+
+    def test_relation_catalog_is_passed_to_later_projection_batches(self):
+        store, interpreter, engine = self.make_engine(
+            {
+                "first": (
+                    projection(
+                        "preferred_editor",
+                        "Cursor",
+                        kind="preference",
+                    ),
+                ),
+                "second": (
+                    projection(
+                        "preferred_editor",
+                        "VS Code",
+                        kind="preference",
+                    ),
+                ),
+            }
+        )
+        first = store.remember("first")
+        engine.project_memory(first.id, provenance="explicit")
+
+        second = store.remember("second")
+        engine.project_memory(second.id, provenance="explicit")
+
+        self.assertEqual(interpreter.project_calls, 2)
+        self.assertEqual(interpreter.project_catalogs[0], ())
+        self.assertIn(
+            "preferred_editor",
+            interpreter.project_catalogs[1],
+        )
+
+    def test_query_relation_can_align_once_to_existing_catalog_relation(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        store = MemoryCoreStore(Path(temp.name) / "memory.sqlite3")
+        interpreter = FixtureInterpreter(
+            projections={
+                "watch intent": (
+                    projection(
+                        "wants_to_watch",
+                        "Inception",
+                        kind="intention",
+                        cardinality="collection",
+                    ),
+                )
+            },
+            alignments={
+                "watchlist_items": "wants_to_watch",
+            },
+        )
+        engine = SemanticMemoryEngine(
+            store,
+            interpreter,
+            min_score=0.45,
+        )
+        store.remember("watch intent")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="watchlist_items",
+                answer_mode="collection",
+                raw_text="semantic paraphrase",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            result["effective_relation"],
+            "wants_to_watch",
+        )
+        self.assertEqual(
+            result["hits"][0].fact.projection.value,
+            "Inception",
+        )
 
     def test_legacy_compound_row_is_lazily_projected_into_independent_facts(self):
         store, interpreter, engine = self.make_engine(
