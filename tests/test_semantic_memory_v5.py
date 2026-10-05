@@ -986,5 +986,162 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertIn("open_application", names)
 
 
+class SemanticMemoryFactoryIntegrationTests(unittest.TestCase):
+    def test_factory_builds_semantic_memory_v5_before_provider_runtime(self):
+        from dataclasses import replace
+
+        from jarvis_agent.agent_runtime import build_agent_runtime
+        from jarvis_agent.config import settings
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = MemoryCoreStore(Path(folder) / "factory.sqlite3")
+            user_write = "Keep this durable: reference Sigma"
+            user_recall = "What durable reference did I save?"
+            interpreter = FixtureInterpreter(
+                turns={
+                    user_write: MemoryTurnInterpretation(
+                        operation="write",
+                        write_text="reference Sigma",
+                        confidence=0.99,
+                        reason="explicit durable request",
+                    ),
+                    user_recall: MemoryTurnInterpretation(
+                        operation="recall",
+                        query=MemoryQueryFrame(
+                            relation="saved_reference",
+                            answer_mode="single",
+                            raw_text=user_recall,
+                            confidence=0.99,
+                        ),
+                        confidence=0.99,
+                        reason="personal recall",
+                    ),
+                },
+                projections={
+                    "reference Sigma": (
+                        projection(
+                            "saved_reference",
+                            "Sigma",
+                            cardinality="single",
+                        ),
+                    )
+                },
+            )
+            adapter = FoundationToolAdapter(
+                ToolSchemaDelegate(),
+                memory=store,
+            )
+
+            for provider, class_name in (
+                ("ollama", "OllamaToolAgent"),
+                ("openai", "OpenAIResponsesAgent"),
+                ("groq", "GroqResponsesAgent"),
+                ("cerebras", "CerebrasResponsesAgent"),
+            ):
+                with self.subTest(provider=provider), patch.dict(
+                    "os.environ",
+                    {
+                        "JARVIS_MEMORY_CORE_ENABLED": "1",
+                        "JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1",
+                        "JARVIS_BROWSER_CORE_ENABLED": "0",
+                        "JARVIS_COMPUTER_CORE_ENABLED": "0",
+                    },
+                    clear=False,
+                ), patch(
+                    "jarvis_agent.agent_runtime.settings",
+                    replace(
+                        settings,
+                        agent_provider=provider,
+                        structured_tracing_enabled=False,
+                    ),
+                ), patch(
+                    "jarvis_agent.agent_runtime." + class_name,
+                    return_value=NoLLM(),
+                ), patch(
+                    "jarvis_agent.foundation_tools.build_foundation_tools",
+                    return_value=adapter,
+                ), patch(
+                    "jarvis_agent.memory_semantic_interpreter."
+                    "build_semantic_memory_interpreter",
+                    return_value=interpreter,
+                ):
+                    runtime = build_agent_runtime()
+                    write = runtime.run(user_write)
+                    self.assertEqual(
+                        [action.name for action in write.actions],
+                        ["remember_information"],
+                    )
+                    runtime.reset()
+                    recall = runtime.run(user_recall)
+                    self.assertEqual(recall.text, "Sigma")
+                    self.assertEqual(
+                        [action.name for action in recall.actions],
+                        ["semantic_memory_recall"],
+                    )
+
+
+class SemanticInterpreterContractTests(unittest.TestCase):
+    def test_invalid_or_weak_projection_is_rejected_without_mutating_raw_memory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = MemoryCoreStore(Path(folder) / "memory.sqlite3")
+            item = store.remember("raw evidence survives")
+            interpreter = FixtureInterpreter(
+                projections={
+                    "raw evidence survives": (
+                        projection(
+                            "uncertain_relation",
+                            "guess",
+                            confidence=0.20,
+                        ),
+                    )
+                }
+            )
+            engine = SemanticMemoryEngine(store, interpreter)
+
+            facts = engine.project_memory(
+                item.id,
+                provenance="explicit",
+            )
+
+            self.assertEqual(facts, ())
+            self.assertEqual(
+                store.get_memory(item.id).content,
+                "raw evidence survives",
+            )
+            self.assertEqual(
+                store.semantic_state(item.id)["status"],
+                "unprojected",
+            )
+
+    def test_query_confidence_can_force_clarification_even_with_relation(self):
+        store = None
+        with tempfile.TemporaryDirectory() as folder:
+            store = MemoryCoreStore(Path(folder) / "memory.sqlite3")
+            interpreter = FixtureInterpreter(
+                projections={
+                    "known": (
+                        projection("home_city", "Tunis"),
+                    )
+                }
+            )
+            engine = SemanticMemoryEngine(
+                store,
+                interpreter,
+                min_score=0.45,
+            )
+            store.remember("known")
+
+            result = engine.resolve(
+                MemoryQueryFrame(
+                    relation="home_city",
+                    answer_mode="single",
+                    raw_text="maybe something about home",
+                    confidence=0.20,
+                )
+            )
+
+            self.assertEqual(result["status"], "underspecified")
+
+
 if __name__ == "__main__":
     unittest.main()
