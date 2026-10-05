@@ -82,10 +82,13 @@ class FixtureInterpreter(SemanticMemoryInterpreter):
     def project_batch(self, items, *, relation_catalog=()):
         self.project_calls += 1
         self.project_catalogs.append(tuple(relation_catalog))
-        return {
-            memory_id: tuple(self.projections.get(text, ()))
-            for memory_id, text in items
-        }
+        result = {}
+        for item in items:
+            memory_id, text = item[0], item[1]
+            result[memory_id] = tuple(
+                self.projections.get(text, ())
+            )
+        return result
 
     def refine_query(self, previous, clarification):
         return self.refinements.get(
