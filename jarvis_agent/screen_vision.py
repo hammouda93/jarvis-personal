@@ -167,7 +167,7 @@ def _capture_window_bytes(
     if image.width > target_width:
         ratio = target_width / float(image.width)
         image = image.resize(
-            (max_width, max(1, int(image.height * ratio)))
+            (target_width, max(1, int(image.height * ratio)))
         )
 
     buffer = io.BytesIO()
