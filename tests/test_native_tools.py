@@ -9,7 +9,7 @@ from unittest.mock import patch
 from jarvis_agent.agent_knowledge import AgentKnowledgeStore
 from jarvis_agent.config import settings as real_settings
 from jarvis_agent.native_tools import NativeToolRegistry
-from jarvis_agent.tools import ToolResult
+from jarvis_agent.tools import ToolIntent, ToolResult
 
 
 class NativeToolRegistryTests(unittest.TestCase):
@@ -316,6 +316,124 @@ class NativeToolRegistryTests(unittest.TestCase):
             ),
             {"replace", "append", "insert"},
         )
+
+    @patch("jarvis_agent.native_tools.type_text_active_window")
+    @patch("jarvis_agent.native_tools.press_key")
+    @patch("jarvis_agent.native_tools.activate_window")
+    def test_declared_whatsapp_search_uses_native_shortcut_before_vision(
+        self,
+        activate_mock,
+        press_mock,
+        type_mock,
+    ):
+        activate_mock.return_value = SimpleNamespace(
+            success=True,
+            message="activated",
+            detail="WhatsApp",
+        )
+        press_mock.return_value = SimpleNamespace(
+            success=True,
+            message="shortcut sent",
+            detail="",
+        )
+        type_mock.return_value = SimpleNamespace(
+            success=True,
+            message="typed",
+            detail='{"verified":false}',
+        )
+
+        result = self.registry.execute(
+            "search_application",
+            {"title": "WhatsApp", "query": "Hamza"},
+        )
+
+        self.assertTrue(result.success)
+        press_mock.assert_called_once_with("altk")
+        type_mock.assert_called_once_with(
+            "Hamza",
+            title="WhatsApp",
+            mode="replace",
+            reactivate=False,
+        )
+
+    @patch(
+        "jarvis_agent.native_tools.settings",
+        replace(
+            real_settings,
+            browser_enabled=True,
+            browser_cdp_url="http://127.0.0.1:9222",
+        ),
+    )
+    def test_direct_browser_open_uses_configured_cdp_session(self):
+        browser = SimpleNamespace(
+            navigate=lambda url: {
+                "verified": True,
+                "page_ref": "page_real",
+                "url": url,
+                "title": "YouTube",
+            }
+        )
+        self.registry._browser = browser
+
+        result = self.registry.execute_direct_browser_intent(
+            ToolIntent(
+                "browser.open_url",
+                {"url": "https://www.youtube.com"},
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertIn("page_real", result.detail)
+
+    @patch(
+        "jarvis_agent.native_tools.settings",
+        replace(
+            real_settings,
+            browser_enabled=True,
+            browser_cdp_url="http://127.0.0.1:9222",
+        ),
+    )
+    def test_browser_inspection_recovers_invented_stale_page_ref(self):
+        class FakeBrowser:
+            def __init__(self):
+                self.calls = []
+
+            def observe(self, page_ref):
+                self.calls.append(page_ref)
+                if page_ref == "page_1":
+                    raise ValueError("stale_or_unknown_page")
+                return {
+                    "observation_id": "bobs1",
+                    "window": {
+                        "title": "messi - YouTube",
+                        "url": "https://www.youtube.com/results?search_query=messi",
+                    },
+                    "controls": [],
+                    "capabilities": {"writable": [], "actionable": []},
+                    "snapshot": {"semantic_coverage": "usable"},
+                }
+
+            def pages(self):
+                return [
+                    {
+                        "page_ref": "page_real",
+                        "title": "messi - YouTube",
+                        "url": "https://www.youtube.com/results?search_query=messi",
+                    }
+                ]
+
+        browser = FakeBrowser()
+        self.registry._browser = browser
+        self.registry._last_web_title_hint = "YouTube - Google Chrome"
+
+        result = self.registry.execute(
+            "inspect_browser_page",
+            {"page_ref": "page_1"},
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(browser.calls, ["page_1", "page_real"])
+        self.assertIn("stale_page_ref_recovered", result.detail)
 
     def test_registry_exposes_operational_knowledge_tools(self):
         names = {
