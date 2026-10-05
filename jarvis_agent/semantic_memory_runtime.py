@@ -59,7 +59,11 @@ class SemanticMemoryEngine:
         projected = self.interpreter.project_batch(
             [(item.id, item.content)]
         )
-        facts = projected.get(item.id, ())
+        facts = tuple(
+            fact
+            for fact in projected.get(item.id, ())
+            if fact.confidence >= 0.55
+        )
         self.store.save_projection(
             item.id,
             facts,
@@ -102,7 +106,11 @@ class SemanticMemoryEngine:
                 break
 
             for item in items:
-                facts = projections.get(item.id, ())
+                facts = tuple(
+                    fact
+                    for fact in projections.get(item.id, ())
+                    if fact.confidence >= 0.55
+                )
                 try:
                     self.store.save_projection(
                         item.id,
