@@ -2608,6 +2608,59 @@ class AgentRuntimeTests(unittest.TestCase):
             "persistent_recall_blocked_current_context",
         )
 
+    def test_groq_allows_persistent_recall_when_recent_context_is_unrelated(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je n'ai pas cette information dans le contexte.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_recall_persistent",
+                            "name": "recall_information",
+                            "arguments": "{\\"query\\":\\"films que je veux regarder\\"}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Vous vouliez regarder Inception.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        agent.run("C'est quoi le nom de projet test que je travaille sur ?")
+        result = agent.run("Quels sont les films que je veux regarder ?")
+
+        self.assertIn(
+            ("recall_information", {"query": "films que je veux regarder"}),
+            tools.calls,
+        )
+        self.assertTrue(any(action.success for action in result.actions))
+
     def test_groq_hides_persistent_memory_write_tool_on_ordinary_turn(self):
         agent = FakeGroqAgent(
             FakeTools(),
