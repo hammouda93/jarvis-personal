@@ -890,16 +890,45 @@ def _looks_like_memory_permission_prompt(text: str) -> bool:
     return any(re.search(pattern, normalized, flags=re.DOTALL) for pattern in patterns)
 
 
-def _is_explicit_web_request(text: str) -> bool:
-    normalized = (text or "").lower().replace("’", "'")
-    markers = (
-        "cherche", "recherche", "sur internet", "internet", "sur le web",
-        "web", "google", "en ligne", "vérifie en ligne", "verifie en ligne",
-        "search", "look up", "online",
+def _is_explicit_research_request(text: str) -> bool:
+    normalized = normalize(text)
+    return bool(
+        re.search(
+            r"\b(?:cherche|chercher|recherche|rechercher|trouve|trouver|"
+            r"verifie|verifier|search|look up|research)\b",
+            normalized,
+        )
+        or re.search(
+            r"\b(?:sur internet|internet|sur le web|web|en ligne|online)\b",
+            normalized,
+        )
     )
-    return any(marker in normalized for marker in markers)
 
 
+def _is_explicit_visible_web_request(text: str) -> bool:
+    """Require an explicit request to expose browser/search UI to the user."""
+    normalized = normalize(text)
+    visible_verb = bool(
+        re.search(
+            r"\b(?:ouvre|ouvrir|affiche|afficher|montre|montrer|voir|"
+            r"lance|lancer|open|show|display)\b",
+            normalized,
+        )
+    )
+    browser_surface = bool(
+        re.search(
+            r"\b(?:chrome|navigateur|browser|google|page|onglet|tab)\b",
+            normalized,
+        )
+    )
+    explicit_visible_search = bool(
+        re.search(
+            r"\b(?:ouvre|ouvrir|affiche|afficher|montre|montrer|open|show)\b"
+            r".{0,50}\b(?:recherche|search)\b",
+            normalized,
+        )
+    )
+    return (visible_verb and browser_surface) or explicit_visible_search
 def _query_matches_recent_user_context(
     query: str,
     messages: list[dict[str, Any]],
@@ -1786,7 +1815,7 @@ class OpenAIResponsesAgent:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
                 autonomous_research = (
                     name in {"research_web", "search_web"}
-                    and not _is_explicit_web_request(user_text)
+                    and not _is_explicit_research_request(user_text)
                 )
                 if phase:
                     if autonomous_research:
@@ -3031,7 +3060,7 @@ class GroqResponsesAgent:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
                 autonomous_research = (
                     name in {"research_web", "search_web"}
-                    and not _is_explicit_web_request(user_text)
+                    and not _is_explicit_research_request(user_text)
                 )
                 if phase:
                     if autonomous_research:
@@ -3214,7 +3243,7 @@ class GroqResponsesAgent:
                     result = _blocked_persistent_recall_for_current_context()
                 elif (
                     name == "open_web_search"
-                    and not _is_explicit_web_request(user_text)
+                    and not _is_explicit_visible_web_request(user_text)
                 ):
                     result = _blocked_visible_web_search_result(
                         str(arguments.get("query", ""))
@@ -3228,7 +3257,7 @@ class GroqResponsesAgent:
                     )
                 elif (
                     name in {"research_web", "search_web"}
-                    and not _is_explicit_web_request(user_text)
+                    and not _is_explicit_research_request(user_text)
                     and not any(not action.success for action in actions)
                     and _query_matches_recent_user_context(
                         str(arguments.get("query", "")),
