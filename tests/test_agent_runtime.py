@@ -1622,6 +1622,84 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_browser_compaction_prioritizes_content_before_navigation(self):
+        controls = []
+        for index in range(1, 31):
+            controls.append(
+                {
+                    "ref": f"bobs1:e{index}",
+                    "type": "button",
+                    "name": f"Navigation {index}",
+                    "region": "navigation",
+                    "actionable": True,
+                    "enabled": True,
+                }
+            )
+        controls.append(
+            {
+                "ref": "bobs1:e31",
+                "type": "link",
+                "name": "Messi first video result",
+                "region": "content",
+                "actionable": True,
+                "enabled": True,
+            }
+        )
+        payload = {
+            "observation_id": "bobs1",
+            "window": {
+                "title": "messi - YouTube",
+                "url": "https://www.youtube.com/results?search_query=messi",
+            },
+            "browser": True,
+            "sensor": "dom",
+            "controls": controls,
+            "accessibility_tree": [
+                {"role": "generic", "name": "noise"} for _ in range(180)
+            ],
+            "capabilities": {
+                "writable": [],
+                "actionable": [
+                    {"ref": item["ref"], "label": item["name"]}
+                    for item in controls
+                ],
+            },
+            "snapshot": {"semantic_coverage": "usable"},
+            "visible_text": ["Messi first video result", "Second result"],
+        }
+        result = AgentActionResult(
+            name="inspect_browser_page",
+            success=True,
+            message="ok",
+            detail=json.dumps(payload, ensure_ascii=False),
+        )
+
+        compact = json.loads(
+            GroqResponsesAgent._compact_tool_content(
+                "inspect_browser_page",
+                result,
+            )
+        )
+        detail = json.loads(compact["detail"])
+
+        self.assertEqual(
+            detail["visible_text"][0],
+            "Messi first video result",
+        )
+        self.assertNotIn("accessibility_tree", detail)
+        self.assertTrue(
+            any(
+                item.get("ref") == "bobs1:e31"
+                for item in detail["controls"]
+            )
+        )
+        self.assertTrue(
+            any(
+                item.get("ref") == "bobs1:e31"
+                for item in detail["capabilities"]["actionable"]
+            )
+        )
+
     @patch(
         "jarvis_agent.agent_runtime.settings",
         replace(
