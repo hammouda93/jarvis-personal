@@ -19,8 +19,13 @@ $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$previousPythonPath = $env:PYTHONPATH
+$previousPythonHome = $env:PYTHONHOME
 Push-Location $root
 try {
+    # Test/validation overlays must never leak into the live runtime.
+    Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+    Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
     if ($All) {
         $MemoryCore = $true
         $BrowserCore = $true
@@ -39,11 +44,19 @@ try {
     }
 
     Write-Host "Checking live runtime dependencies..."
-    & $python -m jarvis_agent.runtime_preflight
+    $preflightArgs = @("-m", "jarvis_agent.runtime_preflight")
+    if ($ComputerCore) {
+        $preflightArgs += "--require-grounding"
+    }
+    & $python @preflightArgs
     if ($LASTEXITCODE -ne 0) {
+        $repairCommand = ".\\scripts\\repair_live_environment.ps1 -PythonExe `"$python`""
+        if ($ComputerCore) {
+            $repairCommand += " -Grounding"
+        }
         throw (
             "Environnement live incomplet ou incohérent. Répare-le avec: " +
-            ".\\scripts\\repair_live_environment.ps1 -PythonExe `"$python`""
+            $repairCommand
         )
     }
     Write-Host ""
@@ -106,5 +119,15 @@ try {
     exit $LASTEXITCODE
 }
 finally {
+    if ($null -eq $previousPythonPath) {
+        Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+    } else {
+        $env:PYTHONPATH = $previousPythonPath
+    }
+    if ($null -eq $previousPythonHome) {
+        Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+    } else {
+        $env:PYTHONHOME = $previousPythonHome
+    }
     Pop-Location
 }
