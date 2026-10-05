@@ -24,6 +24,7 @@ from jarvis_agent.agent_runtime import (
     _actions_have_verified_proof,
     _looks_like_clear_operational_feedback,
     _requested_action_capabilities,
+    _missing_requested_action_capabilities,
     _inspection_requests_visual_fallback,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -2964,6 +2965,24 @@ class AgentRuntimeTests(unittest.TestCase):
             _requested_action_capabilities(
                 "Vas y recherche Messi."
             ),
+        )
+
+    def test_visible_search_url_satisfies_open_and_search_goal(self):
+        actions = [
+            AgentActionResult(
+                name="open_url",
+                success=True,
+                message="opened",
+                detail="https://www.google.com/search?q=python+documentation",
+            )
+        ]
+
+        self.assertEqual(
+            _missing_requested_action_capabilities(
+                "Ouvre Chrome et cherche la documentation Python.",
+                actions,
+            ),
+            set(),
         )
 
     def test_insufficient_structured_inspection_requests_visual_fallback(self):
