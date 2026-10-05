@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from jarvis_agent.assistant_v3 import AssistantWorker, TextTurnInbox
 from jarvis_agent.tools import ToolIntent
@@ -66,6 +67,41 @@ class AssistantV3FastPathTests(unittest.TestCase):
             AssistantWorker._is_simple_direct_action(
                 "Retour en arrière.",
                 ToolIntent("browser.back"),
+            )
+        )
+
+    def test_explicit_internet_research_stays_with_agent(self):
+        self.assertFalse(
+            AssistantWorker._is_simple_direct_action(
+                "Recherche sur Internet la version actuelle de Python.",
+                ToolIntent(
+                    "browser.search",
+                    {"query": "version actuelle de python", "scope": "web"},
+                ),
+            )
+        )
+
+    @patch("jarvis_agent.assistant_v3.has_contextual_browser_scope", return_value=False)
+    def test_plain_search_without_browser_context_stays_with_agent(self, _scope_mock):
+        self.assertFalse(
+            AssistantWorker._is_simple_direct_action(
+                "Recherche Hamza.",
+                ToolIntent(
+                    "browser.search",
+                    {"query": "hamza", "scope": "context"},
+                ),
+            )
+        )
+
+    @patch("jarvis_agent.assistant_v3.has_contextual_browser_scope", return_value=True)
+    def test_plain_search_with_browser_context_keeps_fast_path(self, _scope_mock):
+        self.assertTrue(
+            AssistantWorker._is_simple_direct_action(
+                "Recherche Messi.",
+                ToolIntent(
+                    "browser.search",
+                    {"query": "messi", "scope": "context"},
+                ),
             )
         )
 

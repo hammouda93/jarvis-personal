@@ -19,6 +19,7 @@ from .windows_app_discovery import (
     installed_start_app_names,
     launch_registered_app,
     resolve_registered_app,
+    score_application_name,
 )
 
 
@@ -46,6 +47,42 @@ def _remember_browser_url(url: str) -> None:
     value = str(url or "").strip()
     if value:
         _LAST_BROWSER_URL = value
+
+
+def clear_browser_context() -> None:
+    global _LAST_BROWSER_URL
+    _LAST_BROWSER_URL = ""
+
+
+def has_contextual_browser_scope() -> bool:
+    return bool(str(_LAST_BROWSER_URL or "").strip())
+
+
+def _navigate_current_browser_tab(url: str) -> bool:
+    """Navigate the currently selected browser tab without spawning a new tab."""
+    from .windows_perception import activate_window, press_key, type_text_active_window
+
+    hint = _browser_window_hint()
+    activation = activate_window(hint)
+    if not activation.success and hint != "Google Chrome":
+        activation = activate_window("Google Chrome")
+    if not activation.success:
+        return False
+
+    if not press_key("ctrll", reactivate_snapshot=False).success:
+        return False
+    written = type_text_active_window(
+        url,
+        title="",
+        mode="insert",
+        activate_target=False,
+    )
+    if not written.success:
+        return False
+    if not press_key("enter", reactivate_snapshot=False).success:
+        return False
+    _remember_browser_url(url)
+    return True
 
 
 def _browser_window_hint(context_url: str = "") -> str:
@@ -498,6 +535,8 @@ def _open_browser_url(url: str) -> bool:
 
 
 def _open_application(app: str) -> ToolResult:
+    if normalize(app) not in {"chrome", "google chrome"}:
+        clear_browser_context()
     local = os.getenv("LOCALAPPDATA", "")
     windir = os.getenv("WINDIR", r"C:\Windows")
     program_files = os.getenv("ProgramFiles", r"C:\Program Files")
@@ -758,16 +797,7 @@ def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
         name = _normalize_path_name(path.stem)
         if not name:
             return
-        if wanted == name:
-            score = 1.0
-        elif (
-            len(wanted) >= 5
-            and len(name) >= 4
-            and (wanted in name or name in wanted)
-        ):
-            score = 0.94
-        else:
-            score = difflib.SequenceMatcher(None, wanted, name).ratio()
+        score = score_application_name(wanted, name)
         if score >= 0.80:
             scored.append((score, path))
 
@@ -1099,7 +1129,12 @@ def execute(intent: ToolIntent) -> ToolResult:
         if not url:
             url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
             site_name = "Google"
-        ok = _open_browser_url(url)
+        reuse_current_tab = scope != "web" and has_contextual_browser_scope()
+        ok = (
+            _navigate_current_browser_tab(url)
+            if reuse_current_tab
+            else _open_browser_url(url)
+        )
         if ok:
             _remember_browser_url(url)
         message = (

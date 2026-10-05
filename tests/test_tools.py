@@ -10,6 +10,7 @@ from jarvis_agent.tools import (
     _chrome_profile_directory,
     _contextual_site_search_url,
     _launch_chrome,
+    _navigate_current_browser_tab,
     _find_named_app,
     _find_named_file,
     _open_application,
@@ -19,6 +20,7 @@ from jarvis_agent.tools import (
 from jarvis_agent.windows_app_discovery import (
     WindowsAppCandidate,
     discover_start_apps,
+    score_application_name,
 )
 
 
@@ -112,9 +114,51 @@ class ToolRouterTests(unittest.TestCase):
         self.assertEqual(site, "YouTube")
         self.assertIn("youtube.com/results?search_query=messi", url)
 
+    @patch("jarvis_agent.windows_perception.type_text_active_window")
+    @patch("jarvis_agent.windows_perception.press_key")
+    @patch("jarvis_agent.windows_perception.activate_window")
+    def test_current_tab_navigation_uses_address_bar_without_new_browser_launch(
+        self,
+        activate_mock,
+        press_mock,
+        type_mock,
+    ):
+        result_type = type(
+            "Result",
+            (),
+            {"success": True, "message": "ok", "detail": "{}"},
+        )
+        activate_mock.return_value = result_type()
+        press_mock.return_value = result_type()
+        type_mock.return_value = result_type()
+
+        with patch("jarvis_agent.tools._LAST_BROWSER_URL", "https://www.youtube.com"):
+            ok = _navigate_current_browser_tab(
+                "https://www.youtube.com/results?search_query=messi"
+            )
+
+        self.assertTrue(ok)
+        activate_mock.assert_called()
+        self.assertEqual(
+            [call.args[0] for call in press_mock.call_args_list],
+            ["ctrll", "enter"],
+        )
+        type_mock.assert_called_once_with(
+            "https://www.youtube.com/results?search_query=messi",
+            title="",
+            mode="insert",
+            activate_target=False,
+        )
+
+    @patch("jarvis_agent.tools._navigate_current_browser_tab")
     @patch("jarvis_agent.tools._open_browser_url")
-    def test_plain_search_reuses_last_youtube_context(self, open_mock):
+    def test_plain_search_reuses_last_youtube_context_in_current_tab(
+        self,
+        open_mock,
+        navigate_mock,
+    ):
         open_mock.return_value = True
+        navigate_mock.return_value = True
         with patch("jarvis_agent.tools._LAST_BROWSER_URL", ""):
             opened = execute(
                 ToolIntent(
@@ -131,10 +175,11 @@ class ToolRouterTests(unittest.TestCase):
 
         self.assertTrue(opened.success)
         self.assertTrue(searched.success)
-        self.assertEqual(open_mock.call_count, 2)
+        open_mock.assert_called_once_with("https://www.youtube.com")
+        navigate_mock.assert_called_once()
         self.assertIn(
             "youtube.com/results?search_query=messi",
-            open_mock.call_args_list[-1].args[0],
+            navigate_mock.call_args.args[0],
         )
         self.assertIn("YouTube", searched.message)
 
@@ -284,6 +329,31 @@ class ToolRouterTests(unittest.TestCase):
         self.assertIn("WhatsApp", result.message)
         launch_mock.assert_called_once_with(candidate)
         find_mock.assert_not_called()
+
+    def test_application_name_scoring_rejects_short_substring_false_positive(self):
+        self.assertLess(
+            score_application_name("PersonalAIUnknownTest", "test"),
+            0.72,
+        )
+
+    @patch("jarvis_agent.tools._app_binary_roots")
+    @patch("jarvis_agent.tools._app_search_roots")
+    def test_unknown_long_app_name_does_not_launch_embedded_test_executable(
+        self,
+        shortcut_roots_mock,
+        binary_roots_mock,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrong = root / "test.exe"
+            wrong.write_bytes(b"")
+            shortcut_roots_mock.return_value = []
+            binary_roots_mock.return_value = [root]
+
+            path, matches = _find_named_app("PersonalAIUnknownTest")
+
+            self.assertIsNone(path)
+            self.assertNotIn(wrong, matches)
 
     @patch("jarvis_agent.tools._app_binary_roots")
     @patch("jarvis_agent.tools._app_search_roots")

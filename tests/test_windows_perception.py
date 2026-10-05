@@ -927,6 +927,28 @@ class WindowsPerceptionTests(unittest.TestCase):
             0.94,
         )
 
+    @patch("jarvis_agent.windows_perception._window_by_title")
+    def test_activate_window_rebinds_followup_keyboard_target(self, window_mock):
+        wrapper = SimpleNamespace()
+        wrapper.restore = lambda: None
+        wrapper.set_focus = lambda: None
+        wrapper.window_text = lambda: "messi - YouTube - Google Chrome"
+        wrapper.element_info = SimpleNamespace(
+            name="messi - YouTube - Google Chrome",
+            control_type="Window",
+            automation_id="",
+        )
+        window_mock.return_value = wrapper
+        wp._SNAPSHOT_WINDOW_TITLE = "Ancienne fenêtre"
+
+        result = wp.activate_window("YouTube")
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            wp._SNAPSHOT_WINDOW_TITLE,
+            "messi - YouTube - Google Chrome",
+        )
+
     @patch("jarvis_agent.windows_perception._send_keys")
     def test_press_key_allows_safe_browser_back_navigation(self, send_mock):
         from jarvis_agent.windows_perception import press_key
@@ -944,6 +966,29 @@ class WindowsPerceptionTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         send_mock.assert_called_once_with("^s")
+
+    @patch("jarvis_agent.windows_perception._native_window_candidates")
+    def test_native_target_ignores_internal_cua_overlay(self, candidates_mock):
+        candidates_mock.return_value = [
+            {
+                "handle": 11,
+                "title": "Cua.AgentCursorOverlay.default",
+                "process": "Cua.Driver.exe",
+                "bounds": (0, 0, 1920, 1080),
+            },
+            {
+                "handle": 42,
+                "title": "Installation - Cursor (User)",
+                "process": "CursorUserSetup-x64-3.22.12.exe",
+                "bounds": (300, 180, 1200, 820),
+            },
+        ]
+
+        item = _native_target_window("Cursor Installer")
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item["handle"], 42)
+        self.assertNotIn("Cua.AgentCursorOverlay", item["title"])
 
     @patch("jarvis_agent.windows_perception._native_window_candidates")
     def test_native_target_matches_localized_title_by_process_identity(

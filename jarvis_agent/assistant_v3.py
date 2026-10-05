@@ -16,7 +16,7 @@ from .language import normalize_language, repeat_prompt, tool_message
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
 from .stt import build_stt
-from .tools import ToolIntent, execute, route
+from .tools import ToolIntent, execute, has_contextual_browser_scope, route
 from .tts import ElevenLabsTTS
 
 
@@ -336,6 +336,16 @@ class AssistantWorker(QObject):
             return False
 
         text = user_text.lower()
+        if intent.name == "browser.search":
+            scope = str(intent.args.get("scope") or "context").strip().casefold()
+            # Invisible research belongs to the agent/research_web path. A plain
+            # contextual search may use the deterministic browser fast path only
+            # when a browser surface is actually the current interaction context.
+            if scope == "web":
+                return False
+            if scope == "context" and not has_contextual_browser_scope():
+                return False
+
         # Never let the legacy router truncate a compound mission. If the
         # utterance contains sequencing or a second obvious action, let the
         # native agent handle the complete objective.

@@ -68,6 +68,12 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
 - pour agir dans une application déjà ouverte, ou dans une application que tu
   viens d'ouvrir pendant cette conversation, inspecte/active d'abord la fenêtre
   existante au lieu de relancer une nouvelle instance inutilement;
+- lorsqu'une demande courte comme "recherche X" ou "cherche X" suit une
+  application/site que tu viens d'ouvrir ou d'utiliser, interprète la recherche
+  dans cette surface récente sauf si l'utilisateur nomme explicitement Internet,
+  le Web, Google ou une autre destination. Observe d'abord cette surface; ne
+  détourne jamais une recherche locale vers Google simplement parce que le verbe
+  "rechercher" est présent;
 - pour agir dans une application déjà ouverte, utilise d'abord list_windows ou
   inspect_active_window afin d'observer l'interface réelle;
 - ne conclus jamais qu'une application ne supporte pas une fonction visible
@@ -419,6 +425,7 @@ def _completed_action_capabilities(
     completed: set[str] = set()
     browser_search_written = False
     ui_search_written = False
+    pending_written_value = ""
     for action in actions:
         if not action.success:
             continue
@@ -429,6 +436,9 @@ def _completed_action_capabilities(
                 payload = {}
             if payload.get("verified") is True:
                 completed.add("write_ui")
+                pending_written_value = ""
+            else:
+                pending_written_value = str(payload.get("value") or "").strip()
         elif action.name == "write_visual_target":
             # Visual writes require a separate after-state observation; the
             # existing UI verification loop owns that proof.
@@ -442,6 +452,27 @@ def _completed_action_capabilities(
                 completed.add("write_ui")
         elif action.name == "close_tab":
             completed.add("close_tab")
+        elif action.name == "open_url":
+            detail = str(action.detail or "")
+            if re.search(
+                r"https?://[^\s]+[?&](?:q|query|search|search_query)=",
+                detail,
+                flags=re.I,
+            ):
+                completed.add("site_search")
+        elif action.name == "inspect_active_window" and pending_written_value:
+            payload = _action_detail_dict(action)
+            observed_values = []
+            for item in list(payload.get("controls") or []):
+                if not isinstance(item, dict):
+                    continue
+                for key in ("value", "name"):
+                    value = str(item.get(key) or "").strip()
+                    if value:
+                        observed_values.append(value)
+            if any(value == pending_written_value for value in observed_values):
+                completed.add("write_ui")
+                pending_written_value = ""
 
         if action.success and action.name == "write_browser_element":
             browser_search_written = True
@@ -457,7 +488,6 @@ def _completed_action_capabilities(
         }:
             completed.add("site_search")
     return completed
-
 
 def _missing_requested_action_capabilities(
     user_text: str,
@@ -598,19 +628,65 @@ def _action_detail_dict(action: AgentActionResult) -> dict[str, Any]:
 
 def _inspection_requests_visual_fallback(
     action: AgentActionResult,
+    user_text: str = "",
 ) -> bool:
-    """Return True when structured perception explicitly says it is incomplete."""
+    """Return True only when structure is insufficient for the current goal.
+
+    UIA may describe only part of a window while still exposing the exact
+    control needed by the mission. Escalating to vision in that situation adds
+    latency and can turn a solvable task into a failure. Treat perception as
+    goal-sufficient when the required writable/content control is already
+    grounded.
+    """
     if action.name != "inspect_active_window" or not action.success:
         return False
     payload = _action_detail_dict(action)
     snapshot = payload.get("snapshot")
     if not isinstance(snapshot, dict):
         return False
-    return (
+    insufficient = (
         str(snapshot.get("semantic_coverage") or "").strip().lower()
         == "insufficient"
         or snapshot.get("vision_recommended") is True
     )
+    if not insufficient:
+        return False
+
+    controls = [
+        item for item in list(payload.get("controls") or [])
+        if isinstance(item, dict)
+    ]
+    capabilities = payload.get("capabilities") or {}
+    writable = list(capabilities.get("writable") or []) if isinstance(capabilities, dict) else []
+    if not writable:
+        writable = [item for item in controls if item.get("writable") is True]
+
+    required = _requested_action_capabilities(user_text)
+    if "write_ui" in required and writable:
+        return False
+
+    normalized = normalize(user_text)
+    observation_only = bool(
+        re.search(
+            r"\b(?:observe|observer|inspecte|inspecter|regarde|regarder|decris|decrire)\b",
+            normalized,
+        )
+    )
+    content_types = {
+        "Document", "Edit", "Text", "DataItem", "ListItem", "Hyperlink",
+        "TreeItem", "ComboBox",
+    }
+    if observation_only and any(
+        str(item.get("type") or "") in content_types
+        and (
+            item.get("writable") is True
+            or str(item.get("name") or item.get("value") or "").strip()
+        )
+        for item in controls
+    ):
+        return False
+
+    return True
 
 
 def _actions_have_verified_proof(
@@ -814,28 +890,88 @@ def _looks_like_memory_permission_prompt(text: str) -> bool:
     return any(re.search(pattern, normalized, flags=re.DOTALL) for pattern in patterns)
 
 
-def _is_explicit_web_request(text: str) -> bool:
-    normalized = (text or "").lower().replace("’", "'")
-    markers = (
-        "cherche", "recherche", "sur internet", "internet", "sur le web",
-        "web", "google", "en ligne", "vérifie en ligne", "verifie en ligne",
-        "search", "look up", "online",
+def _is_explicit_research_request(text: str) -> bool:
+    normalized = normalize(text)
+    return bool(
+        re.search(
+            r"\b(?:cherche|chercher|recherche|rechercher|trouve|trouver|"
+            r"verifie|verifier|search|look up|research)\b",
+            normalized,
+        )
+        or re.search(
+            r"\b(?:sur internet|internet|sur le web|web|en ligne|online)\b",
+            normalized,
+        )
     )
-    return any(marker in normalized for marker in markers)
 
 
+def _is_explicit_visible_web_request(text: str) -> bool:
+    """Require an explicit request to expose browser/search UI to the user."""
+    normalized = normalize(text)
+    visible_verb = bool(
+        re.search(
+            r"\b(?:ouvre|ouvrir|affiche|afficher|montre|montrer|voir|"
+            r"lance|lancer|open|show|display)\b",
+            normalized,
+        )
+    )
+    browser_surface = bool(
+        re.search(
+            r"\b(?:chrome|navigateur|browser|google|page|onglet|tab)\b",
+            normalized,
+        )
+    )
+    explicit_visible_search = bool(
+        re.search(
+            r"\b(?:ouvre|ouvrir|affiche|afficher|montre|montrer|open|show)\b"
+            r".{0,50}\b(?:recherche|search)\b",
+            normalized,
+        )
+    )
+    return (visible_verb and browser_surface) or explicit_visible_search
 def _query_matches_recent_user_context(
     query: str,
     messages: list[dict[str, Any]],
 ) -> bool:
-    """Detect a named subject that was just introduced in conversation.
+    """Detect whether a requested subject genuinely belongs to recent context.
 
-    This prevents a model from treating a user-created project name as an
-    unknown public product and launching a web search without being asked.
+    Generic conversational fragments must never be enough to block persistent
+    recall or background research. Named entities may arrive joined by STT or
+    model normalization (AtlasScope vs Atlas Scope), so compare compact n-grams
+    built only from non-stopword tokens.
     """
-    query_words = re.findall(r"[a-z0-9]+", (query or "").lower())
-    query_compact = "".join(query_words)
-    if len(query_compact) < 5:
+    stopwords = {
+        "avec", "cette", "comme", "dans", "dont", "elle", "elles", "encore",
+        "est", "etes", "etre", "fait", "font", "ils", "mais", "mes", "mon",
+        "nous", "pour", "propos", "quel", "quelle", "quelles", "quels", "que",
+        "qui", "sans", "ses", "sont", "sur", "tes", "ton", "tous", "tout",
+        "une", "vous", "veux", "veut", "votre", "vos", "the", "this", "that",
+        "what", "which", "with", "from", "your", "you", "want", "about",
+    }
+
+    def tokens(text: str) -> list[str]:
+        return [
+            token
+            for token in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(token) >= 2 and token not in stopwords
+        ]
+
+    def candidates(text: str) -> set[str]:
+        values = tokens(text)
+        compact: set[str] = set()
+        for size in range(1, min(3, len(values)) + 1):
+            for index in range(0, len(values) - size + 1):
+                group = values[index : index + size]
+                joined = "".join(group)
+                if len(joined) < 5:
+                    continue
+                if not any(len(token) >= 4 for token in group):
+                    continue
+                compact.add(joined)
+        return compact
+
+    query_candidates = candidates(query)
+    if not query_candidates:
         return False
 
     user_texts = [
@@ -843,25 +979,23 @@ def _query_matches_recent_user_context(
         for item in messages
         if item.get("role") == "user"
     ]
-    # The last user message is the current request. Compare only with earlier
-    # conversational turns.
     context_turns = max(8, settings.agent_history_turns)
     for text in user_texts[:-1][-context_turns:]:
-        words = re.findall(r"[a-z0-9]+", text.lower())
-        for size in range(1, min(4, len(words)) + 1):
-            for start in range(0, len(words) - size + 1):
-                candidate = "".join(words[start : start + size])
-                if len(candidate) < 4:
-                    continue
-                if query_compact in candidate or candidate in query_compact:
-                    return True
-                if difflib.SequenceMatcher(
-                    None, query_compact, candidate
-                ).ratio() >= 0.86:
+        previous_candidates = candidates(text)
+        if query_candidates & previous_candidates:
+            return True
+        for wanted in query_candidates:
+            for actual in previous_candidates:
+                shorter = min(len(wanted), len(actual))
+                longer = max(len(wanted), len(actual))
+                if shorter >= 5 and shorter / max(1, longer) >= 0.70:
+                    if wanted in actual or actual in wanted:
+                        return True
+                if shorter >= 6 and difflib.SequenceMatcher(
+                    None, wanted, actual
+                ).ratio() >= 0.92:
                     return True
     return False
-
-
 def _blocked_contextual_web_search_result(query: str) -> AgentActionResult:
     return AgentActionResult(
         name="research_web",
@@ -1681,7 +1815,7 @@ class OpenAIResponsesAgent:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
                 autonomous_research = (
                     name in {"research_web", "search_web"}
-                    and not _is_explicit_web_request(user_text)
+                    and not _is_explicit_research_request(user_text)
                 )
                 if phase:
                     if autonomous_research:
@@ -1824,6 +1958,7 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+        self._recent_execution_state = ""
 
     def reset(self) -> None:
         self._messages = [
@@ -1835,6 +1970,7 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+        self._recent_execution_state = ""
 
     def record_external_turn(
         self,
@@ -2123,7 +2259,81 @@ class GroqResponsesAgent:
             parsed = result.detail
 
         if isinstance(parsed, dict):
-            if name in {"inspect_active_window", "inspect_interface", "inspect_browser_page"}:
+            if name == "inspect_browser_page":
+                source = dict(parsed)
+                controls = [
+                    dict(item)
+                    for item in list(source.get("controls") or [])
+                    if isinstance(item, dict)
+                ]
+
+                def browser_priority(item: dict[str, Any]) -> tuple[int, int, int]:
+                    region = str(item.get("region") or "").strip().lower()
+                    region_rank = {
+                        "content": 0,
+                        "form": 0,
+                        "dialog": 1,
+                        "": 2,
+                        "messages": 2,
+                        "navigation": 4,
+                    }.get(region, 2)
+                    role = str(item.get("type") or "").strip().lower()
+                    role_rank = 0 if role in {
+                        "link", "button", "searchbox", "textbox", "heading",
+                        "checkbox", "radio", "combobox", "option",
+                    } else 1
+                    action_rank = 0 if (
+                        item.get("writable") is True
+                        or item.get("actionable") is True
+                    ) else 1
+                    return (region_rank, action_rank, role_rank)
+
+                ranked_controls = sorted(
+                    enumerate(controls),
+                    key=lambda pair: (*browser_priority(pair[1]), pair[0]),
+                )
+                compact_controls = [item for _index, item in ranked_controls[:48]]
+                kept_refs = {
+                    str(item.get("ref") or "")
+                    for item in compact_controls
+                    if item.get("ref")
+                }
+                capabilities = dict(source.get("capabilities") or {})
+                capabilities["writable"] = [
+                    dict(item)
+                    for item in list(capabilities.get("writable") or [])
+                    if isinstance(item, dict)
+                    and str(item.get("ref") or "") in kept_refs
+                ][:24]
+                capabilities["actionable"] = [
+                    dict(item)
+                    for item in list(capabilities.get("actionable") or [])
+                    if isinstance(item, dict)
+                    and str(item.get("ref") or "") in kept_refs
+                ][:32]
+                visible_text = [
+                    str(line)[:220]
+                    for line in list(source.get("visible_text") or [])
+                    if str(line).strip()
+                ][:60]
+                accessibility = [
+                    dict(item)
+                    for item in list(source.get("accessibility_tree") or [])
+                    if isinstance(item, dict)
+                    and str(item.get("name") or "").strip()
+                ][:60]
+                parsed = {
+                    "observation_id": source.get("observation_id"),
+                    "window": source.get("window"),
+                    "visible_text": visible_text,
+                    "controls": compact_controls,
+                    "capabilities": capabilities,
+                    "snapshot": source.get("snapshot"),
+                    "accessibility_tree": accessibility,
+                }
+                if len(controls) > len(compact_controls):
+                    parsed["controls_omitted"] = len(controls) - len(compact_controls)
+            elif name in {"inspect_active_window", "inspect_interface"}:
                 parsed = dict(parsed)
                 controls = [
                     dict(item)
@@ -2232,10 +2442,12 @@ class GroqResponsesAgent:
             )
 
         detail_text = str(detail or "")
-        max_detail = 6000 if name in {
-            "inspect_active_window",
-            "observe_screen",
-        } else 3500
+        if name == "inspect_browser_page":
+            max_detail = 10000
+        elif name in {"inspect_active_window", "observe_screen"}:
+            max_detail = 6000
+        else:
+            max_detail = 3500
         if len(detail_text) > max_detail:
             detail_text = detail_text[:max_detail] + "…"
 
@@ -2252,6 +2464,7 @@ class GroqResponsesAgent:
 
     def _trim_history(self) -> None:
         clean: list[dict[str, Any]] = []
+        recent_facts: list[dict[str, Any]] = []
         internal_prefixes = (
             "Réponds à la demande précédente uniquement",
             "Cet outil vient d échouer",
@@ -2259,10 +2472,60 @@ class GroqResponsesAgent:
             "Une action vient de modifier l'interface",
             "CHECKPOINT_APPRENTISSAGE_SKILL",
             "CHECKPOINT_APPRENTISSAGE_LESSON",
+            "[RECENT_EXECUTION_STATE]",
         )
+
+        def compact_tool_fact(item: dict[str, Any]) -> dict[str, Any] | None:
+            name = str(item.get("name") or item.get("tool_name") or "").strip()
+            if name not in {
+                "open_application", "open_file", "open_folder", "open_url",
+                "activate_window", "inspect_active_window",
+                "list_browser_pages", "inspect_browser_page",
+            }:
+                return None
+            try:
+                payload = json.loads(str(item.get("content") or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return None
+            if not isinstance(payload, dict) or payload.get("success") is not True:
+                return None
+            detail: Any = payload.get("detail")
+            if isinstance(detail, str):
+                try:
+                    parsed_detail = json.loads(detail)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    parsed_detail = detail
+            else:
+                parsed_detail = detail
+
+            fact: dict[str, Any] = {"tool": name, "success": True}
+            if isinstance(parsed_detail, dict):
+                for key in (
+                    "application", "target", "path", "url", "provider",
+                    "page_ref", "document_generation", "reused_existing_window",
+                ):
+                    value = parsed_detail.get(key)
+                    if value not in (None, "", [], {}):
+                        fact[key] = value
+                window = parsed_detail.get("window")
+                if isinstance(window, dict):
+                    fact["window"] = {
+                        key: window.get(key)
+                        for key in ("title", "url", "page_ref")
+                        if window.get(key) not in (None, "")
+                    }
+                elif window not in (None, ""):
+                    fact["window"] = str(window)[:300]
+            elif isinstance(parsed_detail, str) and parsed_detail.strip():
+                fact["detail"] = parsed_detail.strip()[:700]
+            return fact
+
         for item in self._messages[1:]:
             role = str(item.get("role") or "")
             if role == "tool":
+                fact = compact_tool_fact(item)
+                if fact is not None:
+                    recent_facts.append(fact)
                 continue
             if role == "assistant" and item.get("tool_calls"):
                 continue
@@ -2273,6 +2536,13 @@ class GroqResponsesAgent:
                 continue
             if role in {"user", "assistant"}:
                 clean.append({"role": role, "content": content})
+
+        if recent_facts:
+            self._recent_execution_state = json.dumps(
+                recent_facts[-6:],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )[:2800]
 
         maximum_turns = max(4, settings.agent_history_turns)
         user_turns_seen = 0
@@ -2285,9 +2555,24 @@ class GroqResponsesAgent:
                 start_index = index
                 break
 
+        history = clean[start_index:]
+        if self._recent_execution_state:
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "[RECENT_EXECUTION_STATE] "
+                        + self._recent_execution_state
+                        + "\nUtilise cet état comme continuité factuelle du runtime. "
+                        "Ne réinvente pas un nom de fichier, une application ou une "
+                        "fenêtre qui y est déjà résolue."
+                    ),
+                }
+            )
+
         self._messages = [
             {"role": "system", "content": _effective_system_instructions()},
-            *clean[start_index:],
+            *history,
         ]
 
     def run(
@@ -2775,7 +3060,7 @@ class GroqResponsesAgent:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
                 autonomous_research = (
                     name in {"research_web", "search_web"}
-                    and not _is_explicit_web_request(user_text)
+                    and not _is_explicit_research_request(user_text)
                 )
                 if phase:
                     if autonomous_research:
@@ -2958,7 +3243,7 @@ class GroqResponsesAgent:
                     result = _blocked_persistent_recall_for_current_context()
                 elif (
                     name == "open_web_search"
-                    and not _is_explicit_web_request(user_text)
+                    and not _is_explicit_visible_web_request(user_text)
                 ):
                     result = _blocked_visible_web_search_result(
                         str(arguments.get("query", ""))
@@ -2972,7 +3257,7 @@ class GroqResponsesAgent:
                     )
                 elif (
                     name in {"research_web", "search_web"}
-                    and not _is_explicit_web_request(user_text)
+                    and not _is_explicit_research_request(user_text)
                     and not any(not action.success for action in actions)
                     and _query_matches_recent_user_context(
                         str(arguments.get("query", "")),
@@ -2994,7 +3279,7 @@ class GroqResponsesAgent:
                     structured_inspection_seen = True
                     visual_fallback_required = (
                         settings.vision_enabled
-                        and _inspection_requests_visual_fallback(result)
+                        and _inspection_requests_visual_fallback(result, user_text)
                     )
                     if visual_fallback_required:
                         visual_fallback_repair_attempted = False

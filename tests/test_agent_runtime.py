@@ -17,6 +17,8 @@ from jarvis_agent.agent_runtime import (
     _looks_like_pseudo_tool_syntax,
     _looks_like_unnecessary_followup,
     _is_explicit_memory_write_request,
+    _is_explicit_research_request,
+    _is_explicit_visible_web_request,
     _looks_like_memory_permission_prompt,
     _query_matches_recent_user_context,
     _looks_mostly_english,
@@ -24,6 +26,7 @@ from jarvis_agent.agent_runtime import (
     _actions_have_verified_proof,
     _looks_like_clear_operational_feedback,
     _requested_action_capabilities,
+    _completed_action_capabilities,
     _inspection_requests_visual_fallback,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -461,6 +464,84 @@ class FakeGroqAgent(GroqResponsesAgent):
 
 class AgentRuntimeTests(unittest.TestCase):
 
+    def test_trim_history_preserves_recent_resolved_file_and_window_state(self):
+        agent = FakeGroqAgent(FakeTools(), [])
+        agent._messages.extend(
+            [
+                {"role": "user", "content": "Ouvre l'installation Cursor."},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_open",
+                            "type": "function",
+                            "function": {"name": "open_file", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_open",
+                    "name": "open_file",
+                    "content": json.dumps(
+                        {
+                            "tool": "open_file",
+                            "success": True,
+                            "message": "opened",
+                            "detail": r"C:\\Users\\salah\\Downloads\\CursorUserSetup-x64-3.22.12.exe",
+                        }
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_inspect",
+                    "name": "inspect_active_window",
+                    "content": json.dumps(
+                        {
+                            "tool": "inspect_active_window",
+                            "success": True,
+                            "message": "observed",
+                            "detail": json.dumps(
+                                {"window": {"title": "Installation - Cursor (User)"}}
+                            ),
+                        }
+                    ),
+                },
+                {"role": "assistant", "content": "L'installation est ouverte."},
+            ]
+        )
+
+        agent._trim_history()
+
+        state_messages = [
+            item["content"]
+            for item in agent._messages
+            if str(item.get("content") or "").startswith("[RECENT_EXECUTION_STATE]")
+        ]
+        self.assertEqual(len(state_messages), 1)
+        self.assertIn("CursorUserSetup-x64-3.22.12.exe", state_messages[0])
+        self.assertIn("Installation - Cursor (User)", state_messages[0])
+
+    def test_research_and_visible_browser_intents_are_distinct(self):
+        self.assertTrue(
+            _is_explicit_research_request(
+                "Recherche sur Internet la version actuelle de Python."
+            )
+        )
+        self.assertFalse(
+            _is_explicit_visible_web_request(
+                "Recherche sur Internet la version actuelle de Python."
+            )
+        )
+        self.assertTrue(
+            _is_explicit_visible_web_request(
+                "Ouvre Chrome et cherche la documentation Python."
+            )
+        )
+        self.assertTrue(_is_explicit_research_request("Recherche Messi."))
+        self.assertFalse(_is_explicit_visible_web_request("Recherche Messi."))
+
     def test_pseudo_tool_syntax_is_detected(self):
         self.assertTrue(
             _looks_like_pseudo_tool_syntax(
@@ -817,6 +898,53 @@ class AgentRuntimeTests(unittest.TestCase):
             ],
         )
         self.assertIn("écrit", result.text)
+
+    def test_opened_search_url_satisfies_visible_search_capability(self):
+        actions = [
+            AgentActionResult(
+                name="open_url",
+                success=True,
+                message="opened",
+                detail="https://www.google.com/search?q=python+documentation",
+            )
+        ]
+
+        self.assertIn("site_search", _completed_action_capabilities(actions))
+
+    def test_fresh_uia_after_state_verifies_previous_unverified_write(self):
+        actions = [
+            AgentActionResult(
+                name="write_ui_element",
+                success=True,
+                message="typed",
+                detail=json.dumps(
+                    {
+                        "verified": False,
+                        "before": "HELLO VERIFIED",
+                        "value": "HELLO VERIFIED bien joué",
+                    }
+                ),
+            ),
+            AgentActionResult(
+                name="inspect_active_window",
+                success=True,
+                message="observed",
+                detail=json.dumps(
+                    {
+                        "controls": [
+                            {
+                                "ref": "obs6:e7",
+                                "type": "Document",
+                                "writable": True,
+                                "value": "HELLO VERIFIED bien joué",
+                            }
+                        ]
+                    }
+                ),
+            ),
+        ]
+
+        self.assertIn("write_ui", _completed_action_capabilities(actions))
 
     def test_groq_unverified_write_does_not_satisfy_write_goal(self):
         class EventuallyVerifiedTools(FakeTools):
@@ -2608,6 +2736,59 @@ class AgentRuntimeTests(unittest.TestCase):
             "persistent_recall_blocked_current_context",
         )
 
+    def test_groq_allows_persistent_recall_when_recent_context_is_unrelated(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je n'ai pas cette information dans le contexte.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_recall_persistent",
+                            "name": "recall_information",
+                            "arguments": '{"query":"films que je veux regarder"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Vous vouliez regarder Inception.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        agent.run("C'est quoi le nom de projet test que je travaille sur ?")
+        result = agent.run("Quels sont les films que je veux regarder ?")
+
+        self.assertIn(
+            ("recall_information", {"query": "films que je veux regarder"}),
+            tools.calls,
+        )
+        self.assertTrue(any(action.success for action in result.actions))
+
     def test_groq_hides_persistent_memory_write_tool_on_ordinary_turn(self):
         agent = FakeGroqAgent(
             FakeTools(),
@@ -2882,6 +3063,128 @@ class AgentRuntimeTests(unittest.TestCase):
             ),
         )
         self.assertFalse(_inspection_requests_visual_fallback(usable))
+
+    def test_writable_uia_control_suppresses_unneeded_visual_fallback(self):
+        action = AgentActionResult(
+            name="inspect_active_window",
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "controls": [
+                        {
+                            "ref": "obs1:e7",
+                            "type": "Document",
+                            "writable": True,
+                            "name": "",
+                        }
+                    ],
+                    "capabilities": {
+                        "writable": [{"ref": "obs1:e7"}],
+                        "actionable": [],
+                    },
+                    "snapshot": {
+                        "semantic_coverage": "insufficient",
+                        "vision_recommended": True,
+                    },
+                }
+            ),
+        )
+
+        self.assertFalse(
+            _inspection_requests_visual_fallback(
+                action,
+                "Écris TEST PERSONAL AI dans Bloc-notes.",
+            )
+        )
+
+    def test_structured_document_is_enough_for_observation_request(self):
+        action = AgentActionResult(
+            name="inspect_active_window",
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "controls": [
+                        {
+                            "ref": "obs2:e7",
+                            "type": "Document",
+                            "writable": True,
+                            "value": "HELLO VERIFIED",
+                        }
+                    ],
+                    "snapshot": {
+                        "semantic_coverage": "insufficient",
+                        "vision_recommended": True,
+                    },
+                }
+            ),
+        )
+
+        self.assertFalse(
+            _inspection_requests_visual_fallback(
+                action,
+                "Observe cette application.",
+            )
+        )
+
+    def test_browser_projection_prioritizes_content_and_visible_text(self):
+        controls = []
+        for index in range(35):
+            controls.append(
+                {
+                    "ref": f"bobs1:e{index + 1}",
+                    "type": "button",
+                    "name": f"Navigation {index}",
+                    "region": "navigation",
+                    "actionable": True,
+                    "writable": False,
+                }
+            )
+        controls.append(
+            {
+                "ref": "bobs1:e99",
+                "type": "link",
+                "name": "Messi - Best Goals 2026",
+                "region": "content",
+                "actionable": True,
+                "writable": False,
+            }
+        )
+        payload = {
+            "observation_id": "bobs1",
+            "window": {
+                "title": "messi - YouTube",
+                "url": "https://www.youtube.com/results?search_query=messi",
+            },
+            "controls": controls,
+            "capabilities": {
+                "writable": [],
+                "actionable": [{"ref": item["ref"]} for item in controls],
+            },
+            "visible_text": ["Messi - Best Goals 2026", "Another result"],
+            "accessibility_tree": [],
+            "snapshot": {"semantic_coverage": "usable"},
+        }
+        result = AgentActionResult(
+            name="inspect_browser_page",
+            success=True,
+            message="observed",
+            detail=json.dumps(payload),
+        )
+
+        compact = GroqResponsesAgent._compact_tool_content(
+            "inspect_browser_page",
+            result,
+        )
+        outer = json.loads(compact)
+        detail = json.loads(outer["detail"])
+
+        self.assertEqual(detail["visible_text"][0], "Messi - Best Goals 2026")
+        self.assertEqual(detail["controls"][0]["ref"], "bobs1:e99")
+        self.assertTrue(
+            any(item.get("ref") == "bobs1:e99" for item in detail["controls"])
+        )
 
     def test_action_promise_is_detected(self):
         self.assertTrue(

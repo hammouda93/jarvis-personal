@@ -159,8 +159,16 @@ def _is_enabled(wrapper: Any) -> bool:
         return True
 
 
+def _is_internal_automation_window_title(title: str) -> bool:
+    normalized = normalize(title)
+    if normalized == "jarvis personal":
+        return True
+    compact = normalized.replace(" ", "")
+    return compact.startswith("cuaagentcursoroverlay")
+
+
 def _is_assistant_window(wrapper: Any) -> bool:
-    return normalize(_element_name(wrapper)) == "jarvis personal"
+    return _is_internal_automation_window_title(_element_name(wrapper))
 
 
 def _title_app_hint(title: str) -> str:
@@ -305,10 +313,14 @@ def _window_by_title(title: str):
     if not target:
         return None
 
-    windows = _desktop().windows(
-        visible_only=True,
-        top_level_only=True,
-    )
+    windows = [
+        wrapper
+        for wrapper in _desktop().windows(
+            visible_only=True,
+            top_level_only=True,
+        )
+        if not _is_internal_automation_window_title(_element_name(wrapper))
+    ]
     ranked = sorted(
         (
             (_window_query_score(target, _element_name(wrapper)), wrapper)
@@ -879,7 +891,13 @@ def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
     """Resolve a requested/foreground work window without UI Automation."""
     import ctypes
 
-    candidates = _native_window_candidates(limit=60)
+    candidates = [
+        item
+        for item in _native_window_candidates(limit=60)
+        if not _is_internal_automation_window_title(
+            str(item.get("title") or "")
+        )
+    ]
     if not candidates:
         return None
 
@@ -2114,6 +2132,7 @@ def click_ui_element(
 
 
 def activate_window(title: str) -> UIActionResult:
+    global _SNAPSHOT_WINDOW_TITLE
     target = (title or "").strip()
     if len(normalize(target)) < 2:
         return UIActionResult(False, "Le nom de la fenêtre est trop vague.")
@@ -2136,7 +2155,8 @@ def activate_window(title: str) -> UIActionResult:
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'activer la fenêtre {label}.", str(exc))
 
-    invalidate_ui_snapshot()
+    invalidate_ui_snapshot(preserve_window_title=False)
+    _SNAPSHOT_WINDOW_TITLE = label
     return UIActionResult(
         True,
         f"Fenêtre activée: {label}.",
@@ -2690,6 +2710,7 @@ def type_text_active_window(
     *,
     title: str = "",
     mode: str = "insert",
+    activate_target: bool = True,
 ) -> UIActionResult:
     """Fallback typing when UIA cannot expose an editable control.
 
@@ -2712,7 +2733,7 @@ def type_text_active_window(
         )
 
     target = (title or _SNAPSHOT_WINDOW_TITLE or "").strip()
-    if target:
+    if target and activate_target:
         activation = activate_window(target)
         if not activation.success:
             return UIActionResult(
@@ -2826,7 +2847,11 @@ _ALLOWED_KEYS = {
 }
 
 
-def press_key(key: str) -> UIActionResult:
+def press_key(
+    key: str,
+    *,
+    reactivate_snapshot: bool = True,
+) -> UIActionResult:
     normalized = normalize(key).replace(" ", "")
     sequence = _ALLOWED_KEYS.get(normalized)
     if sequence is None:
@@ -2836,7 +2861,8 @@ def press_key(key: str) -> UIActionResult:
         )
     try:
         if (
-            _SNAPSHOT_WINDOW_TITLE
+            reactivate_snapshot
+            and _SNAPSHOT_WINDOW_TITLE
             and normalize(_SNAPSHOT_WINDOW_TITLE) != "jarvis personal"
         ):
             try:

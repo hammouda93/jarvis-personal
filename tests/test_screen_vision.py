@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from jarvis_agent.screen_vision import (
+    _capture_window_bytes,
     click_visual_target,
     locate_visual_target,
     observe_screen,
@@ -56,7 +57,49 @@ class _FakeClipboard:
         cls.value = value
 
 
+class _ResizableFakeImage:
+    def __init__(self, width=1200, height=800):
+        self.width = width
+        self.height = height
+        self.resize_calls = []
+
+    def convert(self, _mode):
+        return self
+
+    def resize(self, size):
+        self.resize_calls.append(size)
+        self.width, self.height = size
+        return self
+
+    def save(self, buffer, **_kwargs):
+        buffer.write(b"jpeg")
+
+
 class ScreenVisionTests(unittest.TestCase):
+    @patch("PIL.ImageGrab.grab")
+    @patch("jarvis_agent.screen_vision._native_target_window")
+    @patch("jarvis_agent.screen_vision.settings")
+    def test_capture_uses_configured_target_width_when_optional_override_is_none(
+        self,
+        settings_mock,
+        target_mock,
+        grab_mock,
+    ):
+        settings_mock.vision_max_width = 800
+        target_mock.return_value = {
+            "title": "Opaque App",
+            "bounds": [0, 0, 1200, 800],
+        }
+        image = _ResizableFakeImage()
+        grab_mock.return_value = image
+
+        payload, metadata = _capture_window_bytes("Opaque App")
+
+        self.assertEqual(payload, b"jpeg")
+        self.assertEqual(image.resize_calls, [(800, 533)])
+        self.assertEqual(metadata["captured_width"], 800)
+        self.assertEqual(metadata["captured_height"], 533)
+
     @patch("jarvis_agent.screen_vision.settings")
     def test_remote_vision_endpoint_is_blocked_in_local_only_mode(
         self,
