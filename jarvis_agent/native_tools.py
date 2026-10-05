@@ -18,7 +18,15 @@ from .screen_vision import (
     observe_screen,
     write_visual_target,
 )
-from .tools import ToolIntent, ToolResult, execute, normalize
+from .tools import (
+    ToolIntent,
+    ToolResult,
+    _contextual_site_search_url,
+    _explicit_site_search_url,
+    _remember_browser_url,
+    execute,
+    normalize,
+)
 from .windows_perception import (
     activate_window,
     click_ui_element,
@@ -846,6 +854,113 @@ class NativeToolRegistry:
                 timeout_s=settings.browser_timeout_s,
             )
         return self._browser
+
+    def execute_direct_browser_intent(self, intent: ToolIntent) -> ToolResult:
+        """Execute deterministic browser fast-paths through CDP when enabled.
+
+        The legacy Windows/browser path remains untouched when CDP is disabled.
+        This prevents a CDP session from accidentally sending keyboard input to
+        whichever non-browser window currently owns focus.
+        """
+        browser = self._browser_adapter()
+        if browser is None:
+            return execute(intent)
+
+        try:
+            if intent.name == "browser.open_url":
+                url = str(intent.args.get("url") or "").strip()
+                payload = browser.navigate(url)
+                _remember_browser_url(str(payload.get("url") or url))
+                return ToolResult(True, "C'est fait.", json.dumps(payload, ensure_ascii=False))
+
+            if intent.name == "browser.search":
+                query = str(intent.args.get("query") or "").strip()
+                if not query:
+                    return ToolResult(
+                        True,
+                        "Que voulez-vous rechercher ?",
+                        "En attente du sujet de recherche",
+                        follow_up="search_query",
+                    )
+                scope = str(intent.args.get("scope") or "context").strip().casefold()
+                url = ""
+                site_name = ""
+                if scope != "web":
+                    url, site_name = _contextual_site_search_url(query)
+                if not url:
+                    import urllib.parse
+                    url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
+                    site_name = "Google"
+                payload = browser.navigate(url)
+                _remember_browser_url(str(payload.get("url") or url))
+                return ToolResult(
+                    True,
+                    f"Je recherche {query} sur {site_name}.",
+                    json.dumps(payload, ensure_ascii=False),
+                )
+
+            if intent.name == "browser.search_site":
+                site = str(intent.args.get("site") or "").strip()
+                query = str(intent.args.get("query") or "").strip()
+                url, site_name = _explicit_site_search_url(site, query)
+                if not url:
+                    return ToolResult(
+                        False,
+                        f"Je n'ai pas de recherche directe fiable pour {site or 'ce site'}.",
+                        site,
+                    )
+                payload = browser.navigate(url)
+                _remember_browser_url(str(payload.get("url") or url))
+                return ToolResult(
+                    True,
+                    f"Je recherche {query} sur {site_name}.",
+                    json.dumps(payload, ensure_ascii=False),
+                )
+
+            if intent.name == "browser.back":
+                payload = browser.back()
+                _remember_browser_url(str(payload.get("url") or ""))
+                return ToolResult(
+                    True,
+                    "Je reviens à la page précédente.",
+                    json.dumps(payload, ensure_ascii=False),
+                )
+
+            if intent.name == "browser.close_tab":
+                target = normalize(str(intent.args.get("name") or ""))
+                pages = browser.pages()
+                chosen = None
+                if target:
+                    matches = [
+                        item for item in pages
+                        if target in normalize(
+                            f"{item.get('title','')} {item.get('url','')}"
+                        )
+                    ]
+                    if len(matches) == 1:
+                        chosen = matches[0]
+                if chosen is None and len(pages) == 1:
+                    chosen = pages[0]
+                if chosen is None:
+                    return ToolResult(
+                        False,
+                        "Je ne peux pas identifier un onglet unique à fermer.",
+                        json.dumps({"pages": pages}, ensure_ascii=False),
+                    )
+                payload = browser.close_page(str(chosen.get("page_ref") or ""))
+                return ToolResult(
+                    True,
+                    "L'onglet a été fermé.",
+                    json.dumps(payload, ensure_ascii=False),
+                )
+        except Exception as exc:
+            return ToolResult(
+                False,
+                "Le navigateur contrôlé n'a pas pu exécuter cette action.",
+                f"{type(exc).__name__}: {exc}",
+            )
+
+        return execute(intent)
 
     def openai_tools(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
