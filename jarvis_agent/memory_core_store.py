@@ -50,6 +50,7 @@ class MemoryCoreStore(LocalMemory):
                     object_value TEXT NOT NULL,
                     kind TEXT NOT NULL,
                     qualifiers_json TEXT NOT NULL DEFAULT '{}',
+                    entities_json TEXT NOT NULL DEFAULT '[]',
                     scope TEXT NOT NULL DEFAULT 'global',
                     cardinality TEXT NOT NULL DEFAULT 'unknown',
                     confidence REAL NOT NULL DEFAULT 0,
@@ -83,6 +84,17 @@ class MemoryCoreStore(LocalMemory):
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info(memory_semantic_facts)"
+                ).fetchall()
+            }
+            if "entities_json" not in columns:
+                conn.execute(
+                    "ALTER TABLE memory_semantic_facts "
+                    "ADD COLUMN entities_json TEXT NOT NULL DEFAULT '[]'"
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_semantic_relation "
                 "ON memory_semantic_facts(relation, scope, status)"
@@ -244,9 +256,10 @@ class MemoryCoreStore(LocalMemory):
                     """
                     INSERT INTO memory_semantic_facts(
                         memory_id, ordinal, subject, relation, object_value,
-                        kind, qualifiers_json, scope, cardinality, confidence,
-                        status, parser_version, provenance, raw_hash, projected_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+                        kind, qualifiers_json, entities_json, scope,
+                        cardinality, confidence, status, parser_version,
+                        provenance, raw_hash, projected_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
                     """,
                     (
                         int(memory_id),
@@ -257,6 +270,11 @@ class MemoryCoreStore(LocalMemory):
                         projection.kind,
                         json.dumps(
                             projection.qualifiers,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        json.dumps(
+                            list(projection.entities),
                             ensure_ascii=False,
                             sort_keys=True,
                         ),
@@ -382,9 +400,9 @@ class MemoryCoreStore(LocalMemory):
         )
         sql = (
             "SELECT f.fact_id, f.memory_id, f.ordinal, f.subject, f.relation, "
-            "f.object_value, f.kind, f.qualifiers_json, f.scope, "
-            "f.cardinality, f.confidence, f.provenance, f.parser_version, "
-            "f.status, m.content, m.created_at "
+            "f.object_value, f.kind, f.qualifiers_json, f.entities_json, "
+            "f.scope, f.cardinality, f.confidence, f.provenance, "
+            "f.parser_version, f.status, m.content, m.created_at "
             "FROM memory_semantic_facts AS f "
             "JOIN memories AS m ON m.id = f.memory_id"
             + where
@@ -398,15 +416,24 @@ class MemoryCoreStore(LocalMemory):
                 qualifiers = json.loads(str(row[7] or "{}"))
             except (TypeError, ValueError, json.JSONDecodeError):
                 qualifiers = {}
+            try:
+                entities = json.loads(str(row[8] or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                entities = []
             projection = MemoryProjection(
                 subject=str(row[3]),
                 relation=str(row[4]),
                 value=str(row[5]),
                 kind=str(row[6]),
                 qualifiers=qualifiers if isinstance(qualifiers, dict) else {},
-                scope=str(row[8]),
-                cardinality=str(row[9]),
-                confidence=float(row[10]),
+                entities=tuple(
+                    str(item)
+                    for item in entities
+                    if str(item).strip()
+                ) if isinstance(entities, list) else (),
+                scope=str(row[9]),
+                cardinality=str(row[10]),
+                confidence=float(row[11]),
             )
             result.append(
                 SemanticFactRecord(
@@ -414,11 +441,11 @@ class MemoryCoreStore(LocalMemory):
                     memory_id=int(row[1]),
                     ordinal=int(row[2]),
                     projection=projection,
-                    provenance=str(row[11]),
-                    parser_version=str(row[12]),
-                    status=str(row[13]),
-                    raw_content=str(row[14]),
-                    created_at=str(row[15]),
+                    provenance=str(row[12]),
+                    parser_version=str(row[13]),
+                    status=str(row[14]),
+                    raw_content=str(row[15]),
+                    created_at=str(row[16]),
                 )
             )
         return result
