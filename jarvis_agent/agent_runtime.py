@@ -2763,9 +2763,11 @@ class GroqResponsesAgent:
                                 "La dernière inspection structurée indique que la "
                                 "couverture sémantique est insuffisante. N'en conclus "
                                 "pas que la cible n'existe pas et ne répète pas la même "
-                                "inspection. Utilise maintenant observe_screen sur la "
-                                "même fenêtre comme second capteur visuel, avec un focus "
-                                "lié à la mission actuelle."
+                                "inspection. Si la mission demande une recherche dans "
+                                "l'application et que search_application est disponible, "
+                                "utilise d'abord cette capacité déclarée. Sinon utilise "
+                                "observe_screen sur la même fenêtre comme second capteur "
+                                "visuel, avec un focus lié à la mission actuelle."
                             ),
                         }
                     )
@@ -3146,6 +3148,7 @@ class GroqResponsesAgent:
                         "write_visual_target",
                         "write_ui_element",
                         "press_key",
+                        "search_application",
                         "close_window",
                         "close_tab",
                     }
@@ -3286,6 +3289,7 @@ class GroqResponsesAgent:
                         "write_visual_target",
                         "write_ui_element",
                         "press_key",
+                        "search_application",
                         "close_window",
                         "close_tab",
                     }
@@ -3303,6 +3307,7 @@ class GroqResponsesAgent:
                         "write_visual_target",
                         "write_ui_element",
                         "press_key",
+                        "search_application",
                         "close_window",
                         "close_tab",
                     }
