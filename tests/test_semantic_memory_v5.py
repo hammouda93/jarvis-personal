@@ -450,6 +450,136 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
         }
         self.assertNotIn("Vim", values)
 
+    def test_explicit_single_value_update_supersedes_but_preserves_history(self):
+        store, _, engine = self.make_engine({})
+        first = store.remember("language old")
+        store.save_projection(
+            first.id,
+            (
+                projection(
+                    "preferred_language",
+                    "English",
+                    kind="preference",
+                    cardinality="single",
+                ),
+            ),
+            parser_version=engine.parser_version,
+            provenance="explicit",
+        )
+        second = store.remember("language new")
+        store.save_projection(
+            second.id,
+            (
+                projection(
+                    "preferred_language",
+                    "French",
+                    kind="preference",
+                    cardinality="single",
+                ),
+            ),
+            parser_version=engine.parser_version,
+            provenance="explicit",
+        )
+
+        active = engine.resolve(
+            MemoryQueryFrame(
+                relation="preferred_language",
+                answer_mode="single",
+                raw_text="current language",
+                confidence=0.99,
+            )
+        )
+        history = engine.resolve(
+            MemoryQueryFrame(
+                relation="preferred_language",
+                answer_mode="timeline",
+                raw_text="language history",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(
+            active["hits"][0].fact.projection.value,
+            "French",
+        )
+        self.assertEqual(
+            {
+                hit.fact.projection.value
+                for hit in history["hits"]
+            },
+            {"English", "French"},
+        )
+        statuses = {
+            fact.projection.value: fact.status
+            for fact in store.semantic_facts(status=None)
+        }
+        self.assertEqual(statuses["English"], "superseded")
+        self.assertEqual(statuses["French"], "active")
+
+    def test_collection_values_are_never_superseded_by_recency(self):
+        store, _, engine = self.make_engine({})
+        for raw, value in (
+            ("watch one", "Inception"),
+            ("watch two", "Gladiator"),
+        ):
+            item = store.remember(raw)
+            store.save_projection(
+                item.id,
+                (
+                    projection(
+                        "wants_to_watch",
+                        value,
+                        kind="intention",
+                        cardinality="collection",
+                    ),
+                ),
+                parser_version=engine.parser_version,
+                provenance="explicit",
+            )
+
+        active = store.semantic_facts()
+        self.assertEqual(
+            {fact.projection.value for fact in active},
+            {"Inception", "Gladiator"},
+        )
+
+    def test_underspecified_query_refuses_to_guess(self):
+        _, _, engine = self.make_engine(
+            {
+                "one": (projection("home_city", "Tunis"),),
+                "two": (projection("favorite_food", "Couscous"),),
+            }
+        )
+        engine.store.remember("one")
+        engine.store.remember("two")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                answer_mode="single",
+                raw_text="what was it",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "underspecified")
+        self.assertEqual(result["hits"], [])
+
+    def test_unicode_scope_key_is_not_collapsed_to_global(self):
+        from jarvis_agent.semantic_memory import MemoryProjection
+
+        item = MemoryProjection.from_dict(
+            {
+                "subject": "user",
+                "relation": "project_note",
+                "value": "مرحبا",
+                "scope": "مشروع النخبة",
+                "confidence": 1,
+            }
+        )
+
+        self.assertNotEqual(item.scope, "global")
+        self.assertIn("مشروع", item.scope)
+
     def test_legacy_compound_row_is_lazily_projected_into_independent_facts(self):
         store, interpreter, engine = self.make_engine(
             {
