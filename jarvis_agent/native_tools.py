@@ -89,6 +89,14 @@ class NativeToolRegistry:
         self._browser = None
 
     @staticmethod
+    def can_search_application(title: str) -> bool:
+        normalized_title = normalize(str(title or ""))
+        return any(
+            app_key in normalized_title
+            for app_key in _DECLARED_APP_SEARCH_SHORTCUTS
+        )
+
+    @staticmethod
     def _web_window_title_hint(url: str) -> str:
         try:
             host = urlparse(str(url or "")).netloc.casefold()
