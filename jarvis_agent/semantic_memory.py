@@ -66,6 +66,21 @@ def lexical_similarity(left: str, right: str) -> float:
     return len(a & b) / max(1, len(a | b))
 
 
+def _clean_entities(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple, set)):
+        return ()
+    result = []
+    seen = set()
+    for item in value:
+        text = str(item or "").strip()[:300]
+        key = normalize_text(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return tuple(result[:32])
+
+
 def _clean_qualifiers(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
@@ -85,6 +100,7 @@ class MemoryProjection:
     value: str
     kind: str = "fact"
     qualifiers: dict[str, str] = field(default_factory=dict)
+    entities: tuple[str, ...] = ()
     scope: str = "global"
     cardinality: str = "unknown"
     confidence: float = 0.0
@@ -114,6 +130,7 @@ class MemoryProjection:
             value=value[:1000],
             kind=kind,
             qualifiers=_clean_qualifiers(payload.get("qualifiers")),
+            entities=_clean_entities(payload.get("entities")),
             scope=scope,
             cardinality=cardinality,
             confidence=confidence,
@@ -133,6 +150,7 @@ class MemoryProjection:
                 self.relation,
                 normalize_text(self.value),
                 self.scope,
+                "|".join(sorted(normalize_text(item) for item in self.entities)),
                 qualifiers,
             )
         )
@@ -144,6 +162,7 @@ class MemoryQueryFrame:
     relation: str = ""
     object_hint: str = ""
     qualifiers: dict[str, str] = field(default_factory=dict)
+    entities: tuple[str, ...] = ()
     scope: str = "global"
     answer_mode: str = "single"
     exact_terms: tuple[str, ...] = ()
@@ -178,6 +197,7 @@ class MemoryQueryFrame:
             relation=normalize_key(str(data.get("relation") or "")),
             object_hint=str(data.get("object_hint") or "").strip()[:1000],
             qualifiers=_clean_qualifiers(data.get("qualifiers")),
+            entities=_clean_entities(data.get("entities")),
             scope=normalize_key(str(data.get("scope") or "global")) or "global",
             answer_mode=answer_mode,
             exact_terms=exact_terms,
@@ -286,6 +306,7 @@ def query_is_specific_enough(query: MemoryQueryFrame) -> bool:
         query.relation
         or query.object_hint
         or query.qualifiers
+        or query.entities
         or query.exact_terms
     )
 
@@ -335,6 +356,21 @@ def score_semantic_fact(
     if query.qualifiers and qualifier < 0.55:
         return None
 
+    entity_score = 0.5
+    if query.entities:
+        wanted_entities = {normalize_text(item) for item in query.entities}
+        fact_entities = {normalize_text(item) for item in projection.entities}
+        if not fact_entities:
+            fact_entities = {
+                token
+                for token in wanted_entities
+                if token and token in normalized_combined
+            }
+        overlap = len(wanted_entities & fact_entities)
+        if overlap == 0:
+            return None
+        entity_score = overlap / max(1, len(wanted_entities))
+
     object_score = (
         max(
             semantic_key_similarity(query.object_hint, projection.value),
@@ -350,14 +386,16 @@ def score_semantic_fact(
         "subject": subject,
         "qualifier": qualifier,
         "object": object_score,
+        "entity": entity_score,
         "lexical": lexical,
     }
     score = (
         relation * 0.46
         + subject * 0.12
         + qualifier * 0.18
-        + object_score * 0.10
-        + lexical * 0.14
+        + object_score * 0.08
+        + entity_score * 0.12
+        + lexical * 0.04
     )
     score *= 0.75 + (projection.confidence * 0.25)
     return SemanticMemoryHit(
