@@ -47,7 +47,14 @@ def _normalize(value: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _score_name(query: str, candidate: str) -> float:
+def score_application_name(query: str, candidate: str) -> float:
+    """Score an application name conservatively enough to fail closed.
+
+    Substring matches are useful for related product names but dangerous when
+    a very short executable name happens to occur inside an unrelated long
+    request. Treat containment as a strong match only when the shorter name
+    represents a substantial part of the longer one.
+    """
     wanted = _normalize(query)
     name = _normalize(candidate)
     if not wanted or not name:
@@ -60,10 +67,18 @@ def _score_name(query: str, candidate: str) -> float:
     if wanted_tokens and all(token in name_tokens for token in wanted_tokens):
         return 0.97
 
-    if len(wanted) >= 4 and (wanted in name or name in wanted):
-        return 0.94
+    if wanted in name or name in wanted:
+        shorter = min(len(wanted), len(name))
+        longer = max(len(wanted), len(name))
+        coverage = shorter / max(1, longer)
+        if shorter >= 4 and coverage >= 0.60:
+            return 0.94
 
     return difflib.SequenceMatcher(None, wanted, name).ratio()
+
+
+def _score_name(query: str, candidate: str) -> float:
+    return score_application_name(query, candidate)
 
 
 _START_APPS_CACHE: tuple[float, tuple[tuple[str, str], ...]] = (0.0, ())
