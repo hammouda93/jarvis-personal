@@ -598,19 +598,65 @@ def _action_detail_dict(action: AgentActionResult) -> dict[str, Any]:
 
 def _inspection_requests_visual_fallback(
     action: AgentActionResult,
+    user_text: str = "",
 ) -> bool:
-    """Return True when structured perception explicitly says it is incomplete."""
+    """Return True only when structure is insufficient for the current goal.
+
+    UIA may describe only part of a window while still exposing the exact
+    control needed by the mission. Escalating to vision in that situation adds
+    latency and can turn a solvable task into a failure. Treat perception as
+    goal-sufficient when the required writable/content control is already
+    grounded.
+    """
     if action.name != "inspect_active_window" or not action.success:
         return False
     payload = _action_detail_dict(action)
     snapshot = payload.get("snapshot")
     if not isinstance(snapshot, dict):
         return False
-    return (
+    insufficient = (
         str(snapshot.get("semantic_coverage") or "").strip().lower()
         == "insufficient"
         or snapshot.get("vision_recommended") is True
     )
+    if not insufficient:
+        return False
+
+    controls = [
+        item for item in list(payload.get("controls") or [])
+        if isinstance(item, dict)
+    ]
+    capabilities = payload.get("capabilities") or {}
+    writable = list(capabilities.get("writable") or []) if isinstance(capabilities, dict) else []
+    if not writable:
+        writable = [item for item in controls if item.get("writable") is True]
+
+    required = _requested_action_capabilities(user_text)
+    if "write_ui" in required and writable:
+        return False
+
+    normalized = normalize(user_text)
+    observation_only = bool(
+        re.search(
+            r"\b(?:observe|observer|inspecte|inspecter|regarde|regarder|decris|decrire)\b",
+            normalized,
+        )
+    )
+    content_types = {
+        "Document", "Edit", "Text", "DataItem", "ListItem", "Hyperlink",
+        "TreeItem", "ComboBox",
+    }
+    if observation_only and any(
+        str(item.get("type") or "") in content_types
+        and (
+            item.get("writable") is True
+            or str(item.get("name") or item.get("value") or "").strip()
+        )
+        for item in controls
+    ):
+        return False
+
+    return True
 
 
 def _actions_have_verified_proof(
@@ -3006,7 +3052,7 @@ class GroqResponsesAgent:
                     structured_inspection_seen = True
                     visual_fallback_required = (
                         settings.vision_enabled
-                        and _inspection_requests_visual_fallback(result)
+                        and _inspection_requests_visual_fallback(result, user_text)
                     )
                     if visual_fallback_required:
                         visual_fallback_repair_attempted = False
