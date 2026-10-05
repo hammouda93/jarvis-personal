@@ -473,6 +473,29 @@ class WindowsPerceptionTests(unittest.TestCase):
 
     @patch("jarvis_agent.windows_perception.time.sleep")
     @patch("jarvis_agent.windows_perception._send_keys")
+    @patch("jarvis_agent.windows_perception.activate_window")
+    def test_focused_typing_can_preserve_existing_child_focus(
+        self,
+        activate_mock,
+        send_keys_mock,
+        sleep_mock,
+    ):
+        with patch.dict(sys.modules, {"win32clipboard": _FakeClipboard}):
+            result = type_text_active_window(
+                "https://www.youtube.com/results?search_query=messi",
+                mode="replace",
+                reactivate=False,
+            )
+
+        self.assertTrue(result.success)
+        activate_mock.assert_not_called()
+        self.assertEqual(
+            [call.args[0] for call in send_keys_mock.call_args_list],
+            ["^a", "^v"],
+        )
+
+    @patch("jarvis_agent.windows_perception.time.sleep")
+    @patch("jarvis_agent.windows_perception._send_keys")
     def test_control_append_pastes_exact_unicode_and_restores_clipboard(
         self,
         send_keys_mock,
