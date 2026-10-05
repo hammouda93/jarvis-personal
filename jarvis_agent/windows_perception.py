@@ -2738,6 +2738,31 @@ def type_text_active_window(
         )
 
     target = (title or _SNAPSHOT_WINDOW_TITLE or "").strip()
+    if not reactivate and target:
+        try:
+            foreground = _native_target_window(None)
+        except Exception:
+            foreground = None
+        foreground_title = (
+            str((foreground or {}).get("title") or "").strip()
+            if isinstance(foreground, dict)
+            else ""
+        )
+        if (
+            not foreground_title
+            or _window_query_score(target, foreground_title) < 0.82
+        ):
+            return UIActionResult(
+                False,
+                "La fenêtre attendue n'est pas au premier plan; saisie annulée.",
+                _json(
+                    {
+                        "expected_window": target,
+                        "foreground_window": foreground_title,
+                    }
+                ),
+            )
+
     if reactivate and target:
         activation = activate_window(target)
         if not activation.success:
@@ -2843,6 +2868,7 @@ _ALLOWED_KEYS = {
     "ctrls": "^s",
     "ctrlshifts": "^+s",
     "ctrlf": "^f",
+    "altk": "%k",
     "ctrll": "^l",
     "ctrlc": "^c",
     "ctrlv": "^v",
