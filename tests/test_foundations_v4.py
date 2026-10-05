@@ -216,9 +216,23 @@ class ReplayDesktop:
         from jarvis_agent.fast_grounding import png_from_image
         self.require_foreground(window_id)
         return png_from_image(Image.new("RGB",(300,200),"white"))
+    def focus_probe(self,window_id,e):
+        self.actions.append((e,"focus_probe",{}))
+        return {
+            "writable": True,
+            "native_ref": "[9, 9, 9]",
+            "text": "Message",
+            "type": "Edit",
+            "bbox": [10,120,290,180],
+            "value": "",
+            "focused": True,
+        }
+
     def act(self,window_id,e,operation,**args):
         self.actions.append((e,operation,args))
-        if operation == "write": self.controls[0]["value"] = args["text"]
+        if operation == "write":
+            if self.controls:
+                self.controls[0]["value"] = args["text"]
         return True
 
 
@@ -241,6 +255,37 @@ class GroundingReplayTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,"editable_target_not_proven"):
             self.core.act(e["ref"],"write",text="hello")
         self.assertEqual(self.backend.actions,[])
+
+    def test_visual_label_requires_focus_probe_before_write(self):
+        observed = self.core.observe("101")["elements"][0]
+
+        with self.assertRaisesRegex(RuntimeError,"editable_target_not_proven"):
+            self.core.act(observed["ref"],"write",text="hello")
+
+        # A separate focus probe may promote the visual label only after the
+        # backend proves that Windows focused a genuine editable control.
+        promoted = self.core.focus_probe(
+            self.core.observe("101")["elements"][0]["ref"]
+        )
+        self.assertTrue(promoted["verified"])
+        edit = promoted["element"]
+        self.assertEqual(edit["sensor"],"uia_focus")
+        self.assertTrue(edit["writable"])
+
+    def test_visual_focus_probe_refuses_unproven_editability(self):
+        self.backend.focus_probe = lambda *args, **kwargs: {
+            "writable": False,
+            "type": "Text",
+            "text": "Message",
+            "bbox": [10,120,290,180],
+        }
+        ref = self.core.observe("101")["elements"][0]["ref"]
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "focused_editable_control_not_proven",
+        ):
+            self.core.focus_probe(ref)
 
     def test_focus_change_prevents_visual_action(self):
         e = self.core.observe("101")["elements"][0]
@@ -298,6 +343,14 @@ class GroundingReplayTests(unittest.TestCase):
         self.assertEqual(len(obs["elements"]),1)
         with self.assertRaisesRegex(RuntimeError,"confidence_too_low"):
             self.core.act(obs["elements"][0]["ref"],"click")
+
+    def test_foundation_tools_expose_focus_probe_when_computer_core_exists(self):
+        adapter = FoundationToolAdapter(None, computer=self.core)
+        names = {
+            item["function"]["name"]
+            for item in adapter.ollama_tools()
+        }
+        self.assertIn("computer_focus_probe", names)
 
     def test_browser_scope_blocks_windows_input(self):
         class Forbidden:
