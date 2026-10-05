@@ -512,6 +512,29 @@ class GroundingReplayTests(unittest.TestCase):
         self.assertEqual(len(self.backend.actions),1)
 
 
+class RuntimePreflightTests(unittest.TestCase):
+    def test_live_preflight_rejects_codex_dependency_overlay_paths(self):
+        from unittest.mock import patch
+        from jarvis_agent.runtime_preflight import _live_path_contamination
+
+        with patch(
+            "jarvis_agent.runtime_preflight.sys.path",
+            [
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main",
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main\\.cache\\foundation-test-deps",
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main\\.venv\\Lib\\site-packages",
+            ],
+        ):
+            contaminated = _live_path_contamination()
+
+        self.assertEqual(
+            contaminated,
+            [
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main\\.cache\\foundation-test-deps"
+            ],
+        )
+
+
 class FoundationPromptTests(unittest.TestCase):
     def test_browser_core_prompt_uses_only_current_browser_primitives(self):
         from unittest.mock import patch
