@@ -2129,6 +2129,7 @@ def click_ui_element(
 
 
 def activate_window(title: str) -> UIActionResult:
+    global _SNAPSHOT_WINDOW_TITLE
     target = (title or "").strip()
     if len(normalize(target)) < 2:
         return UIActionResult(False, "Le nom de la fenêtre est trop vague.")
@@ -2151,7 +2152,8 @@ def activate_window(title: str) -> UIActionResult:
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'activer la fenêtre {label}.", str(exc))
 
-    invalidate_ui_snapshot()
+    invalidate_ui_snapshot(preserve_window_title=False)
+    _SNAPSHOT_WINDOW_TITLE = label
     return UIActionResult(
         True,
         f"Fenêtre activée: {label}.",
