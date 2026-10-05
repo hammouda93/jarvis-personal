@@ -422,6 +422,18 @@ def _completed_action_capabilities(
     for action in actions:
         if not action.success:
             continue
+        if action.name == "open_web_search":
+            completed.add("site_search")
+        elif action.name == "open_url":
+            detail_lower = str(action.detail or "").casefold()
+            if (
+                "/search?" in detail_lower
+                or "search_query=" in detail_lower
+                or "?q=" in detail_lower
+                or "&q=" in detail_lower
+            ):
+                completed.add("site_search")
+
         if action.name == "write_ui_element":
             try:
                 payload = json.loads(action.detail or "{}")
