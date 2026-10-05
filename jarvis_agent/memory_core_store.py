@@ -209,7 +209,10 @@ class MemoryCoreStore(LocalMemory):
                 )
             if provenance == "explicit":
                 for projection in facts:
-                    if projection.cardinality != "single":
+                    if (
+                        projection.cardinality != "single"
+                        or projection.confidence < 0.85
+                    ):
                         continue
                     qualifiers_json = json.dumps(
                         projection.qualifiers,
