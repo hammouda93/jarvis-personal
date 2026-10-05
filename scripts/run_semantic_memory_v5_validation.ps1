@@ -1,7 +1,11 @@
 param(
     [string]$PythonExe = 'python',
     [string]$NodeExe = 'node',
-    [switch]$FullRegression
+    [switch]$FullRegression,
+    [switch]$LiveSemanticModel,
+    [string]$SemanticProvider = 'auto',
+    [string]$SemanticModel = '',
+    [switch]$AllowCloudSemanticMemory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,10 +40,31 @@ try {
         throw 'Protected installer/desktop primitives changed.'
     }
 
+    if ($LiveSemanticModel) {
+        Write-Host ''
+        Write-Host '5/5 Run synthetic live semantic-model acceptance...'
+        $evalArgs = @(
+            'scripts/evaluate_semantic_memory_v5.py',
+            '--provider', $SemanticProvider
+        )
+        if ($SemanticModel) {
+            $evalArgs += @('--model', $SemanticModel)
+        }
+        if ($AllowCloudSemanticMemory) {
+            $evalArgs += '--allow-cloud'
+        }
+        & $PythonExe @evalArgs
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+
     Write-Host ''
     Write-Host 'Semantic Memory V5 automated validation PASSED.'
     Write-Host 'No real user memory was used by the V5 unit suite.'
-    Write-Host 'Live semantic-model acceptance remains required.'
+    if ($LiveSemanticModel) {
+        Write-Host 'Synthetic live semantic-model acceptance PASSED.'
+    } else {
+        Write-Host 'Synthetic live semantic-model acceptance was not requested.'
+    }
     exit 0
 }
 finally {
