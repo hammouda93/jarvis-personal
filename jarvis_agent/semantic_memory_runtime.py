@@ -29,7 +29,7 @@ class SemanticMemoryEngine:
         *,
         min_score: float = 0.52,
         ambiguity_margin: float = 0.07,
-        batch_size: int = 48,
+        batch_size: int = 16,
     ) -> None:
         self.store = store
         self.interpreter = interpreter
