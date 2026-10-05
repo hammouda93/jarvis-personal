@@ -440,8 +440,9 @@ class GroundingReplayTests(unittest.TestCase):
 
 class FoundationPromptTests(unittest.TestCase):
     def test_browser_core_prompt_uses_only_current_browser_primitives(self):
+        from unittest.mock import patch
         from jarvis_agent.agent_runtime import _effective_system_instructions
-        with unittest.mock.patch.dict(
+        with patch.dict(
             os.environ,
             {
                 "JARVIS_BROWSER_CORE_ENABLED": "1",
@@ -457,8 +458,9 @@ class FoundationPromptTests(unittest.TestCase):
         self.assertIn("Ne substitue jamais une", prompt)
 
     def test_computer_core_prompt_requires_focus_probe_before_opaque_write(self):
+        from unittest.mock import patch
         from jarvis_agent.agent_runtime import _effective_system_instructions
-        with unittest.mock.patch.dict(
+        with patch.dict(
             os.environ,
             {
                 "JARVIS_BROWSER_CORE_ENABLED": "0",
