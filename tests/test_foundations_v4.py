@@ -115,6 +115,75 @@ class MemoryCoreTests(unittest.TestCase):
             self.assertEqual(search(self.memory,query),[])
         self.assertEqual(relevance("film","profil"),0)
 
+    def test_distinct_film_roles_are_preserved_without_cross_contamination(self):
+        self.memory.remember("Mon film test est Arrival.")
+        self.memory.remember("Je veux regarder le film Inception")
+
+        test_film = self.runtime.run("Quel est mon film test ?")
+        self.assertIn("Arrival", test_film.text)
+        self.assertNotIn("Inception", test_film.text)
+
+        watchlist = self.runtime.run(
+            "Quels sont les films que je veux regarder ?"
+        )
+        self.assertIn("Inception", watchlist.text)
+        self.assertNotIn("Arrival", watchlist.text)
+
+    def test_duplicate_fact_does_not_create_false_ambiguity(self):
+        self.memory.remember("Mon film test est Arrival.")
+        self.memory.remember("mon film test est Arrival")
+        result = self.runtime.run("Quel est mon film test ?")
+
+        self.assertIn("Arrival", result.text)
+        self.assertNotIn("Plusieurs informations", result.text)
+
+    def test_generic_film_paraphrase_can_be_disambiguated_by_followup(self):
+        self.memory.remember("Mon film test est Arrival")
+        self.memory.remember("Je veux regarder le film Inception")
+
+        ambiguous = self.runtime.run(
+            "Quel est le nom du film dont je t'ai parlé ?"
+        )
+        self.assertIn("Arrival", ambiguous.text)
+        self.assertIn("Inception", ambiguous.text)
+
+        resolved = self.runtime.run("film de test")
+        self.assertIn("Arrival", resolved.text)
+        self.assertNotIn("Inception", resolved.text)
+        self.assertEqual(self.llm.calls, 0)
+
+    def test_explicit_local_memory_inspection_lists_distinct_persistent_facts(self):
+        self.memory.remember("Mon film test est Arrival.")
+        self.memory.remember("mon film test est Arrival")
+        self.memory.remember("Je veux regarder le film Inception")
+
+        result = self.runtime.run(
+            "Qu'est-ce que t'as dans ta mémoire locale ?"
+        )
+
+        self.assertEqual(
+            [action.name for action in result.actions],
+            ["list_memory_information"],
+        )
+        self.assertEqual(result.text.count("Arrival"), 1)
+        self.assertIn("Inception", result.text)
+        self.assertEqual(self.llm.calls, 0)
+
+    def test_date_personal_question_routes_to_memory_recall(self):
+        self.memory.remember(
+            "Le 09/10/2026 j'ai rendez-vous avec le médecin"
+        )
+
+        result = self.runtime.run(
+            "quesque j'ai a faire le 09/10/2026"
+        )
+
+        self.assertIn("médecin", result.text)
+        self.assertEqual(
+            [action.name for action in result.actions],
+            ["recall_information"],
+        )
+
     def test_conflicting_facts_require_clarification(self):
         self.memory.remember("Mon film est Arrival")
         self.memory.remember("Mon film est Inception")
