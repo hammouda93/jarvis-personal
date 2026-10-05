@@ -475,6 +475,7 @@ class NativeToolRegistryTests(unittest.TestCase):
         observe_mock.assert_called_once_with(
             title="YouTube",
             focus="Identify the first three regular videos.",
+            compact=True,
         )
 
     @patch("jarvis_agent.native_tools.click_visual_target")
