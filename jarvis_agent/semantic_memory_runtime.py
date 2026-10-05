@@ -34,7 +34,8 @@ def _temporal_sort_key(hit: SemanticMemoryHit):
     # event-time qualifier exists. This keeps event chronology separate from
     # indexing/recall recency.
     return (
-        str(temporal),
+        0 if temporal else 1,
+        str(temporal or hit.fact.created_at),
         hit.fact.created_at,
         hit.fact.memory_id,
     )
