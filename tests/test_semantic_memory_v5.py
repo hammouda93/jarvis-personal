@@ -812,6 +812,141 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(second.text, "Sfax")
         self.assertEqual(delegate.calls, 0)
 
+    def test_session_semantic_fact_is_recalled_before_persistent_memory(self):
+        statement = "I am currently working on project Atlas Nova."
+        question = "What is the name of the project I am working on?"
+        session_fact = projection(
+            "current_project_name",
+            "Atlas Nova",
+            kind="project",
+            cardinality="single",
+        )
+        turns = {
+            statement: MemoryTurnInterpretation(
+                operation="pass",
+                session_facts=(session_fact,),
+                confidence=0.99,
+                reason="ordinary personal statement",
+            ),
+            question: MemoryTurnInterpretation(
+                operation="recall",
+                query=MemoryQueryFrame(
+                    relation="current_project_name",
+                    answer_mode="single",
+                    raw_text=question,
+                    confidence=0.99,
+                ),
+                confidence=0.99,
+                reason="personal recall",
+            ),
+        }
+        _, _, delegate, _, runtime = self.build_runtime(
+            turns=turns,
+            projections={},
+        )
+
+        first = runtime.run(statement)
+        self.assertEqual(first.text, "delegate:" + statement)
+        self.assertEqual(delegate.calls, 1)
+
+        second = runtime.run(question)
+        self.assertEqual(second.text, "Atlas Nova")
+        self.assertEqual(delegate.calls, 1)
+
+    def test_session_single_value_update_replaces_only_same_semantic_slot(self):
+        first_statement = "My current workspace is North."
+        second_statement = "My current workspace is South."
+        question = "Which workspace am I using now?"
+        turns = {
+            first_statement: MemoryTurnInterpretation(
+                operation="pass",
+                session_facts=(
+                    projection(
+                        "current_workspace",
+                        "North",
+                        cardinality="single",
+                    ),
+                ),
+                confidence=0.99,
+                reason="session statement",
+            ),
+            second_statement: MemoryTurnInterpretation(
+                operation="pass",
+                session_facts=(
+                    projection(
+                        "current_workspace",
+                        "South",
+                        cardinality="single",
+                    ),
+                ),
+                confidence=0.99,
+                reason="session statement",
+            ),
+            question: MemoryTurnInterpretation(
+                operation="recall",
+                query=MemoryQueryFrame(
+                    relation="current_workspace",
+                    answer_mode="single",
+                    raw_text=question,
+                    confidence=0.99,
+                ),
+                confidence=0.99,
+                reason="session recall",
+            ),
+        }
+        _, _, _, _, runtime = self.build_runtime(
+            turns=turns,
+            projections={},
+        )
+
+        runtime.run(first_statement)
+        runtime.run(second_statement)
+        result = runtime.run(question)
+
+        self.assertEqual(result.text, "South")
+
+    def test_reset_clears_session_semantics_but_not_persistent_store(self):
+        statement = "My temporary codeword is Orion."
+        question = "What is my temporary codeword?"
+        turns = {
+            statement: MemoryTurnInterpretation(
+                operation="pass",
+                session_facts=(
+                    projection(
+                        "temporary_codeword",
+                        "Orion",
+                        cardinality="single",
+                    ),
+                ),
+                confidence=0.99,
+                reason="session statement",
+            ),
+            question: MemoryTurnInterpretation(
+                operation="recall",
+                query=MemoryQueryFrame(
+                    relation="temporary_codeword",
+                    answer_mode="single",
+                    raw_text=question,
+                    confidence=0.99,
+                ),
+                confidence=0.99,
+                reason="session recall",
+            ),
+        }
+        _, _, delegate, _, runtime = self.build_runtime(
+            turns=turns,
+            projections={},
+        )
+
+        runtime.run(statement)
+        self.assertEqual(runtime.run(question).text, "Orion")
+
+        runtime.reset()
+        missing = runtime.run(question)
+
+        self.assertIn("pas assez de contexte", missing.text)
+        self.assertEqual(delegate.calls, 1)
+
     def test_non_memory_turn_passes_to_normal_runtime(self):
         text = "Explain the offside rule."
         _, _, delegate, _, runtime = self.build_runtime(
