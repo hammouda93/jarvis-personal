@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import datetime, timedelta, timezone
 
 from jarvis_agent.memory_semantic_interpreter import (
     ModelSemanticMemoryInterpreter,
@@ -49,6 +50,14 @@ CASES = [
         "mode": "single",
         "entity": "Project North",
     },
+    {
+        "name": "relative_time_projection_en",
+        "memory": "I have a doctor appointment tomorrow.",
+        "created_at": "2026-10-08T12:00:00+00:00",
+        "query": "What appointment do I have on 2026-10-09?",
+        "mode": "single",
+        "projection_date": "2026-10-09",
+    },
 ]
 
 
@@ -73,7 +82,11 @@ def main() -> int:
     start = time.perf_counter()
     projected = interpreter.project_batch(
         [
-            (index + 1, case["memory"])
+            (
+                index + 1,
+                case["memory"],
+                case.get("created_at", ""),
+            )
             for index, case in enumerate(CASES)
         ]
     )
@@ -153,6 +166,23 @@ def main() -> int:
                 f"{case['name']}: expected mode {case['mode']}, "
                 f"got {turn.query.answer_mode}"
             )
+        expected_projection_date = case.get("projection_date")
+        if expected_projection_date:
+            projection_dates = {
+                fact.qualifiers.get("date")
+                or fact.qualifiers.get("datetime")
+                or fact.qualifiers.get("start_at")
+                for fact in facts
+            }
+            if not any(
+                str(value or "").startswith(expected_projection_date)
+                for value in projection_dates
+            ):
+                failures.append(
+                    f"{case['name']}: relative memory time was not "
+                    f"resolved against created_at"
+                )
+
         expected_entity = case.get("entity")
         if expected_entity and turn.query is not None:
             query_entities = {
@@ -254,6 +284,38 @@ def main() -> int:
     if session_best < args.threshold:
         failures.append(
             "session_context: semantic relation mismatch"
+        )
+
+    now = datetime.now(timezone.utc)
+    tomorrow = (now + timedelta(days=1)).date().isoformat()
+    relative_query = interpreter.interpret_turn(
+        "What personal event do I have tomorrow?"
+    )
+    relative_qualifiers = (
+        relative_query.query.qualifiers
+        if relative_query.query is not None
+        else {}
+    )
+    relative_values = {
+        str(value)
+        for value in relative_qualifiers.values()
+    }
+    results.append(
+        {
+            "name": "relative_query_time",
+            "operation": relative_query.operation,
+            "qualifiers": relative_qualifiers,
+            "expected_date": tomorrow,
+        }
+    )
+    if relative_query.operation != "recall":
+        failures.append(
+            "relative_query_time: expected recall"
+        )
+    if not any(value.startswith(tomorrow) for value in relative_values):
+        failures.append(
+            "relative_query_time: tomorrow was not resolved against "
+            "reference_time_utc"
         )
 
     payload = {
