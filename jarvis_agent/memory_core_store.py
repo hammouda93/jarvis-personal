@@ -143,7 +143,7 @@ class MemoryCoreStore(LocalMemory):
             if (
                 current_hash != state_hash
                 or state_version != parser_version
-                or state_status not in {"indexed", "unprojected"}
+                or state_status not in {"indexed", "unprojected", "error"}
             ):
                 result.append(
                     MemoryItem(
