@@ -2608,6 +2608,42 @@ class AgentRuntimeTests(unittest.TestCase):
             "persistent_recall_blocked_current_context",
         )
 
+    def test_persistent_recall_guard_ignores_prior_memory_write_request(self):
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "user",
+                "content": "Mémorise que le film que je veux regarder est Arrival.",
+            },
+            {"role": "assistant", "content": "C'est mémorisé."},
+            {
+                "role": "user",
+                "content": "Quel film voulais-je regarder ?",
+            },
+        ]
+
+        self.assertFalse(
+            _query_matches_recent_user_context("Arrival", messages)
+        )
+
+    def test_persistent_recall_guard_ignores_prior_recall_question(self):
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "user",
+                "content": "Quel film voulais-je regarder ?",
+            },
+            {"role": "assistant", "content": "Je ne sais pas."},
+            {
+                "role": "user",
+                "content": "Rappelle-moi le film mémorisé.",
+            },
+        ]
+
+        self.assertFalse(
+            _query_matches_recent_user_context("Arrival", messages)
+        )
+
     def test_groq_hides_persistent_memory_write_tool_on_ordinary_turn(self):
         agent = FakeGroqAgent(
             FakeTools(),
