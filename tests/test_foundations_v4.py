@@ -535,6 +535,27 @@ class RuntimePreflightTests(unittest.TestCase):
         )
 
 
+    def test_windows_automation_python_gate_allows_memory_only_legacy_runtime(self):
+        from jarvis_agent.runtime_preflight import (
+            _windows_automation_python_compatible,
+        )
+
+        ok, reason = _windows_automation_python_compatible((3, 9, 0))
+
+        self.assertFalse(ok)
+        self.assertIn("Python >=3.10.10", reason)
+
+    def test_windows_automation_python_gate_accepts_modern_runtime(self):
+        from jarvis_agent.runtime_preflight import (
+            _windows_automation_python_compatible,
+        )
+
+        ok, reason = _windows_automation_python_compatible((3, 12, 0))
+
+        self.assertTrue(ok)
+        self.assertEqual(reason, "")
+
+
 class FoundationPromptTests(unittest.TestCase):
     def test_browser_core_prompt_uses_only_current_browser_primitives(self):
         from unittest.mock import patch
