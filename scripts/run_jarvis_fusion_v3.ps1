@@ -1,7 +1,8 @@
 param(
     [string]$LogPath = "",
     [int]$CdpPort = 0,
-    [switch]$EnableDomBrowser
+    [switch]$EnableDomBrowser,
+    [switch]$DisableBackgroundResearch
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +19,14 @@ $env:JARVIS_VISION_ACTIONS_ENABLED = "1"
 $env:JARVIS_OPERATIONAL_LEARNING_ENABLED = "0"
 $env:JARVIS_STRICT_PROOF_ENABLED = "0"
 $env:JARVIS_FOCUSED_TYPING_FALLBACK_ENABLED = "0"
+if ($DisableBackgroundResearch) {
+    $env:JARVIS_GROQ_BROWSER_SEARCH = "0"
+} else {
+    # Fusion V3 expects invisible research_web to be available whenever the
+    # existing Groq credential is configured. Process env intentionally wins
+    # over a stale .env toggle; use -DisableBackgroundResearch to opt out.
+    $env:JARVIS_GROQ_BROWSER_SEARCH = "1"
+}
 
 if ($EnableDomBrowser) {
     & python -c "import playwright; print('ok')" 2>$null | Out-Null
@@ -96,5 +105,6 @@ if ($EnableDomBrowser) {
     Write-Host "  browser=normal Chrome profile (last used profile)"
 }
 Write-Host "  windows=UIA -> Cua -> vision fallback"
+Write-Host ("  background_research=" + $(if ($DisableBackgroundResearch) { "disabled" } else { "Groq browser_search (if GROQ_API_KEY is set)" }))
 & "$PSScriptRoot\run_jarvis_logged.ps1" -LogPath $LogPath
 exit $LASTEXITCODE
