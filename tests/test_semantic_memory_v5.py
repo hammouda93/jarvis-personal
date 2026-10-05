@@ -198,6 +198,182 @@ class SemanticMemoryStoreTests(unittest.TestCase):
             self.assertEqual(facts[0].projection.value, "French")
 
 
+class SemanticMemoryMaintenanceTests(unittest.TestCase):
+    def test_force_reindex_rebuilds_only_sidecar_and_preserves_raw_rows(self):
+        from jarvis_agent.semantic_memory_cli import (
+            raw_snapshot,
+            reindex_semantic,
+        )
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = MemoryCoreStore(Path(folder) / "memory.sqlite3")
+            first = store.remember("evidence alpha", tags="one")
+            second = store.remember("evidence beta", tags="two")
+            before = raw_snapshot(store)
+
+            old = projection(
+                "temporary_relation",
+                "old",
+                confidence=0.99,
+            )
+            store.save_projection(
+                first.id,
+                (old,),
+                parser_version="old-parser",
+                provenance="legacy",
+            )
+
+            interpreter = FixtureInterpreter(
+                projections={
+                    "evidence alpha": (
+                        projection(
+                            "project_owner",
+                            "Alice",
+                            kind="project",
+                        ),
+                    ),
+                    "evidence beta": (
+                        projection(
+                            "project_budget",
+                            "25000",
+                            kind="project",
+                            qualifiers={"currency": "USD"},
+                        ),
+                    ),
+                }
+            )
+            result = reindex_semantic(
+                store,
+                interpreter,
+                force=True,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["raw_memory_unchanged"])
+            self.assertEqual(raw_snapshot(store), before)
+            self.assertEqual(
+                {item.id for item in store.recent_memories(limit=10)},
+                {first.id, second.id},
+            )
+            relations = {
+                fact.projection.relation
+                for fact in store.semantic_facts()
+            }
+            self.assertEqual(
+                relations,
+                {"project_owner", "project_budget"},
+            )
+            self.assertEqual(
+                result["after"]["raw_memories"],
+                2,
+            )
+            self.assertEqual(
+                result["after"]["semantic_facts"],
+                2,
+            )
+
+    def test_retry_errors_reprojects_only_failed_sidecar_rows(self):
+        from jarvis_agent.semantic_memory_cli import reindex_semantic
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = MemoryCoreStore(Path(folder) / "memory.sqlite3")
+            good = store.remember("good evidence")
+            failed = store.remember("failed evidence")
+            store.save_projection(
+                good.id,
+                (
+                    projection(
+                        "stable_fact",
+                        "kept",
+                    ),
+                ),
+                parser_version="fixture-semantic-v1",
+                provenance="legacy",
+            )
+            store.mark_projection_error(
+                failed.id,
+                parser_version="fixture-semantic-v1",
+                error="temporary",
+            )
+
+            interpreter = FixtureInterpreter(
+                projections={
+                    "failed evidence": (
+                        projection(
+                            "recovered_fact",
+                            "recovered",
+                        ),
+                    ),
+                }
+            )
+            result = reindex_semantic(
+                store,
+                interpreter,
+                retry_errors=True,
+            )
+
+            self.assertTrue(result["ok"])
+            facts = {
+                fact.projection.relation: fact.projection.value
+                for fact in store.semantic_facts()
+            }
+            self.assertEqual(facts["stable_fact"], "kept")
+            self.assertEqual(facts["recovered_fact"], "recovered")
+
+    def test_semantic_inspection_includes_history_without_touching_raw_memory(self):
+        from jarvis_agent.semantic_memory_cli import (
+            inspect_semantic,
+            raw_snapshot,
+        )
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = MemoryCoreStore(Path(folder) / "memory.sqlite3")
+            old = store.remember("old raw")
+            new = store.remember("new raw")
+            store.save_projection(
+                old.id,
+                (
+                    projection(
+                        "preferred_language",
+                        "English",
+                        kind="preference",
+                        cardinality="single",
+                        confidence=0.99,
+                    ),
+                ),
+                parser_version="test-v1",
+                provenance="explicit",
+            )
+            store.save_projection(
+                new.id,
+                (
+                    projection(
+                        "preferred_language",
+                        "French",
+                        kind="preference",
+                        cardinality="single",
+                        confidence=0.99,
+                    ),
+                ),
+                parser_version="test-v1",
+                provenance="explicit",
+            )
+            before = raw_snapshot(store)
+
+            payload = inspect_semantic(
+                store,
+                include_history=True,
+            )
+
+            self.assertEqual(raw_snapshot(store), before)
+            statuses = {
+                row["value"]: row["status"]
+                for row in payload["facts"]
+            }
+            self.assertEqual(statuses["English"], "superseded")
+            self.assertEqual(statuses["French"], "active")
+
+
 class SemanticMemoryRetrievalTests(unittest.TestCase):
     def make_engine(self, raw_to_facts):
         self.temp = tempfile.TemporaryDirectory()
