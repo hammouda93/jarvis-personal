@@ -172,13 +172,16 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
         if chosen == "auto":
             chosen = settings.agent_provider.strip().lower()
         self.provider = chosen
-        self.model = model.strip() or self._default_model(chosen)
+        self._model_override = model.strip()
+        self.model = self._model_override or self._default_model(chosen)
         self.timeout_s = float(
             timeout_s
             if timeout_s is not None
             else os.getenv("JARVIS_MEMORY_SEMANTIC_TIMEOUT_S", "8")
         )
-        self._client = None
+        self.last_provider = ""
+        self.last_model = ""
+        self.last_attempts: tuple[str, ...] = ()
 
     @staticmethod
     def _default_model(provider: str) -> str:
@@ -195,32 +198,60 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             return settings.ollama_agent_model
         return ""
 
-    def _provider_config(self) -> tuple[str, str]:
-        if self.provider == "cerebras":
-            return settings.cerebras_base_url.rstrip("/"), settings.cerebras_api_key
-        if self.provider == "groq":
+    @staticmethod
+    def _provider_config(provider: str) -> tuple[str, str]:
+        if provider == "cerebras":
+            return (
+                settings.cerebras_base_url.rstrip("/"),
+                settings.cerebras_api_key,
+            )
+        if provider == "groq":
             return settings.groq_base_url.rstrip("/"), settings.groq_api_key
-        if self.provider == "openai":
-            return settings.openai_base_url.rstrip("/"), settings.openai_api_key
-        raise RuntimeError(f"semantic_memory_provider_unsupported:{self.provider}")
+        if provider == "openai":
+            return (
+                settings.openai_base_url.rstrip("/"),
+                settings.openai_api_key,
+            )
+        raise RuntimeError(
+            f"semantic_memory_provider_unsupported:{provider}"
+        )
 
-    def _chat_openai_compatible(self, system: str, user: str) -> str:
-        base_url, api_key = self._provider_config()
+    def _model_for(self, provider: str) -> str:
+        if provider == self.provider and self._model_override:
+            return self._model_override
+        return self._default_model(provider)
+
+    def _provider_chain(self) -> tuple[str, ...]:
+        providers = [self.provider]
+        if (
+            self.provider == "cerebras"
+            and settings.cerebras_fallback_to_groq
+            and settings.groq_api_key
+        ):
+            providers.append("groq")
+        return tuple(providers)
+
+    def _chat_openai_compatible(
+        self,
+        provider: str,
+        system: str,
+        user: str,
+    ) -> str:
+        base_url, api_key = self._provider_config(provider)
         if not api_key:
             raise RuntimeError(
-                f"semantic_memory_api_key_missing:{self.provider}"
+                f"semantic_memory_api_key_missing:{provider}"
             )
-        if self._client is None:
-            from openai import OpenAI
+        from openai import OpenAI
 
-            self._client = OpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                timeout=self.timeout_s,
-                max_retries=0,
-            )
-        response = self._client.chat.completions.create(
-            model=self.model,
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=self.timeout_s,
+            max_retries=0,
+        )
+        response = client.chat.completions.create(
+            model=self._model_for(provider),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -261,11 +292,47 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
 
     def _chat(self, system: str, payload: Any) -> dict[str, Any]:
         user = json.dumps(payload, ensure_ascii=False)
+        attempts = []
+        errors = []
+
         if self.provider == "ollama":
-            raw = self._chat_ollama(system, user)
-        else:
-            raw = self._chat_openai_compatible(system, user)
-        return _extract_json(raw)
+            attempts.append("ollama")
+            try:
+                raw = self._chat_ollama(system, user)
+                parsed = _extract_json(raw)
+                self.last_provider = "ollama"
+                self.last_model = self._model_for("ollama")
+                self.last_attempts = tuple(attempts)
+                return parsed
+            except Exception:
+                self.last_attempts = tuple(attempts)
+                raise
+
+        for provider in self._provider_chain():
+            attempts.append(provider)
+            try:
+                raw = self._chat_openai_compatible(
+                    provider,
+                    system,
+                    user,
+                )
+                parsed = _extract_json(raw)
+                self.last_provider = provider
+                self.last_model = self._model_for(provider)
+                self.last_attempts = tuple(attempts)
+                return parsed
+            except Exception as exc:
+                errors.append(
+                    f"{provider}:{type(exc).__name__}:{exc}"
+                )
+
+        self.last_provider = ""
+        self.last_model = ""
+        self.last_attempts = tuple(attempts)
+        raise RuntimeError(
+            "semantic_memory_all_providers_failed:"
+            + " | ".join(errors)
+        )
 
     def interpret_turn(self, user_text: str) -> MemoryTurnInterpretation:
         payload = self._chat(
