@@ -29,7 +29,8 @@ favourite like liked love have has that it to in please know said saved
 prochain prochaine prochaines prochains next prevu prevue scheduled quand when
 where memorisee memorises memorisees memoriser dont parle parler parlee parlees
 demande demandes demander demandee demandees asked ask mentionne mentionner
-mentionnee mentionnees evoque evoquer evoquee evoquees""".split())
+mentionnee mentionnees evoque evoquer evoquee evoquees quesque questce qu
+faire fais dois doit""".split())
 _STOP.update({"connais", "connait", "sait", "pourrais", "can", "remind", "donne", "reminds"})
 _CONCEPTS = {
     "movie": "film", "movies": "film", "films": "film",
