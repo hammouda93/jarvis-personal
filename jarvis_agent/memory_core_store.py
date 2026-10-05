@@ -299,6 +299,11 @@ class MemoryCoreStore(LocalMemory):
                         ensure_ascii=False,
                         sort_keys=True,
                     )
+                    entities_json = json.dumps(
+                        list(projection.entities),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
                     conn.execute(
                         """
                         UPDATE memory_semantic_facts
@@ -309,6 +314,7 @@ class MemoryCoreStore(LocalMemory):
                           AND relation = ?
                           AND scope = ?
                           AND qualifiers_json = ?
+                          AND entities_json = ?
                           AND cardinality = 'single'
                         """,
                         (
@@ -317,6 +323,7 @@ class MemoryCoreStore(LocalMemory):
                             projection.relation,
                             projection.scope,
                             qualifiers_json,
+                            entities_json,
                         ),
                     )
 
