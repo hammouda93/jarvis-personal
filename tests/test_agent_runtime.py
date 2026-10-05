@@ -2739,7 +2739,7 @@ class AgentRuntimeTests(unittest.TestCase):
                             "type": "function_call",
                             "call_id": "call_recall_persistent",
                             "name": "recall_information",
-                            "arguments": "{\\"query\\":\\"films que je veux regarder\\"}",
+                            "arguments": '{"query":"films que je veux regarder"}',
                         }
                     ]
                 },
