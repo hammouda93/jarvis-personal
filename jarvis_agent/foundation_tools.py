@@ -36,7 +36,8 @@ _BROWSER_FIELDS = {
 }
 _OS_MUTATIONS = {"press_key", "type_text_active_window", "write_ui_element", "click_ui_element",
                  "write_visual_target", "click_visual_target", "close_window", "close_tab",
-                 "computer_click", "computer_write", "computer_press", "computer_shortcut"}
+                 "computer_click", "computer_write", "computer_press", "computer_shortcut",
+                 "computer_focus_probe"}
 
 
 class FoundationToolAdapter:
@@ -93,6 +94,7 @@ class FoundationToolAdapter:
             for op, names, required in (
                 ("observe", ["window_id"], ["window_id"]),
                 ("find", ["text", "type", "exact"], []),
+                ("focus_probe", ["ref"], ["ref"]),
                 ("click", ["ref", "expected"], ["ref"]),
                 ("write", ["ref", "text", "expected", "context"], ["ref", "text"]),
                 ("press", ["ref", "key", "expected", "context"], ["ref", "key"]),
@@ -161,6 +163,8 @@ class FoundationToolAdapter:
                     payload = self.computer.observe(args["window_id"])
                 elif op == "find":
                     payload = self.computer.find(**args)
+                elif op == "focus_probe":
+                    payload = self.computer.focus_probe(args["ref"])
                 elif op == "verify":
                     observation = self.computer.observe(args["window_id"])
                     payload = {"verified": self.computer.verify(args["condition"], observation=observation),
