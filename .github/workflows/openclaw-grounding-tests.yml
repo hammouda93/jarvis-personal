@@ -8,6 +8,7 @@ on:
       - feature/visual-perception-fallback-v1
       - feature/personal-agent-runtime-fusion-v3
       - fix/browser-runtime-stability-v1
+      - fix/runtime-foundation-reliability-v1
 
 jobs:
   focused-windows-tests:
