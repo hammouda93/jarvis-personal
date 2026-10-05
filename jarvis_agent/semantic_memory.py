@@ -268,9 +268,11 @@ def score_semantic_fact(
 ) -> SemanticMemoryHit | None:
     projection = fact.projection
 
-    if query.scope not in {"", "global"}:
-        if projection.scope not in {query.scope, "global"}:
+    if query.scope in {"", "global"}:
+        if projection.scope != "global":
             return None
+    elif projection.scope not in {query.scope, "global"}:
+        return None
 
     combined = " ".join(
         [
