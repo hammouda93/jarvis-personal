@@ -64,12 +64,27 @@ class NativeBrowserTransport:
         request = {"id": request_id, "version": 1, "token": config["token"],
                    "operation": operation, "arguments": arguments,
                    "deadline_ms": int((time.time() + self.timeout_s) * 1000)}
+        connected = False
+        dispatched = False
         try:
-            with socket.create_connection(("127.0.0.1", int(config["port"])), self.timeout_s) as sock:
+            with socket.create_connection(
+                ("127.0.0.1", int(config["port"])),
+                self.timeout_s,
+            ) as sock:
+                connected = True
                 sock.settimeout(self.timeout_s + 0.5)
                 with sock.makefile("rwb", buffering=0) as stream:
                     write_packet(stream, request)
+                    dispatched = True
                     result = read_packet(stream)
+        except OSError as exc:
+            if not connected:
+                raise RuntimeError("browser_bridge_unavailable") from exc
+            if dispatched:
+                raise RuntimeError(
+                    "browser_outcome_unknown_do_not_retry"
+                ) from exc
+            raise RuntimeError("browser_bridge_transport_failed") from exc
         except (TimeoutError, EOFError) as exc:
             raise RuntimeError("browser_outcome_unknown_do_not_retry") from exc
         if result.get("id") != request_id:
