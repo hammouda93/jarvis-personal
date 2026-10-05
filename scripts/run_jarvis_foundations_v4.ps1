@@ -4,6 +4,7 @@ param(
     [switch]$SemanticMemoryV5,
     [string]$SemanticMemoryProvider = "",
     [string]$SemanticMemoryModel = "",
+    [switch]$AllowCloudSemanticMemory,
     [switch]$BrowserCore,
     [switch]$ComputerCore,
     [switch]$All,
@@ -75,6 +76,7 @@ try {
     if ($SemanticMemoryModel) {
         $env:JARVIS_MEMORY_SEMANTIC_MODEL = $SemanticMemoryModel
     }
+    $env:JARVIS_MEMORY_ALLOW_CLOUD_SEMANTICS = $(if ($AllowCloudSemanticMemory) { "1" } else { "0" })
     $env:JARVIS_BROWSER_CORE_ENABLED = $(if ($BrowserCore) { "1" } else { "0" })
     $env:JARVIS_COMPUTER_CORE_ENABLED = $(if ($ComputerCore) { "1" } else { "0" })
 
@@ -121,6 +123,7 @@ try {
     if ($SemanticMemoryV5) {
         Write-Host ("  semantic_memory_provider=" + $(if ($SemanticMemoryProvider) { $SemanticMemoryProvider } else { "auto" }))
         Write-Host ("  semantic_memory_model=" + $(if ($SemanticMemoryModel) { $SemanticMemoryModel } else { "provider default" }))
+        Write-Host ("  semantic_memory_cloud=" + $(if ($AllowCloudSemanticMemory) { "explicitly allowed" } else { "blocked/local-first" }))
     }
     Write-Host ("  browser_core=" + $(if ($BrowserCore) { "on (normal Chrome profile bridge)" } else { "off" }))
     Write-Host ("  computer_core=" + $(if ($ComputerCore) { "on (UIA -> OCR -> optional model)" } else { "off" }))
