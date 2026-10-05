@@ -3036,6 +3036,64 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_browser_projection_prioritizes_content_and_visible_text(self):
+        controls = []
+        for index in range(35):
+            controls.append(
+                {
+                    "ref": f"bobs1:e{index + 1}",
+                    "type": "button",
+                    "name": f"Navigation {index}",
+                    "region": "navigation",
+                    "actionable": True,
+                    "writable": False,
+                }
+            )
+        controls.append(
+            {
+                "ref": "bobs1:e99",
+                "type": "link",
+                "name": "Messi - Best Goals 2026",
+                "region": "content",
+                "actionable": True,
+                "writable": False,
+            }
+        )
+        payload = {
+            "observation_id": "bobs1",
+            "window": {
+                "title": "messi - YouTube",
+                "url": "https://www.youtube.com/results?search_query=messi",
+            },
+            "controls": controls,
+            "capabilities": {
+                "writable": [],
+                "actionable": [{"ref": item["ref"]} for item in controls],
+            },
+            "visible_text": ["Messi - Best Goals 2026", "Another result"],
+            "accessibility_tree": [],
+            "snapshot": {"semantic_coverage": "usable"},
+        }
+        result = AgentActionResult(
+            name="inspect_browser_page",
+            success=True,
+            message="observed",
+            detail=json.dumps(payload),
+        )
+
+        compact = GroqResponsesAgent._compact_tool_content(
+            "inspect_browser_page",
+            result,
+        )
+        outer = json.loads(compact)
+        detail = json.loads(outer["detail"])
+
+        self.assertEqual(detail["visible_text"][0], "Messi - Best Goals 2026")
+        self.assertEqual(detail["controls"][0]["ref"], "bobs1:e99")
+        self.assertTrue(
+            any(item.get("ref") == "bobs1:e99" for item in detail["controls"])
+        )
+
     def test_action_promise_is_detected(self):
         self.assertTrue(
             _looks_like_action_promise(
