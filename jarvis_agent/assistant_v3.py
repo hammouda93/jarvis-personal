@@ -13,6 +13,7 @@ from .agent_runtime import AgentRuntimeUnavailable, build_agent_runtime
 from .audio import record_utterance, wait_for_double_clap
 from .config import settings
 from .language import normalize_language, repeat_prompt, tool_message
+from .native_tools import NATIVE_TOOLS
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
 from .stt import build_stt
@@ -504,7 +505,21 @@ class AssistantWorker(QObject):
         ):
             return False
 
-        result = execute(intent)
+        browser_fast_path = (
+            settings.browser_enabled
+            and intent.name in {
+                "browser.open_url",
+                "browser.search",
+                "browser.search_site",
+                "browser.close_tab",
+                "browser.back",
+            }
+        )
+        result = (
+            NATIVE_TOOLS.execute_direct_browser_intent(intent)
+            if browser_fast_path
+            else execute(intent)
+        )
         self._pending_direct_follow_up = result.follow_up or ""
         self.log_line.emit(
             f"[DIRECT] simple={intent.name} success={result.success} "
