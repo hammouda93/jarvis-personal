@@ -313,16 +313,19 @@ def _window_by_title(title: str):
     if not target:
         return None
 
-    windows = _desktop().windows(
-        visible_only=True,
-        top_level_only=True,
-    )
+    windows = [
+        wrapper
+        for wrapper in _desktop().windows(
+            visible_only=True,
+            top_level_only=True,
+        )
+        if not _is_internal_automation_window_title(_element_name(wrapper))
+    ]
     ranked = sorted(
         (
             (_window_query_score(target, _element_name(wrapper)), wrapper)
             for wrapper in windows
             if _is_visible(wrapper)
-            and not _is_internal_automation_window_title(_element_name(wrapper))
         ),
         key=lambda pair: -pair[0],
     )
