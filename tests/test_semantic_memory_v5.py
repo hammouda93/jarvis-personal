@@ -375,6 +375,98 @@ class SemanticMemoryMaintenanceTests(unittest.TestCase):
                 2,
             )
 
+    def test_reindex_rebuilds_single_value_supersession_from_admission_history(self):
+        from jarvis_agent.semantic_memory_cli import (
+            raw_snapshot,
+            reindex_semantic,
+        )
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = MemoryCoreStore(Path(folder) / "memory.sqlite3")
+            old = store.remember("preference old raw")
+            new = store.remember("preference new raw")
+
+            store.save_projection(
+                old.id,
+                (
+                    projection(
+                        "preferred_editor",
+                        "VS Code",
+                        kind="preference",
+                        cardinality="single",
+                        confidence=0.99,
+                    ),
+                ),
+                parser_version="fixture-semantic-v1",
+                provenance="explicit",
+            )
+            store.save_projection(
+                new.id,
+                (
+                    projection(
+                        "preferred_editor",
+                        "Cursor",
+                        kind="preference",
+                        cardinality="single",
+                        confidence=0.99,
+                    ),
+                ),
+                parser_version="fixture-semantic-v1",
+                provenance="explicit",
+            )
+            before = raw_snapshot(store)
+
+            store.reset_semantic_index()
+
+            self.assertEqual(
+                store.memory_provenance(old.id),
+                "explicit",
+            )
+            self.assertEqual(
+                store.memory_provenance(new.id),
+                "explicit",
+            )
+
+            interpreter = FixtureInterpreter(
+                projections={
+                    "preference old raw": (
+                        projection(
+                            "preferred_editor",
+                            "VS Code",
+                            kind="preference",
+                            cardinality="single",
+                            confidence=0.99,
+                        ),
+                    ),
+                    "preference new raw": (
+                        projection(
+                            "preferred_editor",
+                            "Cursor",
+                            kind="preference",
+                            cardinality="single",
+                            confidence=0.99,
+                        ),
+                    ),
+                }
+            )
+            result = reindex_semantic(
+                store,
+                interpreter,
+            )
+
+            self.assertTrue(result["raw_memory_unchanged"])
+            self.assertEqual(raw_snapshot(store), before)
+            statuses = {
+                fact.projection.value: fact.status
+                for fact in store.semantic_facts(status=None)
+            }
+            self.assertEqual(statuses["VS Code"], "superseded")
+            self.assertEqual(statuses["Cursor"], "active")
+            self.assertEqual(
+                result["after"]["admissions"]["explicit"],
+                2,
+            )
+
     def test_retry_errors_reprojects_only_failed_sidecar_rows(self):
         from jarvis_agent.semantic_memory_cli import reindex_semantic
 
