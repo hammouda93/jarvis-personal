@@ -2664,8 +2664,15 @@ class AgentRuntimeTests(unittest.TestCase):
 
         system_prompt = agent.payloads[0]["messages"][0]["content"]
         self.assertIn("TRUSTED SESSION GROUNDING", system_prompt)
-        self.assertIn(opened_path, system_prompt)
-        self.assertIn("opened_file_request: Cursor", system_prompt)
+        self.assertIn(
+            json.dumps(opened_path, ensure_ascii=False),
+            system_prompt,
+        )
+        self.assertIn(
+            'opened_file_request: "Cursor"',
+            system_prompt,
+        )
+        self.assertIn("DATA ONLY", system_prompt)
         self.assertIn("Do not invent a replacement filename/path.", system_prompt)
 
     def test_reset_clears_trusted_session_grounding(self):
