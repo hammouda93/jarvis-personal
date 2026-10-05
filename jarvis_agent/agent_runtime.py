@@ -598,19 +598,50 @@ def _action_detail_dict(action: AgentActionResult) -> dict[str, Any]:
 
 def _inspection_requests_visual_fallback(
     action: AgentActionResult,
+    user_text: str = "",
 ) -> bool:
-    """Return True when structured perception explicitly says it is incomplete."""
+    """Return True only when structured perception is insufficient for the mission.
+
+    A UI tree may be globally incomplete while still exposing the exact
+    capability needed by the current step. For example, a Notepad snapshot can
+    legitimately be marked partial yet expose a writable Document control. In
+    that case vision would add latency and failure modes without adding useful
+    grounding.
+    """
     if action.name != "inspect_active_window" or not action.success:
         return False
     payload = _action_detail_dict(action)
     snapshot = payload.get("snapshot")
     if not isinstance(snapshot, dict):
         return False
-    return (
+
+    incomplete = (
         str(snapshot.get("semantic_coverage") or "").strip().lower()
         == "insufficient"
         or snapshot.get("vision_recommended") is True
     )
+    if not incomplete:
+        return False
+
+    required = _requested_action_capabilities(user_text)
+    capabilities = payload.get("capabilities")
+    if isinstance(capabilities, dict):
+        writable = [
+            item
+            for item in list(capabilities.get("writable") or [])
+            if isinstance(item, dict) and str(item.get("ref") or "").strip()
+        ]
+        actionable = [
+            item
+            for item in list(capabilities.get("actionable") or [])
+            if isinstance(item, dict) and str(item.get("ref") or "").strip()
+        ]
+        if "write_ui" in required and writable:
+            return False
+        if "close_tab" in required and actionable:
+            return False
+
+    return True
 
 
 def _actions_have_verified_proof(
@@ -3010,7 +3041,10 @@ class GroqResponsesAgent:
                     structured_inspection_seen = True
                     visual_fallback_required = (
                         settings.vision_enabled
-                        and _inspection_requests_visual_fallback(result)
+                        and _inspection_requests_visual_fallback(
+                            result,
+                            user_text,
+                        )
                     )
                     if visual_fallback_required:
                         visual_fallback_repair_attempted = False
