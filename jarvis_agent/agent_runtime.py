@@ -2197,7 +2197,81 @@ class GroqResponsesAgent:
             parsed = result.detail
 
         if isinstance(parsed, dict):
-            if name in {"inspect_active_window", "inspect_interface", "inspect_browser_page"}:
+            if name == "inspect_browser_page":
+                source = dict(parsed)
+                controls = [
+                    dict(item)
+                    for item in list(source.get("controls") or [])
+                    if isinstance(item, dict)
+                ]
+
+                def browser_priority(item: dict[str, Any]) -> tuple[int, int, int]:
+                    region = str(item.get("region") or "").strip().lower()
+                    region_rank = {
+                        "content": 0,
+                        "form": 0,
+                        "dialog": 1,
+                        "": 2,
+                        "messages": 2,
+                        "navigation": 4,
+                    }.get(region, 2)
+                    role = str(item.get("type") or "").strip().lower()
+                    role_rank = 0 if role in {
+                        "link", "button", "searchbox", "textbox", "heading",
+                        "checkbox", "radio", "combobox", "option",
+                    } else 1
+                    action_rank = 0 if (
+                        item.get("writable") is True
+                        or item.get("actionable") is True
+                    ) else 1
+                    return (region_rank, action_rank, role_rank)
+
+                ranked_controls = sorted(
+                    enumerate(controls),
+                    key=lambda pair: (*browser_priority(pair[1]), pair[0]),
+                )
+                compact_controls = [item for _index, item in ranked_controls[:48]]
+                kept_refs = {
+                    str(item.get("ref") or "")
+                    for item in compact_controls
+                    if item.get("ref")
+                }
+                capabilities = dict(source.get("capabilities") or {})
+                capabilities["writable"] = [
+                    dict(item)
+                    for item in list(capabilities.get("writable") or [])
+                    if isinstance(item, dict)
+                    and str(item.get("ref") or "") in kept_refs
+                ][:24]
+                capabilities["actionable"] = [
+                    dict(item)
+                    for item in list(capabilities.get("actionable") or [])
+                    if isinstance(item, dict)
+                    and str(item.get("ref") or "") in kept_refs
+                ][:32]
+                visible_text = [
+                    str(line)[:220]
+                    for line in list(source.get("visible_text") or [])
+                    if str(line).strip()
+                ][:60]
+                accessibility = [
+                    dict(item)
+                    for item in list(source.get("accessibility_tree") or [])
+                    if isinstance(item, dict)
+                    and str(item.get("name") or "").strip()
+                ][:60]
+                parsed = {
+                    "observation_id": source.get("observation_id"),
+                    "window": source.get("window"),
+                    "visible_text": visible_text,
+                    "controls": compact_controls,
+                    "capabilities": capabilities,
+                    "snapshot": source.get("snapshot"),
+                    "accessibility_tree": accessibility,
+                }
+                if len(controls) > len(compact_controls):
+                    parsed["controls_omitted"] = len(controls) - len(compact_controls)
+            elif name in {"inspect_active_window", "inspect_interface"}:
                 parsed = dict(parsed)
                 controls = [
                     dict(item)
@@ -2306,10 +2380,12 @@ class GroqResponsesAgent:
             )
 
         detail_text = str(detail or "")
-        max_detail = 6000 if name in {
-            "inspect_active_window",
-            "observe_screen",
-        } else 3500
+        if name == "inspect_browser_page":
+            max_detail = 10000
+        elif name in {"inspect_active_window", "observe_screen"}:
+            max_detail = 6000
+        else:
+            max_detail = 3500
         if len(detail_text) > max_detail:
             detail_text = detail_text[:max_detail] + "…"
 
