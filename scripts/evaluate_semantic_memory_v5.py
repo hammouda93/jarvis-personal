@@ -42,6 +42,13 @@ CASES = [
         "query": "ما هي لغتي المفضلة؟",
         "mode": "single",
     },
+    {
+        "name": "entity_context_en",
+        "memory": "Alice owns Project North while Bob owns Project South.",
+        "query": "Who owns Project North?",
+        "mode": "single",
+        "entity": "Project North",
+    },
 ]
 
 
@@ -111,6 +118,16 @@ def main() -> int:
                 if turn.query is not None
                 else ""
             ),
+            "query_entities": (
+                list(turn.query.entities)
+                if turn.query is not None
+                else []
+            ),
+            "projected_entities": [
+                entity
+                for fact in facts
+                for entity in fact.entities
+            ],
             "relation_similarity": round(best, 4),
             "query_seconds": round(query_seconds, 3),
         }
@@ -136,6 +153,26 @@ def main() -> int:
                 f"{case['name']}: expected mode {case['mode']}, "
                 f"got {turn.query.answer_mode}"
             )
+        expected_entity = case.get("entity")
+        if expected_entity and turn.query is not None:
+            query_entities = {
+                item.casefold()
+                for item in turn.query.entities
+            }
+            projected_entities = {
+                item.casefold()
+                for fact in facts
+                for item in fact.entities
+            }
+            if expected_entity.casefold() not in query_entities:
+                failures.append(
+                    f"{case['name']}: query entity not preserved"
+                )
+            if expected_entity.casefold() not in projected_entities:
+                failures.append(
+                    f"{case['name']}: projection entity not preserved"
+                )
+
         exact = case.get("exact")
         if exact and turn.query is not None:
             combined = list(turn.query.exact_terms)
