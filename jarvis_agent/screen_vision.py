@@ -354,7 +354,10 @@ def locate_visual_target(
         return ScreenObservation(False, "La cible visuelle est trop vague.")
 
     try:
-        image_bytes, metadata = _capture_window_bytes(title)
+        image_bytes, metadata = _capture_window_bytes(
+            title,
+            max_width=min(1024, max(640, int(settings.vision_max_width))),
+        )
     except Exception as exc:
         return ScreenObservation(
             False,
@@ -376,6 +379,7 @@ def locate_visual_target(
         content, elapsed = _call_local_vision(
             image_bytes,
             prompt=prompt,
+            num_predict=min(160, int(settings.vision_num_predict)),
         )
     except Exception as exc:
         return ScreenObservation(
