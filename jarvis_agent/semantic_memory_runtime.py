@@ -100,6 +100,13 @@ class SemanticMemoryEngine:
         item = self.store.get_memory(memory_id)
         if item is None:
             raise KeyError(f"memory_not_found:{memory_id}")
+        if provenance == "explicit":
+            # Admission is independent from successful semantic projection.
+            # A later reindex must still know this raw row was user-approved.
+            self.store.mark_admission(
+                memory_id,
+                provenance="explicit",
+            )
         projected = self.interpreter.project_batch(
             [(item.id, item.content)],
             relation_catalog=self.relation_catalog(),
@@ -162,11 +169,15 @@ class SemanticMemoryEngine:
                     if fact.confidence >= 0.55
                 )
                 try:
+                    provenance = (
+                        self.store.memory_provenance(item.id)
+                        or "legacy"
+                    )
                     self.store.save_projection(
                         item.id,
                         facts,
                         parser_version=self.parser_version,
-                        provenance="legacy",
+                        provenance=provenance,
                     )
                     if facts:
                         indexed += 1
