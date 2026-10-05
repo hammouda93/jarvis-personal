@@ -535,6 +535,8 @@ def _open_browser_url(url: str) -> bool:
 
 
 def _open_application(app: str) -> ToolResult:
+    if normalize(app) not in {"chrome", "google chrome"}:
+        clear_browser_context()
     local = os.getenv("LOCALAPPDATA", "")
     windir = os.getenv("WINDIR", r"C:\Windows")
     program_files = os.getenv("ProgramFiles", r"C:\Program Files")
