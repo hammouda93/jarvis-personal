@@ -729,6 +729,10 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result.text, "Cursor")
         self.assertEqual(delegate.calls, 0)
+        self.assertEqual(
+            [action.name for action in result.actions],
+            ["semantic_memory_recall"],
+        )
 
     def test_inspect_lists_raw_durable_evidence_without_legacy_recall_tool(self):
         inspect_text = "Show me what is stored in my local memory."
@@ -751,7 +755,10 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertIn("raw evidence one", result.text)
         self.assertIn("raw evidence two", result.text)
         self.assertEqual(delegate.calls, 0)
-        self.assertEqual(result.actions, ())
+        self.assertEqual(
+            [action.name for action in result.actions],
+            ["semantic_memory_inspect"],
+        )
 
     def test_ambiguous_recall_uses_semantic_clarification_context(self):
         question = "Which office location did I mean?"
