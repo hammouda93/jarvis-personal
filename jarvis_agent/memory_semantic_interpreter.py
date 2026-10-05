@@ -172,7 +172,10 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
         if chosen == "auto":
             chosen = settings.agent_provider.strip().lower()
         self.provider = chosen
-        self._model_override = model.strip()
+        self._model_override = (
+            model.strip()
+            or os.getenv("JARVIS_MEMORY_SEMANTIC_MODEL", "").strip()
+        )
         self.model = self._model_override or self._default_model(chosen)
         self.timeout_s = float(
             timeout_s
@@ -185,9 +188,6 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
 
     @staticmethod
     def _default_model(provider: str) -> str:
-        override = os.getenv("JARVIS_MEMORY_SEMANTIC_MODEL", "").strip()
-        if override:
-            return override
         if provider == "cerebras":
             return settings.cerebras_agent_model
         if provider == "groq":
