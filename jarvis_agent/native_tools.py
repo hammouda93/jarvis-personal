@@ -1274,7 +1274,7 @@ class NativeToolRegistry:
         if name == "observe_screen":
             title = str(args.get("title", "")).strip() or None
             focus = str(args.get("focus", "")).strip()
-            result = observe_screen(title=title, focus=focus)
+            result = observe_screen(title=title, focus=focus, compact=True)
             return AgentActionResult(
                 name=name,
                 success=result.success,
