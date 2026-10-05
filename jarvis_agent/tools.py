@@ -497,6 +497,47 @@ def _open_browser_url(url: str) -> bool:
     return bool(webbrowser.open(url))
 
 
+def _navigate_current_browser_url(url: str) -> bool:
+    """Navigate the currently grounded browser tab without spawning a new tab.
+
+    This is the historical-browser fallback used when DOM/CDP is disabled.
+    It relies only on standard browser/window primitives: foreground the
+    current browser, focus its omnibox, paste the URL into the already-focused
+    control, then submit. If any step fails, callers may fall back to opening
+    the URL normally.
+    """
+    try:
+        from .windows_perception import (
+            activate_window,
+            press_key,
+            type_text_active_window,
+        )
+
+        hint = _browser_window_hint()
+        activation = activate_window(hint)
+        if not activation.success and hint != "Google Chrome":
+            activation = activate_window("Google Chrome")
+        if not activation.success:
+            return False
+
+        focus = press_key("ctrll")
+        if not focus.success:
+            return False
+
+        typed = type_text_active_window(
+            url,
+            mode="replace",
+            reactivate=False,
+        )
+        if not typed.success:
+            return False
+
+        submitted = press_key("enter")
+        return bool(submitted.success)
+    except Exception:
+        return False
+
+
 def _open_application(app: str) -> ToolResult:
     local = os.getenv("LOCALAPPDATA", "")
     windir = os.getenv("WINDIR", r"C:\Windows")
@@ -1112,7 +1153,18 @@ def execute(intent: ToolIntent) -> ToolResult:
         if not url:
             url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
             site_name = "Google"
-        ok = _open_browser_url(url)
+        reuse_current_tab = (
+            scope != "web"
+            and bool(_LAST_BROWSER_URL)
+            and bool(url)
+        )
+        ok = (
+            _navigate_current_browser_url(url)
+            if reuse_current_tab
+            else _open_browser_url(url)
+        )
+        if not ok and reuse_current_tab:
+            ok = _open_browser_url(url)
         if ok:
             _remember_browser_url(url)
         message = (
