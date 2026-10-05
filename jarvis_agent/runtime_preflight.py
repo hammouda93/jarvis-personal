@@ -64,6 +64,20 @@ def _live_path_contamination() -> list[str]:
     return bad
 
 
+def _windows_automation_python_compatible(
+    version_info=None,
+) -> tuple[bool, str]:
+    version = version_info or sys.version_info
+    ok = tuple(version[:3]) >= (3, 10, 10)
+    if ok:
+        return True, ""
+    return (
+        False,
+        "Windows automation requires Python >=3.10.10; "
+        "Python 3.11/3.12 is recommended for Foundations V4.",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--require-windows-automation", action="store_true")
@@ -82,13 +96,11 @@ def main() -> int:
             # comtypes documents Python 3.8/3.9 runtime issues fixed in
             # CPython >=3.10.10 and >=3.11.2. Keep old V3 environments usable
             # for non-automation gates, but fail closed before V4 Computer Core.
-            python_automation_compatible = sys.version_info >= (3, 10, 10)
-            if not python_automation_compatible:
-                python_automation_reason = (
-                    "Windows automation requires Python >=3.10.10; "
-                    "Python 3.11/3.12 is recommended for Foundations V4."
-                )
-            else:
+            (
+                python_automation_compatible,
+                python_automation_reason,
+            ) = _windows_automation_python_compatible()
+            if python_automation_compatible:
                 checks.extend(
                     _check(*item)
                     for item in WINDOWS_AUTOMATION_IMPORTS
