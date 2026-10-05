@@ -247,11 +247,29 @@ class ComputerGrounding:
             current_view = self.observe(window_id)
             if not self.verify(context,observation=current_view):
                 raise RuntimeError("required_view_context_not_verified")
-            candidates = [item for item in current_view["elements"] if
-                          item["sensor"] == e.sensor and item["text"] == e.text and
-                          item["type"] == e.type and tuple(item["bbox"]) == e.bbox]
-            if len(candidates) != 1:
-                raise RuntimeError("target_changed_during_context_verification")
+            if e.sensor == "uia_focus":
+                focused = self.backend.focused_editable(window_id)
+                if (
+                    not focused.get("writable")
+                    or str(focused.get("native_ref") or "") != e.native_ref
+                    or tuple(focused.get("bbox") or ()) != e.bbox
+                ):
+                    raise RuntimeError(
+                        "target_changed_during_context_verification"
+                    )
+            else:
+                candidates = [
+                    item
+                    for item in current_view["elements"]
+                    if item["sensor"] == e.sensor
+                    and item["text"] == e.text
+                    and item["type"] == e.type
+                    and tuple(item["bbox"]) == e.bbox
+                ]
+                if len(candidates) != 1:
+                    raise RuntimeError(
+                        "target_changed_during_context_verification"
+                    )
         if e.sensor != "uia":
             self.backend.require_foreground(window_id)
             point_guard = getattr(self.backend,"require_point",None)
@@ -396,9 +414,42 @@ class WindowsGroundingBackend:
             raise RuntimeError("focused_control_outside_target_window")
         return focused
 
+    def focused_editable(self, window_id):
+        """Return independently proven focused editability without clicking."""
+        from . import windows_perception as win
+
+        self.require_foreground(window_id)
+        focused = self._focused_wrapper(window_id)
+        control_type = win._control_type(focused)
+        base = {
+            "writable": False,
+            "type": control_type,
+            "text": win._element_name(focused),
+            "bbox": list(win._rect_tuple(focused)),
+        }
+        if control_type not in {"Edit", "ComboBox"}:
+            return base
+
+        try:
+            pattern = focused.iface_value
+            if bool(pattern.CurrentIsReadOnly):
+                return base
+            value = str(pattern.CurrentValue or "")
+        except Exception:
+            return base
+
+        return {
+            **base,
+            "writable": True,
+            "native_ref": json.dumps(
+                list(focused.element_info.runtime_id or ())
+            ),
+            "value": value,
+            "focused": True,
+        }
+
     def focus_probe(self, window_id, element):
         """Focus a visual target, then prove editability from the focused UIA control."""
-        from . import windows_perception as win
         from pywinauto import mouse
 
         self.require_foreground(window_id)
@@ -410,44 +461,7 @@ class WindowsGroundingBackend:
         mouse.click(coords=(round(x), round(y)))
         time.sleep(0.05)
         self.require_foreground(window_id)
-
-        focused = self._focused_wrapper(window_id)
-        control_type = win._control_type(focused)
-        if control_type not in {"Edit", "ComboBox"}:
-            return {
-                "writable": False,
-                "type": control_type,
-                "text": win._element_name(focused),
-                "bbox": list(win._rect_tuple(focused)),
-            }
-
-        try:
-            pattern = focused.iface_value
-            if bool(pattern.CurrentIsReadOnly):
-                return {
-                    "writable": False,
-                    "type": control_type,
-                    "text": win._element_name(focused),
-                    "bbox": list(win._rect_tuple(focused)),
-                }
-            value = str(pattern.CurrentValue or "")
-        except Exception:
-            return {
-                "writable": False,
-                "type": control_type,
-                "text": win._element_name(focused),
-                "bbox": list(win._rect_tuple(focused)),
-            }
-
-        return {
-            "writable": True,
-            "native_ref": json.dumps(list(focused.element_info.runtime_id or ())),
-            "text": win._element_name(focused),
-            "type": control_type,
-            "bbox": list(win._rect_tuple(focused)),
-            "value": value,
-            "focused": True,
-        }
+        return self.focused_editable(window_id)
 
     def act(self, window_id, element, operation, *, text="", key=""):
         from . import windows_perception as win
