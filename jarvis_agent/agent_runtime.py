@@ -2177,6 +2177,66 @@ class GroqResponsesAgent:
                     for item in list(parsed.get("controls") or [])
                     if isinstance(item, dict)
                 ]
+                if name == "inspect_browser_page":
+                    # DOM order is often dominated by site chrome. Prioritize
+                    # controls that are most likely to represent the user's
+                    # actual task content before applying any token budget.
+                    def browser_priority(item: dict[str, Any]) -> tuple[int, int]:
+                        region = str(item.get("region") or "").strip().lower()
+                        role = str(item.get("type") or "").strip().lower()
+                        score = 0
+                        if region == "content":
+                            score += 8
+                        elif region in {"form", "dialog"}:
+                            score += 6
+                        elif region == "navigation":
+                            score -= 3
+                        if item.get("writable"):
+                            score += 5
+                        if role in {"link", "button", "searchbox", "textbox"}:
+                            score += 4
+                        elif role in {"heading", "option", "tab", "menuitem"}:
+                            score += 2
+                        if str(item.get("name") or "").strip():
+                            score += 1
+                        return (-score, int(item.get("_source_index") or 0))
+
+                    indexed = []
+                    for index, item in enumerate(controls):
+                        copy_item = dict(item)
+                        copy_item["_source_index"] = index
+                        indexed.append(copy_item)
+                    indexed.sort(key=browser_priority)
+                    controls = []
+                    for item in indexed:
+                        item.pop("_source_index", None)
+                        controls.append(
+                            {
+                                key: item.get(key)
+                                for key in (
+                                    "ref", "type", "name", "semantic_role",
+                                    "value", "writable", "actionable",
+                                    "enabled", "selected", "focused", "region",
+                                )
+                                if item.get(key) not in (None, "", False)
+                            }
+                        )
+                    parsed.pop("accessibility_tree", None)
+                    visible_text = [
+                        str(item)
+                        for item in list(parsed.get("visible_text") or [])
+                        if str(item).strip()
+                    ][:60]
+                    parsed = {
+                        "observation_id": parsed.get("observation_id"),
+                        "window": parsed.get("window"),
+                        "browser": True,
+                        "sensor": parsed.get("sensor") or "dom",
+                        "visible_text": visible_text,
+                        "controls": controls,
+                        "capabilities": parsed.get("capabilities") or {},
+                        "snapshot": parsed.get("snapshot") or {},
+                    }
                 capabilities = dict(parsed.get("capabilities") or {})
                 writable = [
                     dict(item)
@@ -2216,7 +2276,9 @@ class GroqResponsesAgent:
                     if ref:
                         seen_refs.add(ref)
                     compact_controls.append(item)
-                    if len(compact_controls) >= 24:
+                    if len(compact_controls) >= (
+                        36 if name == "inspect_browser_page" else 24
+                    ):
                         break
                 parsed["controls"] = compact_controls
                 if len(controls) > len(compact_controls):
@@ -2279,8 +2341,9 @@ class GroqResponsesAgent:
             )
 
         detail_text = str(detail or "")
-        max_detail = 6000 if name in {
+        max_detail = 7000 if name in {
             "inspect_active_window",
+            "inspect_browser_page",
             "observe_screen",
         } else 3500
         if len(detail_text) > max_detail:
