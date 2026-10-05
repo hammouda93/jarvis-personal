@@ -31,6 +31,7 @@ def projection(
     subject="user",
     kind="fact",
     qualifiers=None,
+    entities=None,
     scope="global",
     cardinality="unknown",
     confidence=0.98,
@@ -41,6 +42,7 @@ def projection(
         value=value,
         kind=kind,
         qualifiers=dict(qualifiers or {}),
+        entities=tuple(entities or ()),
         scope=scope,
         cardinality=cardinality,
         confidence=confidence,
@@ -100,6 +102,7 @@ class FixtureInterpreter(SemanticMemoryInterpreter):
             relation=target,
             object_hint=query.object_hint,
             qualifiers=query.qualifiers,
+            entities=query.entities,
             scope=query.scope,
             answer_mode=query.answer_mode,
             exact_terms=query.exact_terms,
@@ -682,6 +685,119 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
             ],
             ["Inception"],
         )
+
+    def test_entity_context_disambiguates_same_relation_without_domain_rules(self):
+        store, _, engine = self.make_engine(
+            {
+                "north owner": (
+                    projection(
+                        "project_owner",
+                        "Alice",
+                        kind="project",
+                        entities=("Project North", "Alice"),
+                        cardinality="single",
+                    ),
+                ),
+                "south owner": (
+                    projection(
+                        "project_owner",
+                        "Bob",
+                        kind="project",
+                        entities=("Project South", "Bob"),
+                        cardinality="single",
+                    ),
+                ),
+            }
+        )
+        store.remember("north owner")
+        store.remember("south owner")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="project_owner",
+                entities=("Project North",),
+                answer_mode="single",
+                raw_text="who owns Project North",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            result["hits"][0].fact.projection.value,
+            "Alice",
+        )
+        self.assertGreater(
+            result["hits"][0].components["entity"],
+            0.9,
+        )
+
+    def test_same_single_relation_different_entities_do_not_supersede_each_other(self):
+        store, _, engine = self.make_engine({})
+        first = store.remember("north owner")
+        store.save_projection(
+            first.id,
+            (
+                projection(
+                    "project_owner",
+                    "Alice",
+                    entities=("Project North",),
+                    cardinality="single",
+                    confidence=0.99,
+                ),
+            ),
+            parser_version=engine.parser_version,
+            provenance="explicit",
+        )
+        second = store.remember("south owner")
+        store.save_projection(
+            second.id,
+            (
+                projection(
+                    "project_owner",
+                    "Bob",
+                    entities=("Project South",),
+                    cardinality="single",
+                    confidence=0.99,
+                ),
+            ),
+            parser_version=engine.parser_version,
+            provenance="explicit",
+        )
+
+        active = store.semantic_facts(status="active")
+
+        self.assertEqual(
+            {fact.projection.value for fact in active},
+            {"Alice", "Bob"},
+        )
+
+    def test_entity_context_survives_sidecar_reopen(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.sqlite3"
+            first = MemoryCoreStore(path)
+            item = first.remember("entity-bearing raw")
+            first.save_projection(
+                item.id,
+                (
+                    projection(
+                        "office_location",
+                        "Tunis",
+                        entities=("Project Atlas", "Tunis"),
+                        cardinality="single",
+                    ),
+                ),
+                parser_version="entity-test-v1",
+                provenance="explicit",
+            )
+
+            second = MemoryCoreStore(path)
+            facts = second.semantic_facts()
+
+            self.assertEqual(
+                facts[0].projection.entities,
+                ("Project Atlas", "Tunis"),
+            )
 
     def test_collection_query_keeps_multiple_values_same_relation(self):
         store, _, engine = self.make_engine(
