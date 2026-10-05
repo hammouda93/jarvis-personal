@@ -824,6 +824,53 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
             0.9,
         )
 
+    def test_entity_alias_surface_can_match_same_context_without_exact_string(self):
+        store, _, engine = self.make_engine(
+            {
+                "atlas office": (
+                    projection(
+                        "office_location",
+                        "Tunis",
+                        entities=("Project Atlas", "Tunis"),
+                        cardinality="single",
+                    ),
+                ),
+                "beta office": (
+                    projection(
+                        "office_location",
+                        "Sfax",
+                        entities=("Project Beta", "Sfax"),
+                        cardinality="single",
+                    ),
+                ),
+            }
+        )
+        store.remember("atlas office")
+        store.remember("beta office")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="office_location",
+                entities=("Atlas",),
+                answer_mode="single",
+                raw_text="where is Atlas based",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            result["hits"][0].fact.projection.value,
+            "Tunis",
+        )
+        self.assertNotIn(
+            "Sfax",
+            [
+                hit.fact.projection.value
+                for hit in result["hits"]
+            ],
+        )
+
     def test_same_single_relation_different_entities_do_not_supersede_each_other(self):
         store, _, engine = self.make_engine({})
         first = store.remember("north owner")
