@@ -438,6 +438,41 @@ class GroundingReplayTests(unittest.TestCase):
         self.assertEqual(len(self.backend.actions),1)
 
 
+class FoundationPromptTests(unittest.TestCase):
+    def test_browser_core_prompt_uses_only_current_browser_primitives(self):
+        from jarvis_agent.agent_runtime import _effective_system_instructions
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "JARVIS_BROWSER_CORE_ENABLED": "1",
+                "JARVIS_COMPUTER_CORE_ENABLED": "0",
+            },
+            clear=False,
+        ):
+            prompt = _effective_system_instructions()
+
+        self.assertIn("browser_list_tabs", prompt)
+        self.assertIn("browser_observe_dom", prompt)
+        self.assertIn("browser_verify", prompt)
+        self.assertIn("Ne substitue jamais une", prompt)
+
+    def test_computer_core_prompt_requires_focus_probe_before_opaque_write(self):
+        from jarvis_agent.agent_runtime import _effective_system_instructions
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "JARVIS_BROWSER_CORE_ENABLED": "0",
+                "JARVIS_COMPUTER_CORE_ENABLED": "1",
+            },
+            clear=False,
+        ):
+            prompt = _effective_system_instructions()
+
+        self.assertIn("computer_focus_probe", prompt)
+        self.assertIn("vrai contrôle UIA focalisé", prompt)
+        self.assertIn("n'affirme jamais qu'un message a été envoyé", prompt)
+
+
 class FoundationRuntimeTests(unittest.TestCase):
     def test_dispatch_is_successful_tool_but_final_requires_proof(self):
         class Browser:
