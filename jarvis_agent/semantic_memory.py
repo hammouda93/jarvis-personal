@@ -35,7 +35,11 @@ def normalize_text(value: str) -> str:
 
 
 def normalize_key(value: str) -> str:
-    words = re.findall(r"[a-z0-9]+", normalize_text(value))
+    words = [
+        token.strip("_")
+        for token in re.findall(r"\w+", normalize_text(value), flags=re.UNICODE)
+        if token.strip("_")
+    ]
     return "_".join(words)
 
 
@@ -260,6 +264,15 @@ def _qualifier_score(query: MemoryQueryFrame, fact: MemoryProjection) -> float:
         else:
             scores.append(semantic_key_similarity(wanted_norm, actual_norm))
     return sum(scores) / max(1, len(scores))
+
+
+def query_is_specific_enough(query: MemoryQueryFrame) -> bool:
+    return bool(
+        query.relation
+        or query.object_hint
+        or query.qualifiers
+        or query.exact_terms
+    )
 
 
 def score_semantic_fact(
