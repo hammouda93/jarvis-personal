@@ -65,6 +65,14 @@ class AgentActionResult:
         )
 
 
+_DECLARED_APP_SEARCH_SHORTCUTS = {
+    # WhatsApp Help Center (Windows): Extended search = Alt+K.
+    # Keep application-specific accelerators isolated here rather than
+    # hard-coding them in generic perception or planner logic.
+    "whatsapp": "altk",
+}
+
+
 class NativeToolRegistry:
     """Small set of generic capabilities exposed to the AI model.
 
@@ -459,6 +467,21 @@ class NativeToolRegistry:
                     },
                 },
                 ["text"],
+            ),
+            self._ollama(
+                "search_application",
+                "Recherche dans une application de bureau en utilisant uniquement un raccourci de recherche déclaré pour cette application. Utilise ce mécanisme avant la vision lorsque UIA/Cua n'expose aucun champ de recherche. L'outil échoue s'il n'existe pas de raccourci déclaré, il ne devine jamais une combinaison clavier.",
+                {
+                    "title": {
+                        "type": "string",
+                        "description": "Nom ou titre de l'application cible.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Texte à rechercher dans l'application.",
+                    },
+                },
+                ["title", "query"],
             ),
             self._ollama(
                 "press_key",
@@ -1585,6 +1608,79 @@ class NativeToolRegistry:
                 success=result.success,
                 message=result.message,
                 detail=result.detail,
+            )
+
+        if name == "search_application":
+            title = str(args.get("title", "")).strip() or self._last_app_hint
+            query = str(args.get("query", "")).strip()
+            if not title or not query:
+                return self._error(
+                    name,
+                    "L'application cible et la recherche sont requises.",
+                )
+
+            normalized_title = normalize(title)
+            shortcut = next(
+                (
+                    value
+                    for app_key, value in _DECLARED_APP_SEARCH_SHORTCUTS.items()
+                    if app_key in normalized_title
+                ),
+                "",
+            )
+            if not shortcut:
+                return AgentActionResult(
+                    name=name,
+                    success=False,
+                    message=(
+                        "Aucun raccourci de recherche fiable n'est déclaré "
+                        "pour cette application."
+                    ),
+                    detail="app_search_shortcut_not_declared",
+                )
+
+            activation = activate_window(title)
+            if not activation.success:
+                return AgentActionResult(
+                    name=name,
+                    success=False,
+                    message="Impossible d'activer l'application cible.",
+                    detail=activation.detail,
+                )
+
+            focused = press_key(shortcut)
+            if not focused.success:
+                return AgentActionResult(
+                    name=name,
+                    success=False,
+                    message="Impossible d'ouvrir la recherche native.",
+                    detail=focused.detail,
+                )
+
+            typed = type_text_active_window(
+                query,
+                title=title,
+                mode="replace",
+                reactivate=False,
+            )
+            return AgentActionResult(
+                name=name,
+                success=typed.success,
+                message=(
+                    f"Recherche « {query} » saisie dans {title}."
+                    if typed.success
+                    else typed.message
+                ),
+                detail=json.dumps(
+                    {
+                        "application": title,
+                        "query": query,
+                        "shortcut": shortcut,
+                        "typed": bool(typed.success),
+                        "typing_detail": typed.detail,
+                    },
+                    ensure_ascii=False,
+                ),
             )
 
         if name == "press_key":
