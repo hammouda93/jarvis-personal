@@ -102,7 +102,11 @@ than merging them. Sharing a broad noun does not imply the same relation.
 Never infer supersession from recency alone. If no safe fact can be extracted,
 return an empty facts list.
 
-Input is a JSON array of objects with memory_id and text.
+Input is an object with:
+- relation_catalog: existing canonical relation keys. Reuse one when it has the
+  same meaning; create a new relation only when none fits.
+- items: array of objects with memory_id and text.
+
 Return:
 {"items":[{"memory_id":1,"facts":[{"subject":"user","relation":"...",
 "value":"...","kind":"fact","qualifiers":{},"scope":"global",
@@ -115,6 +119,19 @@ provides a clarification. Return JSON only. Keep existing constraints unless
 the clarification changes them. Return subject, canonical English snake_case
 relation, object_hint, qualifiers, scope, answer_mode, exact_terms, confidence.
 Do not answer the memory question.
+"""
+
+
+_ALIGN_SYSTEM = """You align a personal-memory query relation to an existing
+semantic relation catalog. Return JSON only. You have no tools.
+
+Input contains query and relation_catalog. If exactly one catalog relation has
+the same meaning as the query relation in context, return that catalog key.
+Otherwise return the original relation unchanged. Never invent a third key.
+Do not use lexical similarity alone when meanings differ.
+
+Return:
+{"relation":"catalog_or_original_relation","confidence":0.0}
 """
 
 
@@ -147,6 +164,8 @@ class SemanticMemoryInterpreter:
     def project_batch(
         self,
         items: list[tuple[int, str]],
+        *,
+        relation_catalog: tuple[str, ...] = (),
     ) -> dict[int, tuple[MemoryProjection, ...]]:
         raise NotImplementedError
 
@@ -156,6 +175,13 @@ class SemanticMemoryInterpreter:
         clarification: str,
     ) -> MemoryQueryFrame:
         raise NotImplementedError
+
+    def align_query_relation(
+        self,
+        query: MemoryQueryFrame,
+        relation_catalog: tuple[str, ...],
+    ) -> MemoryQueryFrame:
+        return query
 
 
 class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
@@ -366,6 +392,8 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
     def project_batch(
         self,
         items: list[tuple[int, str]],
+        *,
+        relation_catalog: tuple[str, ...] = (),
     ) -> dict[int, tuple[MemoryProjection, ...]]:
         if not items:
             return {}
@@ -376,7 +404,13 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             }
             for memory_id, text in items
         ]
-        payload = self._chat(_PROJECTION_SYSTEM, request)
+        payload = self._chat(
+            _PROJECTION_SYSTEM,
+            {
+                "relation_catalog": list(relation_catalog[:200]),
+                "items": request,
+            },
+        )
         result: dict[int, tuple[MemoryProjection, ...]] = {
             int(memory_id): () for memory_id, _ in items
         }
@@ -428,6 +462,51 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
                 + " | clarification: "
                 + str(clarification or "")
             ),
+        )
+
+
+    def align_query_relation(
+        self,
+        query: MemoryQueryFrame,
+        relation_catalog: tuple[str, ...],
+    ) -> MemoryQueryFrame:
+        if not query.relation or not relation_catalog:
+            return query
+        payload = self._chat(
+            _ALIGN_SYSTEM,
+            {
+                "query": {
+                    "subject": query.subject,
+                    "relation": query.relation,
+                    "object_hint": query.object_hint,
+                    "qualifiers": query.qualifiers,
+                    "scope": query.scope,
+                    "answer_mode": query.answer_mode,
+                    "exact_terms": list(query.exact_terms),
+                },
+                "relation_catalog": list(relation_catalog[:200]),
+            },
+        )
+        relation = str(payload.get("relation") or "").strip()
+        allowed = set(relation_catalog)
+        if relation not in allowed or relation == query.relation:
+            return query
+        try:
+            confidence = float(payload.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence < 0.70:
+            return query
+        return MemoryQueryFrame(
+            subject=query.subject,
+            relation=relation,
+            object_hint=query.object_hint,
+            qualifiers=query.qualifiers,
+            scope=query.scope,
+            answer_mode=query.answer_mode,
+            exact_terms=query.exact_terms,
+            raw_text=query.raw_text,
+            confidence=max(query.confidence, min(confidence, 1.0)),
         )
 
 
