@@ -21,6 +21,25 @@ from .semantic_memory import (
 )
 
 
+def _temporal_sort_key(hit: SemanticMemoryHit):
+    qualifiers = hit.fact.projection.qualifiers
+    temporal = (
+        qualifiers.get("datetime")
+        or qualifiers.get("start_at")
+        or qualifiers.get("date")
+        or qualifiers.get("end_at")
+        or ""
+    )
+    # ISO-8601 values sort lexically; fallback to memory creation time when no
+    # event-time qualifier exists. This keeps event chronology separate from
+    # indexing/recall recency.
+    return (
+        str(temporal),
+        hit.fact.created_at,
+        hit.fact.memory_id,
+    )
+
+
 class SemanticMemoryEngine:
     def __init__(
         self,
@@ -367,12 +386,7 @@ class SemanticMemoryEngine:
             # wording differences in their raw evidence.
             selected = list(hits)
             if query.answer_mode == "timeline":
-                selected.sort(
-                    key=lambda item: (
-                        item.fact.created_at,
-                        item.fact.memory_id,
-                    )
-                )
+                selected.sort(key=_temporal_sort_key)
             return {
                 "status": "resolved",
                 "mode": query.answer_mode,
