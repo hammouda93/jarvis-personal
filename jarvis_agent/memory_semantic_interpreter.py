@@ -483,6 +483,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
                     "relation": previous.relation,
                     "object_hint": previous.object_hint,
                     "qualifiers": previous.qualifiers,
+                    "entities": list(previous.entities),
                     "scope": previous.scope,
                     "answer_mode": previous.answer_mode,
                     "exact_terms": list(previous.exact_terms),
