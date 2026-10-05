@@ -1529,6 +1529,63 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(second.text, "Sfax")
         self.assertEqual(delegate.calls, 0)
 
+    def test_entity_centric_question_returns_multiple_relations_with_context(self):
+        question = "What do you know about Project Atlas?"
+        turns = {
+            question: MemoryTurnInterpretation(
+                operation="recall",
+                query=MemoryQueryFrame(
+                    relation="",
+                    entities=("Project Atlas",),
+                    answer_mode="collection",
+                    raw_text=question,
+                    confidence=0.99,
+                ),
+                confidence=0.99,
+                reason="entity-centric recall",
+            )
+        }
+        projections = {
+            "atlas owner": (
+                projection(
+                    "project_owner",
+                    "Alice",
+                    kind="project",
+                    entities=("Project Atlas", "Alice"),
+                ),
+            ),
+            "atlas deadline": (
+                projection(
+                    "project_deadline",
+                    "2026-11-01",
+                    kind="event",
+                    entities=("Project Atlas",),
+                ),
+            ),
+            "unrelated owner": (
+                projection(
+                    "project_owner",
+                    "Bob",
+                    kind="project",
+                    entities=("Project Beta", "Bob"),
+                ),
+            ),
+        }
+        store, _, delegate, _, runtime = self.build_runtime(
+            turns=turns,
+            projections=projections,
+        )
+        store.remember("atlas owner")
+        store.remember("atlas deadline")
+        store.remember("unrelated owner")
+
+        result = runtime.run(question)
+
+        self.assertEqual(delegate.calls, 0)
+        self.assertIn("project owner: Alice", result.text)
+        self.assertIn("project deadline: 2026-11-01", result.text)
+        self.assertNotIn("Bob", result.text)
+
     def test_session_semantic_fact_is_recalled_before_persistent_memory(self):
         statement = "I am currently working on project Atlas Nova."
         question = "What is the name of the project I am working on?"
