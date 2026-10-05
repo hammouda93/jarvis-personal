@@ -10,6 +10,7 @@ from jarvis_agent.tools import (
     _chrome_profile_directory,
     _contextual_site_search_url,
     _launch_chrome,
+    _navigate_current_browser_tab,
     _find_named_app,
     _find_named_file,
     _open_application,
@@ -112,6 +113,42 @@ class ToolRouterTests(unittest.TestCase):
         )
         self.assertEqual(site, "YouTube")
         self.assertIn("youtube.com/results?search_query=messi", url)
+
+    @patch("jarvis_agent.windows_perception.type_text_active_window")
+    @patch("jarvis_agent.windows_perception.press_key")
+    @patch("jarvis_agent.windows_perception.activate_window")
+    def test_current_tab_navigation_uses_address_bar_without_new_browser_launch(
+        self,
+        activate_mock,
+        press_mock,
+        type_mock,
+    ):
+        result_type = type(
+            "Result",
+            (),
+            {"success": True, "message": "ok", "detail": "{}"},
+        )
+        activate_mock.return_value = result_type()
+        press_mock.return_value = result_type()
+        type_mock.return_value = result_type()
+
+        with patch("jarvis_agent.tools._LAST_BROWSER_URL", "https://www.youtube.com"):
+            ok = _navigate_current_browser_tab(
+                "https://www.youtube.com/results?search_query=messi"
+            )
+
+        self.assertTrue(ok)
+        activate_mock.assert_called()
+        self.assertEqual(
+            [call.args[0] for call in press_mock.call_args_list],
+            ["ctrll", "enter"],
+        )
+        type_mock.assert_called_once_with(
+            "https://www.youtube.com/results?search_query=messi",
+            title="",
+            mode="insert",
+            activate_target=False,
+        )
 
     @patch("jarvis_agent.tools._navigate_current_browser_tab")
     @patch("jarvis_agent.tools._open_browser_url")
