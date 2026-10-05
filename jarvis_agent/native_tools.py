@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -1656,6 +1657,7 @@ class NativeToolRegistry:
                     message="Impossible d'ouvrir la recherche native.",
                     detail=focused.detail,
                 )
+            time.sleep(0.12)
 
             typed = type_text_active_window(
                 query,
