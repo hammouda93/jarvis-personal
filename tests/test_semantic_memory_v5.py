@@ -318,6 +318,61 @@ class SemanticMemoryStoreTests(unittest.TestCase):
                 {"project_owner", "project_deadline"},
             )
 
+    def test_existing_sidecar_schema_is_migrated_with_entities_column(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.sqlite3"
+            conn = sqlite3.connect(path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE memories (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        content TEXT NOT NULL,
+                        tags TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE memory_semantic_facts (
+                        fact_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        memory_id INTEGER NOT NULL,
+                        ordinal INTEGER NOT NULL,
+                        subject TEXT NOT NULL,
+                        relation TEXT NOT NULL,
+                        object_value TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        qualifiers_json TEXT NOT NULL DEFAULT '{}',
+                        scope TEXT NOT NULL DEFAULT 'global',
+                        cardinality TEXT NOT NULL DEFAULT 'unknown',
+                        confidence REAL NOT NULL DEFAULT 0,
+                        status TEXT NOT NULL DEFAULT 'active',
+                        parser_version TEXT NOT NULL,
+                        provenance TEXT NOT NULL DEFAULT 'legacy',
+                        raw_hash TEXT NOT NULL,
+                        projected_at TEXT NOT NULL,
+                        UNIQUE(memory_id, ordinal, parser_version)
+                    )
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            store = MemoryCoreStore(path)
+            with store._connect() as check:
+                columns = {
+                    row[1]
+                    for row in check.execute(
+                        "PRAGMA table_info(memory_semantic_facts)"
+                    ).fetchall()
+                }
+
+            self.assertIn("entities_json", columns)
+
     def test_semantic_sidecar_survives_process_style_reopen(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "memory.sqlite3"
@@ -349,6 +404,40 @@ class SemanticMemoryStoreTests(unittest.TestCase):
 
 
 class SemanticMemoryMaintenanceTests(unittest.TestCase):
+    def test_semantic_summary_reports_distinct_active_entity_coverage(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = MemoryCoreStore(Path(folder) / "memory.sqlite3")
+            one = store.remember("entity one")
+            two = store.remember("entity two")
+            store.save_projection(
+                one.id,
+                (
+                    projection(
+                        "project_owner",
+                        "Alice",
+                        entities=("Project Atlas", "Alice"),
+                    ),
+                ),
+                parser_version="test-v1",
+                provenance="legacy",
+            )
+            store.save_projection(
+                two.id,
+                (
+                    projection(
+                        "project_deadline",
+                        "2026-11-01",
+                        entities=("Project Atlas",),
+                    ),
+                ),
+                parser_version="test-v1",
+                provenance="legacy",
+            )
+
+            summary = store.semantic_summary()
+
+            self.assertEqual(summary["active_entities"], 2)
+
     def test_force_reindex_rebuilds_only_sidecar_and_preserves_raw_rows(self):
         from jarvis_agent.semantic_memory_cli import (
             raw_snapshot,
