@@ -419,6 +419,7 @@ def _completed_action_capabilities(
     completed: set[str] = set()
     browser_search_written = False
     ui_search_written = False
+    pending_written_value = ""
     for action in actions:
         if not action.success:
             continue
@@ -429,6 +430,9 @@ def _completed_action_capabilities(
                 payload = {}
             if payload.get("verified") is True:
                 completed.add("write_ui")
+                pending_written_value = ""
+            else:
+                pending_written_value = str(payload.get("value") or "").strip()
         elif action.name == "write_visual_target":
             # Visual writes require a separate after-state observation; the
             # existing UI verification loop owns that proof.
@@ -442,6 +446,19 @@ def _completed_action_capabilities(
                 completed.add("write_ui")
         elif action.name == "close_tab":
             completed.add("close_tab")
+        elif action.name == "inspect_active_window" and pending_written_value:
+            payload = _action_detail_dict(action)
+            observed_values = []
+            for item in list(payload.get("controls") or []):
+                if not isinstance(item, dict):
+                    continue
+                for key in ("value", "name"):
+                    value = str(item.get(key) or "").strip()
+                    if value:
+                        observed_values.append(value)
+            if any(value == pending_written_value for value in observed_values):
+                completed.add("write_ui")
+                pending_written_value = ""
 
         if action.success and action.name == "write_browser_element":
             browser_search_written = True
@@ -457,7 +474,6 @@ def _completed_action_capabilities(
         }:
             completed.add("site_search")
     return completed
-
 
 def _missing_requested_action_capabilities(
     user_text: str,
