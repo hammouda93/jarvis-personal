@@ -191,6 +191,7 @@ class MemoryTurnInterpretation:
     operation: str
     write_text: str = ""
     query: MemoryQueryFrame | None = None
+    session_facts: tuple[MemoryProjection, ...] = ()
     confidence: float = 0.0
     reason: str = ""
 
@@ -220,10 +221,22 @@ class MemoryTurnInterpretation:
                 raw_text=user_text,
                 confidence=max(0.0, min(confidence, 1.0)),
             )
+        session_facts = []
+        for fact in payload.get("session_facts") or []:
+            if not isinstance(fact, dict):
+                continue
+            try:
+                projection = MemoryProjection.from_dict(fact)
+            except ValueError:
+                continue
+            if projection.confidence >= 0.55:
+                session_facts.append(projection)
+
         return cls(
             operation=operation,
             write_text=str(payload.get("write_text") or "").strip()[:4000],
             query=query,
+            session_facts=tuple(session_facts[:12]),
             confidence=max(0.0, min(confidence, 1.0)),
             reason=str(payload.get("reason") or "").strip()[:500],
         )
