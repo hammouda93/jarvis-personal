@@ -46,6 +46,11 @@ def terms(value: str) -> tuple[str, ...]:
                               if t not in _STOP and (len(t) > 1 or t.isdigit())))
 
 
+def content_key(value: str) -> str:
+    """Canonical text identity for duplicate suppression, not semantic merging."""
+    return " ".join(re.findall(r"\w+", normalize(value)))
+
+
 def relevance(query: str, content: str, tags: str = "") -> float:
     wanted, actual = terms(query), terms(content + " " + tags)
     if not wanted or not actual:
@@ -83,7 +88,7 @@ def search(memory, query: str, *, limit: int = 5):
     unique = []
     seen = set()
     for score, memory_id, item in scored:
-        key = normalize(item.content).strip()
+        key = content_key(item.content)
         if key in seen:
             continue
         seen.add(key)
