@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+import argparse
+import json
+import time
+
+from jarvis_agent.memory_semantic_interpreter import (
+    ModelSemanticMemoryInterpreter,
+)
+from jarvis_agent.semantic_memory import semantic_key_similarity
+
+
+CASES = [
+    {
+        "name": "preference_en",
+        "memory": "My preferred code editor is Cursor.",
+        "query": "Which code editor do I prefer?",
+        "mode": "single",
+    },
+    {
+        "name": "collection_fr",
+        "memory": "Je veux regarder Inception et Gladiator.",
+        "query": "Quels films est-ce que je veux regarder ?",
+        "mode": "collection",
+    },
+    {
+        "name": "date_fr",
+        "memory": "J'ai rendez-vous avec le médecin le 09/10/2026.",
+        "query": "Qu'est-ce que j'ai prévu le 09/10/2026 ?",
+        "mode": "single",
+        "exact": "09/10/2026",
+    },
+    {
+        "name": "project_fr",
+        "memory": "Pour le projet Atlas, la date limite est le 1 novembre 2026.",
+        "query": "Quelle est la deadline du projet Atlas ?",
+        "mode": "single",
+    },
+    {
+        "name": "preference_ar",
+        "memory": "لغتي المفضلة هي الفرنسية.",
+        "query": "ما هي لغتي المفضلة؟",
+        "mode": "single",
+    },
+]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--provider", default="auto")
+    parser.add_argument("--model", default="")
+    parser.add_argument("--threshold", type=float, default=0.48)
+    args = parser.parse_args()
+
+    interpreter = ModelSemanticMemoryInterpreter(
+        provider=args.provider,
+        model=args.model,
+    )
+
+    start = time.perf_counter()
+    projected = interpreter.project_batch(
+        [
+            (index + 1, case["memory"])
+            for index, case in enumerate(CASES)
+        ]
+    )
+    projection_seconds = time.perf_counter() - start
+
+    failures = []
+    results = []
+
+    for index, case in enumerate(CASES):
+        facts = projected.get(index + 1, ())
+        t0 = time.perf_counter()
+        turn = interpreter.interpret_turn(case["query"])
+        query_seconds = time.perf_counter() - t0
+
+        similarities = []
+        if turn.query is not None:
+            similarities = [
+                semantic_key_similarity(
+                    turn.query.relation,
+                    fact.relation,
+                )
+                for fact in facts
+            ]
+        best = max(similarities or [0.0])
+
+        row = {
+            "name": case["name"],
+            "projected_relations": [
+                fact.relation for fact in facts
+            ],
+            "projected_values": [
+                fact.value for fact in facts
+            ],
+            "operation": turn.operation,
+            "query_relation": (
+                turn.query.relation
+                if turn.query is not None
+                else ""
+            ),
+            "answer_mode": (
+                turn.query.answer_mode
+                if turn.query is not None
+                else ""
+            ),
+            "relation_similarity": round(best, 4),
+            "query_seconds": round(query_seconds, 3),
+        }
+
+        if turn.operation != "recall":
+            failures.append(
+                f"{case['name']}: expected recall, got {turn.operation}"
+            )
+        if not facts:
+            failures.append(
+                f"{case['name']}: no semantic facts projected"
+            )
+        if best < args.threshold:
+            failures.append(
+                f"{case['name']}: relation similarity {best:.3f} "
+                f"< {args.threshold:.3f}"
+            )
+        if (
+            turn.query is not None
+            and turn.query.answer_mode != case["mode"]
+        ):
+            failures.append(
+                f"{case['name']}: expected mode {case['mode']}, "
+                f"got {turn.query.answer_mode}"
+            )
+        exact = case.get("exact")
+        if exact and turn.query is not None:
+            combined = list(turn.query.exact_terms)
+            combined.extend(turn.query.qualifiers.values())
+            if not any(exact in str(value) for value in combined):
+                failures.append(
+                    f"{case['name']}: exact date not preserved"
+                )
+
+        results.append(row)
+
+    pass_checks = [
+        "What is the capital of Japan?",
+        "Ouvre Chrome et va sur YouTube.",
+    ]
+    for text in pass_checks:
+        t0 = time.perf_counter()
+        turn = interpreter.interpret_turn(text)
+        elapsed = time.perf_counter() - t0
+        results.append(
+            {
+                "name": "pass_guard",
+                "text": text,
+                "operation": turn.operation,
+                "session_facts": len(turn.session_facts),
+                "query_seconds": round(elapsed, 3),
+            }
+        )
+        if turn.operation != "pass":
+            failures.append(
+                f"pass_guard: {text!r} -> {turn.operation}"
+            )
+
+    session_statement = (
+        "Je travaille actuellement sur un projet appelé Atlas Nova."
+    )
+    session_question = (
+        "Comment s'appelle le projet sur lequel je travaille ?"
+    )
+    statement = interpreter.interpret_turn(session_statement)
+    question = interpreter.interpret_turn(session_question)
+    session_best = 0.0
+    if question.query is not None:
+        session_best = max(
+            (
+                semantic_key_similarity(
+                    question.query.relation,
+                    fact.relation,
+                )
+                for fact in statement.session_facts
+            ),
+            default=0.0,
+        )
+    results.append(
+        {
+            "name": "session_context",
+            "statement_operation": statement.operation,
+            "session_relations": [
+                fact.relation
+                for fact in statement.session_facts
+            ],
+            "question_operation": question.operation,
+            "question_relation": (
+                question.query.relation
+                if question.query is not None
+                else ""
+            ),
+            "relation_similarity": round(session_best, 4),
+        }
+    )
+    if statement.operation != "pass" or not statement.session_facts:
+        failures.append(
+            "session_context: declarative statement not captured as session fact"
+        )
+    if question.operation != "recall":
+        failures.append(
+            "session_context: follow-up question not classified as recall"
+        )
+    if session_best < args.threshold:
+        failures.append(
+            "session_context: semantic relation mismatch"
+        )
+
+    payload = {
+        "ok": not failures,
+        "provider": interpreter.provider,
+        "model": interpreter.model,
+        "projection_seconds": round(projection_seconds, 3),
+        "results": results,
+        "failures": failures,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if not failures else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
