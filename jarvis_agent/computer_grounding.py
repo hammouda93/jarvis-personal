@@ -270,7 +270,7 @@ class ComputerGrounding:
                     raise RuntimeError(
                         "target_changed_during_context_verification"
                     )
-        if e.sensor != "uia":
+        if e.sensor not in {"uia", "uia_focus"}:
             self.backend.require_foreground(window_id)
             point_guard = getattr(self.backend,"require_point",None)
             if point_guard:
