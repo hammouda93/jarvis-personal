@@ -17,7 +17,7 @@ from .native_tools import NATIVE_TOOLS
 from .recognition import recognize_command
 from .states import AssistantState, STATE_LABELS
 from .stt import build_stt
-from .tools import ToolIntent, execute, route
+from .tools import ToolIntent, ToolResult, execute, route
 from .tts import ElevenLabsTTS
 
 
