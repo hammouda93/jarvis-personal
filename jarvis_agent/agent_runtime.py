@@ -828,14 +828,30 @@ def _query_matches_recent_user_context(
     query: str,
     messages: list[dict[str, Any]],
 ) -> bool:
-    """Detect a named subject that was just introduced in conversation.
+    """Detect whether the requested subject is genuinely present in recent turns.
 
-    This prevents a model from treating a user-created project name as an
-    unknown public product and launching a web search without being asked.
+    The guard exists to avoid querying persistent memory for a fact that was
+    just provided in the current conversation. It must not fire merely because
+    two French sentences share generic fragments such as "que je" or "je veux".
     """
-    query_words = re.findall(r"[a-z0-9]+", (query or "").lower())
-    query_compact = "".join(query_words)
-    if len(query_compact) < 5:
+    stopwords = {
+        "avec", "cette", "comme", "dans", "dont", "elle", "elles", "encore",
+        "est", "etes", "etre", "fait", "font", "ils", "mais", "mes", "mon",
+        "nous", "pour", "propos", "quel", "quelle", "quelles", "quels", "que",
+        "qui", "sans", "ses", "sont", "sur", "tes", "ton", "tous", "tout",
+        "une", "vous", "veux", "veut", "votre", "vos", "the", "this", "that",
+        "what", "which", "with", "from", "your", "you", "want", "about",
+    }
+
+    def meaningful_tokens(text: str) -> list[str]:
+        return [
+            token
+            for token in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(token) >= 4 and token not in stopwords
+        ]
+
+    query_tokens = meaningful_tokens(query)
+    if not query_tokens:
         return False
 
     user_texts = [
@@ -843,24 +859,20 @@ def _query_matches_recent_user_context(
         for item in messages
         if item.get("role") == "user"
     ]
-    # The last user message is the current request. Compare only with earlier
-    # conversational turns.
     context_turns = max(8, settings.agent_history_turns)
     for text in user_texts[:-1][-context_turns:]:
-        words = re.findall(r"[a-z0-9]+", text.lower())
-        for size in range(1, min(4, len(words)) + 1):
-            for start in range(0, len(words) - size + 1):
-                candidate = "".join(words[start : start + size])
-                if len(candidate) < 4:
+        previous_tokens = meaningful_tokens(text)
+        if not previous_tokens:
+            continue
+        if set(query_tokens) & set(previous_tokens):
+            return True
+        for wanted in query_tokens:
+            for actual in previous_tokens:
+                if min(len(wanted), len(actual)) < 5:
                     continue
-                if query_compact in candidate or candidate in query_compact:
-                    return True
-                if difflib.SequenceMatcher(
-                    None, query_compact, candidate
-                ).ratio() >= 0.86:
+                if difflib.SequenceMatcher(None, wanted, actual).ratio() >= 0.90:
                     return True
     return False
-
 
 def _blocked_contextual_web_search_result(query: str) -> AgentActionResult:
     return AgentActionResult(
