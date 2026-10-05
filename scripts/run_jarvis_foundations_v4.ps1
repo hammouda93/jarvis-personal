@@ -1,6 +1,7 @@
 param(
     [string]$PythonExe = ".\.venv\Scripts\python.exe",
     [switch]$MemoryCore,
+    [switch]$SemanticMemoryV5,
     [switch]$BrowserCore,
     [switch]$ComputerCore,
     [switch]$All,
@@ -28,8 +29,12 @@ try {
     Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
     if ($All) {
         $MemoryCore = $true
+        $SemanticMemoryV5 = $true
         $BrowserCore = $true
         $ComputerCore = $true
+    }
+    if ($SemanticMemoryV5) {
+        $MemoryCore = $true
     }
 
     $python = $PythonExe
@@ -61,6 +66,7 @@ try {
     }
     Write-Host ""
     $env:JARVIS_MEMORY_CORE_ENABLED = $(if ($MemoryCore) { "1" } else { "0" })
+    $env:JARVIS_SEMANTIC_MEMORY_V5_ENABLED = $(if ($SemanticMemoryV5) { "1" } else { "0" })
     $env:JARVIS_BROWSER_CORE_ENABLED = $(if ($BrowserCore) { "1" } else { "0" })
     $env:JARVIS_COMPUTER_CORE_ENABLED = $(if ($ComputerCore) { "1" } else { "0" })
 
@@ -103,6 +109,7 @@ try {
 
     Write-Host "Personal AI Foundations V4 live"
     Write-Host ("  memory_core=" + $(if ($MemoryCore) { "on" } else { "off" }))
+    Write-Host ("  semantic_memory_v5=" + $(if ($SemanticMemoryV5) { "on" } else { "off" }))
     Write-Host ("  browser_core=" + $(if ($BrowserCore) { "on (normal Chrome profile bridge)" } else { "off" }))
     Write-Host ("  computer_core=" + $(if ($ComputerCore) { "on (UIA -> OCR -> optional model)" } else { "off" }))
     if ($BrowserCore) {
