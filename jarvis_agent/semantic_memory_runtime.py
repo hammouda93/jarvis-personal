@@ -628,6 +628,30 @@ class SemanticMemoryRuntime:
             )
         mode = resolution.get("mode")
         if mode in {"collection", "timeline"}:
+            relations = {
+                hit.fact.projection.relation
+                for hit in hits
+                if hit.fact.projection.relation
+            }
+            if len(relations) > 1:
+                parts = []
+                seen = set()
+                for hit in hits:
+                    relation = hit.fact.projection.relation.replace("_", " ").strip()
+                    value = hit.fact.projection.value.strip()
+                    key = (
+                        normalize_text(relation),
+                        normalize_text(value),
+                    )
+                    if not value or key in seen:
+                        continue
+                    seen.add(key)
+                    parts.append(
+                        f"{relation}: {value}"
+                        if relation
+                        else value
+                    )
+                return " ; ".join(parts), False
             return " ; ".join(values), False
         return values[0], False
 
