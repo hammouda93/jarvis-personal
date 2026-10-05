@@ -50,11 +50,17 @@ def main() -> int:
     parser.add_argument("--provider", default="auto")
     parser.add_argument("--model", default="")
     parser.add_argument("--threshold", type=float, default=0.48)
+    parser.add_argument(
+        "--allow-cloud",
+        action="store_true",
+        help="Explicitly permit sending the synthetic acceptance corpus to a cloud provider.",
+    )
     args = parser.parse_args()
 
     interpreter = ModelSemanticMemoryInterpreter(
         provider=args.provider,
         model=args.model,
+        allow_cloud=args.allow_cloud,
     )
 
     start = time.perf_counter()
