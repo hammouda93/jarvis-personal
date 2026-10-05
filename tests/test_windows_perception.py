@@ -927,6 +927,31 @@ class WindowsPerceptionTests(unittest.TestCase):
             0.94,
         )
 
+    @patch("jarvis_agent.windows_perception._native_window_candidates")
+    def test_native_target_ignores_internal_cua_overlay(
+        self,
+        candidates_mock,
+    ):
+        candidates_mock.return_value = [
+            {
+                "handle": 10,
+                "title": "Cua.AgentCursorOverlay.default",
+                "process": "cua-driver.exe",
+                "bounds": (0, 0, 1920, 1080),
+            },
+            {
+                "handle": 20,
+                "title": "Installation - Cursor (User)",
+                "process": "CursorUserSetup-x64-3.22.12.exe",
+                "bounds": (300, 200, 1200, 900),
+            },
+        ]
+
+        item = _native_target_window("Cursor Installer")
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item["handle"], 20)
+
     @patch("jarvis_agent.windows_perception._send_keys")
     def test_press_key_allows_safe_browser_back_navigation(self, send_mock):
         from jarvis_agent.windows_perception import press_key
