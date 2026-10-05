@@ -144,6 +144,28 @@ The entity layer is intentionally lightweight: it improves entity-centric
 retrieval without introducing a separate graph database. A future graph layer
 can be built from the same sidecar if multi-hop reasoning proves necessary.
 
+## Temporal context
+
+Temporal meaning is separate from raw memory insertion order.
+
+The semantic interpreter receives a reference timestamp for the current query,
+and each persistent memory is projected against its own historical
+`created_at`. Relative language such as "tomorrow" or "next Friday" must
+therefore be resolved using the time when the memory was authored, not the day
+when the semantic index is later rebuilt.
+
+Preferred temporal qualifier keys are:
+
+- `date` — ISO `YYYY-MM-DD`
+- `datetime` — ISO-8601 timestamp
+- `start_at`
+- `end_at`
+- `temporal_status`
+
+Date/time and identifier qualifiers are exact constraints. They are never fuzzy
+matched. Timeline answers are ordered by event time first and storage time only
+as a fallback.
+
 ## Conflict and collection semantics
 
 Memories are not overwritten merely because they share a noun.
