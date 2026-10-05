@@ -1164,6 +1164,29 @@ class NativeToolRegistry:
             url = str(args.get("url", "")).strip()
             if not url.startswith(("https://", "http://")):
                 return self._error(name, "URL non autorisée ou invalide.")
+
+            browser = self._browser_adapter()
+            if browser is not None:
+                try:
+                    payload = browser.navigate(url)
+                    _remember_browser_url(str(payload.get("url") or url))
+                    self._last_web_title_hint = self._web_window_title_hint(url)
+                    self._last_app_hint = "Google Chrome"
+                    invalidate_ui_snapshot()
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="Page ouverte dans le navigateur contrôlé.",
+                        detail=json.dumps(payload, ensure_ascii=False),
+                    )
+                except Exception as exc:
+                    return AgentActionResult(
+                        name=name,
+                        success=False,
+                        message="Le navigateur DOM/CDP n'a pas pu ouvrir cette page.",
+                        detail=f"{type(exc).__name__}: {exc}",
+                    )
+
             converted = self._convert(
                 name,
                 execute(ToolIntent("browser.open_url", {"url": url})),
@@ -1192,7 +1215,38 @@ class NativeToolRegistry:
                     payload = {"pages": browser.pages()}
                     message = "Pages navigateur observées."
                 elif name == "inspect_browser_page":
-                    payload = browser.observe(page_ref)
+                    try:
+                        payload = browser.observe(page_ref)
+                    except ValueError as exc:
+                        if "stale_or_unknown_page" not in str(exc):
+                            raise
+                        pages = browser.pages()
+                        hint = normalize(self._last_web_title_hint)
+                        site_label = normalize(
+                            self._last_web_title_hint.split(" - ", 1)[0]
+                        )
+                        matches = [
+                            item
+                            for item in pages
+                            if (
+                                hint
+                                and hint in normalize(str(item.get("title") or ""))
+                            )
+                            or (
+                                site_label
+                                and site_label in normalize(
+                                    f"{item.get('title','')} {item.get('url','')}"
+                                )
+                            )
+                        ]
+                        if len(matches) == 1:
+                            page_ref = str(matches[0].get("page_ref") or "")
+                        elif len(pages) == 1:
+                            page_ref = str(pages[0].get("page_ref") or "")
+                        else:
+                            raise
+                        payload = browser.observe(page_ref)
+                        payload["stale_page_ref_recovered"] = True
                     message = "Page observée via DOM."
                 elif name == "activate_browser_page":
                     payload = browser.activate(page_ref)
