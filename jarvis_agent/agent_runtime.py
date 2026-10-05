@@ -1883,6 +1883,7 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+        self._session_grounding: dict[str, str] = {}
 
     def reset(self) -> None:
         self._messages = [
@@ -1894,6 +1895,116 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+        self._session_grounding = {}
+
+    @staticmethod
+    def _clean_grounding_value(value: Any, *, limit: int = 700) -> str:
+        text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+        text = re.sub(r"\s+", " ", text)
+        return text[:limit]
+
+    def _remember_session_grounding(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None,
+        result: AgentActionResult,
+    ) -> None:
+        """Keep only trusted, session-local entity identity from successful tools.
+
+        This is operational state, not learning or long-term memory. Only a
+        strict allow-list of local capability results is retained so arbitrary
+        web/page text cannot become trusted instructions.
+        """
+        if not result.success:
+            return
+
+        args = dict(arguments or {})
+        tool = str(name or "").strip()
+        detail = self._clean_grounding_value(result.detail)
+
+        if tool == "open_file":
+            if detail:
+                self._session_grounding["opened_file"] = detail
+            requested = self._clean_grounding_value(args.get("name"))
+            if requested:
+                self._session_grounding["opened_file_request"] = requested
+        elif tool == "open_folder":
+            if detail:
+                self._session_grounding["opened_folder"] = detail
+        elif tool == "open_application":
+            app = self._clean_grounding_value(args.get("name"))
+            if app:
+                self._session_grounding["active_application"] = app
+        elif tool == "open_url":
+            url = self._clean_grounding_value(args.get("url"))
+            if url:
+                self._session_grounding["current_url"] = url
+                self._session_grounding["active_application"] = "Google Chrome"
+        elif tool == "activate_window":
+            title = self._clean_grounding_value(args.get("title"))
+            if title:
+                self._session_grounding["active_window"] = title
+
+    def _remember_external_grounding(
+        self,
+        action_name: str,
+        action_detail: str,
+        *,
+        success: bool,
+    ) -> None:
+        if not success:
+            return
+        name = str(action_name or "").strip()
+        detail = self._clean_grounding_value(action_detail)
+        if not detail:
+            return
+
+        if name in {"browser.open_url", "browser.search", "browser.search_site"}:
+            self._session_grounding["current_url"] = detail
+            self._session_grounding["active_application"] = "Google Chrome"
+        elif name in {"folder.open", "folder.open_named"}:
+            self._session_grounding["opened_folder"] = detail
+        elif name in {"file.open_named"}:
+            self._session_grounding["opened_file"] = detail
+        elif name in {"app.open", "app.open_named"}:
+            # Direct app details can be JSON or a local launch description.
+            # Keep only a bounded identity trace, never treat it as instructions.
+            self._session_grounding["active_application_result"] = detail
+
+    def _refresh_session_grounding_prompt(self) -> None:
+        if not self._messages:
+            self._messages = [
+                {"role": "system", "content": _effective_system_instructions()}
+            ]
+        base = _effective_system_instructions()
+        if not self._session_grounding:
+            self._messages[0] = {"role": "system", "content": base}
+            return
+
+        lines = [
+            "TRUSTED SESSION GROUNDING (local tool results, current session only):",
+        ]
+        for key in (
+            "active_application",
+            "active_window",
+            "opened_file",
+            "opened_file_request",
+            "opened_folder",
+            "current_url",
+            "active_application_result",
+        ):
+            value = self._session_grounding.get(key)
+            if value:
+                lines.append(f"- {key}: {value}")
+        lines.append(
+            "Use these exact grounded entities for follow-up references such as "
+            "'it', 'the installer', 'continue', or 'the opened file'. "
+            "Do not invent a replacement filename/path."
+        )
+        self._messages[0] = {
+            "role": "system",
+            "content": base + "\n\n" + "\n".join(lines),
+        }
 
     def record_external_turn(
         self,
@@ -1905,6 +2016,11 @@ class GroqResponsesAgent:
         success: bool = True,
     ) -> None:
         """Record a deterministic local action without another model request."""
+        self._remember_external_grounding(
+            action_name,
+            action_detail,
+            success=success,
+        )
         self._messages.append({"role": "user", "content": str(user_text or "").strip()})
         context = str(assistant_text or "").strip()
         if action_name:
@@ -2425,8 +2541,13 @@ class GroqResponsesAgent:
                 start_index = index
                 break
 
+        system_content = (
+            str(self._messages[0].get("content") or "")
+            if self._messages and self._messages[0].get("role") == "system"
+            else _effective_system_instructions()
+        )
         self._messages = [
-            {"role": "system", "content": _effective_system_instructions()},
+            {"role": "system", "content": system_content},
             *clean[start_index:],
         ]
 
@@ -2447,6 +2568,7 @@ class GroqResponsesAgent:
             settings.operational_learning_enabled
             and _looks_like_clear_operational_feedback(user_text)
         )
+        self._refresh_session_grounding_prompt()
 
         if self._pending_function_approval is not None:
             normalized = user_text.strip().lower().strip(" .!?")
@@ -3127,6 +3249,11 @@ class GroqResponsesAgent:
                     if name in {"research_web", "search_web"}:
                         research_web_calls += 1
                 actions.append(result)
+                self._remember_session_grounding(
+                    name,
+                    arguments,
+                    result,
+                )
                 if (
                     result.success
                     and name == "inspect_active_window"
