@@ -44,6 +44,22 @@ class SemanticMemoryEngine:
     def parser_version(self) -> str:
         return str(self.interpreter.parser_version)
 
+    def relation_catalog(
+        self,
+        session_facts=(),
+    ) -> tuple[str, ...]:
+        relations = {
+            fact.projection.relation
+            for fact in self.store.semantic_facts(status="active")
+            if fact.projection.relation
+        }
+        relations.update(
+            fact.projection.relation
+            for fact in session_facts
+            if fact.projection.relation
+        )
+        return tuple(sorted(relations))
+
     def _log_interpreter(self, log, stage: str) -> None:
         if not log:
             return
@@ -85,7 +101,8 @@ class SemanticMemoryEngine:
         if item is None:
             raise KeyError(f"memory_not_found:{memory_id}")
         projected = self.interpreter.project_batch(
-            [(item.id, item.content)]
+            [(item.id, item.content)],
+            relation_catalog=self.relation_catalog(),
         )
         self._log_interpreter(log, "projection")
         facts = tuple(
@@ -118,7 +135,10 @@ class SemanticMemoryEngine:
                 break
             request = [(item.id, item.content) for item in items]
             try:
-                projections = self.interpreter.project_batch(request)
+                projections = self.interpreter.project_batch(
+                    request,
+                    relation_catalog=self.relation_catalog(),
+                )
                 self._log_interpreter(log, "legacy_index")
             except Exception as exc:
                 for item in items:
@@ -276,21 +296,22 @@ class SemanticMemoryEngine:
         if not query_is_specific_enough(query):
             return {"status": "underspecified", "hits": []}
 
-        session_hits = self._score_records(
-            query,
-            session_facts,
-            limit=20,
-            session_priority=True,
-        )
-        persistent_hits = self.search(query, log=log)
+        effective_query = query
 
-        if query.answer_mode == "single" and session_hits:
-            hits = session_hits
-        else:
-            hits = self._dedupe_hits(
+        def combined_hits(frame):
+            session_hits = self._score_records(
+                frame,
+                session_facts,
+                limit=20,
+                session_priority=True,
+            )
+            persistent_hits = self.search(frame, log=log)
+            if frame.answer_mode == "single" and session_hits:
+                return session_hits
+            merged = self._dedupe_hits(
                 [*session_hits, *persistent_hits]
             )
-            hits.sort(
+            merged.sort(
                 key=lambda item: (
                     item.score,
                     item.fact.memory_id,
@@ -298,9 +319,32 @@ class SemanticMemoryEngine:
                 ),
                 reverse=True,
             )
+            return merged
+
+        hits = combined_hits(effective_query)
+
+        if not hits and effective_query.relation:
+            catalog = self.relation_catalog(session_facts)
+            aligned = self.interpreter.align_query_relation(
+                effective_query,
+                catalog,
+            )
+            self._log_interpreter(log, "relation_align")
+            if aligned.relation != effective_query.relation:
+                if log:
+                    log(
+                        "[SEMANTIC_MEMORY] relation_align="
+                        f"{effective_query.relation}->{aligned.relation}"
+                    )
+                effective_query = aligned
+                hits = combined_hits(effective_query)
 
         if not hits:
-            return {"status": "missing", "hits": []}
+            return {
+                "status": "missing",
+                "hits": [],
+                "effective_relation": effective_query.relation,
+            }
 
         if query.answer_mode in {"collection", "timeline"}:
             # Every hit already passed semantic relation/scope/qualifier gates.
@@ -318,6 +362,7 @@ class SemanticMemoryEngine:
                 "status": "resolved",
                 "mode": query.answer_mode,
                 "hits": selected,
+                "effective_relation": effective_query.relation,
             }
 
         top = hits[0]
@@ -341,12 +386,14 @@ class SemanticMemoryEngine:
                 return {
                     "status": "ambiguous",
                     "hits": hits[:4],
+                    "effective_relation": effective_query.relation,
                 }
 
         return {
             "status": "resolved",
             "mode": "single",
             "hits": [top],
+            "effective_relation": effective_query.relation,
         }
 
     def refine(
