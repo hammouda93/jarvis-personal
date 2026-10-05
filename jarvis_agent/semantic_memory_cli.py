@@ -13,8 +13,8 @@ from typing import Any
 from .memory import LOCAL_MEMORY
 from .memory_core_store import MemoryCoreStore
 from .memory_semantic_interpreter import (
+    ModelSemanticMemoryInterpreter,
     SemanticMemoryInterpreter,
-    build_semantic_memory_interpreter,
 )
 from .semantic_memory_runtime import SemanticMemoryEngine
 
@@ -172,6 +172,21 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="Optional memory.sqlite3 path; defaults to Jarvis local memory.",
     )
+    parser.add_argument(
+        "--provider",
+        default="auto",
+        help="Semantic provider for reindex; auto is local-first.",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Optional semantic model override for the primary provider.",
+    )
+    parser.add_argument(
+        "--allow-cloud",
+        action="store_true",
+        help="Explicitly permit raw memory projection through a cloud provider.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status")
@@ -202,8 +217,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    interpreter = build_semantic_memory_interpreter()
     try:
+        interpreter = ModelSemanticMemoryInterpreter(
+            provider=args.provider,
+            model=args.model,
+            allow_cloud=args.allow_cloud,
+        )
         payload = reindex_semantic(
             store,
             interpreter,
