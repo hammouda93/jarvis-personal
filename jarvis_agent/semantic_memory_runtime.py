@@ -561,7 +561,7 @@ class SemanticMemoryRuntime:
                 f"reason={intent.reason}"
             )
 
-        if intent.session_facts:
+        if intent.session_facts and intent.operation in {"pass", "write"}:
             self._record_session_facts(
                 intent.session_facts,
                 user_text,
