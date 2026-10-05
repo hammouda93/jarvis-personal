@@ -218,6 +218,16 @@ class ReplayDesktop:
         return png_from_image(Image.new("RGB",(300,200),"white"))
     def focus_probe(self,window_id,e):
         self.actions.append((e,"focus_probe",{}))
+        self.controls = [{
+            "ref": "[9, 9, 9]",
+            "name": "Message",
+            "type": "Edit",
+            "writable": True,
+            "actionable": True,
+            "focused": True,
+            "bounds": [10,120,290,180],
+            "value": "",
+        }]
         return {
             "writable": True,
             "native_ref": "[9, 9, 9]",
@@ -271,6 +281,14 @@ class GroundingReplayTests(unittest.TestCase):
         edit = promoted["element"]
         self.assertEqual(edit["sensor"],"uia_focus")
         self.assertTrue(edit["writable"])
+
+        written = self.core.act(
+            edit["ref"],
+            "write",
+            text="hello",
+        )
+        self.assertTrue(written["verified"])
+        self.assertEqual(self.backend.controls[0]["value"],"hello")
 
     def test_visual_focus_probe_refuses_unproven_editability(self):
         self.backend.focus_probe = lambda *args, **kwargs: {
