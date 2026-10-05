@@ -81,6 +81,16 @@ class FoundationToolAdapter:
 
     def ollama_tools(self):
         tools = self.delegate.ollama_tools()
+        if self.memory and enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED"):
+            # Memory V5 is a pre-LLM runtime. Hide legacy memory tools from the
+            # conversational model so it cannot bypass semantic admission,
+            # projection, scoping or retrieval.
+            tools = [
+                item
+                for item in tools
+                if item["function"]["name"]
+                not in {"remember_information", "recall_information"}
+            ]
         if self.browser:
             legacy = {"list_browser_pages", "inspect_browser_page", "activate_browser_page",
                       "write_browser_element", "click_browser_element", "press_browser_element",
