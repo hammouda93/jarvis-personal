@@ -2690,6 +2690,7 @@ def type_text_active_window(
     *,
     title: str = "",
     mode: str = "insert",
+    activate_target: bool = True,
 ) -> UIActionResult:
     """Fallback typing when UIA cannot expose an editable control.
 
@@ -2712,7 +2713,7 @@ def type_text_active_window(
         )
 
     target = (title or _SNAPSHOT_WINDOW_TITLE or "").strip()
-    if target:
+    if target and activate_target:
         activation = activate_window(target)
         if not activation.success:
             return UIActionResult(
