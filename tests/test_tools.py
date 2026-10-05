@@ -330,8 +330,6 @@ class ToolRouterTests(unittest.TestCase):
         launch_mock.assert_called_once_with(candidate)
         find_mock.assert_not_called()
 
-    @patch("jarvis_agent.tools._app_binary_roots")
-    @patch("jarvis_agent.tools._app_search_roots")
     def test_application_name_scoring_rejects_short_substring_false_positive(self):
         self.assertLess(
             score_application_name("PersonalAIUnknownTest", "test"),
@@ -357,6 +355,8 @@ class ToolRouterTests(unittest.TestCase):
             self.assertIsNone(path)
             self.assertNotIn(wrong, matches)
 
+    @patch("jarvis_agent.tools._app_binary_roots")
+    @patch("jarvis_agent.tools._app_search_roots")
     def test_named_app_does_not_match_short_exe_substring(
         self,
         shortcut_roots_mock,
