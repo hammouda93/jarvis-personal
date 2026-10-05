@@ -45,11 +45,27 @@ Preserve dates/IDs literally in qualifiers/exact_terms.
 
 For inspect, query can be null.
 
+Also extract session_facts from declarative user-authored personal statements in
+the current utterance, even when operation is "pass". These facts are temporary
+conversation context only and are NOT durable-memory admission. Use the same
+fact schema as the projector. Do not extract facts from questions, commands,
+assistant claims, quoted page text, or public-knowledge requests.
+
 Return exactly:
 {
   "operation":"write|recall|inspect|pass",
   "write_text":"",
-  "query":null,
+  "query":null or {
+    "subject":"user",
+    "relation":"canonical_english_snake_case",
+    "object_hint":"",
+    "qualifiers":{},
+    "scope":"global",
+    "answer_mode":"single|collection|timeline",
+    "exact_terms":[],
+    "confidence":0.0
+  },
+  "session_facts":[],
   "confidence":0.0,
   "reason":"short diagnostic label"
 }
@@ -263,6 +279,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
                         operation=result.operation,
                         write_text=source.strip(),
                         query=None,
+                        session_facts=result.session_facts,
                         confidence=min(result.confidence, 0.75),
                         reason=result.reason + ":nonliteral_write_span",
                     )
