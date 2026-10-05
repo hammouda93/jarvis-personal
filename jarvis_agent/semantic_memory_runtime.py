@@ -108,7 +108,7 @@ class SemanticMemoryEngine:
                 provenance="explicit",
             )
         projected = self.interpreter.project_batch(
-            [(item.id, item.content)],
+            [(item.id, item.content, item.created_at)],
             relation_catalog=self.relation_catalog(),
         )
         self._log_interpreter(log, "projection")
@@ -140,7 +140,10 @@ class SemanticMemoryEngine:
             )
             if not items:
                 break
-            request = [(item.id, item.content) for item in items]
+            request = [
+                (item.id, item.content, item.created_at)
+                for item in items
+            ]
             try:
                 projections = self.interpreter.project_batch(
                     request,
