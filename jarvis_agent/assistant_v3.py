@@ -126,6 +126,7 @@ class AssistantWorker(QObject):
         # from being hijacked by the browser fast-path after a desktop app
         # or Explorer surface has just become the user's active context.
         self._active_surface_kind = ""
+        self._active_surface_name = ""
         self._text_inbox = TextTurnInbox()
         self._input_mode = InputModeGate(self._text_inbox)
         self._announced_input_generation = -1
@@ -425,6 +426,7 @@ class AssistantWorker(QObject):
         action_name: str,
         *,
         success: bool,
+        detail: str = "",
     ) -> None:
         if not success:
             return
@@ -452,6 +454,18 @@ class AssistantWorker(QObject):
             "open_file",
         }:
             self._active_surface_kind = "app"
+            if action_name == "open_application":
+                try:
+                    payload = json.loads(detail or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    payload = {}
+                candidate = str(
+                    payload.get("application")
+                    or payload.get("target")
+                    or ""
+                ).strip()
+                if candidate:
+                    self._active_surface_name = candidate
         elif action_name in {
             "folder.open",
             "folder.open_named",
@@ -469,6 +483,7 @@ class AssistantWorker(QObject):
         self._update_surface_context(
             intent.name,
             success=bool(result.success),
+            detail=str(result.detail or ""),
         )
         recorder = getattr(self._agent, "record_external_turn", None)
         if not callable(recorder):
@@ -498,6 +513,65 @@ class AssistantWorker(QObject):
         user_text: str,
         intent: ToolIntent,
     ) -> bool:
+        contextual_app_search = (
+            intent.name == "browser.search"
+            and str(intent.args.get("scope") or "context").strip().casefold()
+            != "web"
+            and self._active_surface_kind == "app"
+            and self._active_surface_name
+            and NATIVE_TOOLS.can_search_application(
+                self._active_surface_name
+            )
+        )
+        if contextual_app_search:
+            native = NATIVE_TOOLS.execute(
+                "search_application",
+                {
+                    "title": self._active_surface_name,
+                    "query": str(intent.args.get("query") or "").strip(),
+                },
+            )
+            result = ToolResult(
+                success=native.success,
+                message=native.message,
+                detail=native.detail,
+            )
+            self._pending_direct_follow_up = ""
+            self.log_line.emit(
+                f"[DIRECT] contextual_app_search={self._active_surface_name} "
+                f"success={result.success} query={intent.args.get('query')!r}"
+            )
+            spoken = result.message
+            self._record_direct_agent_context(
+                user_text,
+                spoken,
+                ToolIntent(
+                    "app.search",
+                    {
+                        "app": self._active_surface_name,
+                        "query": intent.args.get("query"),
+                    },
+                ),
+                result,
+            )
+            self._shadow_observe(
+                user_text,
+                source="direct_fast_path",
+                actions=(result,),
+                action_names=("search_application",),
+                response_text=spoken,
+                success=result.success,
+            )
+            self.detail_changed.emit(
+                f"search_application:{'ok' if result.success else 'erreur'}"
+            )
+            self._deliver_reply(spoken)
+            self._state(
+                AssistantState.SUCCESS if result.success else AssistantState.ERROR,
+                "Prêt" if result.success else "Action non terminée",
+            )
+            return True
+
         if not self._is_simple_direct_action(
             user_text,
             intent,
@@ -669,6 +743,7 @@ class AssistantWorker(QObject):
             self._update_surface_context(
                 action.name,
                 success=bool(action.success),
+                detail=str(action.detail or ""),
             )
 
         if turn.actions:
