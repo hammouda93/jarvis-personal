@@ -33,6 +33,7 @@ Every durable memory keeps two layers:
    - relation
    - object/value
    - qualifiers (time, location, project, person, etc.)
+   - entities (people, projects, organizations, products, places, concepts)
    - memory kind
    - scope
    - confidence
@@ -114,12 +115,34 @@ Persistent retrieval is hybrid:
 
 - structured field matching for exact dates, IDs, entities and scope
 - semantic relation/object similarity
+- entity overlap/identity as an independent context signal
 - lexical matching for exact tokens and identifiers
 - optional embedding similarity when a configured embedding provider exists
 - recency only as a tiebreaker, never as a substitute for semantic fit
 
 This follows the same broad direction as mature agent memory systems that combine
 semantic/vector retrieval with lexical search and scoped stores.
+
+## Entity context
+
+Entity context is deliberately separate from the semantic relation.
+
+For example:
+
+    Project North / project_owner / Alice
+    Project South / project_owner / Bob
+
+The relation is the same, but the entity context is different. These facts must
+not supersede each other and a query about Project North should rank only the
+North fact.
+
+Entities are extracted only when they are explicit in raw user evidence. They
+are retrieval signals, not executable instructions and not a reason to merge
+two memories automatically.
+
+The entity layer is intentionally lightweight: it improves entity-centric
+retrieval without introducing a separate graph database. A future graph layer
+can be built from the same sidecar if multi-hop reasoning proves necessary.
 
 ## Conflict and collection semantics
 
