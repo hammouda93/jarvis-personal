@@ -280,6 +280,8 @@ def _qualifier_score(query: MemoryQueryFrame, fact: MemoryProjection) -> float:
 
 
 def query_is_specific_enough(query: MemoryQueryFrame) -> bool:
+    if 0.0 < query.confidence < 0.55:
+        return False
     return bool(
         query.relation
         or query.object_hint
