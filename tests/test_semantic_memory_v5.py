@@ -1411,6 +1411,58 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
             "Inception",
         )
 
+    def test_semantic_relation_alignment_precedes_misleading_lexical_similarity(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        store = MemoryCoreStore(Path(temp.name) / "memory.sqlite3")
+        interpreter = FixtureInterpreter(
+            projections={
+                "wrong lexical neighbor": (
+                    projection(
+                        "project_owner_company",
+                        "Acme Corp",
+                        kind="project",
+                    ),
+                ),
+                "semantic target": (
+                    projection(
+                        "responsible_person",
+                        "Alice",
+                        kind="project",
+                    ),
+                ),
+            },
+            alignments={
+                "project_owner_name": "responsible_person",
+            },
+        )
+        engine = SemanticMemoryEngine(
+            store,
+            interpreter,
+            min_score=0.45,
+        )
+        store.remember("wrong lexical neighbor")
+        store.remember("semantic target")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="project_owner_name",
+                answer_mode="single",
+                raw_text="who is the responsible person",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            result["effective_relation"],
+            "responsible_person",
+        )
+        self.assertEqual(
+            result["hits"][0].fact.projection.value,
+            "Alice",
+        )
+
     def test_legacy_compound_row_is_lazily_projected_into_independent_facts(self):
         store, interpreter, engine = self.make_engine(
             {
