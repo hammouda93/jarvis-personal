@@ -111,6 +111,7 @@ class FixtureInterpreter(SemanticMemoryInterpreter):
 class NoLLM:
     def __init__(self):
         self.calls = 0
+        self.external_turns = []
 
     def run(self, user_text, *, log=None, phase=None):
         self.calls += 1
@@ -125,8 +126,10 @@ class NoLLM:
     def warm_up(self, *, log=None):
         return None
 
-    def record_external_turn(self, *args, **kwargs):
-        return None
+    def record_external_turn(self, user_text, assistant_text, **kwargs):
+        self.external_turns.append(
+            (user_text, assistant_text, dict(kwargs))
+        )
 
 
 class ToolSchemaDelegate:
@@ -1180,6 +1183,19 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(
             [action.name for action in result.actions],
             ["semantic_memory_recall"],
+        )
+        self.assertEqual(len(delegate.external_turns), 1)
+        self.assertEqual(
+            delegate.external_turns[0][0],
+            query_text,
+        )
+        self.assertEqual(
+            delegate.external_turns[0][1],
+            "Cursor",
+        )
+        self.assertEqual(
+            delegate.external_turns[0][2]["action_name"],
+            "semantic_memory_recall",
         )
 
     def test_inspect_lists_raw_durable_evidence_without_legacy_recall_tool(self):
