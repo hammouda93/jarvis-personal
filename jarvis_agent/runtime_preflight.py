@@ -16,9 +16,12 @@ CORE_IMPORTS = (
     ("dotenv", "environment loading"),
 )
 
-WINDOWS_IMPORTS = (
+WINDOWS_BASE_IMPORTS = (
     ("pythoncom", "Windows COM"),
     ("win32com.client", "Windows SAPI/COM"),
+)
+
+WINDOWS_AUTOMATION_IMPORTS = (
     ("pywinauto", "Windows UI Automation"),
 )
 
@@ -68,10 +71,33 @@ def main() -> int:
     args = parser.parse_args()
 
     checks = [_check(*item) for item in CORE_IMPORTS]
+    python_automation_compatible = True
+    python_automation_reason = ""
     if platform.system().lower() == "windows":
-        checks.extend(_check(*item) for item in WINDOWS_IMPORTS)
-        if args.require_grounding:
-            checks.extend(_check(*item) for item in GROUNDING_IMPORTS)
+        checks.extend(_check(*item) for item in WINDOWS_BASE_IMPORTS)
+        needs_automation = (
+            args.require_windows_automation or args.require_grounding
+        )
+        if needs_automation:
+            # comtypes documents Python 3.8/3.9 runtime issues fixed in
+            # CPython >=3.10.10 and >=3.11.2. Keep old V3 environments usable
+            # for non-automation gates, but fail closed before V4 Computer Core.
+            python_automation_compatible = sys.version_info >= (3, 10, 10)
+            if not python_automation_compatible:
+                python_automation_reason = (
+                    "Windows automation requires Python >=3.10.10; "
+                    "Python 3.11/3.12 is recommended for Foundations V4."
+                )
+            else:
+                checks.extend(
+                    _check(*item)
+                    for item in WINDOWS_AUTOMATION_IMPORTS
+                )
+                if args.require_grounding:
+                    checks.extend(
+                        _check(*item)
+                        for item in GROUNDING_IMPORTS
+                    )
 
     contamination = _live_path_contamination()
     failures = [item for item in checks if not item["ok"]]
@@ -81,6 +107,8 @@ def main() -> int:
         "version": sys.version.split()[0],
         "platform": platform.platform(),
         "checks": checks,
+        "windows_automation_compatible": python_automation_compatible,
+        "windows_automation_reason": python_automation_reason,
         "path_contamination": contamination,
         "repair": (
             ".\\scripts\\repair_live_environment.ps1 "
@@ -89,7 +117,13 @@ def main() -> int:
         ),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return 0 if not failures and not contamination else 2
+    return (
+        0
+        if not failures
+        and not contamination
+        and python_automation_compatible
+        else 2
+    )
 
 
 if __name__ == "__main__":
