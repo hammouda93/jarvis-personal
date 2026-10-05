@@ -475,9 +475,26 @@ class MemoryCoreStore(LocalMemory):
                 "SELECT provenance, COUNT(*) "
                 "FROM memory_semantic_admission GROUP BY provenance"
             ).fetchall()
+            entity_rows = conn.execute(
+                "SELECT entities_json FROM memory_semantic_facts "
+                "WHERE status = 'active'"
+            ).fetchall()
+        entity_keys = set()
+        for row in entity_rows:
+            try:
+                values = json.loads(str(row[0] or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                values = []
+            if isinstance(values, list):
+                entity_keys.update(
+                    str(item).strip().casefold()
+                    for item in values
+                    if str(item).strip()
+                )
         return {
             "raw_memories": raw_count,
             "semantic_facts": fact_count,
+            "active_entities": len(entity_keys),
             "projection_states": {
                 str(row[0]): int(row[1])
                 for row in status_rows
