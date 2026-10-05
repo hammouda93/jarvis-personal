@@ -264,6 +264,20 @@ class ReplayDesktop:
             "focused": True,
         }
 
+    def focused_editable(self,window_id):
+        if not self.controls:
+            return {"writable":False}
+        item = self.controls[0]
+        return {
+            "writable": bool(item.get("writable")),
+            "native_ref": item.get("ref",""),
+            "text": item.get("name",""),
+            "type": item.get("type",""),
+            "bbox": item.get("bounds",[]),
+            "value": item.get("value"),
+            "focused": bool(item.get("focused")),
+        }
+
     def act(self,window_id,e,operation,**args):
         self.actions.append((e,operation,args))
         if operation == "write":
@@ -315,6 +329,40 @@ class GroundingReplayTests(unittest.TestCase):
         )
         self.assertTrue(written["verified"])
         self.assertEqual(self.backend.controls[0]["value"],"hello")
+
+    def test_promoted_editor_survives_exact_header_context_verification(self):
+        original_focus_probe = self.backend.focus_probe
+
+        def focus_with_header(window_id, element):
+            result = original_focus_probe(window_id, element)
+            self.backend.controls.append(
+                {
+                    "ref": "header",
+                    "name": "Exact Person",
+                    "type": "Heading",
+                    "writable": False,
+                    "actionable": False,
+                    "focused": False,
+                    "bounds": [10,10,180,40],
+                    "value": None,
+                    "region": "header",
+                }
+            )
+            return result
+
+        self.backend.focus_probe = focus_with_header
+        visual_ref = self.core.observe("101")["elements"][0]["ref"]
+        promoted = self.core.focus_probe(visual_ref)["element"]
+
+        result = self.core.act(
+            promoted["ref"],
+            "write",
+            text="private draft",
+            context={"text":"Exact Person","region":"header"},
+        )
+
+        self.assertTrue(result["verified"])
+        self.assertEqual(self.backend.controls[0]["value"],"private draft")
 
     def test_visual_focus_probe_refuses_unproven_editability(self):
         self.backend.focus_probe = lambda *args, **kwargs: {
