@@ -14,7 +14,9 @@ from .memory_retrieval import normalize, relevance, terms
 
 
 _WRITE = re.compile(
-    r"^(?:s'il te plait[, ]*|please[, ]*)?"
+    r"^(?:(?:ok|oui|d'accord|daccord|okay)[, ]*)?"
+    r"(?:(?:je (?:veux|voudrais|souhaite) que tu|i (?:want|would like) you to)\s+)?"
+    r"(?:s'il te plait[, ]*|please[, ]*)?"
     r"(?:memorise(?:z)?|retiens|retenez|souviens-toi|souvenez-vous|"
     r"(?:garde[z]?|conserve[z]?) (?:en (?:memoire|tete)|a l'esprit)|"
     r"remember|memorize|memorise|(?:save|keep) (?:in )?(?:memory|mind))"
@@ -30,6 +32,23 @@ _RECALL_CLARIFICATION_BLOCK = re.compile(
     r"^(?:ouvre|ouvrir|open|ferme|fermer|close|ecris|ecrire|write|"
     r"envoie|envoyer|send|recherche|chercher|search|lance|lancer|run)\b"
 )
+
+
+def _is_collection_query(value: str) -> bool:
+    text = normalize(value)
+    return bool(
+        re.search(
+            r"\b(?:quels|quelles|lesquels|lesquelles|mes|tous|toutes|"
+            r"which|all)\b",
+            text,
+        )
+        and re.search(
+            r"\b(?:films?|projets?|reunions?|rendezvous|adresses?|"
+            r"emails?|preferences?|souvenirs?|memoires?|"
+            r"movies?|projects?|meetings?|addresses?|memories?)\b",
+            text,
+        )
+    )
 
 
 def _looks_like_recall_clarification(value: str) -> bool:
@@ -214,6 +233,12 @@ class MemoryRoutingRuntime:
             if not terms(recall_query) or not candidates:
                 reply = "Je n'ai pas cette information. Pouvez-vous me la préciser ?"
                 self._pending_recall_query = recall_query
+            elif len(candidates) > 1 and _is_collection_query(recall_query):
+                reply = (
+                    "Informations correspondantes : "
+                    + " ; ".join(candidates[:8])
+                )
+                self._pending_recall_query = ""
             elif len(candidates) > 1:
                 reply = (
                     "Plusieurs informations correspondent : "
