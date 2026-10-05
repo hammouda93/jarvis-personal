@@ -765,7 +765,20 @@ def _find_named_app(query: str) -> tuple[Path | None, list[Path]]:
             and len(name) >= 4
             and (wanted in name or name in wanted)
         ):
-            score = 0.94
+            shorter = min(len(wanted), len(name))
+            longer = max(len(wanted), len(name))
+            containment_ratio = shorter / float(longer)
+            # A very short executable name that merely occurs inside a much
+            # longer requested application name is not trustworthy identity
+            # evidence (for example "test.exe" inside
+            # "PersonalAIUnknownTest"). Keep fuzzy filesystem discovery
+            # fail-closed unless the contained name represents a substantial
+            # portion of the request.
+            score = (
+                0.94
+                if containment_ratio >= 0.45
+                else difflib.SequenceMatcher(None, wanted, name).ratio()
+            )
         else:
             score = difflib.SequenceMatcher(None, wanted, name).ratio()
         if score >= 0.80:
