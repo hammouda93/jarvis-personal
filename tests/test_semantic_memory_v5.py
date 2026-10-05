@@ -911,6 +911,47 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
             {"Alice", "Bob"},
         )
 
+    def test_entity_order_does_not_change_singleton_slot_identity(self):
+        store, _, engine = self.make_engine({})
+        first = store.remember("old atlas office")
+        store.save_projection(
+            first.id,
+            (
+                projection(
+                    "office_location",
+                    "Tunis",
+                    entities=("Project Atlas", "HQ"),
+                    cardinality="single",
+                    confidence=0.99,
+                ),
+            ),
+            parser_version=engine.parser_version,
+            provenance="explicit",
+        )
+        second = store.remember("new atlas office")
+        store.save_projection(
+            second.id,
+            (
+                projection(
+                    "office_location",
+                    "Sfax",
+                    entities=("HQ", "Project Atlas"),
+                    cardinality="single",
+                    confidence=0.99,
+                ),
+            ),
+            parser_version=engine.parser_version,
+            provenance="explicit",
+        )
+
+        statuses = {
+            fact.projection.value: fact.status
+            for fact in store.semantic_facts(status=None)
+        }
+
+        self.assertEqual(statuses["Tunis"], "superseded")
+        self.assertEqual(statuses["Sfax"], "active")
+
     def test_entity_context_survives_sidecar_reopen(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "memory.sqlite3"
