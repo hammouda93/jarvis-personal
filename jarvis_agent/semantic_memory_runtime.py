@@ -44,14 +44,42 @@ class SemanticMemoryEngine:
     def parser_version(self) -> str:
         return str(self.interpreter.parser_version)
 
-    def interpret_turn(self, text: str) -> MemoryTurnInterpretation:
-        return self.interpreter.interpret_turn(text)
+    def _log_interpreter(self, log, stage: str) -> None:
+        if not log:
+            return
+        provider = str(
+            getattr(self.interpreter, "last_provider", "") or ""
+        )
+        model = str(
+            getattr(self.interpreter, "last_model", "") or ""
+        )
+        attempts = tuple(
+            getattr(self.interpreter, "last_attempts", ()) or ()
+        )
+        if provider or attempts:
+            log(
+                "[MEMORY_V5_MODEL] "
+                f"stage={stage} provider={provider or 'unknown'} "
+                f"model={model or 'unknown'} "
+                f"attempts={','.join(attempts) or 'unknown'}"
+            )
+
+    def interpret_turn(
+        self,
+        text: str,
+        *,
+        log=None,
+    ) -> MemoryTurnInterpretation:
+        result = self.interpreter.interpret_turn(text)
+        self._log_interpreter(log, "intent")
+        return result
 
     def project_memory(
         self,
         memory_id: int,
         *,
         provenance: str,
+        log=None,
     ) -> tuple[MemoryProjection, ...]:
         item = self.store.get_memory(memory_id)
         if item is None:
@@ -59,6 +87,7 @@ class SemanticMemoryEngine:
         projected = self.interpreter.project_batch(
             [(item.id, item.content)]
         )
+        self._log_interpreter(log, "projection")
         facts = tuple(
             fact
             for fact in projected.get(item.id, ())
@@ -90,6 +119,7 @@ class SemanticMemoryEngine:
             request = [(item.id, item.content) for item in items]
             try:
                 projections = self.interpreter.project_batch(request)
+                self._log_interpreter(log, "legacy_index")
             except Exception as exc:
                 for item in items:
                     self.store.mark_projection_error(
@@ -323,11 +353,15 @@ class SemanticMemoryEngine:
         self,
         previous: MemoryQueryFrame,
         clarification: str,
+        *,
+        log=None,
     ) -> MemoryQueryFrame:
-        return self.interpreter.refine_query(
+        result = self.interpreter.refine_query(
             previous,
             clarification,
         )
+        self._log_interpreter(log, "clarification")
+        return result
 
 
 def _memory_id_from_detail(detail: str) -> int | None:
@@ -513,6 +547,7 @@ class SemanticMemoryRuntime:
                 refined = self.engine.refine(
                     self._pending_query,
                     user_text,
+                    log=log,
                 )
                 resolution = self.engine.resolve(
                     refined,
@@ -537,7 +572,10 @@ class SemanticMemoryRuntime:
                 self._pending_query = None
 
         try:
-            intent = self.engine.interpret_turn(user_text)
+            intent = self.engine.interpret_turn(
+                user_text,
+                log=log,
+            )
         except Exception as exc:
             if log:
                 log(
@@ -628,6 +666,7 @@ class SemanticMemoryRuntime:
                     facts = self.engine.project_memory(
                         memory_id,
                         provenance="explicit",
+                        log=log,
                     )
                     if log:
                         log(
