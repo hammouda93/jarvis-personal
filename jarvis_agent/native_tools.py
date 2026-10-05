@@ -18,7 +18,7 @@ from .screen_vision import (
     observe_screen,
     write_visual_target,
 )
-from .tools import ToolIntent, ToolResult, execute, normalize
+from .tools import ToolIntent, ToolResult, clear_browser_context, execute, normalize
 from .windows_perception import (
     activate_window,
     click_ui_element,
@@ -899,6 +899,8 @@ class NativeToolRegistry:
             target = str(args.get("name", "")).strip()
             new_instance = bool(args.get("new_instance", False))
             self._last_web_title_hint = ""
+            if normalize(target) not in {"chrome", "google chrome"}:
+                clear_browser_context()
 
             observed_title = self._last_observed_window_title
             if (
