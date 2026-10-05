@@ -442,7 +442,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
 
     def project_batch(
         self,
-        items: list[tuple[int, str]],
+        items: list[tuple[int, str] | tuple[int, str, str]],
         *,
         relation_catalog: tuple[str, ...] = (),
     ) -> dict[int, tuple[MemoryProjection, ...]]:
