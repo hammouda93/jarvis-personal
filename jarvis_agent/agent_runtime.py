@@ -1898,6 +1898,7 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+        self._recent_execution_state = ""
 
     def reset(self) -> None:
         self._messages = [
@@ -1909,6 +1910,7 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+        self._recent_execution_state = ""
 
     def record_external_turn(
         self,
@@ -2402,6 +2404,7 @@ class GroqResponsesAgent:
 
     def _trim_history(self) -> None:
         clean: list[dict[str, Any]] = []
+        recent_facts: list[dict[str, Any]] = []
         internal_prefixes = (
             "Réponds à la demande précédente uniquement",
             "Cet outil vient d échouer",
@@ -2409,10 +2412,60 @@ class GroqResponsesAgent:
             "Une action vient de modifier l'interface",
             "CHECKPOINT_APPRENTISSAGE_SKILL",
             "CHECKPOINT_APPRENTISSAGE_LESSON",
+            "[RECENT_EXECUTION_STATE]",
         )
+
+        def compact_tool_fact(item: dict[str, Any]) -> dict[str, Any] | None:
+            name = str(item.get("name") or item.get("tool_name") or "").strip()
+            if name not in {
+                "open_application", "open_file", "open_folder", "open_url",
+                "activate_window", "inspect_active_window",
+                "list_browser_pages", "inspect_browser_page",
+            }:
+                return None
+            try:
+                payload = json.loads(str(item.get("content") or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return None
+            if not isinstance(payload, dict) or payload.get("success") is not True:
+                return None
+            detail: Any = payload.get("detail")
+            if isinstance(detail, str):
+                try:
+                    parsed_detail = json.loads(detail)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    parsed_detail = detail
+            else:
+                parsed_detail = detail
+
+            fact: dict[str, Any] = {"tool": name, "success": True}
+            if isinstance(parsed_detail, dict):
+                for key in (
+                    "application", "target", "path", "url", "provider",
+                    "page_ref", "document_generation", "reused_existing_window",
+                ):
+                    value = parsed_detail.get(key)
+                    if value not in (None, "", [], {}):
+                        fact[key] = value
+                window = parsed_detail.get("window")
+                if isinstance(window, dict):
+                    fact["window"] = {
+                        key: window.get(key)
+                        for key in ("title", "url", "page_ref")
+                        if window.get(key) not in (None, "")
+                    }
+                elif window not in (None, ""):
+                    fact["window"] = str(window)[:300]
+            elif isinstance(parsed_detail, str) and parsed_detail.strip():
+                fact["detail"] = parsed_detail.strip()[:700]
+            return fact
+
         for item in self._messages[1:]:
             role = str(item.get("role") or "")
             if role == "tool":
+                fact = compact_tool_fact(item)
+                if fact is not None:
+                    recent_facts.append(fact)
                 continue
             if role == "assistant" and item.get("tool_calls"):
                 continue
@@ -2423,6 +2476,13 @@ class GroqResponsesAgent:
                 continue
             if role in {"user", "assistant"}:
                 clean.append({"role": role, "content": content})
+
+        if recent_facts:
+            self._recent_execution_state = json.dumps(
+                recent_facts[-6:],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )[:2800]
 
         maximum_turns = max(4, settings.agent_history_turns)
         user_turns_seen = 0
@@ -2435,9 +2495,24 @@ class GroqResponsesAgent:
                 start_index = index
                 break
 
+        history = clean[start_index:]
+        if self._recent_execution_state:
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "[RECENT_EXECUTION_STATE] "
+                        + self._recent_execution_state
+                        + "\nUtilise cet état comme continuité factuelle du runtime. "
+                        "Ne réinvente pas un nom de fichier, une application ou une "
+                        "fenêtre qui y est déjà résolue."
+                    ),
+                }
+            )
+
         self._messages = [
             {"role": "system", "content": _effective_system_instructions()},
-            *clean[start_index:],
+            *history,
         ]
 
     def run(
