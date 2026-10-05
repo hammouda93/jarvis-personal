@@ -361,6 +361,55 @@ class MemoryCoreStore(LocalMemory):
             )
         return result
 
+    def semantic_summary(self) -> dict[str, object]:
+        with closing(self._connect()) as conn:
+            raw_count = int(
+                conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+            )
+            fact_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_semantic_facts"
+                ).fetchone()[0]
+            )
+            status_rows = conn.execute(
+                "SELECT status, COUNT(*) FROM memory_semantic_state "
+                "GROUP BY status"
+            ).fetchall()
+        return {
+            "raw_memories": raw_count,
+            "semantic_facts": fact_count,
+            "projection_states": {
+                str(row[0]): int(row[1])
+                for row in status_rows
+            },
+        }
+
+    def reset_semantic_index(self, *, errors_only: bool = False) -> None:
+        """Clear only rebuildable semantic sidecar state; raw memories survive."""
+        with self._connect() as conn:
+            if errors_only:
+                ids = [
+                    int(row[0])
+                    for row in conn.execute(
+                        "SELECT memory_id FROM memory_semantic_state "
+                        "WHERE status = 'error'"
+                    ).fetchall()
+                ]
+                for memory_id in ids:
+                    conn.execute(
+                        "DELETE FROM memory_semantic_facts "
+                        "WHERE memory_id = ?",
+                        (memory_id,),
+                    )
+                    conn.execute(
+                        "DELETE FROM memory_semantic_state "
+                        "WHERE memory_id = ?",
+                        (memory_id,),
+                    )
+            else:
+                conn.execute("DELETE FROM memory_semantic_facts")
+                conn.execute("DELETE FROM memory_semantic_state")
+
     def semantic_state(self, memory_id: int) -> dict[str, str] | None:
         with closing(self._connect()) as conn:
             row = conn.execute(
