@@ -159,8 +159,16 @@ def _is_enabled(wrapper: Any) -> bool:
         return True
 
 
+def _is_internal_automation_window_title(title: str) -> bool:
+    normalized = normalize(title)
+    if normalized == "jarvis personal":
+        return True
+    compact = normalized.replace(" ", "")
+    return compact.startswith("cua.agentcursoroverlay.") or compact == "cua.agentcursoroverlay"
+
+
 def _is_assistant_window(wrapper: Any) -> bool:
-    return normalize(_element_name(wrapper)) == "jarvis personal"
+    return _is_internal_automation_window_title(_element_name(wrapper))
 
 
 def _title_app_hint(title: str) -> str:
@@ -314,6 +322,7 @@ def _window_by_title(title: str):
             (_window_query_score(target, _element_name(wrapper)), wrapper)
             for wrapper in windows
             if _is_visible(wrapper)
+            and not _is_internal_automation_window_title(_element_name(wrapper))
         ),
         key=lambda pair: -pair[0],
     )
@@ -879,7 +888,13 @@ def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
     """Resolve a requested/foreground work window without UI Automation."""
     import ctypes
 
-    candidates = _native_window_candidates(limit=60)
+    candidates = [
+        item
+        for item in _native_window_candidates(limit=60)
+        if not _is_internal_automation_window_title(
+            str(item.get("title") or "")
+        )
+    ]
     if not candidates:
         return None
 
