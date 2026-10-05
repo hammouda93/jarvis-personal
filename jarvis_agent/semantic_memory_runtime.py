@@ -274,6 +274,7 @@ class SemanticMemoryEngine:
                     "memory_id": hit.fact.memory_id,
                     "relation": hit.fact.projection.relation,
                     "value": hit.fact.projection.value,
+                    "entities": list(hit.fact.projection.entities),
                     "score": round(hit.score, 3),
                     "components": {
                         key: round(value, 3)
