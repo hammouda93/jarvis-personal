@@ -184,8 +184,18 @@ class SemanticMemoryInterpreter:
         return query
 
 
+_CLOUD_PROVIDERS = {"cerebras", "groq", "openai"}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
-    """Small JSON-only semantic calls through the configured agent provider."""
+    """Small JSON-only semantic calls through an explicitly permitted provider."""
 
     def __init__(
         self,
@@ -193,10 +203,26 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
         provider: str = "auto",
         model: str = "",
         timeout_s: float | None = None,
+        allow_cloud: bool | None = None,
     ) -> None:
+        cloud_allowed = (
+            _env_bool("JARVIS_MEMORY_ALLOW_CLOUD_SEMANTICS", False)
+            if allow_cloud is None
+            else bool(allow_cloud)
+        )
         chosen = (provider or "auto").strip().lower()
         if chosen == "auto":
-            chosen = settings.agent_provider.strip().lower()
+            agent_provider = settings.agent_provider.strip().lower()
+            chosen = (
+                agent_provider
+                if agent_provider not in _CLOUD_PROVIDERS or cloud_allowed
+                else "ollama"
+            )
+        if chosen in _CLOUD_PROVIDERS and not cloud_allowed:
+            raise RuntimeError(
+                "semantic_memory_cloud_provider_requires_explicit_opt_in"
+            )
+        self.allow_cloud = cloud_allowed
         self.provider = chosen
         self._model_override = (
             model.strip()
