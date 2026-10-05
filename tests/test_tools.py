@@ -19,6 +19,7 @@ from jarvis_agent.tools import (
 from jarvis_agent.windows_app_discovery import (
     WindowsAppCandidate,
     discover_start_apps,
+    score_application_name,
 )
 
 
@@ -287,6 +288,31 @@ class ToolRouterTests(unittest.TestCase):
 
     @patch("jarvis_agent.tools._app_binary_roots")
     @patch("jarvis_agent.tools._app_search_roots")
+    def test_application_name_scoring_rejects_short_substring_false_positive(self):
+        self.assertLess(
+            score_application_name("PersonalAIUnknownTest", "test"),
+            0.72,
+        )
+
+    @patch("jarvis_agent.tools._app_binary_roots")
+    @patch("jarvis_agent.tools._app_search_roots")
+    def test_unknown_long_app_name_does_not_launch_embedded_test_executable(
+        self,
+        shortcut_roots_mock,
+        binary_roots_mock,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrong = root / "test.exe"
+            wrong.write_bytes(b"")
+            shortcut_roots_mock.return_value = []
+            binary_roots_mock.return_value = [root]
+
+            path, matches = _find_named_app("PersonalAIUnknownTest")
+
+            self.assertIsNone(path)
+            self.assertNotIn(wrong, matches)
+
     def test_named_app_does_not_match_short_exe_substring(
         self,
         shortcut_roots_mock,
