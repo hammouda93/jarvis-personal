@@ -332,6 +332,24 @@ class SemanticMemoryEngine:
             return {"status": "underspecified", "hits": []}
 
         effective_query = query
+        if effective_query.relation:
+            catalog = self.relation_catalog(session_facts)
+            if (
+                catalog
+                and effective_query.relation not in set(catalog)
+            ):
+                aligned = self.interpreter.align_query_relation(
+                    effective_query,
+                    catalog,
+                )
+                self._log_interpreter(log, "relation_align")
+                if aligned.relation != effective_query.relation:
+                    if log:
+                        log(
+                            "[SEMANTIC_MEMORY] relation_align="
+                            f"{effective_query.relation}->{aligned.relation}"
+                        )
+                    effective_query = aligned
 
         def combined_hits(frame):
             session_hits = self._score_records(
@@ -360,19 +378,15 @@ class SemanticMemoryEngine:
 
         if not hits and effective_query.relation:
             catalog = self.relation_catalog(session_facts)
-            aligned = self.interpreter.align_query_relation(
-                effective_query,
-                catalog,
-            )
-            self._log_interpreter(log, "relation_align")
-            if aligned.relation != effective_query.relation:
-                if log:
-                    log(
-                        "[SEMANTIC_MEMORY] relation_align="
-                        f"{effective_query.relation}->{aligned.relation}"
-                    )
-                effective_query = aligned
-                hits = combined_hits(effective_query)
+            if effective_query.relation not in set(catalog):
+                aligned = self.interpreter.align_query_relation(
+                    effective_query,
+                    catalog,
+                )
+                self._log_interpreter(log, "relation_align_retry")
+                if aligned.relation != effective_query.relation:
+                    effective_query = aligned
+                    hits = combined_hits(effective_query)
 
         if not hits:
             return {
