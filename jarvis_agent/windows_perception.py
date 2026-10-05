@@ -2844,7 +2844,11 @@ _ALLOWED_KEYS = {
 }
 
 
-def press_key(key: str) -> UIActionResult:
+def press_key(
+    key: str,
+    *,
+    reactivate_snapshot: bool = True,
+) -> UIActionResult:
     normalized = normalize(key).replace(" ", "")
     sequence = _ALLOWED_KEYS.get(normalized)
     if sequence is None:
@@ -2854,7 +2858,8 @@ def press_key(key: str) -> UIActionResult:
         )
     try:
         if (
-            _SNAPSHOT_WINDOW_TITLE
+            reactivate_snapshot
+            and _SNAPSHOT_WINDOW_TITLE
             and normalize(_SNAPSHOT_WINDOW_TITLE) != "jarvis personal"
         ):
             try:
