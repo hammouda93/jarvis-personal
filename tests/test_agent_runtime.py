@@ -2936,6 +2936,70 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertFalse(_inspection_requests_visual_fallback(usable))
 
+    def test_writable_uia_control_suppresses_unneeded_visual_fallback(self):
+        action = AgentActionResult(
+            name="inspect_active_window",
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "controls": [
+                        {
+                            "ref": "obs1:e7",
+                            "type": "Document",
+                            "writable": True,
+                            "name": "",
+                        }
+                    ],
+                    "capabilities": {
+                        "writable": [{"ref": "obs1:e7"}],
+                        "actionable": [],
+                    },
+                    "snapshot": {
+                        "semantic_coverage": "insufficient",
+                        "vision_recommended": True,
+                    },
+                }
+            ),
+        )
+
+        self.assertFalse(
+            _inspection_requests_visual_fallback(
+                action,
+                "Écris TEST PERSONAL AI dans Bloc-notes.",
+            )
+        )
+
+    def test_structured_document_is_enough_for_observation_request(self):
+        action = AgentActionResult(
+            name="inspect_active_window",
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "controls": [
+                        {
+                            "ref": "obs2:e7",
+                            "type": "Document",
+                            "writable": True,
+                            "value": "HELLO VERIFIED",
+                        }
+                    ],
+                    "snapshot": {
+                        "semantic_coverage": "insufficient",
+                        "vision_recommended": True,
+                    },
+                }
+            ),
+        )
+
+        self.assertFalse(
+            _inspection_requests_visual_fallback(
+                action,
+                "Observe cette application.",
+            )
+        )
+
     def test_action_promise_is_detected(self):
         self.assertTrue(
             _looks_like_action_promise(
