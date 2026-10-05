@@ -446,6 +446,14 @@ def _completed_action_capabilities(
                 completed.add("write_ui")
         elif action.name == "close_tab":
             completed.add("close_tab")
+        elif action.name == "open_url":
+            detail = str(action.detail or "")
+            if re.search(
+                r"https?://[^\s]+[?&](?:q|query|search|search_query)=",
+                detail,
+                flags=re.I,
+            ):
+                completed.add("site_search")
         elif action.name == "inspect_active_window" and pending_written_value:
             payload = _action_detail_dict(action)
             observed_values = []
