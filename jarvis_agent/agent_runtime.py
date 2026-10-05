@@ -904,11 +904,12 @@ def _query_matches_recent_user_context(
     query: str,
     messages: list[dict[str, Any]],
 ) -> bool:
-    """Detect whether the requested subject is genuinely present in recent turns.
+    """Detect whether a requested subject genuinely belongs to recent context.
 
-    The guard exists to avoid querying persistent memory for a fact that was
-    just provided in the current conversation. It must not fire merely because
-    two French sentences share generic fragments such as "que je" or "je veux".
+    Generic conversational fragments must never be enough to block persistent
+    recall or background research. Named entities may arrive joined by STT or
+    model normalization (AtlasScope vs Atlas Scope), so compare compact n-grams
+    built only from non-stopword tokens.
     """
     stopwords = {
         "avec", "cette", "comme", "dans", "dont", "elle", "elles", "encore",
@@ -919,15 +920,29 @@ def _query_matches_recent_user_context(
         "what", "which", "with", "from", "your", "you", "want", "about",
     }
 
-    def meaningful_tokens(text: str) -> list[str]:
+    def tokens(text: str) -> list[str]:
         return [
             token
             for token in re.findall(r"[a-z0-9]+", (text or "").lower())
-            if len(token) >= 4 and token not in stopwords
+            if len(token) >= 2 and token not in stopwords
         ]
 
-    query_tokens = meaningful_tokens(query)
-    if not query_tokens:
+    def candidates(text: str) -> set[str]:
+        values = tokens(text)
+        compact: set[str] = set()
+        for size in range(1, min(3, len(values)) + 1):
+            for index in range(0, len(values) - size + 1):
+                group = values[index : index + size]
+                joined = "".join(group)
+                if len(joined) < 5:
+                    continue
+                if not any(len(token) >= 4 for token in group):
+                    continue
+                compact.add(joined)
+        return compact
+
+    query_candidates = candidates(query)
+    if not query_candidates:
         return False
 
     user_texts = [
@@ -937,19 +952,21 @@ def _query_matches_recent_user_context(
     ]
     context_turns = max(8, settings.agent_history_turns)
     for text in user_texts[:-1][-context_turns:]:
-        previous_tokens = meaningful_tokens(text)
-        if not previous_tokens:
-            continue
-        if set(query_tokens) & set(previous_tokens):
+        previous_candidates = candidates(text)
+        if query_candidates & previous_candidates:
             return True
-        for wanted in query_tokens:
-            for actual in previous_tokens:
-                if min(len(wanted), len(actual)) < 5:
-                    continue
-                if difflib.SequenceMatcher(None, wanted, actual).ratio() >= 0.90:
+        for wanted in query_candidates:
+            for actual in previous_candidates:
+                shorter = min(len(wanted), len(actual))
+                longer = max(len(wanted), len(actual))
+                if shorter >= 5 and shorter / max(1, longer) >= 0.70:
+                    if wanted in actual or actual in wanted:
+                        return True
+                if shorter >= 6 and difflib.SequenceMatcher(
+                    None, wanted, actual
+                ).ratio() >= 0.92:
                     return True
     return False
-
 def _blocked_contextual_web_search_result(query: str) -> AgentActionResult:
     return AgentActionResult(
         name="research_web",
