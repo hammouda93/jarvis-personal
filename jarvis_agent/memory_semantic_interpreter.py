@@ -10,6 +10,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any
 
 from .config import settings
@@ -41,6 +42,10 @@ memory and query must be null.
 For recall, return a query with:
 subject, canonical English snake_case relation, object_hint, qualifiers,
 entities, scope, answer_mode (single|collection|timeline), exact_terms and confidence.
+The input includes reference_time_utc. Resolve relative temporal expressions
+such as today/tomorrow/next Friday into structured qualifiers when confidence is
+high. Prefer qualifier keys date (YYYY-MM-DD), datetime (ISO 8601), start_at,
+end_at, temporal_status. Keep literal IDs/dates in exact_terms when present.
 Preserve dates/IDs literally in qualifiers/exact_terms.
 For entity-centric questions such as "what do you know about Project Atlas?",
 relation may be empty, entities must contain the explicit entity, and
@@ -116,7 +121,11 @@ return an empty facts list.
 Input is an object with:
 - relation_catalog: existing canonical relation keys. Reuse one when it has the
   same meaning; create a new relation only when none fits.
-- items: array of objects with memory_id and text.
+- items: array of objects with memory_id, text and created_at.
+When an item contains relative time language, resolve it relative to that item's
+created_at, never relative to the current indexing time. Prefer temporal
+qualifiers date (YYYY-MM-DD), datetime (ISO 8601), start_at, end_at,
+temporal_status. Preserve the raw text separately; do not rewrite evidence.
 
 Return:
 {"items":[{"memory_id":1,"facts":[{"subject":"user","relation":"...",
@@ -176,7 +185,7 @@ class SemanticMemoryInterpreter:
 
     def project_batch(
         self,
-        items: list[tuple[int, str]],
+        items: list[tuple[int, str] | tuple[int, str, str]],
         *,
         relation_catalog: tuple[str, ...] = (),
     ) -> dict[int, tuple[MemoryProjection, ...]]:
@@ -402,7 +411,10 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
     def interpret_turn(self, user_text: str) -> MemoryTurnInterpretation:
         payload = self._chat(
             _TURN_SYSTEM,
-            {"user_text": str(user_text or "")},
+            {
+                "user_text": str(user_text or ""),
+                "reference_time_utc": datetime.now(timezone.utc).isoformat(),
+            },
         )
         result = MemoryTurnInterpretation.from_dict(
             payload,
@@ -436,13 +448,23 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
     ) -> dict[int, tuple[MemoryProjection, ...]]:
         if not items:
             return {}
-        request = [
-            {
-                "memory_id": int(memory_id),
-                "text": str(text)[:3000],
-            }
-            for memory_id, text in items
-        ]
+        request = []
+        item_ids = []
+        for item in items:
+            if len(item) == 2:
+                memory_id, text = item
+                created_at = ""
+            else:
+                memory_id, text, created_at = item
+            memory_id = int(memory_id)
+            item_ids.append(memory_id)
+            request.append(
+                {
+                    "memory_id": memory_id,
+                    "text": str(text)[:3000],
+                    "created_at": str(created_at or ""),
+                }
+            )
         payload = self._chat(
             _PROJECTION_SYSTEM,
             {
@@ -451,7 +473,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             },
         )
         result: dict[int, tuple[MemoryProjection, ...]] = {
-            int(memory_id): () for memory_id, _ in items
+            memory_id: () for memory_id in item_ids
         }
         allowed = set(result)
         for item in payload.get("items") or []:
