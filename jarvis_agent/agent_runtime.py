@@ -847,7 +847,23 @@ def _query_matches_recent_user_context(
     # conversational turns.
     context_turns = max(8, settings.agent_history_turns)
     for text in user_texts[:-1][-context_turns:]:
-        words = re.findall(r"[a-z0-9]+", text.lower())
+        normalized_text = (text or "").lower().replace("’", "'")
+        # A prior explicit persistence request is not temporary conversational
+        # evidence. Likewise, a prior recall question did not introduce the
+        # fact itself. Skipping both keeps the guard focused on fresh facts
+        # actually stated by the user during this session.
+        if _is_explicit_memory_write_request(text):
+            continue
+        if (
+            "?" in text
+            or re.search(
+                r"\b(?:rappelle|rappelles|souviens|remember|recall|"
+                r"quel|quelle|quels|quelles|what|which)\b",
+                normalized_text,
+            )
+        ):
+            continue
+        words = re.findall(r"[a-z0-9]+", normalized_text)
         for size in range(1, min(4, len(words)) + 1):
             for start in range(0, len(words) - size + 1):
                 candidate = "".join(words[start : start + size])
