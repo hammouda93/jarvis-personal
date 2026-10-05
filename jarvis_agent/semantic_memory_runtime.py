@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any
 
 from .memory_core_store import MemoryCoreStore
@@ -12,6 +13,7 @@ from .semantic_memory import (
     MemoryProjection,
     MemoryQueryFrame,
     MemoryTurnInterpretation,
+    SemanticFactRecord,
     SemanticMemoryHit,
     normalize_text,
     query_is_specific_enough,
@@ -148,24 +150,28 @@ class SemanticMemoryEngine:
             result.append(hit)
         return result
 
-    def search(
+    def _score_records(
         self,
         query: MemoryQueryFrame,
+        records,
         *,
-        log=None,
         limit: int = 12,
+        session_priority: bool = False,
     ) -> list[SemanticMemoryHit]:
-        self.ensure_indexed(log=log)
         hits = []
-        status = None if query.answer_mode == "timeline" else "active"
-        for fact in self.store.semantic_facts(
-            scope=query.scope,
-            status=status,
-        ):
+        for fact in records:
             hit = score_semantic_fact(query, fact)
-            if hit is not None and hit.score >= self.min_score:
-                hits.append(hit)
-
+            if hit is None or hit.score < self.min_score:
+                continue
+            if session_priority:
+                components = dict(hit.components)
+                components["session_priority"] = 0.05
+                hit = SemanticMemoryHit(
+                    fact=hit.fact,
+                    score=min(1.0, hit.score + 0.05),
+                    components=components,
+                )
+            hits.append(hit)
         hits.sort(
             key=lambda item: (
                 item.score,
@@ -174,7 +180,25 @@ class SemanticMemoryEngine:
             ),
             reverse=True,
         )
-        hits = self._dedupe_hits(hits)
+        return self._dedupe_hits(hits)[: max(1, min(int(limit), 50))]
+
+    def search(
+        self,
+        query: MemoryQueryFrame,
+        *,
+        log=None,
+        limit: int = 12,
+    ) -> list[SemanticMemoryHit]:
+        self.ensure_indexed(log=log)
+        status = None if query.answer_mode == "timeline" else "active"
+        hits = self._score_records(
+            query,
+            self.store.semantic_facts(
+                scope=query.scope,
+                status=status,
+            ),
+            limit=limit,
+        )
         if log:
             summary = [
                 {
@@ -193,13 +217,14 @@ class SemanticMemoryEngine:
                 "[SEMANTIC_MEMORY] candidates="
                 + json.dumps(summary, ensure_ascii=False)
             )
-        return hits[: max(1, min(int(limit), 50))]
+        return hits
 
     def resolve(
         self,
         query: MemoryQueryFrame,
         *,
         log=None,
+        session_facts=(),
     ) -> dict[str, Any]:
         if query.answer_mode == "inspect":
             return {
@@ -213,7 +238,29 @@ class SemanticMemoryEngine:
         if not query_is_specific_enough(query):
             return {"status": "underspecified", "hits": []}
 
-        hits = self.search(query, log=log)
+        session_hits = self._score_records(
+            query,
+            session_facts,
+            limit=20,
+            session_priority=True,
+        )
+        persistent_hits = self.search(query, log=log)
+
+        if query.answer_mode == "single" and session_hits:
+            hits = session_hits
+        else:
+            hits = self._dedupe_hits(
+                [*session_hits, *persistent_hits]
+            )
+            hits.sort(
+                key=lambda item: (
+                    item.score,
+                    item.fact.memory_id,
+                    item.fact.fact_id,
+                ),
+                reverse=True,
+            )
+
         if not hits:
             return {"status": "missing", "hits": []}
 
@@ -311,12 +358,16 @@ class SemanticMemoryRuntime:
         self.engine = engine
         self.connector_resolver = connector_resolver
         self._pending_query: MemoryQueryFrame | None = None
+        self._session_facts: list[SemanticFactRecord] = []
+        self._session_sequence = 0
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
 
     def reset(self) -> None:
         self._pending_query = None
+        self._session_facts.clear()
+        self._session_sequence = 0
         self.delegate.reset()
 
     def warm_up(self, *, log=None) -> None:
@@ -333,6 +384,47 @@ class SemanticMemoryRuntime:
         method = getattr(self.delegate, "record_external_turn", None)
         if method:
             method(user_text, assistant_text, **kwargs)
+
+    def _record_session_facts(
+        self,
+        facts: tuple[MemoryProjection, ...],
+        raw_text: str,
+    ) -> None:
+        for projection in facts:
+            if projection.confidence < 0.55:
+                continue
+            if projection.cardinality == "single":
+                self._session_facts = [
+                    existing
+                    for existing in self._session_facts
+                    if not (
+                        existing.projection.subject == projection.subject
+                        and existing.projection.relation == projection.relation
+                        and existing.projection.scope == projection.scope
+                        and existing.projection.qualifiers
+                        == projection.qualifiers
+                    )
+                ]
+            if any(
+                existing.projection.identity == projection.identity
+                for existing in self._session_facts
+            ):
+                continue
+            self._session_sequence += 1
+            self._session_facts.append(
+                SemanticFactRecord(
+                    fact_id=-self._session_sequence,
+                    memory_id=-self._session_sequence,
+                    ordinal=0,
+                    projection=projection,
+                    provenance="session",
+                    parser_version=self.engine.parser_version,
+                    status="active",
+                    raw_content=str(raw_text or ""),
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+        self._session_facts = self._session_facts[-64:]
 
     def _result(self, text: str, actions=()):
         from .agent_runtime import AgentTurnResult
@@ -408,6 +500,7 @@ class SemanticMemoryRuntime:
                 resolution = self.engine.resolve(
                     refined,
                     log=log,
+                    session_facts=self._session_facts,
                 )
                 reply, pending = self._reply_from_resolution(resolution)
                 self._pending_query = refined if pending else None
@@ -448,6 +541,17 @@ class SemanticMemoryRuntime:
                 f"{intent.operation} confidence={intent.confidence:.3f} "
                 f"reason={intent.reason}"
             )
+
+        if intent.session_facts:
+            self._record_session_facts(
+                intent.session_facts,
+                user_text,
+            )
+            if log:
+                log(
+                    "[MEMORY_V5] session_facts="
+                    f"{len(intent.session_facts)}"
+                )
 
         if intent.operation == "pass" or intent.confidence < 0.55:
             return self.delegate.run(
@@ -534,6 +638,7 @@ class SemanticMemoryRuntime:
             resolution = self.engine.resolve(
                 query,
                 log=log,
+                session_facts=self._session_facts,
             )
         except Exception as exc:
             if log:
