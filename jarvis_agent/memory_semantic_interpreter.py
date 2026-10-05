@@ -65,7 +65,18 @@ Return exactly:
     "exact_terms":[],
     "confidence":0.0
   },
-  "session_facts":[],
+  "session_facts":[
+    {
+      "subject":"user",
+      "relation":"canonical_english_snake_case",
+      "value":"...",
+      "kind":"fact|preference|intention|event|project|decision|constraint|relationship|observation",
+      "qualifiers":{},
+      "scope":"global",
+      "cardinality":"single|collection|history|unknown",
+      "confidence":0.0
+    }
+  ],
   "confidence":0.0,
   "reason":"short diagnostic label"
 }
@@ -292,7 +303,10 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
         if not items:
             return {}
         request = [
-            {"memory_id": int(memory_id), "text": str(text)}
+            {
+                "memory_id": int(memory_id),
+                "text": str(text)[:3000],
+            }
             for memory_id, text in items
         ]
         payload = self._chat(_PROJECTION_SYSTEM, request)
