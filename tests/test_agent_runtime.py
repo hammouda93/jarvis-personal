@@ -878,6 +878,18 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("écrit", result.text)
 
+    def test_opened_search_url_satisfies_visible_search_capability(self):
+        actions = [
+            AgentActionResult(
+                name="open_url",
+                success=True,
+                message="opened",
+                detail="https://www.google.com/search?q=python+documentation",
+            )
+        ]
+
+        self.assertIn("site_search", _completed_action_capabilities(actions))
+
     def test_fresh_uia_after_state_verifies_previous_unverified_write(self):
         actions = [
             AgentActionResult(
