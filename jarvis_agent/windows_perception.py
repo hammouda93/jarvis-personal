@@ -164,7 +164,7 @@ def _is_internal_automation_window_title(title: str) -> bool:
     if normalized == "jarvis personal":
         return True
     compact = normalized.replace(" ", "")
-    return compact.startswith("cua.agentcursoroverlay.") or compact == "cua.agentcursoroverlay"
+    return compact.startswith("cuaagentcursoroverlay")
 
 
 def _is_assistant_window(wrapper: Any) -> bool:
