@@ -260,6 +260,42 @@ Every memory action should log:
 
 This lets us debug "why did Jarvis remember this?" without guessing.
 
+## Diagnostics and validation
+
+Semantic Memory V5 can be inspected independently from the conversational
+agent.
+
+Read-only/raw-safe status and semantic inspection:
+
+```powershell
+python -m jarvis_agent.semantic_memory_cli status
+python -m jarvis_agent.semantic_memory_cli inspect --active-only
+```
+
+Query diagnostics show the interpreted semantic frame, effective relation,
+entity/date context, candidate memory IDs and score components:
+
+```powershell
+python -m jarvis_agent.semantic_memory_cli query "What do I know about Project Atlas?"
+```
+
+The dedicated validation runner supports a synthetic live-model gate without
+using real user memories:
+
+```powershell
+.\scripts\run_semantic_memory_v5_validation.ps1 -LiveSemanticModel
+```
+
+Cloud semantic processing remains blocked unless explicitly enabled. To use a
+cloud semantic provider for the synthetic acceptance corpus only:
+
+```powershell
+.\scripts\run_semantic_memory_v5_validation.ps1 `
+    -LiveSemanticModel `
+    -SemanticProvider cerebras `
+    -AllowCloudSemanticMemory
+```
+
 ## Acceptance invariants
 
 The implementation is not accepted until these general invariants pass:
