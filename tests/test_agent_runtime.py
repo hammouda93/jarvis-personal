@@ -462,6 +462,65 @@ class FakeGroqAgent(GroqResponsesAgent):
 
 class AgentRuntimeTests(unittest.TestCase):
 
+    def test_trim_history_preserves_recent_resolved_file_and_window_state(self):
+        agent = FakeGroqAgent(FakeTools(), [])
+        agent._messages.extend(
+            [
+                {"role": "user", "content": "Ouvre l'installation Cursor."},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_open",
+                            "type": "function",
+                            "function": {"name": "open_file", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_open",
+                    "name": "open_file",
+                    "content": json.dumps(
+                        {
+                            "tool": "open_file",
+                            "success": True,
+                            "message": "opened",
+                            "detail": r"C:\\Users\\salah\\Downloads\\CursorUserSetup-x64-3.22.12.exe",
+                        }
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_inspect",
+                    "name": "inspect_active_window",
+                    "content": json.dumps(
+                        {
+                            "tool": "inspect_active_window",
+                            "success": True,
+                            "message": "observed",
+                            "detail": json.dumps(
+                                {"window": {"title": "Installation - Cursor (User)"}}
+                            ),
+                        }
+                    ),
+                },
+                {"role": "assistant", "content": "L'installation est ouverte."},
+            ]
+        )
+
+        agent._trim_history()
+
+        state_messages = [
+            item["content"]
+            for item in agent._messages
+            if str(item.get("content") or "").startswith("[RECENT_EXECUTION_STATE]")
+        ]
+        self.assertEqual(len(state_messages), 1)
+        self.assertIn("CursorUserSetup-x64-3.22.12.exe", state_messages[0])
+        self.assertIn("Installation - Cursor (User)", state_messages[0])
+
     def test_pseudo_tool_syntax_is_detected(self):
         self.assertTrue(
             _looks_like_pseudo_tool_syntax(
