@@ -306,6 +306,25 @@ class ToolRouterTests(unittest.TestCase):
 
     @patch("jarvis_agent.tools._app_binary_roots")
     @patch("jarvis_agent.tools._app_search_roots")
+    def test_named_app_rejects_short_executable_contained_in_long_unknown_name(
+        self,
+        shortcut_roots_mock,
+        binary_roots_mock,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrong = root / "test.exe"
+            wrong.write_bytes(b"")
+            shortcut_roots_mock.return_value = []
+            binary_roots_mock.return_value = [root]
+
+            path, matches = _find_named_app("PersonalAIUnknownTest")
+
+            self.assertIsNone(path)
+            self.assertNotIn(wrong, matches)
+
+    @patch("jarvis_agent.tools._app_binary_roots")
+    @patch("jarvis_agent.tools._app_search_roots")
     def test_named_app_discovers_matching_executable(
         self,
         shortcut_roots_mock,
