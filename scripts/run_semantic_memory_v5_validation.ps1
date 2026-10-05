@@ -15,7 +15,7 @@ try {
     Write-Host ''
 
     Write-Host '1/4 Compile semantic memory modules...'
-    & $PythonExe -m py_compile jarvis_agent/semantic_memory.py jarvis_agent/memory_core_store.py jarvis_agent/memory_semantic_interpreter.py jarvis_agent/semantic_memory_runtime.py jarvis_agent/foundation_tools.py jarvis_agent/agent_runtime.py
+    & $PythonExe -m py_compile jarvis_agent/semantic_memory.py jarvis_agent/memory_core_store.py jarvis_agent/memory_semantic_interpreter.py jarvis_agent/semantic_memory_runtime.py jarvis_agent/semantic_memory_cli.py jarvis_agent/foundation_tools.py jarvis_agent/agent_runtime.py scripts/evaluate_semantic_memory_v5.py
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     Write-Host '2/4 Run V5 semantic invariants...'
