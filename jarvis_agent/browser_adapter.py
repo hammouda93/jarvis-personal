@@ -142,9 +142,19 @@ class BrowserAdapter:
                         continue
                     page_ref = str(args[0] or "")
                     if not page_ref:
-                        if len(pages) != 1:
+                        focused_refs = []
+                        for ref, candidate in pages.items():
+                            try:
+                                if candidate.evaluate("document.hasFocus()") is True:
+                                    focused_refs.append(ref)
+                            except Exception:
+                                continue
+                        if len(focused_refs) == 1:
+                            page_ref = focused_refs[0]
+                        elif len(pages) == 1:
+                            page_ref = next(iter(pages))
+                        else:
                             raise ValueError("Select a unique page_ref from list_browser_pages")
-                        page_ref = next(iter(pages))
                     if page_ref not in pages:
                         raise ValueError("stale_or_unknown_page")
                     page = pages[page_ref]
@@ -163,7 +173,58 @@ class BrowserAdapter:
                             popup.value.wait_for_load_state("domcontentloaded", timeout=wait_ms)
                         else:
                             deliver()
-                    if method == "activate":
+                    if method == "navigate":
+                        url = str(args[1] or "").strip()
+                        if not url.startswith(("https://", "http://", "about:")):
+                            raise ValueError("invalid_browser_url")
+                        page.bring_to_front()
+                        page.goto(
+                            url,
+                            wait_until="domcontentloaded",
+                            timeout=min(15000, max(3000, int(self.timeout_s * 1000))),
+                        )
+                        future.set_result(
+                            {
+                                "verified": page.url.startswith(url.split("#", 1)[0]),
+                                "page_ref": page_ref,
+                                "url": page.url,
+                                "title": page.title(),
+                                "document_generation": generations[page_ref],
+                            }
+                        )
+                    elif method == "back":
+                        page.bring_to_front()
+                        page.go_back(
+                            wait_until="domcontentloaded",
+                            timeout=min(15000, max(3000, int(self.timeout_s * 1000))),
+                        )
+                        future.set_result(
+                            {
+                                "verified": True,
+                                "page_ref": page_ref,
+                                "url": page.url,
+                                "title": page.title(),
+                                "document_generation": generations[page_ref],
+                            }
+                        )
+                    elif method == "close_page":
+                        title = page.title()
+                        url = page.url
+                        page.close()
+                        pages.pop(page_ref, None)
+                        generations.pop(page_ref, None)
+                        for key in list(targets):
+                            if targets[key]["page_ref"] == page_ref:
+                                del targets[key]
+                        future.set_result(
+                            {
+                                "verified": True,
+                                "page_ref": page_ref,
+                                "title": title,
+                                "url": url,
+                            }
+                        )
+                    elif method == "activate":
                         page.bring_to_front()
                         focused = page.evaluate("document.hasFocus()")
                         future.set_result({"verified":focused is True,"window":window,
@@ -400,6 +461,15 @@ class BrowserAdapter:
 
     def observe(self, page_ref: str = "") -> dict[str, Any]:
         return self._call("observe", page_ref)
+
+    def navigate(self, url: str, page_ref: str = "") -> dict[str, Any]:
+        return self._call("navigate", page_ref, url)
+
+    def back(self, page_ref: str = "") -> dict[str, Any]:
+        return self._call("back", page_ref)
+
+    def close_page(self, page_ref: str = "") -> dict[str, Any]:
+        return self._call("close_page", page_ref)
 
     def activate(self, page_ref: str) -> dict[str, Any]:
         return self._call("activate", page_ref)
