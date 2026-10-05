@@ -30,7 +30,8 @@ prochain prochaine prochaines prochains next prevu prevue scheduled quand when
 where memorisee memorises memorisees memoriser dont parle parler parlee parlees
 demande demandes demander demandee demandees asked ask mentionne mentionner
 mentionnee mentionnees evoque evoquer evoquee evoquees quesque questce qu
-faire fais dois doit""".split())
+faire fais dois doit veux veut voudrais voudrait souhaite souhaites souhaitent
+want wants would""".split())
 _STOP.update({"connais", "connait", "sait", "pourrais", "can", "remind", "donne", "reminds"})
 _CONCEPTS = {
     "movie": "film", "movies": "film", "films": "film",
@@ -50,6 +51,35 @@ def terms(value: str) -> tuple[str, ...]:
 def content_key(value: str) -> str:
     """Canonical text identity for duplicate suppression, not semantic merging."""
     return " ".join(re.findall(r"\w+", normalize(value)))
+
+
+def _segments(content: str) -> tuple[str, ...]:
+    """Semantic-ish clauses for legacy free-text memories.
+
+    Query terms must co-occur in one clause. This prevents an old compound note
+    such as "Films à regarder: ... ; Tests: ..." from falsely satisfying
+    "film test" just because the two words exist in unrelated clauses.
+    """
+    pieces = [
+        part.strip()
+        for part in re.split(r"[;\n\r|]+", str(content or ""))
+        if part.strip()
+    ]
+    return tuple(pieces) or (str(content or ""),)
+
+
+def segmented_relevance(
+    query: str,
+    content: str,
+    tags: str = "",
+) -> float:
+    return max(
+        (
+            relevance(query, segment, tags)
+            for segment in _segments(content)
+        ),
+        default=0.0,
+    )
 
 
 def relevance(query: str, content: str, tags: str = "") -> float:
@@ -77,7 +107,11 @@ def search(memory, query: str, *, limit: int = 5):
     scored = []
     with closing(memory._connect()) as connection:
         for row in connection.execute("SELECT id, content, tags, created_at FROM memories"):
-            score = relevance(query, str(row[1]), str(row[2]))
+            score = segmented_relevance(
+                query,
+                str(row[1]),
+                str(row[2]),
+            )
             if score:
                 scored.append((score, int(row[0]), MemoryItem(*row)))
     scored.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
