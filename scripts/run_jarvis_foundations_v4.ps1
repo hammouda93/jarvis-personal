@@ -58,6 +58,15 @@ try {
             )
         }
         $env:JARVIS_BROWSER_BRIDGE_CONFIG = (Resolve-Path -LiteralPath $BrowserBridgeConfig).Path
+
+        Write-Host "Checking normal-profile Chrome bridge..."
+        & $python -m jarvis_agent.browser_bridge_doctor --config $env:JARVIS_BROWSER_BRIDGE_CONFIG
+        if ($LASTEXITCODE -ne 0) {
+            throw (
+                "Browser bridge non disponible. Ouvre ton Chrome normal, " +
+                "vérifie l'extension Personal AI Browser Bridge puis clique son icône."
+            )
+        }
     }
 
     if ($ComputerCore) {
