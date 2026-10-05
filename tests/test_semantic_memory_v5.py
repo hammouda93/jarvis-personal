@@ -634,7 +634,7 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         )
         refined = MemoryQueryFrame(
             relation="office_location",
-            scope="project_atlas",
+            qualifiers={"project": "Atlas"},
             answer_mode="single",
             raw_text=question + " " + clarification,
             confidence=0.99,
@@ -648,10 +648,11 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
             )
         }
         projections = {
-            "office global": (
+            "office beta": (
                 projection(
                     "office_location",
                     "Tunis",
+                    qualifiers={"project": "Beta"},
                     cardinality="single",
                 ),
             ),
@@ -659,7 +660,7 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
                 projection(
                     "office_location",
                     "Sfax",
-                    scope="project_atlas",
+                    qualifiers={"project": "Atlas"},
                     cardinality="single",
                 ),
             ),
@@ -671,7 +672,7 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
                 ("office_location", clarification): refined,
             },
         )
-        store.remember("office global")
+        store.remember("office beta")
         store.remember("office atlas")
 
         first = runtime.run(question)
