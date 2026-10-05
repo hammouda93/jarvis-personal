@@ -115,6 +115,47 @@ class MemoryCoreTests(unittest.TestCase):
             self.assertEqual(search(self.memory,query),[])
         self.assertEqual(relevance("film","profil"),0)
 
+    def test_conversational_prefix_explicit_write_is_intercepted_before_llm(self):
+        result = self.runtime.run(
+            'ok je veux que tu memorise que je veux regarder le film "Gladiator"'
+        )
+
+        self.assertEqual(
+            [action.name for action in result.actions],
+            ["remember_information"],
+        )
+        self.assertEqual(self.llm.calls, 0)
+        self.assertIn(
+            "Gladiator",
+            search(self.memory, "films que je veux regarder")[0].content,
+        )
+
+    def test_compound_legacy_memory_does_not_cross_match_unrelated_clauses(self):
+        self.memory.remember(
+            "Films à regarder: Inception, Avatar; Tests: test 1, test 3"
+        )
+        self.memory.remember("mon film test est Arrival.")
+
+        matches = search(self.memory, "Quel est mon film test ?")
+
+        self.assertEqual(len(matches), 1)
+        self.assertIn("Arrival", matches[0].content)
+
+    def test_collection_recall_returns_all_relevant_watchlist_memories(self):
+        self.memory.remember("Film à regarder : Inception")
+        self.memory.remember(
+            "Films à regarder: Inception, Avatar; Tests: test 1, test 3"
+        )
+
+        result = self.runtime.run(
+            "Quels sont les films que je veux regarder ?"
+        )
+
+        self.assertIn("Inception", result.text)
+        self.assertIn("Avatar", result.text)
+        self.assertNotIn("Laquelle", result.text)
+        self.assertEqual(self.llm.calls, 0)
+
     def test_distinct_film_roles_are_preserved_without_cross_contamination(self):
         self.memory.remember("Mon film test est Arrival.")
         self.memory.remember("Je veux regarder le film Inception")
