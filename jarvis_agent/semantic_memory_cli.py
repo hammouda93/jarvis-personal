@@ -28,7 +28,7 @@ def raw_snapshot(store: MemoryCoreStore) -> list[dict[str, Any]]:
             "tags": item.tags,
             "created_at": item.created_at,
         }
-        for item in store.recent_memories(limit=100000)
+        for item in store.all_memories()
     ]
 
 
