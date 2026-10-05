@@ -870,6 +870,34 @@ def _is_explicit_web_request(text: str) -> bool:
     return any(marker in normalized for marker in markers)
 
 
+def _continues_explicit_web_request(
+    text: str,
+    messages: list[dict[str, Any]],
+) -> bool:
+    normalized = normalize(text)
+    continuation = normalized in {
+        "ok vas y",
+        "vas y",
+        "continue",
+        "continues",
+        "poursuis",
+        "procede",
+        "procedes",
+        "go ahead",
+    }
+    if not continuation:
+        return False
+
+    user_texts = [
+        str(item.get("content") or "")
+        for item in messages
+        if item.get("role") == "user"
+    ]
+    # The current request is normally already appended to the local history.
+    prior = user_texts[-2] if len(user_texts) >= 2 else ""
+    return bool(prior and _is_explicit_web_request(prior))
+
+
 def _query_matches_recent_user_context(
     query: str,
     messages: list[dict[str, Any]],
@@ -3245,6 +3273,10 @@ class GroqResponsesAgent:
                 elif (
                     name in {"research_web", "search_web"}
                     and not _is_explicit_web_request(user_text)
+                    and not _continues_explicit_web_request(
+                        user_text,
+                        self._messages,
+                    )
                     and not any(not action.success for action in actions)
                     and _query_matches_recent_user_context(
                         str(arguments.get("query", "")),
