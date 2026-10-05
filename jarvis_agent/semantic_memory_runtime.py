@@ -273,12 +273,10 @@ class SemanticMemoryEngine:
             return {"status": "missing", "hits": []}
 
         if query.answer_mode in {"collection", "timeline"}:
-            selected = []
-            top = hits[0].score
-            for hit in hits:
-                if hit.score + 0.12 < top:
-                    continue
-                selected.append(hit)
+            # Every hit already passed semantic relation/scope/qualifier gates.
+            # Collections should not lose valid members due only to lexical
+            # wording differences in their raw evidence.
+            selected = list(hits)
             if query.answer_mode == "timeline":
                 selected.sort(
                     key=lambda item: (
