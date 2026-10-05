@@ -14,6 +14,7 @@ from .semantic_memory import (
     MemoryTurnInterpretation,
     SemanticMemoryHit,
     normalize_text,
+    query_is_specific_enough,
     score_semantic_fact,
 )
 
@@ -156,7 +157,11 @@ class SemanticMemoryEngine:
     ) -> list[SemanticMemoryHit]:
         self.ensure_indexed(log=log)
         hits = []
-        for fact in self.store.semantic_facts(scope=query.scope):
+        status = None if query.answer_mode == "timeline" else "active"
+        for fact in self.store.semantic_facts(
+            scope=query.scope,
+            status=status,
+        ):
             hit = score_semantic_fact(query, fact)
             if hit is not None and hit.score >= self.min_score:
                 hits.append(hit)
@@ -204,6 +209,9 @@ class SemanticMemoryEngine:
                     for item in self.store.recent_memories(limit=30)
                 ],
             }
+
+        if not query_is_specific_enough(query):
+            return {"status": "underspecified", "hits": []}
 
         hits = self.search(query, log=log)
         if not hits:
@@ -359,9 +367,9 @@ class SemanticMemoryRuntime:
     ) -> tuple[str, bool]:
         status = resolution.get("status")
         hits = list(resolution.get("hits") or [])
-        if status == "missing":
+        if status in {"missing", "underspecified"}:
             return (
-                "Je n'ai pas trouvé de souvenir correspondant. "
+                "Je n'ai pas assez de contexte pour identifier le souvenir. "
                 "Pouvez-vous préciser ce que vous cherchez ?",
                 True,
             )
