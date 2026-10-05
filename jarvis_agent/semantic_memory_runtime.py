@@ -76,7 +76,7 @@ class SemanticMemoryEngine:
         self,
         *,
         log=None,
-        max_items: int = 192,
+        max_items: int = 16,
     ) -> dict[str, int]:
         indexed = errors = unprojected = 0
         remaining = max(0, int(max_items))
