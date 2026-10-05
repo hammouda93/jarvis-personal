@@ -120,6 +120,11 @@ class AssistantWorker(QObject):
         self._agent = build_agent_runtime()
         self._conversation_language = "fr"
         self._pending_direct_follow_up = ""
+        # Session-local surface grounding. This is not persistent learning:
+        # it only prevents an ambiguous follow-up such as "Recherche Hamza"
+        # from being hijacked by the browser fast-path after a desktop app
+        # or Explorer surface has just become the user's active context.
+        self._active_surface_kind = ""
         self._text_inbox = TextTurnInbox()
         self._input_mode = InputModeGate(self._text_inbox)
         self._announced_input_generation = -1
@@ -313,7 +318,11 @@ class AssistantWorker(QObject):
         return True, True
 
     @staticmethod
-    def _is_simple_direct_action(user_text: str, intent: ToolIntent) -> bool:
+    def _is_simple_direct_action(
+        user_text: str,
+        intent: ToolIntent,
+        active_surface_kind: str = "",
+    ) -> bool:
         """Fast path only for one explicit deterministic action.
 
         Complex/compound language still goes to the conversational agent loop.
@@ -379,6 +388,18 @@ class AssistantWorker(QObject):
         ):
             return False
 
+        # An unqualified "Recherche X" belongs to the currently grounded
+        # surface. Only keep the deterministic browser fast-path when the
+        # current surface is already a browser, or when the request explicitly
+        # asks for web search. Desktop apps and Explorer must go through the
+        # agent so it can inspect the actual search control.
+        if (
+            intent.name == "browser.search"
+            and str(intent.args.get("scope") or "context").strip().casefold() != "web"
+            and active_surface_kind in {"app", "filesystem"}
+        ):
+            return False
+
         # A search targeted at a visible field/page is UI interaction, not a
         # generic Google search. Let the agent inspect the current application
         # and operate the real control instead of hijacking the request through
@@ -398,6 +419,45 @@ class AssistantWorker(QObject):
             return False
         return True
 
+    def _update_surface_context(
+        self,
+        action_name: str,
+        *,
+        success: bool,
+    ) -> None:
+        if not success:
+            return
+        if action_name in {
+            "browser.open_url",
+            "browser.search",
+            "browser.search_site",
+            "browser.back",
+            "browser.close_tab",
+            "open_url",
+            "open_web_search",
+            "list_browser_pages",
+            "inspect_browser_page",
+            "activate_browser_page",
+            "write_browser_element",
+            "click_browser_element",
+            "press_browser_element",
+            "scroll_browser_element",
+        }:
+            self._active_surface_kind = "browser"
+        elif action_name in {
+            "app.open",
+            "app.open_named",
+            "open_application",
+            "open_file",
+        }:
+            self._active_surface_kind = "app"
+        elif action_name in {
+            "folder.open",
+            "folder.open_named",
+            "open_folder",
+        }:
+            self._active_surface_kind = "filesystem"
+
     def _record_direct_agent_context(
         self,
         user_text: str,
@@ -405,6 +465,10 @@ class AssistantWorker(QObject):
         intent: ToolIntent,
         result,
     ) -> None:
+        self._update_surface_context(
+            intent.name,
+            success=bool(result.success),
+        )
         recorder = getattr(self._agent, "record_external_turn", None)
         if not callable(recorder):
             return
@@ -433,7 +497,11 @@ class AssistantWorker(QObject):
         user_text: str,
         intent: ToolIntent,
     ) -> bool:
-        if not self._is_simple_direct_action(user_text, intent):
+        if not self._is_simple_direct_action(
+            user_text,
+            intent,
+            self._active_surface_kind,
+        ):
             return False
 
         result = execute(intent)
@@ -581,6 +649,12 @@ class AssistantWorker(QObject):
             actions=turn.actions,
             response_text=turn.text,
         )
+
+        for action in turn.actions:
+            self._update_surface_context(
+                action.name,
+                success=bool(action.success),
+            )
 
         if turn.actions:
             details = " · ".join(

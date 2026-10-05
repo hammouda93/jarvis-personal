@@ -112,9 +112,15 @@ class ToolRouterTests(unittest.TestCase):
         self.assertEqual(site, "YouTube")
         self.assertIn("youtube.com/results?search_query=messi", url)
 
+    @patch("jarvis_agent.tools._navigate_current_browser_url")
     @patch("jarvis_agent.tools._open_browser_url")
-    def test_plain_search_reuses_last_youtube_context(self, open_mock):
+    def test_plain_search_reuses_last_youtube_context(
+        self,
+        open_mock,
+        navigate_mock,
+    ):
         open_mock.return_value = True
+        navigate_mock.return_value = True
         with patch("jarvis_agent.tools._LAST_BROWSER_URL", ""):
             opened = execute(
                 ToolIntent(
@@ -131,10 +137,11 @@ class ToolRouterTests(unittest.TestCase):
 
         self.assertTrue(opened.success)
         self.assertTrue(searched.success)
-        self.assertEqual(open_mock.call_count, 2)
+        open_mock.assert_called_once_with("https://www.youtube.com")
+        navigate_mock.assert_called_once()
         self.assertIn(
             "youtube.com/results?search_query=messi",
-            open_mock.call_args_list[-1].args[0],
+            navigate_mock.call_args.args[0],
         )
         self.assertIn("YouTube", searched.message)
 
@@ -300,6 +307,25 @@ class ToolRouterTests(unittest.TestCase):
             binary_roots_mock.return_value = [root]
 
             path, matches = _find_named_app("cursor-setup.exe")
+
+            self.assertIsNone(path)
+            self.assertNotIn(wrong, matches)
+
+    @patch("jarvis_agent.tools._app_binary_roots")
+    @patch("jarvis_agent.tools._app_search_roots")
+    def test_named_app_rejects_short_executable_contained_in_long_unknown_name(
+        self,
+        shortcut_roots_mock,
+        binary_roots_mock,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrong = root / "test.exe"
+            wrong.write_bytes(b"")
+            shortcut_roots_mock.return_value = []
+            binary_roots_mock.return_value = [root]
+
+            path, matches = _find_named_app("PersonalAIUnknownTest")
 
             self.assertIsNone(path)
             self.assertNotIn(wrong, matches)

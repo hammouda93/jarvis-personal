@@ -69,6 +69,42 @@ class AssistantV3FastPathTests(unittest.TestCase):
             )
         )
 
+    def test_ambiguous_search_after_desktop_app_stays_with_agent(self):
+        self.assertFalse(
+            AssistantWorker._is_simple_direct_action(
+                "Recherche Hamza.",
+                ToolIntent(
+                    "browser.search",
+                    {"query": "hamza", "scope": "context"},
+                ),
+                "app",
+            )
+        )
+
+    def test_explicit_web_search_ignores_desktop_surface_context(self):
+        self.assertTrue(
+            AssistantWorker._is_simple_direct_action(
+                "Recherche Hamza sur Internet.",
+                ToolIntent(
+                    "browser.search",
+                    {"query": "hamza", "scope": "web"},
+                ),
+                "app",
+            )
+        )
+
+    def test_contextual_search_on_browser_surface_keeps_browser_fast_path(self):
+        self.assertTrue(
+            AssistantWorker._is_simple_direct_action(
+                "Recherche Messi.",
+                ToolIntent(
+                    "browser.search",
+                    {"query": "messi", "scope": "context"},
+                ),
+                "browser",
+            )
+        )
+
     def test_in_app_search_stays_with_agent(self):
         self.assertFalse(
             AssistantWorker._is_simple_direct_action(

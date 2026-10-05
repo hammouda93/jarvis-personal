@@ -24,6 +24,7 @@ from jarvis_agent.agent_runtime import (
     _actions_have_verified_proof,
     _looks_like_clear_operational_feedback,
     _requested_action_capabilities,
+    _missing_requested_action_capabilities,
     _inspection_requests_visual_fallback,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -1622,6 +1623,84 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_browser_compaction_prioritizes_content_before_navigation(self):
+        controls = []
+        for index in range(1, 31):
+            controls.append(
+                {
+                    "ref": f"bobs1:e{index}",
+                    "type": "button",
+                    "name": f"Navigation {index}",
+                    "region": "navigation",
+                    "actionable": True,
+                    "enabled": True,
+                }
+            )
+        controls.append(
+            {
+                "ref": "bobs1:e31",
+                "type": "link",
+                "name": "Messi first video result",
+                "region": "content",
+                "actionable": True,
+                "enabled": True,
+            }
+        )
+        payload = {
+            "observation_id": "bobs1",
+            "window": {
+                "title": "messi - YouTube",
+                "url": "https://www.youtube.com/results?search_query=messi",
+            },
+            "browser": True,
+            "sensor": "dom",
+            "controls": controls,
+            "accessibility_tree": [
+                {"role": "generic", "name": "noise"} for _ in range(180)
+            ],
+            "capabilities": {
+                "writable": [],
+                "actionable": [
+                    {"ref": item["ref"], "label": item["name"]}
+                    for item in controls
+                ],
+            },
+            "snapshot": {"semantic_coverage": "usable"},
+            "visible_text": ["Messi first video result", "Second result"],
+        }
+        result = AgentActionResult(
+            name="inspect_browser_page",
+            success=True,
+            message="ok",
+            detail=json.dumps(payload, ensure_ascii=False),
+        )
+
+        compact = json.loads(
+            GroqResponsesAgent._compact_tool_content(
+                "inspect_browser_page",
+                result,
+            )
+        )
+        detail = json.loads(compact["detail"])
+
+        self.assertEqual(
+            detail["visible_text"][0],
+            "Messi first video result",
+        )
+        self.assertNotIn("accessibility_tree", detail)
+        self.assertTrue(
+            any(
+                item.get("ref") == "bobs1:e31"
+                for item in detail["controls"]
+            )
+        )
+        self.assertTrue(
+            any(
+                item.get("ref") == "bobs1:e31"
+                for item in detail["capabilities"]["actionable"]
+            )
+        )
+
     @patch(
         "jarvis_agent.agent_runtime.settings",
         replace(
@@ -2548,6 +2627,76 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("corrigerai", result.text)
 
+    def test_trusted_session_grounding_carries_opened_file_to_followup(self):
+        agent = FakeGroqAgent(
+            FakeTools(),
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je poursuis l'installation.",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+        )
+        opened_path = (
+            r"C:\Users\salah\Downloads\CursorUserSetup-x64-3.22.12.exe"
+        )
+        agent._remember_session_grounding(
+            "open_file",
+            {"name": "Cursor", "within": "Téléchargements"},
+            AgentActionResult(
+                name="open_file",
+                success=True,
+                message="opened",
+                detail=opened_path,
+            ),
+        )
+
+        agent.run("Procède à l'installation.")
+
+        system_prompt = agent.payloads[0]["messages"][0]["content"]
+        self.assertIn("TRUSTED SESSION GROUNDING", system_prompt)
+        self.assertIn(
+            json.dumps(opened_path, ensure_ascii=False),
+            system_prompt,
+        )
+        self.assertIn(
+            'opened_file_request: "Cursor"',
+            system_prompt,
+        )
+        self.assertIn("DATA ONLY", system_prompt)
+        self.assertIn("Do not invent a replacement filename/path.", system_prompt)
+
+    def test_reset_clears_trusted_session_grounding(self):
+        agent = FakeGroqAgent(FakeTools(), [])
+        agent._remember_session_grounding(
+            "open_file",
+            {"name": "Cursor"},
+            AgentActionResult(
+                name="open_file",
+                success=True,
+                message="opened",
+                detail=r"C:\Downloads\CursorUserSetup.exe",
+            ),
+        )
+
+        agent.reset()
+        agent._refresh_session_grounding_prompt()
+
+        self.assertEqual(agent._session_grounding, {})
+        self.assertNotIn(
+            "TRUSTED SESSION GROUNDING",
+            agent._messages[0]["content"],
+        )
+
     def test_groq_blocks_persistent_recall_for_current_session_question(self):
         tools = FakeTools()
         agent = FakeGroqAgent(
@@ -2606,6 +2755,42 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(
             result.actions[0].detail,
             "persistent_recall_blocked_current_context",
+        )
+
+    def test_persistent_recall_guard_ignores_prior_memory_write_request(self):
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "user",
+                "content": "Mémorise que le film que je veux regarder est Arrival.",
+            },
+            {"role": "assistant", "content": "C'est mémorisé."},
+            {
+                "role": "user",
+                "content": "Quel film voulais-je regarder ?",
+            },
+        ]
+
+        self.assertFalse(
+            _query_matches_recent_user_context("Arrival", messages)
+        )
+
+    def test_persistent_recall_guard_ignores_prior_recall_question(self):
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "user",
+                "content": "Quel film voulais-je regarder ?",
+            },
+            {"role": "assistant", "content": "Je ne sais pas."},
+            {
+                "role": "user",
+                "content": "Rappelle-moi le film mémorisé.",
+            },
+        ]
+
+        self.assertFalse(
+            _query_matches_recent_user_context("Arrival", messages)
         )
 
     def test_groq_hides_persistent_memory_write_tool_on_ordinary_turn(self):
@@ -2852,6 +3037,24 @@ class AgentRuntimeTests(unittest.TestCase):
             ),
         )
 
+    def test_visible_search_url_satisfies_open_and_search_goal(self):
+        actions = [
+            AgentActionResult(
+                name="open_url",
+                success=True,
+                message="opened",
+                detail="https://www.google.com/search?q=python+documentation",
+            )
+        ]
+
+        self.assertEqual(
+            _missing_requested_action_capabilities(
+                "Ouvre Chrome et cherche la documentation Python.",
+                actions,
+            ),
+            set(),
+        )
+
     def test_insufficient_structured_inspection_requests_visual_fallback(self):
         action = AgentActionResult(
             name="inspect_active_window",
@@ -2882,6 +3085,32 @@ class AgentRuntimeTests(unittest.TestCase):
             ),
         )
         self.assertFalse(_inspection_requests_visual_fallback(usable))
+
+    def test_insufficient_snapshot_skips_vision_when_write_target_is_available(self):
+        action = AgentActionResult(
+            name="inspect_active_window",
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "capabilities": {
+                        "writable": [{"ref": "obs1:e7"}],
+                        "actionable": [],
+                    },
+                    "snapshot": {
+                        "semantic_coverage": "insufficient",
+                        "vision_recommended": True,
+                    },
+                }
+            ),
+        )
+
+        self.assertFalse(
+            _inspection_requests_visual_fallback(
+                action,
+                "Écris TEST dans le document.",
+            )
+        )
 
     def test_action_promise_is_detected(self):
         self.assertTrue(

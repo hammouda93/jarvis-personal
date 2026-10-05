@@ -159,8 +159,21 @@ def _is_enabled(wrapper: Any) -> bool:
         return True
 
 
+def _is_internal_automation_title(title: str) -> bool:
+    raw = str(title or "").strip().casefold()
+    normalized = normalize(title)
+    return (
+        normalized in {"jarvis personal", "personal jarvis"}
+        or raw.startswith("cua.agent")
+        or raw.startswith("cua agent")
+    )
+
+
 def _is_assistant_window(wrapper: Any) -> bool:
-    return normalize(_element_name(wrapper)) == "jarvis personal"
+    # Kept as the historical helper name because callers already use it, but
+    # the exclusion now covers all of our own automation surfaces. Internal
+    # overlays must never win target-window selection over the user's app.
+    return _is_internal_automation_title(_element_name(wrapper))
 
 
 def _title_app_hint(title: str) -> str:
@@ -313,7 +326,7 @@ def _window_by_title(title: str):
         (
             (_window_query_score(target, _element_name(wrapper)), wrapper)
             for wrapper in windows
-            if _is_visible(wrapper)
+            if _is_visible(wrapper) and not _is_assistant_window(wrapper)
         ),
         key=lambda pair: -pair[0],
     )
@@ -324,6 +337,7 @@ def _window_by_title(title: str):
         (
             (_window_query_score(target, _element_name(wrapper)), wrapper)
             for wrapper in windows
+            if not _is_assistant_window(wrapper)
         ),
         key=lambda pair: -pair[0],
     )
@@ -351,7 +365,10 @@ def _window_by_title(title: str):
         hinted = [
             wrapper
             for wrapper in windows
-            if normalize(hint) in normalize(_element_name(wrapper))
+            if (
+                not _is_assistant_window(wrapper)
+                and normalize(hint) in normalize(_element_name(wrapper))
+            )
         ]
         if len(hinted) == 1:
             return hinted[0]
@@ -642,6 +659,8 @@ def _native_window_candidates(*, limit: int = 40) -> list[dict[str, Any]]:
                 return True
             if key in {"program manager", "barre des taches"}:
                 return True
+            if _is_internal_automation_title(title):
+                return True
 
             seen.add(handle)
             items.append(
@@ -879,7 +898,13 @@ def _native_target_window(title: str | None = None) -> dict[str, Any] | None:
     """Resolve a requested/foreground work window without UI Automation."""
     import ctypes
 
-    candidates = _native_window_candidates(limit=60)
+    candidates = [
+        item
+        for item in _native_window_candidates(limit=60)
+        if not _is_internal_automation_title(
+            str(item.get("title") or "")
+        )
+    ]
     if not candidates:
         return None
 
@@ -2690,6 +2715,7 @@ def type_text_active_window(
     *,
     title: str = "",
     mode: str = "insert",
+    reactivate: bool = True,
 ) -> UIActionResult:
     """Fallback typing when UIA cannot expose an editable control.
 
@@ -2712,7 +2738,7 @@ def type_text_active_window(
         )
 
     target = (title or _SNAPSHOT_WINDOW_TITLE or "").strip()
-    if target:
+    if reactivate and target:
         activation = activate_window(target)
         if not activation.success:
             return UIActionResult(
