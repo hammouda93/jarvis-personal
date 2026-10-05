@@ -207,6 +207,36 @@ class MemoryCoreStore(LocalMemory):
                         projected_at,
                     ),
                 )
+            if provenance == "explicit":
+                for projection in facts:
+                    if projection.cardinality != "single":
+                        continue
+                    qualifiers_json = json.dumps(
+                        projection.qualifiers,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    conn.execute(
+                        """
+                        UPDATE memory_semantic_facts
+                        SET status = 'superseded'
+                        WHERE memory_id != ?
+                          AND status = 'active'
+                          AND subject = ?
+                          AND relation = ?
+                          AND scope = ?
+                          AND qualifiers_json = ?
+                          AND cardinality = 'single'
+                        """,
+                        (
+                            int(memory_id),
+                            projection.subject,
+                            projection.relation,
+                            projection.scope,
+                            qualifiers_json,
+                        ),
+                    )
+
             conn.execute(
                 """
                 INSERT INTO memory_semantic_state(
@@ -267,24 +297,32 @@ class MemoryCoreStore(LocalMemory):
         self,
         *,
         scope: str | None = None,
-        status: str = "active",
+        status: str | None = "active",
     ) -> list[SemanticFactRecord]:
-        clauses = ["f.status = ?"]
-        params: list[object] = [status]
+        clauses = []
+        params: list[object] = []
+        if status is not None:
+            clauses.append("f.status = ?")
+            params.append(status)
         if scope:
             if scope == "global":
                 clauses.append("f.scope = 'global'")
             else:
                 clauses.append("f.scope IN (?, 'global')")
                 params.append(scope)
+        where = (
+            " WHERE " + " AND ".join(clauses)
+            if clauses
+            else ""
+        )
         sql = (
             "SELECT f.fact_id, f.memory_id, f.ordinal, f.subject, f.relation, "
             "f.object_value, f.kind, f.qualifiers_json, f.scope, "
             "f.cardinality, f.confidence, f.provenance, f.parser_version, "
             "f.status, m.content, m.created_at "
             "FROM memory_semantic_facts AS f "
-            "JOIN memories AS m ON m.id = f.memory_id "
-            "WHERE " + " AND ".join(clauses)
+            "JOIN memories AS m ON m.id = f.memory_id"
+            + where
         )
         with closing(self._connect()) as conn:
             rows = conn.execute(sql, params).fetchall()
