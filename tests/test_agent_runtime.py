@@ -24,6 +24,7 @@ from jarvis_agent.agent_runtime import (
     _actions_have_verified_proof,
     _looks_like_clear_operational_feedback,
     _requested_action_capabilities,
+    _completed_action_capabilities,
     _inspection_requests_visual_fallback,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -817,6 +818,41 @@ class AgentRuntimeTests(unittest.TestCase):
             ],
         )
         self.assertIn("écrit", result.text)
+
+    def test_fresh_uia_after_state_verifies_previous_unverified_write(self):
+        actions = [
+            AgentActionResult(
+                name="write_ui_element",
+                success=True,
+                message="typed",
+                detail=json.dumps(
+                    {
+                        "verified": False,
+                        "before": "HELLO VERIFIED",
+                        "value": "HELLO VERIFIED bien joué",
+                    }
+                ),
+            ),
+            AgentActionResult(
+                name="inspect_active_window",
+                success=True,
+                message="observed",
+                detail=json.dumps(
+                    {
+                        "controls": [
+                            {
+                                "ref": "obs6:e7",
+                                "type": "Document",
+                                "writable": True,
+                                "value": "HELLO VERIFIED bien joué",
+                            }
+                        ]
+                    }
+                ),
+            ),
+        ]
+
+        self.assertIn("write_ui", _completed_action_capabilities(actions))
 
     def test_groq_unverified_write_does_not_satisfy_write_goal(self):
         class EventuallyVerifiedTools(FakeTools):
