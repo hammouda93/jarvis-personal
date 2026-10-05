@@ -42,6 +42,10 @@ For recall, return a query with:
 subject, canonical English snake_case relation, object_hint, qualifiers,
 entities, scope, answer_mode (single|collection|timeline), exact_terms and confidence.
 Preserve dates/IDs literally in qualifiers/exact_terms.
+For entity-centric questions such as "what do you know about Project Atlas?",
+relation may be empty, entities must contain the explicit entity, and
+answer_mode should be "collection" so independent facts about that entity can
+be returned together.
 
 For inspect, query can be null.
 
