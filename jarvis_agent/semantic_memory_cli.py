@@ -66,6 +66,7 @@ def inspect_semantic(
                 "value": fact.projection.value,
                 "kind": fact.projection.kind,
                 "qualifiers": fact.projection.qualifiers,
+                "entities": list(fact.projection.entities),
                 "scope": fact.projection.scope,
                 "cardinality": fact.projection.cardinality,
                 "confidence": fact.projection.confidence,
