@@ -69,7 +69,7 @@ def _navigate_current_browser_tab(url: str) -> bool:
     if not activation.success:
         return False
 
-    if not press_key("ctrll").success:
+    if not press_key("ctrll", reactivate_snapshot=False).success:
         return False
     written = type_text_active_window(
         url,
@@ -79,7 +79,7 @@ def _navigate_current_browser_tab(url: str) -> bool:
     )
     if not written.success:
         return False
-    if not press_key("enter").success:
+    if not press_key("enter", reactivate_snapshot=False).success:
         return False
     _remember_browser_url(url)
     return True
