@@ -12,8 +12,18 @@ $env:PYTHONUTF8 = "1"
 Write-Host "=== Personal AI checkpoint full validation ==="
 Write-Host ""
 
-$branch = (& git branch --show-current).Trim()
-$head = (& git log -1 --oneline).Trim()
+$branchRaw = (& git branch --show-current)
+$branch = if ($branchRaw) {
+    ($branchRaw | Out-String).Trim()
+} elseif ($env:GITHUB_HEAD_REF) {
+    $env:GITHUB_HEAD_REF.Trim()
+} elseif ($env:GITHUB_REF_NAME) {
+    $env:GITHUB_REF_NAME.Trim()
+} else {
+    "(detached)"
+}
+$headRaw = (& git log -1 --oneline)
+$head = if ($headRaw) { ($headRaw | Out-String).Trim() } else { "(unknown)" }
 Write-Host "Branch: $branch"
 Write-Host "HEAD:   $head"
 Write-Host ""
