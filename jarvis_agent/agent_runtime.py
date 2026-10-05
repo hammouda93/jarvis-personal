@@ -2227,6 +2227,24 @@ class GroqResponsesAgent:
                         for item in list(parsed.get("visible_text") or [])
                         if str(item).strip()
                     ][:60]
+                    browser_capabilities = {
+                        "writable": [
+                            {
+                                "ref": item.get("ref"),
+                                "label": item.get("name") or "",
+                            }
+                            for item in controls
+                            if item.get("writable") and item.get("ref")
+                        ][:24],
+                        "actionable": [
+                            {
+                                "ref": item.get("ref"),
+                                "label": item.get("name") or "",
+                            }
+                            for item in controls
+                            if item.get("actionable") and item.get("ref")
+                        ][:32],
+                    }
                     parsed = {
                         "observation_id": parsed.get("observation_id"),
                         "window": parsed.get("window"),
@@ -2234,7 +2252,7 @@ class GroqResponsesAgent:
                         "sensor": parsed.get("sensor") or "dom",
                         "visible_text": visible_text,
                         "controls": controls,
-                        "capabilities": parsed.get("capabilities") or {},
+                        "capabilities": browser_capabilities,
                         "snapshot": parsed.get("snapshot") or {},
                     }
                 capabilities = dict(parsed.get("capabilities") or {})
