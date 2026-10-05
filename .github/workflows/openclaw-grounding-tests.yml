@@ -10,6 +10,10 @@ on:
       - fix/browser-runtime-stability-v1
       - fix/runtime-foundation-reliability-v1
 
+  pull_request:
+    branches:
+      - fix/browser-runtime-stability-v1
+
 jobs:
   focused-windows-tests:
     runs-on: windows-latest
