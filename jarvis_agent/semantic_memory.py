@@ -371,18 +371,37 @@ def score_semantic_fact(
 
     entity_score = 0.5
     if query.entities:
-        wanted_entities = {normalize_text(item) for item in query.entities}
-        fact_entities = {normalize_text(item) for item in projection.entities}
-        if not fact_entities:
-            fact_entities = {
-                token
-                for token in wanted_entities
-                if token and token in normalized_combined
-            }
-        overlap = len(wanted_entities & fact_entities)
-        if overlap == 0:
-            return None
-        entity_score = overlap / max(1, len(wanted_entities))
+        wanted_entities = [
+            normalize_text(item)
+            for item in query.entities
+            if normalize_text(item)
+        ]
+        fact_entities = [
+            normalize_text(item)
+            for item in projection.entities
+            if normalize_text(item)
+        ]
+        entity_matches = []
+        for wanted in wanted_entities:
+            best = max(
+                (
+                    semantic_key_similarity(wanted, actual)
+                    for actual in fact_entities
+                ),
+                default=0.0,
+            )
+            if best < 0.45 and wanted in normalized_combined:
+                # Legacy/unprojected entity evidence can still be recognized
+                # from the raw fact text, but only by literal normalized span.
+                best = 0.72
+            if best < 0.45:
+                return None
+            entity_matches.append(best)
+        entity_score = (
+            sum(entity_matches) / len(entity_matches)
+            if entity_matches
+            else 0.5
+        )
 
     object_score = (
         max(
