@@ -157,6 +157,12 @@ class FoundationToolAdapter:
             elif name == "recall_information" and self.memory:
                 from .memory_retrieval import search
                 payload = [asdict(item) for item in search(self.memory, str(args.get("query", "")))]
+            elif name == "list_memory_information" and self.memory:
+                from .memory_retrieval import list_recent
+                payload = [asdict(item) for item in list_recent(
+                    self.memory,
+                    limit=int(args.get("limit", 20) or 20),
+                )]
             elif name.startswith("computer_") and self.computer:
                 op = name[9:]
                 if op == "observe":
