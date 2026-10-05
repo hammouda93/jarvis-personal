@@ -535,12 +535,47 @@ class SemanticMemoryRuntime:
             detail=json.dumps(payload, ensure_ascii=False),
         )
 
-    def _result(self, text: str, actions=()):
+    def _result(
+        self,
+        text: str,
+        actions=(),
+        *,
+        user_text: str = "",
+    ):
         from .agent_runtime import AgentTurnResult
+
+        action_tuple = tuple(actions)
+        if user_text:
+            method = getattr(
+                self.delegate,
+                "record_external_turn",
+                None,
+            )
+            if method:
+                last = action_tuple[-1] if action_tuple else None
+                method(
+                    user_text,
+                    text,
+                    action_name=(
+                        str(getattr(last, "name", "") or "")
+                        if last is not None
+                        else "semantic_memory"
+                    ),
+                    action_detail=(
+                        str(getattr(last, "detail", "") or "")
+                        if last is not None
+                        else ""
+                    ),
+                    success=(
+                        bool(getattr(last, "success", True))
+                        if last is not None
+                        else True
+                    ),
+                )
 
         return AgentTurnResult(
             text=text,
-            actions=tuple(actions),
+            actions=action_tuple,
         )
 
     @staticmethod
@@ -620,7 +655,10 @@ class SemanticMemoryRuntime:
                         f"relation={refined.relation} "
                         f"status={resolution.get('status')}"
                     )
-                return self._result(reply)
+                return self._result(
+                    reply,
+                    user_text=user_text,
+                )
             except Exception as exc:
                 if log:
                     log(
@@ -694,13 +732,15 @@ class SemanticMemoryRuntime:
             return self._result(
                 self._inspection_reply(resolution["items"]),
                 (action,),
+                user_text=user_text,
             )
 
         if intent.operation == "write":
             raw = intent.write_text.strip()
             if not raw:
                 return self._result(
-                    "Quelle information exacte souhaitez-vous mémoriser ?"
+                    "Quelle information exacte souhaitez-vous mémoriser ?",
+                    user_text=user_text,
                 )
             authorize = getattr(
                 self.tools,
@@ -717,6 +757,7 @@ class SemanticMemoryRuntime:
                 return self._result(
                     "La mémorisation a échoué : " + action.message,
                     (action,),
+                    user_text=user_text,
                 )
             memory_id = _memory_id_from_detail(action.detail)
             if memory_id is not None:
@@ -746,6 +787,7 @@ class SemanticMemoryRuntime:
             return self._result(
                 action.message,
                 (action,),
+                user_text=user_text,
             )
 
         query = intent.query
@@ -769,7 +811,8 @@ class SemanticMemoryRuntime:
                     f"{type(exc).__name__}:{exc}"
                 )
             return self._result(
-                "La mémoire sémantique n'est pas disponible pour le moment."
+                "La mémoire sémantique n'est pas disponible pour le moment.",
+                user_text=user_text,
             )
 
         if resolution.get("status") == "missing" and self.connector_resolver:
@@ -788,6 +831,7 @@ class SemanticMemoryRuntime:
                 return self._result(
                     " ; ".join(str(item) for item in external[:8]),
                     (action,),
+                    user_text=user_text,
                 )
 
         reply, pending = self._reply_from_resolution(resolution)
@@ -819,4 +863,8 @@ class SemanticMemoryRuntime:
                 "hits": hit_payload,
             },
         )
-        return self._result(reply, (action,))
+        return self._result(
+            reply,
+            (action,),
+            user_text=user_text,
+        )
