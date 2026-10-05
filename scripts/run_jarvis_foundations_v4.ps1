@@ -38,6 +38,15 @@ try {
         $python = $command.Source
     }
 
+    Write-Host "Checking live runtime dependencies..."
+    & $python -m jarvis_agent.runtime_preflight
+    if ($LASTEXITCODE -ne 0) {
+        throw (
+            "Environnement live incomplet ou incohérent. Répare-le avec: " +
+            ".\\scripts\\repair_live_environment.ps1 -PythonExe `"$python`""
+        )
+    }
+    Write-Host ""
     $env:JARVIS_MEMORY_CORE_ENABLED = $(if ($MemoryCore) { "1" } else { "0" })
     $env:JARVIS_BROWSER_CORE_ENABLED = $(if ($BrowserCore) { "1" } else { "0" })
     $env:JARVIS_COMPUTER_CORE_ENABLED = $(if ($ComputerCore) { "1" } else { "0" })
