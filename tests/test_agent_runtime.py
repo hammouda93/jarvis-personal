@@ -17,6 +17,8 @@ from jarvis_agent.agent_runtime import (
     _looks_like_pseudo_tool_syntax,
     _looks_like_unnecessary_followup,
     _is_explicit_memory_write_request,
+    _is_explicit_research_request,
+    _is_explicit_visible_web_request,
     _looks_like_memory_permission_prompt,
     _query_matches_recent_user_context,
     _looks_mostly_english,
@@ -520,6 +522,25 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(state_messages), 1)
         self.assertIn("CursorUserSetup-x64-3.22.12.exe", state_messages[0])
         self.assertIn("Installation - Cursor (User)", state_messages[0])
+
+    def test_research_and_visible_browser_intents_are_distinct(self):
+        self.assertTrue(
+            _is_explicit_research_request(
+                "Recherche sur Internet la version actuelle de Python."
+            )
+        )
+        self.assertFalse(
+            _is_explicit_visible_web_request(
+                "Recherche sur Internet la version actuelle de Python."
+            )
+        )
+        self.assertTrue(
+            _is_explicit_visible_web_request(
+                "Ouvre Chrome et cherche la documentation Python."
+            )
+        )
+        self.assertTrue(_is_explicit_research_request("Recherche Messi."))
+        self.assertFalse(_is_explicit_visible_web_request("Recherche Messi."))
 
     def test_pseudo_tool_syntax_is_detected(self):
         self.assertTrue(
