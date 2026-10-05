@@ -2737,8 +2737,9 @@ def type_text_active_window(
             normalized_mode,
         )
 
-    target = (title or _SNAPSHOT_WINDOW_TITLE or "").strip()
-    if not reactivate and target:
+    requested_title = str(title or "").strip()
+    target = (requested_title or _SNAPSHOT_WINDOW_TITLE or "").strip()
+    if not reactivate and requested_title:
         try:
             foreground = _native_target_window(None)
         except Exception:
@@ -2750,7 +2751,7 @@ def type_text_active_window(
         )
         if (
             not foreground_title
-            or _window_query_score(target, foreground_title) < 0.82
+            or _window_query_score(requested_title, foreground_title) < 0.82
         ):
             return UIActionResult(
                 False,
