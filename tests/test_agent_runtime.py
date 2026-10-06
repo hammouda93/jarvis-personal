@@ -19,6 +19,7 @@ from jarvis_agent.agent_runtime import (
     _is_explicit_memory_write_request,
     _looks_like_memory_permission_prompt,
     _query_matches_recent_user_context,
+    _query_matches_memory_grounded_answer,
     _looks_mostly_english,
     _visible_text,
     _actions_have_verified_proof,
@@ -3630,6 +3631,72 @@ class AgentRuntimeTests(unittest.TestCase):
         }
         self.assertNotIn("msf_capabilities", names)
         self.assertIn("open_application", names)
+
+    def test_memory_grounded_followup_matches_named_entity(self):
+        self.assertTrue(
+            _query_matches_memory_grounded_answer(
+                "Polaris 418 project",
+                "Projet test : Atlas ; autre projet de test : Polaris 418",
+            )
+        )
+        self.assertFalse(
+            _query_matches_memory_grounded_answer(
+                "un sujet totalement différent",
+                "Projet test : Atlas ; autre projet de test : Polaris 418",
+            )
+        )
+
+    def test_groq_memory_grounded_followup_prefers_local_memory_before_web(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_web",
+                            "name": "research_web",
+                            "arguments": '{"query":"Polaris 418 project"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_memory",
+                            "name": "semantic_memory_search",
+                            "arguments": '{"query":"Polaris 418"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Polaris 418 vient de ta mémoire personnelle.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+        agent._session_grounding["memory_grounded_answer"] = (
+            "Projet test : Atlas ; autre projet de test : Polaris 418"
+        )
+
+        result = agent.run("Parle-moi plus de Polaris 418.")
+
+        self.assertEqual(
+            [name for name, _args in tools.calls],
+            ["semantic_memory_search"],
+        )
+        self.assertIn("Polaris 418", result.text)
 
     def test_recent_project_name_matches_temporary_context(self):
         messages = [
