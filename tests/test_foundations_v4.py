@@ -719,6 +719,67 @@ class FoundationRuntimeTests(unittest.TestCase):
         self.assertIn('"placeholder":"Search videos"', delegate.contexts[0])
         self.assertIn('"ref":"r-search"', delegate.contexts[0])
 
+    def test_browser_grounding_context_is_bounded_and_prioritized(self):
+        class Browser:
+            def get_active_tab(self):
+                return {
+                    "tab_id": 7,
+                    "title": "Results",
+                    "url": "https://example.com/results",
+                    "active": True,
+                }
+
+            def observe_dom(self, tab_id):
+                controls = []
+                for index in range(60):
+                    controls.append(
+                        {
+                            "ref": f"r-{index}",
+                            "type": "button",
+                            "name": f"Navigation {index}",
+                            "region": "navigation",
+                            "actionable": True,
+                            "visual_index": index + 1,
+                        }
+                    )
+                controls.append(
+                    {
+                        "ref": "result-link",
+                        "type": "link",
+                        "name": "First real result",
+                        "region": "content",
+                        "actionable": True,
+                        "href": "https://example.com/watch/1",
+                        "visual_index": 61,
+                    }
+                )
+                return {
+                    "observation_id": "obs-1",
+                    "tab": self.get_active_tab(),
+                    "sensor": "dom",
+                    "controls": controls,
+                    "visible_text": "\n".join(
+                        f"visible {i}" for i in range(80)
+                    ),
+                    "frames_skipped": 0,
+                }
+
+        adapter = FoundationToolAdapter(None, browser=Browser())
+        adapter.browser_mode = True
+
+        context = adapter.browser_grounding_context()
+        payload = json.loads(context.split("\n", 1)[1])
+
+        self.assertEqual(payload["observation_id"], "obs-1")
+        self.assertLessEqual(len(payload["controls"]), 32)
+        self.assertLessEqual(len(payload["visible_text"]), 30)
+        self.assertTrue(
+            any(
+                item.get("ref") == "result-link"
+                for item in payload["controls"]
+            )
+        )
+
     def test_browser_navigate_rejects_missing_observed_tab_id(self):
         class Browser:
             def call(self, operation, **args):
