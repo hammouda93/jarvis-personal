@@ -43,6 +43,35 @@ def _temporal_sort_key(hit: SemanticMemoryHit):
     )
 
 
+def _collection_relation_family_hits(
+    query: MemoryQueryFrame,
+    hits: list[SemanticMemoryHit],
+    *,
+    relation_floor: float = 0.70,
+) -> list[SemanticMemoryHit]:
+    """Keep a related relation family once an exact canonical relation exists.
+
+    Collection recall intentionally allows nearby semantic relations so legacy
+    projections such as wants_to_watch_next can still participate. But once an
+    exact canonical relation is present, weak lexical neighbours must not leak
+    into the collection merely because they clear the global retrieval floor.
+    """
+    if not query.relation or not hits:
+        return list(hits)
+    relation_key = normalize_key(query.relation)
+    has_exact = any(
+        normalize_key(hit.fact.projection.relation) == relation_key
+        for hit in hits
+    )
+    if not has_exact:
+        return list(hits)
+    return [
+        hit
+        for hit in hits
+        if float(hit.components.get("relation", 0.0)) >= relation_floor
+    ]
+
+
 class SemanticMemoryEngine:
     def __init__(
         self,
@@ -457,9 +486,25 @@ class SemanticMemoryEngine:
 
         if query.answer_mode in {"collection", "timeline"}:
             # Every hit already passed semantic relation/scope/qualifier gates.
-            # Collections should not lose valid members due only to lexical
-            # wording differences in their raw evidence.
-            selected = list(hits)
+            # Keep nearby semantic relation variants for legacy compatibility,
+            # but prune weak relation neighbours once the canonical relation is
+            # represented by at least one exact hit.
+            selected = _collection_relation_family_hits(
+                effective_query,
+                list(hits),
+            )
+            if log and len(selected) != len(hits):
+                log(
+                    "[SEMANTIC_MEMORY] collection_relation_filter="
+                    + json.dumps(
+                        {
+                            "relation": effective_query.relation,
+                            "before": len(hits),
+                            "after": len(selected),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
             if query.answer_mode == "timeline":
                 selected.sort(key=_temporal_sort_key)
             return {
