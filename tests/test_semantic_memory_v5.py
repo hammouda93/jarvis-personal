@@ -2375,6 +2375,38 @@ class SemanticMemoryLiveRunnerTests(unittest.TestCase):
         self.assertTrue(callable(module.main))
 
 
+class SemanticQueryFrameContractTests(unittest.TestCase):
+    def test_inverse_query_can_leave_subject_unknown_and_request_subject_answer(self):
+        query = MemoryQueryFrame.from_dict(
+            {
+                "subject": "",
+                "relation": "owns",
+                "object_hint": "Project North",
+                "entities": ["Project North"],
+                "answer_mode": "single",
+                "answer_field": "subject",
+                "confidence": 0.99,
+            },
+            raw_text="Who owns Project North?",
+        )
+
+        self.assertEqual(query.subject, "")
+        self.assertEqual(query.answer_field, "subject")
+        self.assertEqual(query.object_hint, "Project North")
+
+    def test_missing_answer_field_remains_backward_compatible_with_value(self):
+        query = MemoryQueryFrame.from_dict(
+            {
+                "subject": "user",
+                "relation": "preferred_editor",
+                "answer_mode": "single",
+                "confidence": 0.99,
+            }
+        )
+
+        self.assertEqual(query.answer_field, "value")
+
+
 class SemanticInterpreterContractTests(unittest.TestCase):
     def test_invalid_or_weak_projection_is_rejected_without_mutating_raw_memory(self):
         with tempfile.TemporaryDirectory() as folder:
