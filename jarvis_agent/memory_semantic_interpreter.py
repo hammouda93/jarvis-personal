@@ -21,7 +21,7 @@ from .semantic_memory import (
 )
 
 
-PARSER_VERSION = "semantic-memory-v2-entities"
+PARSER_VERSION = "semantic-memory-v3-directional-triples"
 
 
 _TURN_SYSTEM = """You are a semantic memory intent parser for a personal AI.
