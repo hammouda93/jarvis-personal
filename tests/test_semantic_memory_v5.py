@@ -2046,7 +2046,9 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
             )
         }
 
-        store = MemoryCoreStore(Path(self.temp.name) / "agentic.sqlite3")
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        store = MemoryCoreStore(Path(temp.name) / "agentic.sqlite3")
         interpreter = FixtureInterpreter(
             turns=turns,
             projections=projections,
@@ -2596,7 +2598,9 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
                 ),
             )
         }
-        store = MemoryCoreStore(Path(self.temp.name) / "tool.sqlite3")
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        store = MemoryCoreStore(Path(temp.name) / "tool.sqlite3")
         interpreter = FixtureInterpreter(
             turns=turns,
             projections=projections,
