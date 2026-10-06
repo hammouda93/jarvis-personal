@@ -12,7 +12,15 @@ let domItems = [];
 let observed = new Map();
 let failMouseRelease = false;
 let includeNullFrame = false;
-const event = () => ({addListener(){}});
+const event = () => {
+  const listeners = [];
+  return {
+    addListener(fn){listeners.push(fn)},
+    dispatch(...args){for(const fn of listeners) fn(...args)}
+  };
+};
+const tabRemovedEvent = event();
+const tabUpdatedEvent = event();
 globalThis.chrome = {
   tabs:{
     async query(filter){return [...tabs.values()].filter(t=>!filter.active || t.active)},
@@ -21,7 +29,7 @@ globalThis.chrome = {
     async update(id,change){Object.assign(tabs.get(id),change); operations.push(['tab_update',id,change]); return tabs.get(id)},
     async remove(id){operations.push(['remove',id]);tabs.delete(id)},
     async goBack(id){operations.push(['back',id])}, async goForward(id){operations.push(['forward',id])},
-    onRemoved:event(),onUpdated:event()
+    onRemoved:tabRemovedEvent,onUpdated:tabUpdatedEvent
   },
   windows:{async update(id,args){operations.push(['window_update',id,args])},async get(id){return{id,focused:true}}},
   scripting:{async executeScript(options){
@@ -65,6 +73,9 @@ const source = fs.readFileSync('extensions/personal-ai-browser-bridge/service_wo
 const {action,OPERATIONS} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 function request(operation,args={}){return action({id:crypto.randomUUID(),version:1,operation,arguments:args,deadline_ms:Date.now()+5000})}
 beforeEach(()=>{
+  // Simulate Chrome tearing down the tabs from the previous test so the
+  // service worker invalidates its persistent refs/snapshots too.
+  for (const id of [...tabs.keys()]) tabRemovedEvent.dispatch(id,{});
   tabs.clear();operations.length=0;observed.clear();
   failMouseRelease=false;
   includeNullFrame=false;
