@@ -1359,7 +1359,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             result.actions[0].detail,
-            "open_url_blocked_for_search_submission",
+            "open_url_blocked_for_existing_browser_context",
         )
 
     def test_groq_requires_reinspection_between_ui_mutations(self):
@@ -4254,6 +4254,68 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn(("click_ui_element", {"ref": "e26"}), tools.calls)
         self.assertIn("ouverte", result.text)
+
+    def test_result_selection_blocks_guessed_browser_url(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_wrong_url",
+                            "name": "open_url",
+                            "arguments": '{"url":"https://example.com/result"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_observe",
+                            "name": "browser_observe_dom",
+                            "arguments": '{"tab_id":7}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_click",
+                            "name": "browser_click",
+                            "arguments": '{"tab_id":7,"ref":"r1"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Le premier résultat observé est ouvert.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ouvre le premier résultat.")
+
+        self.assertNotIn(
+            ("open_url", {"url": "https://example.com/result"}),
+            tools.calls,
+        )
+        self.assertEqual(
+            result.actions[0].detail,
+            "open_url_blocked_for_existing_browser_context",
+        )
 
     def test_direct_local_browser_action_is_recorded_without_model_call(self):
         agent = GroqResponsesAgent(FakeTools())
