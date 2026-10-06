@@ -274,10 +274,14 @@ FOUNDATION BROWSER CORE ACTIF:
   inspect_browser_page / *_browser_element pour le contenu web;
 - utilise browser_list_tabs / browser_get_active_tab pour obtenir les vrais
   tab_id du profil Chrome utilisateur;
-- browser_observe_dom est le capteur principal du contenu web. Il expose les
-  vrais contrôles de la page avec rôle accessible, nom/label, placeholder,
-  valeur, href, état writable/actionable, bbox et ordre visuel. Observe avant
-  de deviner un sélecteur, un rôle ou une destination;
+- BROWSER_GROUNDING_READ_ONLY est déjà une observation fraîche du tab actif
+  au début d'un tour Browser. Si elle contient le tab_id et une cible exploitable,
+  UTILISE DIRECTEMENT ses refs: ne rappelle pas browser_get_active_tab,
+  browser_observe_dom ou browser_find juste pour redécouvrir la même cible;
+- browser_observe_dom est le capteur principal lorsqu'aucun snapshot exploitable
+  n'est déjà fourni. Il expose les vrais contrôles de la page avec rôle accessible,
+  nom/label, placeholder, valeur, href, état writable/actionable, bbox et ordre
+  visuel. Observe avant de deviner un sélecteur, un rôle ou une destination;
 - browser_find sert seulement à filtrer le SNAPSHOT COURANT: il ne crée
   pas une nouvelle observation tant que ce snapshot existe et n'invalide donc
   pas ses refs. Son champ text est le nom/label/placeholder de la cible, jamais
@@ -285,8 +289,12 @@ FOUNDATION BROWSER CORE ACTIF:
   (searchbox, textbox, link, button...) au lieu d'inventer un type HTML comme
   "input";
 - après browser_write, utilise directement post_observation si elle est fournie:
-  elle contient les refs fraîches après mutation et évite un nouvel appel
-  d'observation inutile;
+  elle contient les refs fraîches après mutation. Ne rappelle ni observe_dom ni
+  find si la cible suivante est déjà présente dans post_observation;
+- pour "premier/deuxième/troisième résultat", si le snapshot courant contient les
+  vrais liens/résultats et leur visual_index, choisis la ref correspondante et
+  clique-la directement. Ne fais pas un round de lecture supplémentaire sans
+  nécessité;
 - open_url sert à ouvrir un nouveau site/onglet. Pour continuer une mission
   dans une page déjà ouverte, conserve le tab_id actuel. browser_navigate exige
   un tab_id et navigue cet onglet existant; ne crée pas un nouvel onglet pour
