@@ -1046,8 +1046,30 @@ class SemanticMemoryRuntime:
                         f"relation={refined.relation} "
                         f"status={resolution.get('status')}"
                     )
+                action = self._memory_action(
+                    "semantic_memory_recall",
+                    {
+                        "status": resolution.get("status"),
+                        "relation": refined.relation,
+                        "scope": refined.scope,
+                        "answer_mode": refined.answer_mode,
+                        "answer_field": refined.answer_field,
+                        "clarification": True,
+                    },
+                )
+                grounded = self._run_grounded_memory_answer(
+                    user_text,
+                    refined,
+                    resolution,
+                    action,
+                    log=log,
+                    phase=phase,
+                )
+                if grounded is not None:
+                    return grounded
                 return self._result(
                     reply,
+                    (action,),
                     user_text=user_text,
                 )
             except Exception as exc:
