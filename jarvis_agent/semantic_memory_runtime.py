@@ -15,8 +15,10 @@ from .semantic_memory import (
     MemoryTurnInterpretation,
     SemanticFactRecord,
     SemanticMemoryHit,
+    entity_context_similarity,
     normalize_key,
     normalize_text,
+    semantic_key_similarity,
     query_is_specific_enough,
     score_semantic_fact,
     semantic_rejection_reason,
@@ -40,6 +42,53 @@ def _temporal_sort_key(hit: SemanticMemoryHit):
         str(temporal or hit.fact.created_at),
         hit.fact.created_at,
         hit.fact.memory_id,
+    )
+
+
+def _normalize_query_for_retrieval(
+    query: MemoryQueryFrame,
+) -> MemoryQueryFrame:
+    """Remove parser-side role confusion without changing user semantics.
+
+    Entity-centric collection queries sometimes put the named entity in both
+    subject and entities even when stored personal facts legitimately use
+    subject=user. Inverse queries can likewise duplicate the known object in
+    entities. These are query-shape mistakes, not evidence constraints.
+    """
+    subject = query.subject
+    entities = list(query.entities)
+
+    if (
+        not query.relation
+        and query.answer_mode in {"collection", "timeline"}
+        and subject
+        and subject != "user"
+        and any(
+            entity_context_similarity(subject, entity) >= 0.82
+            for entity in entities
+        )
+    ):
+        subject = ""
+
+    if query.answer_field == "subject" and query.object_hint and entities:
+        entities = [
+            entity
+            for entity in entities
+            if semantic_key_similarity(
+                entity,
+                query.object_hint,
+            ) < 0.82
+        ]
+
+    if (
+        subject == query.subject
+        and tuple(entities) == tuple(query.entities)
+    ):
+        return query
+    return replace(
+        query,
+        subject=subject,
+        entities=tuple(entities),
     )
 
 
@@ -398,6 +447,7 @@ class SemanticMemoryEngine:
         log=None,
         session_facts=(),
     ) -> dict[str, Any]:
+        query = _normalize_query_for_retrieval(query)
         if query.answer_mode == "inspect":
             return {
                 "status": "inspect",
@@ -613,6 +663,41 @@ def _distinct_values(
     return result
 
 
+def _raw_memory_candidates(
+    store: MemoryCoreStore,
+    query: MemoryQueryFrame,
+    *,
+    limit: int = 12,
+):
+    from .memory_retrieval import search as raw_search
+
+    search_text = " ".join(
+        part
+        for part in (
+            query.raw_text,
+            query.object_hint,
+            " ".join(query.entities),
+            " ".join(query.qualifiers.values()),
+        )
+        if str(part or "").strip()
+    ).strip()
+    matched = raw_search(
+        store,
+        search_text,
+        limit=limit,
+    ) if search_text else []
+
+    if matched:
+        return matched
+
+    # A truly broad inventory request has no semantic constraints. In that
+    # case recent raw rows are legitimate inventory evidence. Specific failed
+    # searches do not receive unrelated recent memories.
+    if not query_is_specific_enough(query):
+        return store.recent_memories(limit=limit)
+    return []
+
+
 def _memory_evidence_context(
     query: MemoryQueryFrame,
     resolution: dict[str, Any],
@@ -643,15 +728,19 @@ def _memory_evidence_context(
             }
         )
 
-    # If strict semantic retrieval found nothing, give the reasoning model a
-    # small bounded raw-memory fallback. This is still retrieval, not an answer:
-    # the model must decide whether any item actually supports the question.
+    # If strict semantic retrieval found nothing, use a bounded raw retrieval
+    # pass over the user's actual question. Only genuinely broad inventory
+    # questions fall back to recent memory rows.
     raw_fallback = []
     if not evidence and resolution.get("status") in {
         "missing",
         "underspecified",
     }:
-        for item in store.recent_memories(limit=12):
+        for item in _raw_memory_candidates(
+            store,
+            query,
+            limit=12,
+        ):
             content = str(item.content or "").strip()
             if not content:
                 continue
@@ -694,10 +783,12 @@ def _memory_evidence_context(
         "as the source of truth and the semantic fields only as retrieval hints. "
         "Do not expose internal relation names, scores, memory IDs, JSON or "
         "implementation details unless explicitly asked. Do not search the web "
-        "to answer a personal-memory question. Structured temporal qualifiers "
-        "already resolve expressions such as today/tomorrow/after tomorrow; "
-        "reason with that resolved date instead of requiring the relative phrase "
-        "to appear in stored text. If evidence is insufficient or genuinely "
+        "to answer a personal-memory question. STRUCTURED QUERY QUALIFIERS ARE "
+        "AUTHORITATIVE FOR THIS TURN. If a date/datetime qualifier is present, "
+        "use that exact resolved value and NEVER recompute the relative date "
+        "from your own clock or conversation history. Expressions such as "
+        "today/tomorrow/after tomorrow have already been resolved upstream. "
+        "If evidence is insufficient or genuinely "
         "contradictory, say so or ask one concise clarification.\n"
         + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     )
