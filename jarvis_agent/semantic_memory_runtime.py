@@ -19,6 +19,7 @@ from .semantic_memory import (
     normalize_text,
     query_is_specific_enough,
     score_semantic_fact,
+    semantic_rejection_reason,
 )
 
 
@@ -288,14 +289,58 @@ class SemanticMemoryEngine:
     ) -> list[SemanticMemoryHit]:
         self.ensure_indexed(log=log)
         status = None if query.answer_mode == "timeline" else "active"
+        records = self.store.semantic_facts(
+            scope=query.scope,
+            status=status,
+        )
         hits = self._score_records(
             query,
-            self.store.semantic_facts(
-                scope=query.scope,
-                status=status,
-            ),
+            records,
             limit=limit,
         )
+        if log and not hits and records:
+            reason_counts = {}
+            samples = []
+            for fact in records:
+                reason = semantic_rejection_reason(
+                    query,
+                    fact,
+                )
+                if not reason:
+                    scored = score_semantic_fact(
+                        query,
+                        fact,
+                    )
+                    if scored is not None and scored.score < self.min_score:
+                        reason = "below_score"
+                    elif scored is None:
+                        reason = "gated"
+                    else:
+                        reason = "unknown"
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                if len(samples) < 12:
+                    samples.append(
+                        {
+                            "memory_id": fact.memory_id,
+                            "relation": fact.projection.relation,
+                            "subject": fact.projection.subject,
+                            "entities": list(
+                                fact.projection.entities
+                            )[:4],
+                            "qualifiers": fact.projection.qualifiers,
+                            "reason": reason,
+                        }
+                    )
+            log(
+                "[SEMANTIC_MEMORY] rejected="
+                + json.dumps(
+                    {
+                        "counts": reason_counts,
+                        "samples": samples,
+                    },
+                    ensure_ascii=False,
+                )
+            )
         if log:
             summary = [
                 {
