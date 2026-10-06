@@ -2,6 +2,7 @@ export const OPERATIONS = new Set(["list_tabs","get_active_tab","activate_tab","
   "observe_dom","find","click","write","press","back","forward","close_tab","download","verify"]);
 let port;
 const refs = new Map();
+const snapshots = new Map();
 let sequence = Promise.resolve();
 function checkDeadline(request) {
   if (!Number.isFinite(request.deadline_ms) || Date.now() >= request.deadline_ms)
@@ -29,6 +30,10 @@ async function domCall(tabId, method, args=[], documentId) {
     world:"ISOLATED", func:(method,args) => globalThis.__personalAIBridge[method](...args), args:[method,args]});
 }
 function clearRefs(tabId) { for (const [ref,item] of refs) if (item.tabId === tabId) refs.delete(ref); }
+function invalidateSnapshot(tabId) {
+  clearRefs(tabId);
+  snapshots.delete(tabId);
+}
 async function observe(tabId) {
   await injected(tabId);
   clearRefs(tabId);
@@ -46,7 +51,7 @@ async function observe(tabId) {
     }
   }
   const tab = await tabOf(tabId);
-  return {observation_id:crypto.randomUUID(), tab:cleanTab(tab), sensor:"dom", controls,
+  const observation = {observation_id:crypto.randomUUID(), tab:cleanTab(tab), sensor:"dom", controls,
     visible_text:validFrames.map(f=>String(f.result.visible_text || "")).join("\n").slice(0,20000),
     truncated:(frames || []).length>12 || controls.length>=400 ||
       validFrames.some(f=>f.result.truncated),
@@ -54,6 +59,8 @@ async function observe(tabId) {
     frames_seen:(frames || []).length,
     frames_observed:validFrames.length,
     frames_skipped:Math.max(0,(frames || []).length-validFrames.length)};
+  snapshots.set(tabId,observation);
+  return observation;
 }
 async function action(request) {
   const a = request.arguments || {}, op = request.operation;
@@ -70,7 +77,7 @@ async function action(request) {
     if (a.tab_id !== undefined) await tabOf(a.tab_id);
     checkDeadline(request);
     const tab = a.tab_id === undefined ? await chrome.tabs.create({url}) : await chrome.tabs.update(a.tab_id,{url});
-    clearRefs(tab.id);
+    invalidateSnapshot(tab.id);
     return {tab:cleanTab(tab), dispatched:true, verified:false, postcondition:"navigation_pending"};
   }
   if (op === "download") {
@@ -94,18 +101,22 @@ async function action(request) {
   }
   if (op === "close_tab") {
     checkDeadline(request);
-    await chrome.tabs.remove(tab.id); clearRefs(tab.id);
+    await chrome.tabs.remove(tab.id); invalidateSnapshot(tab.id);
     const all = await chrome.tabs.query({});
     return {verified:!all.some(t=>t.id === tab.id), postcondition:"tab_absent", tabs:all.map(cleanTab)};
   }
   if (["back","forward"].includes(op)) {
     checkDeadline(request);
     await (op === "back" ? chrome.tabs.goBack(tab.id) : chrome.tabs.goForward(tab.id));
-    clearRefs(tab.id);
+    invalidateSnapshot(tab.id);
     return {dispatched:true, verified:false, postcondition:"history_navigation_pending"};
   }
   if (["observe_dom","find","verify"].includes(op)) {
-    const observation = await observe(tab.id);
+    const observation = (
+      op === "find"
+        ? (snapshots.get(tab.id) || await observe(tab.id))
+        : await observe(tab.id)
+    );
     if (op === "observe_dom") return observation;
     if (op === "verify") {
       if (!["url","title","text"].some(k => Object.hasOwn(a,k))) throw Error("explicit_postcondition_required");
@@ -141,7 +152,7 @@ async function action(request) {
       const point = result[0]?.result;
       if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) throw Error("invalid_browser_pointer_target");
       checkDeadline(request);
-      clearRefs(tab.id);
+      invalidateSnapshot(tab.id);
       await domCall(tab.id,"invalidate",[],target.documentId);
       attempted = true;
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchMouseEvent",
@@ -168,7 +179,7 @@ async function action(request) {
     try {
       await domCall(tab.id,"prepare",[a.ref],target.documentId);
       checkDeadline(request);
-      clearRefs(tab.id);
+      invalidateSnapshot(tab.id);
       await domCall(tab.id,"invalidate",[],target.documentId);
       attempted = true;
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchKeyEvent",{type:"keyDown",...keys[a.key]});
@@ -181,8 +192,12 @@ async function action(request) {
   }
   checkDeadline(request);
   const results = await domCall(tab.id,"act",[a.ref,op,{...a,deadline_ms:request.deadline_ms}],target.documentId);
-  clearRefs(tab.id);
-  return results[0].result;
+  invalidateSnapshot(tab.id);
+  const result = results[0].result;
+  if (op === "write" && result?.verified === true) {
+    result.post_observation = await observe(tab.id);
+  }
+  return result;
 }
 export {action};
 function connect() {
@@ -202,11 +217,14 @@ function connect() {
     console.warn("Native host disconnected",chrome.runtime.lastError?.message);
     if (port === connection) port = undefined;
     refs.clear();
+    snapshots.clear();
     // User clicks the extension to reconnect; pending mutations are never retried.
   });
 }
 chrome.action.onClicked.addListener(connect);
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
-chrome.tabs.onRemoved.addListener(clearRefs);
-chrome.tabs.onUpdated.addListener((id,change)=> { if (change.status === "loading" || change.url) clearRefs(id); });
+chrome.tabs.onRemoved.addListener(invalidateSnapshot);
+chrome.tabs.onUpdated.addListener((id,change)=> {
+  if (change.status === "loading" || change.url) invalidateSnapshot(id);
+});
