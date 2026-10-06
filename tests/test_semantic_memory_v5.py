@@ -68,14 +68,27 @@ class FixtureInterpreter(SemanticMemoryInterpreter):
         self.turn_calls = 0
         self.project_catalogs = []
 
-    def interpret_turn(self, user_text):
+    def interpret_turn(
+        self,
+        user_text,
+        *,
+        pending_query=None,
+    ):
         self.turn_calls += 1
+        pending_relation = (
+            pending_query.relation
+            if pending_query is not None
+            else None
+        )
         return self.turns.get(
-            user_text,
-            MemoryTurnInterpretation(
-                operation="pass",
-                confidence=0.99,
-                reason="fixture_pass",
+            (user_text, pending_relation),
+            self.turns.get(
+                user_text,
+                MemoryTurnInterpretation(
+                    operation="pass",
+                    confidence=0.99,
+                    reason="fixture_pass",
+                ),
             ),
         )
 
@@ -1966,7 +1979,13 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
                 query=initial,
                 confidence=0.99,
                 reason="personal recall",
-            )
+            ),
+            (clarification, "office_location"): MemoryTurnInterpretation(
+                operation="clarify",
+                query=refined,
+                confidence=0.99,
+                reason="semantic clarification",
+            ),
         }
         projections = {
             "office beta": (
@@ -2002,6 +2021,96 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         second = runtime.run(clarification)
         self.assertEqual(second.text, "Sfax")
         self.assertEqual(delegate.calls, 0)
+
+    def test_complete_new_recall_replaces_stale_pending_clarification(self):
+        first_text = "Which missing preference?"
+        second_text = "What is my preferred editor?"
+        first_query = MemoryQueryFrame(
+            relation="missing_preference",
+            answer_mode="single",
+            raw_text=first_text,
+            confidence=0.99,
+        )
+        second_query = MemoryQueryFrame(
+            relation="preferred_editor",
+            answer_mode="single",
+            raw_text=second_text,
+            confidence=0.99,
+        )
+        turns = {
+            first_text: MemoryTurnInterpretation(
+                operation="recall",
+                query=first_query,
+                confidence=0.99,
+                reason="first recall",
+            ),
+            (second_text, "missing_preference"): MemoryTurnInterpretation(
+                operation="recall",
+                query=second_query,
+                confidence=0.99,
+                reason="new independent recall",
+            ),
+        }
+        projections = {
+            "editor evidence": (
+                projection(
+                    "preferred_editor",
+                    "Cursor",
+                    kind="preference",
+                    cardinality="single",
+                ),
+            ),
+        }
+        store, _, delegate, _, runtime = self.build_runtime(
+            turns=turns,
+            projections=projections,
+        )
+        store.remember("editor evidence")
+
+        first = runtime.run(first_text)
+        self.assertIn("préciser", first.text)
+
+        second = runtime.run(second_text)
+
+        self.assertEqual(second.text, "Cursor")
+        self.assertEqual(delegate.calls, 0)
+        self.assertIsNone(runtime._pending_query)
+
+    def test_inspect_request_replaces_stale_pending_clarification(self):
+        first_text = "Which missing preference?"
+        inspect_text = "What is really in my local memory?"
+        turns = {
+            first_text: MemoryTurnInterpretation(
+                operation="recall",
+                query=MemoryQueryFrame(
+                    relation="missing_preference",
+                    answer_mode="single",
+                    raw_text=first_text,
+                    confidence=0.99,
+                ),
+                confidence=0.99,
+                reason="first recall",
+            ),
+            (inspect_text, "missing_preference"): MemoryTurnInterpretation(
+                operation="inspect",
+                confidence=0.99,
+                reason="new inspect request",
+            ),
+        }
+        store, _, delegate, _, runtime = self.build_runtime(
+            turns=turns,
+            projections={},
+        )
+        store.remember("Durable raw evidence")
+
+        first = runtime.run(first_text)
+        self.assertIn("préciser", first.text)
+
+        second = runtime.run(inspect_text)
+
+        self.assertIn("Durable raw evidence", second.text)
+        self.assertEqual(delegate.calls, 0)
+        self.assertIsNone(runtime._pending_query)
 
     def test_entity_centric_question_returns_multiple_relations_with_context(self):
         question = "What do you know about Project Atlas?"
