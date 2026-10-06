@@ -256,6 +256,15 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             if timeout_s is not None
             else os.getenv("JARVIS_MEMORY_SEMANTIC_TIMEOUT_S", "8")
         )
+        self.max_completion_tokens = max(
+            800,
+            int(
+                os.getenv(
+                    "JARVIS_MEMORY_SEMANTIC_MAX_COMPLETION_TOKENS",
+                    "3000",
+                )
+            ),
+        )
         self.last_provider = ""
         self.last_model = ""
         self.last_attempts: tuple[str, ...] = ()
@@ -295,6 +304,27 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             return self._model_override
         return self._default_model(provider)
 
+    def _structured_output_options(
+        self,
+        provider: str,
+    ) -> dict[str, Any]:
+        """Provider-compatible JSON contract for semantic memory calls.
+
+        JSON Object Mode constrains syntax while our local dataclass validators
+        remain authoritative for schema/semantic validation. GPT-OSS on Groq
+        requires reasoning to be hidden/parsed when JSON mode is enabled.
+        """
+        options: dict[str, Any] = {
+            "response_format": {"type": "json_object"},
+        }
+        model = self._model_for(provider).casefold()
+        if provider == "groq" and "gpt-oss" in model:
+            options["extra_body"] = {
+                "reasoning_format": "hidden",
+                "reasoning_effort": "low",
+            }
+        return options
+
     def _provider_chain(self) -> tuple[str, ...]:
         providers = [self.provider]
         if (
@@ -331,9 +361,23 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
                 {"role": "user", "content": user},
             ],
             temperature=0,
-            max_completion_tokens=1200,
+            max_completion_tokens=self.max_completion_tokens,
+            **self._structured_output_options(provider),
         )
-        return str(response.choices[0].message.content or "")
+        choice = response.choices[0]
+        finish_reason = str(
+            getattr(choice, "finish_reason", "") or ""
+        ).strip().lower()
+        if finish_reason in {"length", "max_tokens"}:
+            raise RuntimeError(
+                "semantic_memory_structured_output_truncated"
+            )
+        content = str(choice.message.content or "")
+        if not content.strip():
+            raise RuntimeError(
+                "semantic_memory_structured_output_empty"
+            )
+        return content
 
     def _chat_ollama(self, system: str, user: str) -> str:
         payload = {
