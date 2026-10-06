@@ -387,6 +387,79 @@ def query_is_specific_enough(query: MemoryQueryFrame) -> bool:
     )
 
 
+def semantic_rejection_reason(
+    query: MemoryQueryFrame,
+    fact: SemanticFactRecord,
+) -> str:
+    """Explain why a fact is gated out before final score thresholding."""
+    projection = fact.projection
+
+    if query.scope in {"", "global"}:
+        if projection.scope != "global":
+            return "scope"
+    elif projection.scope not in {query.scope, "global"}:
+        return "scope"
+
+    combined = " ".join(
+        [
+            fact.raw_content,
+            projection.value,
+            projection.relation,
+            " ".join(projection.qualifiers.values()),
+        ]
+    )
+    normalized_combined = normalize_text(combined)
+    for exact in query.exact_terms:
+        if normalize_text(exact) not in normalized_combined:
+            return "exact_term"
+
+    if query.relation:
+        relation = semantic_key_similarity(
+            query.relation,
+            projection.relation,
+        )
+        if relation < 0.48:
+            return "relation"
+
+    if query.subject:
+        subject = semantic_key_similarity(
+            query.subject,
+            projection.subject,
+        )
+        if subject < 0.45:
+            return "subject"
+
+    qualifier = _qualifier_score(query, projection)
+    if query.qualifiers and qualifier < 0.55:
+        return "qualifier"
+
+    if query.entities:
+        wanted_entities = [
+            normalize_text(item)
+            for item in query.entities
+            if normalize_text(item)
+        ]
+        fact_entities = [
+            normalize_text(item)
+            for item in projection.entities
+            if normalize_text(item)
+        ]
+        for wanted in wanted_entities:
+            best = max(
+                (
+                    entity_context_similarity(wanted, actual)
+                    for actual in fact_entities
+                ),
+                default=0.0,
+            )
+            if best < 0.82 and wanted in normalized_combined:
+                best = 0.88
+            if best < 0.82:
+                return "entity"
+
+    return ""
+
+
 def score_semantic_fact(
     query: MemoryQueryFrame,
     fact: SemanticFactRecord,
