@@ -61,18 +61,107 @@
       value:e.type === "password" ? null : writable ? (e.value ?? e.innerText ?? "") : null,
       focused:document.activeElement === e};
   }
+  function relatedTarget(e, top) {
+    return Boolean(top && (top === e || e.contains(top) || top.contains(e)));
+  }
+  function visibleRects(e) {
+    const raw = typeof e.getClientRects === "function"
+      ? Array.from(e.getClientRects())
+      : [e.getBoundingClientRect()];
+    return raw.filter(r =>
+      Number.isFinite(r.left) && Number.isFinite(r.top) &&
+      Number.isFinite(r.right) && Number.isFinite(r.bottom) &&
+      r.right > r.left && r.bottom > r.top &&
+      r.bottom > 0 && r.right > 0 &&
+      r.top < innerHeight && r.left < innerWidth
+    );
+  }
+  function pointerPoint(e) {
+    const candidates = [];
+    for (const r of visibleRects(e)) {
+      const left = Math.max(1, r.left);
+      const right = Math.min(innerWidth - 1, r.right);
+      const top = Math.max(1, r.top);
+      const bottom = Math.min(innerHeight - 1, r.bottom);
+      if (!(right > left && bottom > top)) continue;
+      const xs = [(left + right) / 2, left + (right-left)*0.25, left + (right-left)*0.75];
+      const ys = [(top + bottom) / 2, top + (bottom-top)*0.25, top + (bottom-top)*0.75];
+      for (const y of ys) for (const x of xs) candidates.push({x,y});
+    }
+    for (const point of candidates) {
+      if (relatedTarget(e, document.elementFromPoint(point.x, point.y))) return point;
+    }
+    return null;
+  }
+  function editableValue(e) {
+    if (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement) {
+      return String(e.value ?? "");
+    }
+    return String(e.innerText ?? e.textContent ?? "");
+  }
+  function normalizedEditableValue(value) {
+    return String(value ?? "")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .replace(/\u00A0/g, " ")
+      .replace(/\r\n/g, "\n");
+  }
+  function writeContentEditable(e, next, mode, inputText) {
+    e.focus({preventScroll:true});
+    const selection = globalThis.getSelection?.();
+    if (selection && typeof document.createRange === "function") {
+      const range = document.createRange();
+      range.selectNodeContents(e);
+      if (mode === "append") range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    let inserted = false;
+    try {
+      if (typeof document.execCommand === "function") {
+        inserted = Boolean(document.execCommand("insertText", false, mode === "append" ? inputText : next));
+      }
+    } catch (_error) {}
+
+    if (!inserted || normalizedEditableValue(editableValue(e)) !== normalizedEditableValue(next)) {
+      if (selection && selection.rangeCount && typeof document.createTextNode === "function") {
+        const range = selection.getRangeAt(0);
+        if (mode === "replace") {
+          range.selectNodeContents(e);
+          range.deleteContents();
+        }
+        const node = document.createTextNode(mode === "append" ? inputText : next);
+        range.insertNode(node);
+        range.setStartAfter(node);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } else {
+        e.textContent = next;
+      }
+      e.dispatchEvent(new InputEvent("beforeinput", {
+        bubbles:true,
+        cancelable:true,
+        inputType:mode === "replace" ? "insertReplacementText" : "insertText",
+        data:inputText
+      }));
+      e.dispatchEvent(new InputEvent("input", {
+        bubbles:true,
+        inputType:mode === "replace" ? "insertReplacementText" : "insertText",
+        data:inputText
+      }));
+    }
+    e.dispatchEvent(new Event("change", {bubbles:true}));
+  }
   function resolve(ref) {
     const original = targets.get(ref), e = original?.node;
     if (!original || !e?.isConnected) throw Error("stale_browser_ref");
     const now = describe(e);
     if (!now.visible || !now.enabled || now.text !== original.text || now.type !== original.type ||
-      now.bbox.some((x,i) => Math.abs(x-original.bbox[i]) > 2)) throw Error("browser_target_changed");
-    const r = e.getBoundingClientRect();
-    const x = (Math.max(0,r.left)+Math.min(innerWidth,r.right))/2;
-    const y = (Math.max(0,r.top)+Math.min(innerHeight,r.bottom))/2;
-    const top = document.elementFromPoint(x,y);
-    if (!top || !(top === e || e.contains(top) || top.contains(e))) throw Error("browser_target_occluded");
-    return [e, now];
+      now.bbox.some((x,i) => Math.abs(x-original.bbox[i]) > 4)) throw Error("browser_target_changed");
+    const point = pointerPoint(e);
+    if (!point) throw Error("browser_target_occluded");
+    return [e, now, point];
   }
   globalThis.__personalAIBridge = {
     observe() {
@@ -115,9 +204,10 @@
       return {type:item.type};
     },
     preparePointer(ref) {
-      const [e] = resolve(ref), r = e.getBoundingClientRect();
-      return {x:(Math.max(0,r.left)+Math.min(innerWidth,r.right))/2,
-        y:(Math.max(0,r.top)+Math.min(innerHeight,r.bottom))/2};
+      const [e, _item, point] = resolve(ref);
+      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y))
+        throw Error("browser_pointer_unavailable");
+      return point;
     },
     act(ref, operation, options) {
       if (options.deadline_ms && Date.now() >= options.deadline_ms) throw Error("expired_browser_request");
@@ -131,19 +221,31 @@
         if (!item.writable) throw Error("browser_target_not_editable");
         const mode = options.mode || "replace";
         if (!["replace","append"].includes(mode)) throw Error("invalid_write_mode");
-        const text = String(options.text ?? ""), previous = e.value ?? e.innerText ?? "";
+        const text = String(options.text ?? ""), previous = editableValue(e);
         const next = mode === "replace" ? text : previous + text;
         e.focus({preventScroll:true});
         if (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement) {
           const proto = e instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
           Object.getOwnPropertyDescriptor(proto,"value").set.call(e,next);
+          e.dispatchEvent(new InputEvent("input", {
+            bubbles:true,
+            inputType:mode === "replace" ? "insertReplacementText" : "insertText",
+            data:text
+          }));
+          e.dispatchEvent(new Event("change", {bubbles:true}));
+        } else if (e.isContentEditable) {
+          writeContentEditable(e,next,mode,text);
         } else {
-          e.textContent = next;
+          throw Error("browser_target_not_editable");
         }
-        e.dispatchEvent(new InputEvent("input", {bubbles:true, inputType:"insertText", data:text}));
-        e.dispatchEvent(new Event("change", {bubbles:true}));
-        result = {dispatched:true, verified:(e.value ?? e.innerText ?? "") === next,
-          postcondition:"element_value", value:e.value ?? e.innerText ?? ""};
+        const actual = editableValue(e);
+        result = {
+          dispatched:true,
+          verified:normalizedEditableValue(actual) === normalizedEditableValue(next),
+          postcondition:"element_value",
+          value:actual,
+          requested_value:next
+        };
       } else throw Error("unknown_dom_action");
       targets.clear();
       return result;
