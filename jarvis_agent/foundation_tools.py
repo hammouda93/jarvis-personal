@@ -48,6 +48,7 @@ class FoundationToolAdapter:
         self.current_user_text = ""
         self.pending_verification = set()
         self.uncertain_scopes = set()
+        self._semantic_memory_write_authorized = False
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
@@ -55,6 +56,7 @@ class FoundationToolAdapter:
     def begin_turn(self, user_text):
         import re
         self.current_user_text = user_text
+        self._semantic_memory_write_authorized = False
         if not self.browser:
             return
         from .tools import route
@@ -72,8 +74,23 @@ class FoundationToolAdapter:
         elif re.search(r"\b(?:ouvre|ouvrir|open|inspecte|inspect)\b.*\b(?:application|app|exe|installateur|installer|fenetre|window)\b", user_text, re.I):
             self.browser_mode = False
 
+    def authorize_semantic_memory_write(self, user_text):
+        if str(user_text or "") != str(self.current_user_text or ""):
+            raise RuntimeError("semantic_memory_write_turn_mismatch")
+        self._semantic_memory_write_authorized = True
+
     def ollama_tools(self):
         tools = self.delegate.ollama_tools()
+        if self.memory and enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED"):
+            # Memory V5 is a pre-LLM runtime. Hide legacy memory tools from the
+            # conversational model so it cannot bypass semantic admission,
+            # projection, scoping or retrieval.
+            tools = [
+                item
+                for item in tools
+                if item["function"]["name"]
+                not in {"remember_information", "recall_information"}
+            ]
         if self.browser:
             legacy = {"list_browser_pages", "inspect_browser_page", "activate_browser_page",
                       "write_browser_element", "click_browser_element", "press_browser_element",
@@ -148,12 +165,28 @@ class FoundationToolAdapter:
             elif self.browser and name in {"open_web_search", "close_tab"}:
                 raise RuntimeError("use_generic_browser_primitives_with_observed_tab_id")
             elif name == "remember_information" and self.memory:
-                from .memory_router import MemoryRouter
-                if MemoryRouter().decide(self.current_user_text).kind != "write":
-                    raise RuntimeError("persistent_write_requires_explicit_user_request")
-                item = self.memory.remember(str(args.get("content", "")), tags=str(args.get("tags", "")))
-                return AgentActionResult(name=name, success=True, message="Information mémorisée localement.",
-                                         detail=f"memory_id={item.id}")
+                if enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED"):
+                    if not self._semantic_memory_write_authorized:
+                        raise RuntimeError(
+                            "persistent_write_requires_semantic_user_authorization"
+                        )
+                    self._semantic_memory_write_authorized = False
+                else:
+                    from .memory_router import MemoryRouter
+                    if MemoryRouter().decide(self.current_user_text).kind != "write":
+                        raise RuntimeError(
+                            "persistent_write_requires_explicit_user_request"
+                        )
+                item = self.memory.remember(
+                    str(args.get("content", "")),
+                    tags=str(args.get("tags", "")),
+                )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="Information mémorisée localement.",
+                    detail=f"memory_id={item.id}",
+                )
             elif name == "recall_information" and self.memory:
                 from .memory_retrieval import search
                 payload = [asdict(item) for item in search(self.memory, str(args.get("query", "")))]

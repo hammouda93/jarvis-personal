@@ -3755,9 +3755,37 @@ def build_agent_runtime() -> AgentRuntime:
     if foundation_tools is not None:
         runtime = FoundationRuntime(runtime, foundation_tools)
         if enabled("JARVIS_MEMORY_CORE_ENABLED"):
-            from .memory_router import MemoryRoutingRuntime
             from .memory_connectors import MEMORY_CONNECTORS
-            runtime = MemoryRoutingRuntime(runtime, tools, connector_resolver=MEMORY_CONNECTORS)
+            if enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED"):
+                from .memory_semantic_interpreter import (
+                    build_semantic_memory_interpreter,
+                )
+                from .semantic_memory_runtime import (
+                    SemanticMemoryEngine,
+                    SemanticMemoryRuntime,
+                )
+
+                if foundation_tools.memory is None:
+                    raise AgentRuntimeUnavailable(
+                        "Semantic Memory V5 requires Memory Core storage."
+                    )
+                semantic_engine = SemanticMemoryEngine(
+                    foundation_tools.memory,
+                    build_semantic_memory_interpreter(),
+                )
+                runtime = SemanticMemoryRuntime(
+                    runtime,
+                    tools,
+                    semantic_engine,
+                    connector_resolver=MEMORY_CONNECTORS,
+                )
+            else:
+                from .memory_router import MemoryRoutingRuntime
+                runtime = MemoryRoutingRuntime(
+                    runtime,
+                    tools,
+                    connector_resolver=MEMORY_CONNECTORS,
+                )
 
     if tracing_tools is not None and journal is not None:
         from .tracing_runtime import StructuredTracingRuntime

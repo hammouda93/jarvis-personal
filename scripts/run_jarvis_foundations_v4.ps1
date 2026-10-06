@@ -1,6 +1,10 @@
 param(
     [string]$PythonExe = ".\.venv\Scripts\python.exe",
     [switch]$MemoryCore,
+    [switch]$SemanticMemoryV5,
+    [string]$SemanticMemoryProvider = "",
+    [string]$SemanticMemoryModel = "",
+    [switch]$AllowCloudSemanticMemory,
     [switch]$BrowserCore,
     [switch]$ComputerCore,
     [switch]$All,
@@ -19,12 +23,21 @@ $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$previousPythonPath = $env:PYTHONPATH
+$previousPythonHome = $env:PYTHONHOME
 Push-Location $root
 try {
+    # Test/validation overlays must never leak into the live runtime.
+    Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+    Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
     if ($All) {
         $MemoryCore = $true
+        $SemanticMemoryV5 = $true
         $BrowserCore = $true
         $ComputerCore = $true
+    }
+    if ($SemanticMemoryV5) {
+        $MemoryCore = $true
     }
 
     $python = $PythonExe
@@ -38,7 +51,32 @@ try {
         $python = $command.Source
     }
 
+    Write-Host "Checking live runtime dependencies..."
+    $preflightArgs = @("-m", "jarvis_agent.runtime_preflight")
+    if ($ComputerCore) {
+        $preflightArgs += "--require-grounding"
+    }
+    & $python @preflightArgs
+    if ($LASTEXITCODE -ne 0) {
+        $repairCommand = ".\\scripts\\repair_live_environment.ps1 -PythonExe `"$python`""
+        if ($ComputerCore) {
+            $repairCommand += " -Grounding"
+        }
+        throw (
+            "Environnement live incomplet ou incohérent. Répare-le avec: " +
+            $repairCommand
+        )
+    }
+    Write-Host ""
     $env:JARVIS_MEMORY_CORE_ENABLED = $(if ($MemoryCore) { "1" } else { "0" })
+    $env:JARVIS_SEMANTIC_MEMORY_V5_ENABLED = $(if ($SemanticMemoryV5) { "1" } else { "0" })
+    if ($SemanticMemoryProvider) {
+        $env:JARVIS_MEMORY_SEMANTIC_PROVIDER = $SemanticMemoryProvider
+    }
+    if ($SemanticMemoryModel) {
+        $env:JARVIS_MEMORY_SEMANTIC_MODEL = $SemanticMemoryModel
+    }
+    $env:JARVIS_MEMORY_ALLOW_CLOUD_SEMANTICS = $(if ($AllowCloudSemanticMemory) { "1" } else { "0" })
     $env:JARVIS_BROWSER_CORE_ENABLED = $(if ($BrowserCore) { "1" } else { "0" })
     $env:JARVIS_COMPUTER_CORE_ENABLED = $(if ($ComputerCore) { "1" } else { "0" })
 
@@ -81,6 +119,12 @@ try {
 
     Write-Host "Personal AI Foundations V4 live"
     Write-Host ("  memory_core=" + $(if ($MemoryCore) { "on" } else { "off" }))
+    Write-Host ("  semantic_memory_v5=" + $(if ($SemanticMemoryV5) { "on" } else { "off" }))
+    if ($SemanticMemoryV5) {
+        Write-Host ("  semantic_memory_provider=" + $(if ($SemanticMemoryProvider) { $SemanticMemoryProvider } else { "auto" }))
+        Write-Host ("  semantic_memory_model=" + $(if ($SemanticMemoryModel) { $SemanticMemoryModel } else { "provider default" }))
+        Write-Host ("  semantic_memory_cloud=" + $(if ($AllowCloudSemanticMemory) { "explicitly allowed" } else { "blocked/local-first" }))
+    }
     Write-Host ("  browser_core=" + $(if ($BrowserCore) { "on (normal Chrome profile bridge)" } else { "off" }))
     Write-Host ("  computer_core=" + $(if ($ComputerCore) { "on (UIA -> OCR -> optional model)" } else { "off" }))
     if ($BrowserCore) {
@@ -97,5 +141,15 @@ try {
     exit $LASTEXITCODE
 }
 finally {
+    if ($null -eq $previousPythonPath) {
+        Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+    } else {
+        $env:PYTHONPATH = $previousPythonPath
+    }
+    if ($null -eq $previousPythonHome) {
+        Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+    } else {
+        $env:PYTHONHOME = $previousPythonHome
+    }
     Pop-Location
 }

@@ -30,7 +30,7 @@ jobs:
       - name: Compile V4 runtime modules
         shell: pwsh
         run: |
-          python -m py_compile jarvis_agent/agent_runtime.py jarvis_agent/assistant_v3.py jarvis_agent/browser_core.py jarvis_agent/browser_native_host.py jarvis_agent/browser_bridge_doctor.py jarvis_agent/computer_grounding.py jarvis_agent/fast_grounding.py jarvis_agent/foundation_tools.py jarvis_agent/memory_router.py jarvis_agent/memory_retrieval.py
+          python -m py_compile jarvis_agent/agent_runtime.py jarvis_agent/assistant_v3.py jarvis_agent/browser_core.py jarvis_agent/browser_native_host.py jarvis_agent/browser_bridge_doctor.py jarvis_agent/runtime_preflight.py jarvis_agent/computer_grounding.py jarvis_agent/fast_grounding.py jarvis_agent/foundation_tools.py jarvis_agent/memory_router.py jarvis_agent/memory_retrieval.py
 
       - name: Run V4 and critical historical Python tests
         shell: pwsh

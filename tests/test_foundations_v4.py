@@ -512,6 +512,62 @@ class GroundingReplayTests(unittest.TestCase):
         self.assertEqual(len(self.backend.actions),1)
 
 
+class RuntimePreflightTests(unittest.TestCase):
+    def test_live_preflight_rejects_codex_dependency_overlay_paths(self):
+        from unittest.mock import patch
+        from jarvis_agent.runtime_preflight import _live_path_contamination
+
+        with patch(
+            "jarvis_agent.runtime_preflight.sys.path",
+            [
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main",
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main\\.cache\\foundation-test-deps",
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main\\.venv\\Lib\\site-packages",
+            ],
+        ):
+            contaminated = _live_path_contamination()
+
+        self.assertEqual(
+            contaminated,
+            [
+                r"D:\\Django_Projects\\jarvis-main\\jarvis-main\\.cache\\foundation-test-deps"
+            ],
+        )
+
+
+    def test_live_preflight_normalizes_mixed_and_repeated_separators(self):
+        from jarvis_agent.runtime_preflight import _normalized_live_path
+
+        left = _normalized_live_path(
+            r"D:\\Django_Projects//jarvis-main\\.cache//foundation-test-deps"
+        )
+        right = _normalized_live_path(
+            r"d:\Django_Projects\jarvis-main\.cache\foundation-test-deps"
+        )
+
+        self.assertEqual(left, right)
+
+    def test_windows_automation_python_gate_allows_memory_only_legacy_runtime(self):
+        from jarvis_agent.runtime_preflight import (
+            _windows_automation_python_compatible,
+        )
+
+        ok, reason = _windows_automation_python_compatible((3, 9, 0))
+
+        self.assertFalse(ok)
+        self.assertIn("Python >=3.10.10", reason)
+
+    def test_windows_automation_python_gate_accepts_modern_runtime(self):
+        from jarvis_agent.runtime_preflight import (
+            _windows_automation_python_compatible,
+        )
+
+        ok, reason = _windows_automation_python_compatible((3, 12, 0))
+
+        self.assertTrue(ok)
+        self.assertEqual(reason, "")
+
+
 class FoundationPromptTests(unittest.TestCase):
     def test_browser_core_prompt_uses_only_current_browser_primitives(self):
         from unittest.mock import patch
