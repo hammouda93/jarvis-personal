@@ -108,6 +108,7 @@ class FixtureInterpreter(SemanticMemoryInterpreter):
             entities=query.entities,
             scope=query.scope,
             answer_mode=query.answer_mode,
+            answer_field=query.answer_field,
             exact_terms=query.exact_terms,
             raw_text=query.raw_text,
             confidence=query.confidence,
@@ -1098,6 +1099,133 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
                 ("Project Atlas", "Tunis"),
             )
 
+    def test_directional_triple_can_answer_subject_from_known_object(self):
+        store, _, engine = self.make_engine(
+            {
+                "ownership fact": (
+                    MemoryProjection(
+                        subject="alice",
+                        relation="owns",
+                        value="Project North",
+                        kind="relationship",
+                        entities=("Alice", "Project North"),
+                        cardinality="single",
+                        confidence=0.99,
+                    ),
+                ),
+            }
+        )
+        store.remember("ownership fact")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                subject="",
+                relation="owns",
+                object_hint="Project North",
+                entities=("Project North",),
+                answer_mode="single",
+                answer_field="subject",
+                raw_text="Who owns Project North?",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(result["answer_field"], "subject")
+        from jarvis_agent.semantic_memory_runtime import _answer_from_hit
+        self.assertEqual(
+            _answer_from_hit(result["hits"][0], "subject"),
+            "Alice",
+        )
+
+    def test_directional_triple_can_answer_value_from_known_subject(self):
+        store, _, engine = self.make_engine(
+            {
+                "ownership fact": (
+                    MemoryProjection(
+                        subject="alice",
+                        relation="owns",
+                        value="Project North",
+                        kind="relationship",
+                        entities=("Alice", "Project North"),
+                        cardinality="single",
+                        confidence=0.99,
+                    ),
+                ),
+            }
+        )
+        store.remember("ownership fact")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                subject="alice",
+                relation="owns",
+                answer_mode="single",
+                answer_field="value",
+                raw_text="What does Alice own?",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            result["hits"][0].fact.projection.value,
+            "Project North",
+        )
+
+    def test_broad_qualifier_collection_can_resolve_without_relation(self):
+        store, _, engine = self.make_engine(
+            {
+                "appointment": (
+                    projection(
+                        "has_appointment_with",
+                        "doctor",
+                        kind="event",
+                        qualifiers={"date": "2026-10-09"},
+                    ),
+                ),
+                "deadline": (
+                    projection(
+                        "project_deadline",
+                        "submit report",
+                        kind="event",
+                        qualifiers={"date": "2026-10-09"},
+                    ),
+                ),
+                "other day": (
+                    projection(
+                        "has_appointment_with",
+                        "dentist",
+                        kind="event",
+                        qualifiers={"date": "2026-10-10"},
+                    ),
+                ),
+            }
+        )
+        store.remember("appointment")
+        store.remember("deadline")
+        store.remember("other day")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="",
+                qualifiers={"date": "2026-10-09"},
+                answer_mode="collection",
+                answer_field="value",
+                raw_text="What do I have on that date?",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            {
+                hit.fact.projection.value
+                for hit in result["hits"]
+            },
+            {"doctor", "submit report"},
+        )
+
     def test_collection_query_keeps_multiple_values_same_relation(self):
         store, _, engine = self.make_engine(
             {
@@ -1931,6 +2059,49 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertIn("project owner: Alice", result.text)
         self.assertIn("project deadline: 2026-11-01", result.text)
         self.assertNotIn("Bob", result.text)
+
+    def test_runtime_renders_subject_when_inverse_relation_is_requested(self):
+        question = "Who owns Project North?"
+        turns = {
+            question: MemoryTurnInterpretation(
+                operation="recall",
+                query=MemoryQueryFrame(
+                    subject="",
+                    relation="owns",
+                    object_hint="Project North",
+                    entities=("Project North",),
+                    answer_mode="single",
+                    answer_field="subject",
+                    raw_text=question,
+                    confidence=0.99,
+                ),
+                confidence=0.99,
+                reason="inverse relational recall",
+            )
+        }
+        projections = {
+            "ownership": (
+                MemoryProjection(
+                    subject="alice",
+                    relation="owns",
+                    value="Project North",
+                    kind="relationship",
+                    entities=("Alice", "Project North"),
+                    cardinality="single",
+                    confidence=0.99,
+                ),
+            )
+        }
+        store, _, delegate, _, runtime = self.build_runtime(
+            turns=turns,
+            projections=projections,
+        )
+        store.remember("ownership")
+
+        result = runtime.run(question)
+
+        self.assertEqual(result.text, "Alice")
+        self.assertEqual(delegate.calls, 0)
 
     def test_session_semantic_fact_is_recalled_before_persistent_memory(self):
         statement = "I am currently working on project Atlas Nova."
