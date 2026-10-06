@@ -274,11 +274,27 @@ FOUNDATION BROWSER CORE ACTIF:
   inspect_browser_page / *_browser_element pour le contenu web;
 - utilise browser_list_tabs / browser_get_active_tab pour obtenir les vrais
   tab_id du profil Chrome utilisateur;
-- utilise browser_navigate puis browser_observe_dom; les refs browser sont
-  opaques, liées à un onglet/document et expirent après mutation ou nouvelle
-  observation;
-- localise une cible avec browser_find ou dans browser_observe_dom, puis utilise
-  browser_click / browser_write / browser_press;
+- browser_observe_dom est le capteur principal du contenu web. Il expose les
+  vrais contrôles de la page avec rôle accessible, nom/label, placeholder,
+  valeur, href, état writable/actionable, bbox et ordre visuel. Observe avant
+  de deviner un sélecteur, un rôle ou une destination;
+- browser_find sert seulement à filtrer des contrôles réellement présents:
+  son champ text est le nom/label/placeholder de la cible, jamais le texte que
+  tu veux saisir. Réutilise les rôles retournés par l'observation (searchbox,
+  textbox, link, button...) au lieu d'inventer un type HTML comme "input";
+- open_url sert à ouvrir un nouveau site/onglet. Pour continuer une mission
+  dans une page déjà ouverte, conserve le tab_id actuel. browser_navigate exige
+  un tab_id et navigue cet onglet existant; ne crée pas un nouvel onglet pour
+  contourner une cible que tu n'as pas réussi à observer;
+- pour une recherche dans le site déjà ouvert, observe le DOM, choisis le champ
+  writable pertinent, écris la requête puis déclenche explicitement la recherche
+  avec un contrôle/touche observé. Ne fabrique pas une URL de recherche spécifique
+  au site si l'interface actuelle peut être utilisée;
+- pour "premier/deuxième résultat", "première vidéo", etc., observe les éléments
+  réellement affichés et raisonne sur rôle, nom, href, bbox/ordre visuel. Clique
+  ensuite la ref choisie. N'invente jamais directement l'URL du résultat;
+- les refs browser sont opaques, liées à un onglet/document et expirent après
+  mutation ou nouvelle observation;
 - après navigation, click, press, back/forward ou download, utilise
   browser_verify avec une postcondition explicite avant d'affirmer le succès;
 - browser_write agit uniquement dans le tab_id observé. Ne substitue jamais une
@@ -2530,14 +2546,14 @@ class GroqResponsesAgent:
             parsed = result.detail
 
         if isinstance(parsed, dict):
-            if name in {"inspect_active_window", "inspect_interface", "inspect_browser_page"}:
+            if name in {"inspect_active_window", "inspect_interface", "inspect_browser_page", "browser_observe_dom"}:
                 parsed = dict(parsed)
                 controls = [
                     dict(item)
                     for item in list(parsed.get("controls") or [])
                     if isinstance(item, dict)
                 ]
-                if name == "inspect_browser_page":
+                if name in {"inspect_browser_page", "browser_observe_dom"}:
                     # DOM order is often dominated by site chrome. Prioritize
                     # controls that are most likely to represent the user's
                     # actual task content before applying any token budget.
@@ -2575,18 +2591,28 @@ class GroqResponsesAgent:
                                 key: item.get(key)
                                 for key in (
                                     "ref", "type", "name", "semantic_role",
-                                    "value", "writable", "actionable",
+                                    "placeholder", "aria_label", "input_type",
+                                    "href", "value", "writable", "actionable",
                                     "enabled", "selected", "focused", "region",
+                                    "bbox", "visual_index", "dom_index",
                                 )
                                 if item.get(key) not in (None, "", False)
                             }
                         )
                     parsed.pop("accessibility_tree", None)
-                    visible_text = [
-                        str(item)
-                        for item in list(parsed.get("visible_text") or [])
-                        if str(item).strip()
-                    ][:60]
+                    raw_visible_text = parsed.get("visible_text") or ""
+                    if isinstance(raw_visible_text, str):
+                        visible_text = [
+                            line.strip()
+                            for line in raw_visible_text.splitlines()
+                            if line.strip()
+                        ][:80]
+                    else:
+                        visible_text = [
+                            str(item).strip()
+                            for item in list(raw_visible_text)
+                            if str(item).strip()
+                        ][:80]
                     browser_capabilities = {
                         "writable": [
                             {
@@ -2605,15 +2631,23 @@ class GroqResponsesAgent:
                             if item.get("actionable") and item.get("ref")
                         ][:32],
                     }
+                    browser_meta = (
+                        {"tab": parsed.get("tab")}
+                        if name == "browser_observe_dom"
+                        else {"window": parsed.get("window")}
+                    )
                     parsed = {
                         "observation_id": parsed.get("observation_id"),
-                        "window": parsed.get("window"),
+                        **browser_meta,
                         "browser": True,
                         "sensor": parsed.get("sensor") or "dom",
                         "visible_text": visible_text,
                         "controls": controls,
                         "capabilities": browser_capabilities,
                         "snapshot": parsed.get("snapshot") or {},
+                        "frames_seen": parsed.get("frames_seen"),
+                        "frames_observed": parsed.get("frames_observed"),
+                        "frames_skipped": parsed.get("frames_skipped"),
                     }
                 capabilities = dict(parsed.get("capabilities") or {})
                 writable = [
@@ -3391,17 +3425,34 @@ class GroqResponsesAgent:
                     )
                 elif (
                     name == "open_url"
-                    and _requests_search_submission(user_text)
+                    and (
+                        _requests_search_submission(user_text)
+                        or _requests_result_selection(user_text)
+                    )
                 ):
                     result = AgentActionResult(
                         name=name,
                         success=False,
                         message=(
-                            "La demande consiste à lancer une recherche déjà "
-                            "préparée. Inspectez l'interface courante et activez "
-                            "son contrôle de recherche au lieu de rouvrir le site."
+                            "La demande vise une action dans l'interface web déjà "
+                            "ouverte. Observez l'onglet courant et agissez sur une "
+                            "cible réelle au lieu d'ouvrir une nouvelle URL."
                         ),
-                        detail="open_url_blocked_for_search_submission",
+                        detail="open_url_blocked_for_existing_browser_context",
+                    )
+                elif (
+                    name == "browser_navigate"
+                    and _requests_result_selection(user_text)
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La demande vise un résultat visible. Utilisez "
+                            "browser_observe_dom puis browser_click sur une ref "
+                            "réellement observée au lieu de fabriquer son URL."
+                        ),
+                        detail="browser_navigate_blocked_for_result_selection",
                     )
                 elif (
                     name == "close_window"
