@@ -278,10 +278,15 @@ FOUNDATION BROWSER CORE ACTIF:
   vrais contrôles de la page avec rôle accessible, nom/label, placeholder,
   valeur, href, état writable/actionable, bbox et ordre visuel. Observe avant
   de deviner un sélecteur, un rôle ou une destination;
-- browser_find sert seulement à filtrer des contrôles réellement présents:
-  son champ text est le nom/label/placeholder de la cible, jamais le texte que
-  tu veux saisir. Réutilise les rôles retournés par l'observation (searchbox,
-  textbox, link, button...) au lieu d'inventer un type HTML comme "input";
+- browser_find sert seulement à filtrer le SNAPSHOT COURANT: il ne crée
+  pas une nouvelle observation tant que ce snapshot existe et n'invalide donc
+  pas ses refs. Son champ text est le nom/label/placeholder de la cible, jamais
+  le texte que tu veux saisir. Réutilise les rôles retournés par l'observation
+  (searchbox, textbox, link, button...) au lieu d'inventer un type HTML comme
+  "input";
+- après browser_write, utilise directement post_observation si elle est fournie:
+  elle contient les refs fraîches après mutation et évite un nouvel appel
+  d'observation inutile;
 - open_url sert à ouvrir un nouveau site/onglet. Pour continuer une mission
   dans une page déjà ouverte, conserve le tab_id actuel. browser_navigate exige
   un tab_id et navigue cet onglet existant; ne crée pas un nouvel onglet pour
