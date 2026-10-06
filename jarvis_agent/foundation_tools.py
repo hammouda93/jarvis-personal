@@ -264,6 +264,23 @@ class FoundationRuntime:
             return replace(result,text="Des actions ont été envoyées, mais leur résultat reste à vérifier dans l'interface.")
         return result
 
+    def run_with_context(self, user_text, context, *, log=None, phase=None):
+        self.tools.begin_turn(user_text)
+        method = getattr(self.delegate, "run_with_context", None)
+        if method is None:
+            result = self.delegate.run(user_text, log=log, phase=phase)
+        else:
+            result = method(
+                user_text,
+                context,
+                log=log,
+                phase=phase,
+            )
+        if self.tools.pending_verification:
+            from dataclasses import replace
+            return replace(result,text="Des actions ont été envoyées, mais leur résultat reste à vérifier dans l'interface.")
+        return result
+
     def record_external_turn(self, user_text, assistant_text, **kwargs):
         self.tools.begin_turn(user_text)
         method = getattr(self.delegate, "record_external_turn", None)
