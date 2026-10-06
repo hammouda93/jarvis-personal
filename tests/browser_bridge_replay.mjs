@@ -11,6 +11,7 @@ const operations = [];
 let domItems = [];
 let observed = new Map();
 let failMouseRelease = false;
+let includeNullFrame = false;
 const event = () => ({addListener(){}});
 globalThis.chrome = {
   tabs:{
@@ -30,7 +31,9 @@ globalThis.chrome = {
     if(method === 'observe'){
       const controls=domItems.map(item=>({...item,ref:crypto.randomUUID()}));
       observed = new Map(controls.map(c=>[c.ref,c]));
-      return [{documentId:'doc-'+options.target.tabId,frameId:0,result:{controls,visible_text:'Observed header',truncated:false}}];
+      const frames=[{documentId:'doc-'+options.target.tabId,frameId:0,result:{controls,visible_text:'Observed header',truncated:false}}];
+      if(includeNullFrame) frames.push({documentId:'opaque-frame',frameId:7,result:null});
+      return frames;
     }
     if(method === 'prepare'){
       if(!observed.has(args[0])) throw Error('stale_browser_ref');
@@ -64,6 +67,7 @@ function request(operation,args={}){return action({id:crypto.randomUUID(),versio
 beforeEach(()=>{
   tabs.clear();operations.length=0;observed.clear();
   failMouseRelease=false;
+  includeNullFrame=false;
   tabs.set(1,{id:1,windowId:9,active:true,title:'Browser One',url:'https://one.example/'});
   tabs.set(2,{id:2,windowId:10,active:false,title:'Browser Two',url:'https://two.example/'});
   domItems=[{text:'Search',type:'searchbox',writable:true,bbox:[1,2,80,30]},
@@ -84,6 +88,19 @@ test('exact find avoids contact/result prefix confusion',async()=>{
   const result=await request('find',{tab_id:1,text:'Exact Person',exact:true});
   assert.equal(result.matches.length,1);
   assert.equal(result.matches[0].text,'Exact Person');
+});
+test('partial or opaque frames do not invalidate the whole DOM observation',async()=>{
+  includeNullFrame=true;
+  const result=await request('observe_dom',{tab_id:1});
+  assert.equal(result.controls.length,3);
+  assert.equal(result.frames_seen,2);
+  assert.equal(result.frames_observed,1);
+  assert.equal(result.frames_skipped,1);
+});
+test('generic input alias can find an observed writable field without site rules',async()=>{
+  const result=await request('find',{tab_id:1,type:'input'});
+  assert.equal(result.matches.length,1);
+  assert.equal(result.matches[0].type,'searchbox');
 });
 test('cross-tab ref is rejected before any mutation',async()=>{
   const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
@@ -148,7 +165,7 @@ test('download dispatch requires separate completion proof',async()=>{
 
 function fakeDOM(){
   class Input {
-    constructor(){this.tagName='INPUT';this.type='text';this.attributes={'aria-label':'Search'};this.rect={left:5,top:5,right:100,bottom:30,width:95,height:25};
+    constructor(){this.tagName='INPUT';this.type='search';this.attributes={'aria-label':'Search','placeholder':'Search videos'};this.rect={left:5,top:5,right:100,bottom:30,width:95,height:25};
       this.labels=[];this.isConnected=true;this.readOnly=false;this.disabled=false;this._value='';this.events=[];}
     getAttribute(key){return this.attributes[key]??null} querySelector(){return null}
     getBoundingClientRect(){return this.rect} matches(){return true}
@@ -166,6 +183,17 @@ function fakeDOM(){
   vm.runInNewContext(fs.readFileSync('extensions/personal-ai-browser-bridge/dom_bridge.js','utf8'),sandbox);
   return{bridge:sandbox.__personalAIBridge,input,document};
 }
+test('DOM references expose accessible semantics and bind the actual node',()=>{
+  const {bridge}=fakeDOM();const item=bridge.observe().controls[0];
+  assert.equal(item.type,'searchbox');
+  assert.equal(item.semantic_role,'searchbox');
+  assert.equal(item.aria_label,'Search');
+  assert.equal(item.placeholder,'Search videos');
+  assert.equal(item.input_type,'search');
+  assert.equal(item.writable,true);
+  assert.equal(item.visual_index,1);
+  assert.equal(item.dom_index,1);
+});
 test('DOM references bind actual node; write verifies Unicode and expires',()=>{
   const {bridge,input}=fakeDOM();const ref=bridge.observe().controls[0].ref;
   assert.equal(bridge.act(ref,'write',{text:'été عربي'}).verified,true);
