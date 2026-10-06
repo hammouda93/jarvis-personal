@@ -288,9 +288,10 @@ FOUNDATION BROWSER CORE ACTIF:
   le texte que tu veux saisir. Réutilise les rôles retournés par l'observation
   (searchbox, textbox, link, button...) au lieu d'inventer un type HTML comme
   "input";
-- après browser_write, utilise directement post_observation si elle est fournie:
-  elle contient les refs fraîches après mutation. Ne rappelle ni observe_dom ni
-  find si la cible suivante est déjà présente dans post_observation;
+- après browser_write, browser_click ou browser_press, utilise directement
+  post_observation si elle est fournie: elle contient l'état frais après mutation.
+  Ne rappelle ni observe_dom ni find si la cible suivante est déjà présente dans
+  cette post_observation;
 - pour "premier/deuxième/troisième résultat", si le snapshot courant contient les
   vrais liens/résultats et leur visual_index, choisis la ref correspondante et
   clique-la directement. Ne fais pas un round de lecture supplémentaire sans
@@ -2597,7 +2598,7 @@ class GroqResponsesAgent:
 
         if isinstance(parsed, dict):
             if (
-                name == "browser_write"
+                name in {"browser_write", "browser_click", "browser_press"}
                 and isinstance(parsed.get("post_observation"), dict)
             ):
                 observation = dict(parsed["post_observation"])
