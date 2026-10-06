@@ -15,6 +15,7 @@ from .semantic_memory import (
     MemoryTurnInterpretation,
     SemanticFactRecord,
     SemanticMemoryHit,
+    normalize_key,
     normalize_text,
     query_is_specific_enough,
     score_semantic_fact,
@@ -402,6 +403,7 @@ class SemanticMemoryEngine:
                 "status": "missing",
                 "hits": [],
                 "effective_relation": effective_query.relation,
+                "answer_field": effective_query.answer_field,
             }
 
         if query.answer_mode in {"collection", "timeline"}:
@@ -416,6 +418,7 @@ class SemanticMemoryEngine:
                 "mode": query.answer_mode,
                 "hits": selected,
                 "effective_relation": effective_query.relation,
+                "answer_field": effective_query.answer_field,
             }
 
         top = hits[0]
@@ -426,8 +429,18 @@ class SemanticMemoryEngine:
                 == second.fact.projection.relation
             )
             different_value = (
-                normalize_text(top.fact.projection.value)
-                != normalize_text(second.fact.projection.value)
+                normalize_text(
+                    _answer_from_hit(
+                        top,
+                        effective_query.answer_field,
+                    )
+                )
+                != normalize_text(
+                    _answer_from_hit(
+                        second,
+                        effective_query.answer_field,
+                    )
+                )
             )
             if (
                 second.score >= top.score - self.ambiguity_margin
@@ -440,6 +453,7 @@ class SemanticMemoryEngine:
                     "status": "ambiguous",
                     "hits": hits[:4],
                     "effective_relation": effective_query.relation,
+                    "answer_field": effective_query.answer_field,
                 }
 
         return {
@@ -447,6 +461,7 @@ class SemanticMemoryEngine:
             "mode": "single",
             "hits": [top],
             "effective_relation": effective_query.relation,
+            "answer_field": effective_query.answer_field,
         }
 
     def refine(
@@ -469,11 +484,33 @@ def _memory_id_from_detail(detail: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _distinct_values(hits: list[SemanticMemoryHit]) -> list[str]:
+def _subject_display(projection: MemoryProjection) -> str:
+    subject = str(projection.subject or "").strip()
+    if not subject:
+        return ""
+    for entity in projection.entities:
+        if normalize_key(entity) == subject:
+            return str(entity).strip()
+    return subject.replace("_", " ").strip()
+
+
+def _answer_from_hit(
+    hit: SemanticMemoryHit,
+    answer_field: str,
+) -> str:
+    if answer_field == "subject":
+        return _subject_display(hit.fact.projection)
+    return hit.fact.projection.value.strip()
+
+
+def _distinct_values(
+    hits: list[SemanticMemoryHit],
+    answer_field: str = "value",
+) -> list[str]:
     result = []
     seen = set()
     for hit in hits:
-        value = hit.fact.projection.value.strip()
+        value = _answer_from_hit(hit, answer_field)
         key = normalize_text(value)
         if not key or key in seen:
             continue
@@ -652,7 +689,10 @@ class SemanticMemoryRuntime:
                 True,
             )
         if status == "ambiguous":
-            choices = _distinct_values(hits)
+            answer_field = str(
+                resolution.get("answer_field") or "value"
+            )
+            choices = _distinct_values(hits, answer_field)
             detail = " ; ".join(choices[:4])
             return (
                 "J'ai plusieurs souvenirs plausibles"
@@ -660,7 +700,10 @@ class SemanticMemoryRuntime:
                 + ". Lequel voulez-vous préciser ?",
                 True,
             )
-        values = _distinct_values(hits)
+        answer_field = str(
+            resolution.get("answer_field") or "value"
+        )
+        values = _distinct_values(hits, answer_field)
         if not values:
             return (
                 "J'ai retrouvé le souvenir, mais sa valeur sémantique "
@@ -679,7 +722,10 @@ class SemanticMemoryRuntime:
                 seen = set()
                 for hit in hits:
                     relation = hit.fact.projection.relation.replace("_", " ").strip()
-                    value = hit.fact.projection.value.strip()
+                    value = _answer_from_hit(
+                        hit,
+                        answer_field,
+                    )
                     key = (
                         normalize_text(relation),
                         normalize_text(value),
@@ -906,7 +952,8 @@ class SemanticMemoryRuntime:
             log(
                 "[MEMORY_V5] recall_status="
                 f"{resolution.get('status')} relation={query.relation} "
-                f"mode={query.answer_mode}"
+                f"mode={query.answer_mode} "
+                f"answer_field={query.answer_field}"
             )
         hit_payload = []
         for hit in list(resolution.get("hits") or [])[:8]:
@@ -926,6 +973,7 @@ class SemanticMemoryRuntime:
                 "relation": query.relation,
                 "scope": query.scope,
                 "answer_mode": query.answer_mode,
+                "answer_field": query.answer_field,
                 "hits": hit_payload,
             },
         )
