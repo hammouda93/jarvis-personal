@@ -593,7 +593,36 @@ class FoundationPromptTests(unittest.TestCase):
         self.assertIn("browser_list_tabs", prompt)
         self.assertIn("browser_observe_dom", prompt)
         self.assertIn("browser_verify", prompt)
-        self.assertIn("Ne substitue jamais une", prompt)
+        self.assertIn("placeholder", prompt)
+        self.assertIn("ordre visuel", prompt)
+        self.assertIn("browser_navigate exige", prompt)
+
+    def test_browser_tool_contract_requires_existing_tab_for_navigate(self):
+        class Delegate:
+            @staticmethod
+            def _ollama(name, description, properties, required):
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required,
+                        },
+                    },
+                }
+            def ollama_tools(self): return []
+
+        adapter = FoundationToolAdapter(Delegate(), browser=object())
+        tools = {
+            item["function"]["name"]: item["function"]
+            for item in adapter.ollama_tools()
+        }
+        self.assertIn("tab_id", tools["browser_navigate"]["parameters"]["required"])
+        self.assertIn("CAPTEUR PRINCIPAL", tools["browser_observe_dom"]["description"])
+        self.assertIn("jamais le texte", tools["browser_find"]["description"])
 
     def test_computer_core_prompt_requires_focus_probe_before_opaque_write(self):
         from unittest.mock import patch
@@ -627,6 +656,15 @@ class FoundationRuntimeTests(unittest.TestCase):
         self.assertTrue(adapter.pending_verification)
         adapter.execute("browser_verify",{"tab_id":7,"text":"correct tab"})
         self.assertFalse(adapter.pending_verification)
+
+    def test_browser_navigate_rejects_missing_observed_tab_id(self):
+        class Browser:
+            def call(self, operation, **args):
+                raise AssertionError("transport must not be reached")
+        adapter = FoundationToolAdapter(None, browser=Browser())
+        result = adapter.execute("browser_navigate", {"url": "https://example.com"})
+        self.assertFalse(result.success)
+        self.assertIn("requires_observed_tab_id", result.detail)
 
     def test_unknown_browser_action_outcome_cannot_be_announced_as_completed(self):
         class Browser:
