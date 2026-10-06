@@ -2074,6 +2074,17 @@ class SemanticMemoryFactoryIntegrationTests(unittest.TestCase):
                     )
 
 
+class SemanticMemoryLiveRunnerTests(unittest.TestCase):
+    def test_live_evaluator_is_importable_as_repo_root_module(self):
+        import importlib
+
+        module = importlib.import_module(
+            "scripts.evaluate_semantic_memory_v5"
+        )
+
+        self.assertTrue(callable(module.main))
+
+
 class SemanticInterpreterContractTests(unittest.TestCase):
     def test_invalid_or_weak_projection_is_rejected_without_mutating_raw_memory(self):
         with tempfile.TemporaryDirectory() as folder:
