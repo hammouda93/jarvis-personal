@@ -2074,6 +2074,18 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         )
         return store, interpreter, delegate, tools, runtime
 
+    def test_routed_browser_operation_skips_semantic_memory_model(self):
+        store, interpreter, delegate, _, runtime = self.build_runtime(
+            turns={},
+            projections={},
+        )
+
+        result = runtime.run("recherche Lionel Messi")
+
+        self.assertEqual(result.text, "delegate:recherche Lionel Messi")
+        self.assertEqual(delegate.calls, 1)
+        self.assertEqual(interpreter.turn_calls, 0)
+
     def test_arbitrary_explicit_write_is_admitted_by_semantic_intent_not_regex(self):
         user_text = "Please keep this detail for another day: codeword Zeta"
         raw = "codeword Zeta"
