@@ -2,13 +2,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+from jarvis_agent.memory_core_store import MemoryCoreStore
 from jarvis_agent.memory_semantic_interpreter import (
     ModelSemanticMemoryInterpreter,
 )
-from jarvis_agent.semantic_memory import semantic_key_similarity
+from jarvis_agent.semantic_memory import (
+    SemanticFactRecord,
+    normalize_text,
+    semantic_key_similarity,
+)
+from jarvis_agent.semantic_memory_runtime import (
+    SemanticMemoryEngine,
+    _answer_from_hit,
+)
 
 
 CASES = [
@@ -17,18 +28,21 @@ CASES = [
         "memory": "My preferred code editor is Cursor.",
         "query": "Which code editor do I prefer?",
         "mode": "single",
+        "answers": ["Cursor"],
     },
     {
         "name": "collection_fr",
         "memory": "Je veux regarder Inception et Gladiator.",
         "query": "Quels films est-ce que je veux regarder ?",
         "mode": "collection",
+        "answers": ["Inception", "Gladiator"],
     },
     {
         "name": "date_fr",
         "memory": "J'ai rendez-vous avec le médecin le 09/10/2026.",
         "query": "Qu'est-ce que j'ai prévu le 09/10/2026 ?",
-        "mode": "single",
+        "mode": "collection",
+        "answers": ["doctor"],
         "exact": "09/10/2026",
     },
     {
@@ -36,19 +50,24 @@ CASES = [
         "memory": "Pour le projet Atlas, la date limite est le 1 novembre 2026.",
         "query": "Quelle est la deadline du projet Atlas ?",
         "mode": "single",
+        "answers": ["2026-11-01"],
+        "entity": "Project Atlas",
     },
     {
         "name": "preference_ar",
         "memory": "لغتي المفضلة هي الفرنسية.",
         "query": "ما هي لغتي المفضلة؟",
         "mode": "single",
+        "answers": ["French"],
     },
     {
         "name": "entity_context_en",
         "memory": "Alice owns Project North while Bob owns Project South.",
         "query": "Who owns Project North?",
         "mode": "single",
+        "answers": ["Alice"],
         "entity": "Project North",
+        "answer_field": "subject",
     },
     {
         "name": "relative_time_projection_en",
@@ -56,20 +75,72 @@ CASES = [
         "created_at": "2026-10-08T12:00:00+00:00",
         "query": "What appointment do I have on 2026-10-09?",
         "mode": "single",
+        "answers": ["doctor"],
         "projection_date": "2026-10-09",
     },
 ]
+
+
+def _resolved_answers(resolution) -> list[str]:
+    answer_field = str(
+        resolution.get("answer_field") or "value"
+    )
+    result = []
+    seen = set()
+    for hit in list(resolution.get("hits") or []):
+        value = _answer_from_hit(hit, answer_field).strip()
+        key = normalize_text(value)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
+
+
+def _same_answers(actual, expected) -> bool:
+    return {
+        normalize_text(value)
+        for value in actual
+        if normalize_text(value)
+    } == {
+        normalize_text(value)
+        for value in expected
+        if normalize_text(value)
+    }
+
+
+def _session_records(facts, raw_text: str):
+    now = datetime.now(timezone.utc).isoformat()
+    return tuple(
+        SemanticFactRecord(
+            fact_id=-(index + 1),
+            memory_id=-(index + 1),
+            ordinal=index,
+            projection=fact,
+            provenance="session",
+            parser_version="live-semantic-acceptance",
+            status="active",
+            raw_content=raw_text,
+            created_at=now,
+        )
+        for index, fact in enumerate(facts)
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--provider", default="auto")
     parser.add_argument("--model", default="")
+    # Kept for CLI compatibility with early V5 runners. Acceptance is now
+    # end-to-end retrieval, not lexical relation-name similarity.
     parser.add_argument("--threshold", type=float, default=0.48)
     parser.add_argument(
         "--allow-cloud",
         action="store_true",
-        help="Explicitly permit sending the synthetic acceptance corpus to a cloud provider.",
+        help=(
+            "Explicitly permit sending the synthetic acceptance corpus "
+            "to a cloud provider."
+        ),
     )
     args = parser.parse_args()
 
@@ -101,19 +172,54 @@ def main() -> int:
         turn = interpreter.interpret_turn(case["query"])
         query_seconds = time.perf_counter() - t0
 
-        similarities = []
+        relation_similarity = 0.0
         if turn.query is not None:
-            similarities = [
-                semantic_key_similarity(
-                    turn.query.relation,
-                    fact.relation,
-                )
-                for fact in facts
-            ]
-        best = max(similarities or [0.0])
+            relation_similarity = max(
+                (
+                    semantic_key_similarity(
+                        turn.query.relation,
+                        fact.relation,
+                    )
+                    for fact in facts
+                ),
+                default=0.0,
+            )
 
+        resolution = {
+            "status": "not_run",
+            "hits": [],
+            "effective_relation": "",
+            "answer_field": (
+                turn.query.answer_field
+                if turn.query is not None
+                else "value"
+            ),
+        }
+        if turn.operation == "recall" and turn.query is not None and facts:
+            with tempfile.TemporaryDirectory() as folder:
+                store = MemoryCoreStore(
+                    Path(folder) / "semantic-live.sqlite3"
+                )
+                item = store.remember(case["memory"])
+                store.save_projection(
+                    item.id,
+                    facts,
+                    parser_version=interpreter.parser_version,
+                    provenance="legacy",
+                )
+                engine = SemanticMemoryEngine(
+                    store,
+                    interpreter,
+                    min_score=0.45,
+                )
+                resolution = engine.resolve(turn.query)
+
+        answers = _resolved_answers(resolution)
         row = {
             "name": case["name"],
+            "projected_subjects": [
+                fact.subject for fact in facts
+            ],
             "projected_relations": [
                 fact.relation for fact in facts
             ],
@@ -121,13 +227,28 @@ def main() -> int:
                 fact.value for fact in facts
             ],
             "operation": turn.operation,
+            "query_subject": (
+                turn.query.subject
+                if turn.query is not None
+                else ""
+            ),
             "query_relation": (
                 turn.query.relation
                 if turn.query is not None
                 else ""
             ),
+            "query_object_hint": (
+                turn.query.object_hint
+                if turn.query is not None
+                else ""
+            ),
             "answer_mode": (
                 turn.query.answer_mode
+                if turn.query is not None
+                else ""
+            ),
+            "answer_field": (
+                turn.query.answer_field
                 if turn.query is not None
                 else ""
             ),
@@ -141,7 +262,17 @@ def main() -> int:
                 for fact in facts
                 for entity in fact.entities
             ],
-            "relation_similarity": round(best, 4),
+            "raw_relation_similarity_diagnostic": round(
+                relation_similarity,
+                4,
+            ),
+            "resolution_status": resolution.get("status"),
+            "effective_relation": resolution.get(
+                "effective_relation",
+                "",
+            ),
+            "resolved_answers": answers,
+            "expected_answers": case["answers"],
             "query_seconds": round(query_seconds, 3),
         }
 
@@ -153,11 +284,6 @@ def main() -> int:
             failures.append(
                 f"{case['name']}: no semantic facts projected"
             )
-        if best < args.threshold:
-            failures.append(
-                f"{case['name']}: relation similarity {best:.3f} "
-                f"< {args.threshold:.3f}"
-            )
         if (
             turn.query is not None
             and turn.query.answer_mode != case["mode"]
@@ -166,6 +292,29 @@ def main() -> int:
                 f"{case['name']}: expected mode {case['mode']}, "
                 f"got {turn.query.answer_mode}"
             )
+        expected_answer_field = case.get("answer_field")
+        if (
+            expected_answer_field
+            and turn.query is not None
+            and turn.query.answer_field != expected_answer_field
+        ):
+            failures.append(
+                f"{case['name']}: expected answer_field "
+                f"{expected_answer_field}, got "
+                f"{turn.query.answer_field}"
+            )
+        if turn.operation == "recall" and facts:
+            if resolution.get("status") != "resolved":
+                failures.append(
+                    f"{case['name']}: retrieval status "
+                    f"{resolution.get('status')}"
+                )
+            elif not _same_answers(answers, case["answers"]):
+                failures.append(
+                    f"{case['name']}: resolved answers {answers!r} "
+                    f"!= expected {case['answers']!r}"
+                )
+
         expected_projection_date = case.get("projection_date")
         if expected_projection_date:
             projection_dates = {
@@ -244,25 +393,49 @@ def main() -> int:
     )
     statement = interpreter.interpret_turn(session_statement)
     question = interpreter.interpret_turn(session_question)
-    session_best = 0.0
-    if question.query is not None:
-        session_best = max(
-            (
-                semantic_key_similarity(
-                    question.query.relation,
-                    fact.relation,
-                )
-                for fact in statement.session_facts
-            ),
-            default=0.0,
-        )
+    session_resolution = {
+        "status": "not_run",
+        "hits": [],
+        "answer_field": (
+            question.query.answer_field
+            if question.query is not None
+            else "value"
+        ),
+    }
+    if (
+        statement.session_facts
+        and question.operation == "recall"
+        and question.query is not None
+    ):
+        with tempfile.TemporaryDirectory() as folder:
+            store = MemoryCoreStore(
+                Path(folder) / "semantic-session.sqlite3"
+            )
+            engine = SemanticMemoryEngine(
+                store,
+                interpreter,
+                min_score=0.45,
+            )
+            session_resolution = engine.resolve(
+                question.query,
+                session_facts=_session_records(
+                    statement.session_facts,
+                    session_statement,
+                ),
+            )
+    session_answers = _resolved_answers(session_resolution)
     results.append(
         {
             "name": "session_context",
             "statement_operation": statement.operation,
+            "session_subjects": [
+                fact.subject for fact in statement.session_facts
+            ],
             "session_relations": [
-                fact.relation
-                for fact in statement.session_facts
+                fact.relation for fact in statement.session_facts
+            ],
+            "session_values": [
+                fact.value for fact in statement.session_facts
             ],
             "question_operation": question.operation,
             "question_relation": (
@@ -270,7 +443,17 @@ def main() -> int:
                 if question.query is not None
                 else ""
             ),
-            "relation_similarity": round(session_best, 4),
+            "question_answer_field": (
+                question.query.answer_field
+                if question.query is not None
+                else ""
+            ),
+            "resolution_status": session_resolution.get("status"),
+            "effective_relation": session_resolution.get(
+                "effective_relation",
+                "",
+            ),
+            "resolved_answers": session_answers,
         }
     )
     if statement.operation != "pass" or not statement.session_facts:
@@ -281,9 +464,21 @@ def main() -> int:
         failures.append(
             "session_context: follow-up question not classified as recall"
         )
-    if session_best < args.threshold:
+    if (
+        statement.session_facts
+        and question.operation == "recall"
+        and session_resolution.get("status") != "resolved"
+    ):
         failures.append(
-            "session_context: semantic relation mismatch"
+            "session_context: end-to-end semantic resolution failed"
+        )
+    elif session_answers and not _same_answers(
+        session_answers,
+        ["Atlas Nova"],
+    ):
+        failures.append(
+            "session_context: resolved wrong project "
+            f"{session_answers!r}"
         )
 
     now = datetime.now(timezone.utc)
@@ -323,6 +518,7 @@ def main() -> int:
         "provider": interpreter.provider,
         "model": interpreter.model,
         "projection_seconds": round(projection_seconds, 3),
+        "acceptance": "end_to_end_semantic_resolution",
         "results": results,
         "failures": failures,
     }
