@@ -227,8 +227,9 @@ async function action(request) {
   const results = await domCall(tab.id,"act",[a.ref,op,{...a,deadline_ms:request.deadline_ms}],target.documentId);
   invalidateSnapshot(tab.id);
   const result = results[0].result;
-  if (op === "write" && result?.verified === true) {
-    result.post_observation = await observe(tab.id);
+  if (op === "write" && result?.dispatched === true) {
+    const postObservation = await bestEffortPostObservation(tab.id, 60);
+    if (postObservation) result.post_observation = postObservation;
   }
   return result;
 }
