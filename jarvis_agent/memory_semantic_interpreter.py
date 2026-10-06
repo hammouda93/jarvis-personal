@@ -74,6 +74,12 @@ such as today/tomorrow/next Friday into structured qualifiers when confidence is
 high. Prefer qualifier keys date (YYYY-MM-DD), datetime (ISO 8601), start_at,
 end_at, temporal_status. Keep literal IDs/dates in exact_terms when present.
 Preserve dates/IDs literally in qualifiers/exact_terms.
+exact_terms are literal surface constraints, not semantic concepts. Every
+exact_term MUST be present in the user's original utterance (after harmless
+case/accent normalization). Never translate or paraphrase an exact_term. Put
+translated or canonicalized concepts in relation, object_hint, entities or
+qualifiers instead. Prefer exact_terms for dates, IDs, codes, quoted literals
+and similarly opaque anchors.
 For entity-centric questions such as "what do you know about Project Atlas?",
 relation may be empty, entities must contain the explicit entity, and
 answer_mode should be "collection" so independent facts about that entity can
