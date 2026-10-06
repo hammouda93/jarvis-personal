@@ -224,12 +224,18 @@ class FoundationToolAdapter:
                 query_text = str(args.get("query", "")).strip()
                 if not query_text:
                     raise RuntimeError("semantic_memory_search_query_required")
-                intent = self.semantic_memory_engine.interpret_turn(query_text)
-                if intent.operation != "recall" or intent.query is None:
-                    raise RuntimeError(
-                        "semantic_memory_search_requires_personal_recall_query"
+                intent = self.semantic_memory_engine.interpret_turn(
+                    query_text
+                )
+                resolution = {
+                    "status": "raw_only",
+                    "hits": [],
+                }
+                if intent.operation == "recall" and intent.query is not None:
+                    resolution = self.semantic_memory_engine.resolve(
+                        intent.query
                     )
-                resolution = self.semantic_memory_engine.resolve(intent.query)
+
                 hits = []
                 for hit in list(resolution.get("hits") or [])[:12]:
                     projection = hit.fact.projection
@@ -248,18 +254,44 @@ class FoundationToolAdapter:
                             "provenance": hit.fact.provenance,
                         }
                     )
-                raw_fallback = []
-                if not hits and self.memory is not None:
-                    for item in self.memory.recent_memories(limit=12):
-                        raw_fallback.append(
-                            {
-                                "memory_id": item.id,
-                                "raw": str(item.content or "")[:900],
-                                "created_at": item.created_at,
-                            }
-                        )
+
+                # This tool is already an explicit READ-ONLY retrieval action
+                # chosen by the agent. Do not reject the search just because
+                # the intent parser classifies the short search phrase as
+                # "pass". Use deterministic raw retrieval as a second lane.
+                from .memory_retrieval import search as raw_search
+
+                raw_items = raw_search(
+                    self.memory,
+                    query_text,
+                    limit=12,
+                ) if self.memory is not None else []
+                raw_fallback = [
+                    {
+                        "memory_id": item.id,
+                        "raw": str(item.content or "")[:900],
+                        "created_at": item.created_at,
+                    }
+                    for item in raw_items
+                ]
+
+                # For broad inventory-style search phrases that match nothing
+                # lexically, return a bounded recent inventory rather than
+                # failing the tool. It is labelled as fallback evidence and the
+                # reasoning model must still decide relevance.
+                if not hits and not raw_fallback and self.memory is not None:
+                    raw_fallback = [
+                        {
+                            "memory_id": item.id,
+                            "raw": str(item.content or "")[:900],
+                            "created_at": item.created_at,
+                        }
+                        for item in self.memory.recent_memories(limit=12)
+                    ]
+
                 payload = {
                     "status": resolution.get("status"),
+                    "parser_operation": intent.operation,
                     "query": query_text,
                     "hits": hits,
                     "raw_fallback": raw_fallback,
