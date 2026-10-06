@@ -1014,6 +1014,57 @@ def _query_matches_recent_user_context(
     return False
 
 
+def _query_matches_memory_grounded_answer(
+    query: str,
+    grounded_answer: str,
+) -> bool:
+    """Match a follow-up entity/topic against the last memory-grounded answer."""
+    query_tokens = {
+        token
+        for token in re.findall(
+            r"[a-z0-9]+",
+            normalize(query),
+        )
+        if len(token) >= 4 or token.isdigit()
+    }
+    answer_tokens = set(
+        re.findall(
+            r"[a-z0-9]+",
+            normalize(grounded_answer),
+        )
+    )
+    if not query_tokens or not answer_tokens:
+        return False
+    overlap = query_tokens & answer_tokens
+    if not overlap:
+        return False
+    # Require either a distinctive number/code or substantial token coverage.
+    if any(token.isdigit() for token in overlap):
+        return True
+    return len(overlap) / max(1, len(query_tokens)) >= 0.5
+
+
+def _blocked_memory_grounded_web_search_result(
+    query: str,
+) -> AgentActionResult:
+    return AgentActionResult(
+        name="research_web",
+        success=False,
+        message=(
+            "Ce sujet vient d'une réponse fondée sur la mémoire personnelle. "
+            "Consulte d'abord semantic_memory_search avant toute recherche web."
+        ),
+        detail=json.dumps(
+            {
+                "query": query,
+                "reason": "memory_grounded_subject_requires_local_recall_first",
+                "results_read": False,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
 def _blocked_contextual_web_search_result(query: str) -> AgentActionResult:
     return AgentActionResult(
         name="research_web",
@@ -2141,6 +2192,7 @@ class GroqResponsesAgent:
             "opened_folder",
             "current_url",
             "active_application_result",
+            "memory_grounded_answer",
         ):
             value = self._session_grounding.get(key)
             if value:
@@ -2150,7 +2202,9 @@ class GroqResponsesAgent:
         lines.append(
             "Use these exact grounded entities for follow-up references such as "
             "'it', 'the installer', 'continue', or 'the opened file'. "
-            "Do not invent a replacement filename/path."
+            "If memory_grounded_answer contains the entity/topic of the user's "
+            "follow-up, consult semantic_memory_search before autonomous web "
+            "research. Do not invent a replacement filename/path."
         )
         content = base + "\n\n" + "\n".join(lines)
         if self._ephemeral_context:
@@ -2170,7 +2224,16 @@ class GroqResponsesAgent:
     ) -> AgentTurnResult:
         self._ephemeral_context = str(context or "").strip()
         try:
-            return self.run(user_text, log=log, phase=phase)
+            result = self.run(user_text, log=log, phase=phase)
+            grounded_answer = self._clean_grounding_value(
+                getattr(result, "text", ""),
+                limit=1200,
+            )
+            if grounded_answer:
+                self._session_grounding[
+                    "memory_grounded_answer"
+                ] = grounded_answer
+            return result
         finally:
             self._ephemeral_context = ""
             self._refresh_session_grounding_prompt()
@@ -3404,6 +3467,20 @@ class GroqResponsesAgent:
                 elif (
                     name in {"research_web", "search_web"}
                     and not _is_explicit_web_request(user_text)
+                    and _query_matches_memory_grounded_answer(
+                        str(arguments.get("query", "")),
+                        self._session_grounding.get(
+                            "memory_grounded_answer",
+                            "",
+                        ),
+                    )
+                ):
+                    result = _blocked_memory_grounded_web_search_result(
+                        str(arguments.get("query", ""))
+                    )
+                elif (
+                    name in {"research_web", "search_web"}
+                    and not _is_explicit_web_request(user_text)
                     and not any(not action.success for action in actions)
                     and _query_matches_recent_user_context(
                         str(arguments.get("query", "")),
@@ -3598,6 +3675,19 @@ class GroqResponsesAgent:
                             "observe_screen maintenant pour lire visuellement la "
                             "fenêtre et poursuivre la mission à partir de ce qui est "
                             "réellement visible."
+                        )
+                    elif (
+                        result.detail
+                        and "memory_grounded_subject_requires_local_recall_first"
+                        in result.detail
+                    ):
+                        recovery = (
+                            "Ce sujet provient d'une réponse précédente fondée "
+                            "sur la mémoire personnelle. Utilise maintenant "
+                            "semantic_memory_search avec une requête naturelle "
+                            "ciblée sur ce sujet. N'utilise le web que si "
+                            "l'utilisateur le demande explicitement ou si la "
+                            "mémoire locale ne peut réellement pas répondre."
                         )
                     else:
                         recovery = (
