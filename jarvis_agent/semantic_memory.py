@@ -376,22 +376,42 @@ def _qualifier_score(query: MemoryQueryFrame, fact: MemoryProjection) -> float:
 
 
 def _literal_exact_terms(query: MemoryQueryFrame) -> tuple[str, ...]:
-    """Return only exact constraints literally present in the user utterance.
+    """Return only true literal anchors from the original user utterance.
 
-    Semantic providers may translate or paraphrase concepts while building a
-    query frame. Those semantic rewrites belong in relation/object/entity
-    fields, not in exact_terms: treating a translated phrase as literal would
-    make multilingual recall impossible. Exact constraints remain strict when
-    their normalized surface is actually present in the original utterance.
+    Semantic providers may translate/paraphrase concepts or resolve relative
+    time into structured qualifiers. Those semantic rewrites must not become
+    raw substring gates. Structured temporal qualifiers are authoritative, so
+    phrases such as "tomorrow" / "après-demain" are not required to occur in
+    the stored evidence after they have been resolved to a date.
     """
     raw = normalize_text(query.raw_text)
     if not raw:
         return ()
+
+    has_temporal_constraint = any(
+        key in query.qualifiers
+        for key in ("date", "datetime", "start_at", "end_at")
+    )
+
     result = []
     for exact in query.exact_terms:
         normalized = normalize_text(exact)
-        if normalized and normalized in raw:
-            result.append(str(exact))
+        if not normalized or normalized not in raw:
+            continue
+
+        if has_temporal_constraint:
+            compact = re.sub(r"[^a-z0-9]+", "", normalized)
+            has_alpha = bool(re.search(r"[a-z]", compact))
+            has_digit = bool(re.search(r"[0-9]", compact))
+            opaque_identifier = has_alpha and has_digit and " " not in normalized
+            quoted_literal = (
+                f'"{normalized}"' in raw
+                or f"'{normalized}'" in raw
+            )
+            if not opaque_identifier and not quoted_literal:
+                continue
+
+        result.append(str(exact))
     return tuple(result)
 
 
