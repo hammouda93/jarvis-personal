@@ -780,6 +780,37 @@ class FoundationRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_fresh_browser_grounding_clears_prior_turn_pending_scope(self):
+        class Browser:
+            def get_active_tab(self):
+                return {
+                    "tab_id": 7,
+                    "title": "Current",
+                    "url": "https://example.com/current",
+                    "active": True,
+                }
+
+            def observe_dom(self, tab_id):
+                return {
+                    "observation_id": "fresh",
+                    "tab": self.get_active_tab(),
+                    "sensor": "dom",
+                    "controls": [],
+                    "visible_text": "Current page",
+                    "frames_skipped": 0,
+                }
+
+        adapter = FoundationToolAdapter(None, browser=Browser())
+        adapter.browser_mode = True
+        adapter.pending_verification.add(("browser", 7))
+        adapter.uncertain_scopes.add(("browser", 7))
+
+        context = adapter.browser_grounding_context()
+
+        self.assertIn("BROWSER_GROUNDING_READ_ONLY", context)
+        self.assertNotIn(("browser", 7), adapter.pending_verification)
+        self.assertNotIn(("browser", 7), adapter.uncertain_scopes)
+
     def test_browser_navigate_rejects_missing_observed_tab_id(self):
         class Browser:
             def call(self, operation, **args):
