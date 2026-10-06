@@ -809,6 +809,13 @@ class SemanticMemoryRuntime:
         log=None,
         phase=None,
     ):
+        supports = getattr(
+            self.delegate,
+            "supports_grounded_context",
+            None,
+        )
+        if supports is False:
+            return None
         method = getattr(self.delegate, "run_with_context", None)
         if method is None:
             return None
