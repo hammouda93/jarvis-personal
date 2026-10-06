@@ -2571,6 +2571,73 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(result.text, "delegate:" + text)
         self.assertEqual(delegate.calls, 1)
 
+    def test_readonly_semantic_memory_search_is_exposed_when_engine_attached(self):
+        question = "What is my preferred editor?"
+        turns = {
+            question: MemoryTurnInterpretation(
+                operation="recall",
+                query=MemoryQueryFrame(
+                    relation="preferred_editor",
+                    answer_mode="single",
+                    raw_text=question,
+                    confidence=0.99,
+                ),
+                confidence=0.99,
+                reason="personal recall",
+            )
+        }
+        projections = {
+            "editor evidence": (
+                projection(
+                    "preferred_editor",
+                    "Cursor",
+                    kind="preference",
+                    cardinality="single",
+                ),
+            )
+        }
+        store = MemoryCoreStore(Path(self.temp.name) / "tool.sqlite3")
+        interpreter = FixtureInterpreter(
+            turns=turns,
+            projections=projections,
+        )
+        engine = SemanticMemoryEngine(
+            store,
+            interpreter,
+            min_score=0.45,
+        )
+        adapter = FoundationToolAdapter(
+            ToolSchemaDelegate(),
+            memory=store,
+        )
+        adapter.attach_semantic_memory_engine(engine)
+        store.remember("editor evidence")
+        before = len(store.recent_memories(limit=20))
+
+        with patch.dict(
+            "os.environ",
+            {"JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1"},
+            clear=False,
+        ):
+            names = {
+                item["function"]["name"]
+                for item in adapter.ollama_tools()
+            }
+            result = adapter.execute(
+                "semantic_memory_search",
+                {"query": question},
+            )
+
+        self.assertIn("semantic_memory_search", names)
+        self.assertNotIn("recall_information", names)
+        self.assertNotIn("remember_information", names)
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertTrue(payload["read_only"])
+        self.assertEqual(payload["hits"][0]["value"], "Cursor")
+        self.assertEqual(payload["hits"][0]["raw"], "editor evidence")
+        self.assertEqual(len(store.recent_memories(limit=20)), before)
+
     def test_legacy_memory_tools_are_hidden_from_model_in_v5(self):
         tools = FoundationToolAdapter(
             ToolSchemaDelegate(),
