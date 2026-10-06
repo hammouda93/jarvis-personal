@@ -1353,6 +1353,107 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
             {"wants_to_watch", "wants_to_watch_next"},
         )
 
+    def test_entity_centric_subject_alias_uses_entity_context_not_subject_gate(self):
+        store, _, engine = self.make_engine(
+            {
+                "Projet Atlas": (
+                    projection(
+                        "has_project",
+                        "Atlas",
+                        subject="user",
+                        kind="project",
+                        entities=("Atlas",),
+                    ),
+                ),
+                "Projet Atlas : ajouter un espace client": (
+                    projection(
+                        "add_feature_to_project",
+                        "espace client",
+                        subject="user",
+                        kind="project",
+                        entities=("Atlas",),
+                    ),
+                ),
+            }
+        )
+        store.remember("Projet Atlas")
+        store.remember("Projet Atlas : ajouter un espace client")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                subject="atlas",
+                relation="",
+                entities=("Atlas",),
+                answer_mode="collection",
+                exact_terms=("Atlas",),
+                raw_text="Qu'est-ce que tu as sur le projet Atlas ?",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(len(result["hits"]), 2)
+
+    def test_inverse_query_drops_object_duplicate_from_entity_gate(self):
+        store, _, engine = self.make_engine(
+            {
+                "Le projet Atlas inclut un module de paiement": (
+                    projection(
+                        "adds_module_to_project",
+                        "module de paiement",
+                        subject="user",
+                        kind="project",
+                        entities=("Atlas",),
+                    ),
+                ),
+            }
+        )
+        store.remember("Le projet Atlas inclut un module de paiement")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                subject="",
+                relation="adds_module_to_project",
+                object_hint="module de paiement",
+                entities=("module de paiement",),
+                answer_mode="single",
+                answer_field="subject",
+                raw_text="module de paiement dans quel projet ?",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(result["hits"][0].fact.memory_id, 1)
+
+    def test_ordinary_exact_terms_do_not_become_literal_retrieval_gates(self):
+        store, _, engine = self.make_engine(
+            {
+                "Projet Atlas": (
+                    projection(
+                        "has_project",
+                        "Atlas",
+                        kind="project",
+                        cardinality="collection",
+                    ),
+                ),
+            }
+        )
+        store.remember("Projet Atlas")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="has_project",
+                answer_mode="collection",
+                exact_terms=("tests",),
+                raw_text="quels sont mes projets tests ?",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(result["hits"][0].fact.projection.value, "Atlas")
+
     def test_translated_exact_term_does_not_block_multilingual_semantic_recall(self):
         store, _, engine = self.make_engine(
             {
@@ -2641,6 +2742,57 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["hits"][0]["value"], "Cursor")
         self.assertEqual(payload["hits"][0]["raw"], "editor evidence")
         self.assertEqual(len(store.recent_memories(limit=20)), before)
+
+    def test_readonly_semantic_memory_search_accepts_short_pass_phrase(self):
+        query_text = "Atlas projet test"
+        raw = "Le nom de mon projet test s'appelle Atlas"
+        turns = {
+            query_text: MemoryTurnInterpretation(
+                operation="pass",
+                confidence=0.99,
+                reason="short search phrase",
+            )
+        }
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        store = MemoryCoreStore(Path(temp.name) / "short-search.sqlite3")
+        interpreter = FixtureInterpreter(
+            turns=turns,
+            projections={
+                raw: (
+                    projection(
+                        "has_test_project",
+                        "Atlas",
+                        kind="project",
+                        entities=("Atlas",),
+                    ),
+                ),
+            },
+        )
+        engine = SemanticMemoryEngine(
+            store,
+            interpreter,
+            min_score=0.45,
+        )
+        adapter = FoundationToolAdapter(
+            ToolSchemaDelegate(),
+            memory=store,
+        )
+        adapter.attach_semantic_memory_engine(engine)
+        store.remember(raw)
+
+        result = adapter.execute(
+            "semantic_memory_search",
+            {"query": query_text},
+        )
+
+        self.assertTrue(result.success)
+        payload = json.loads(result.detail)
+        self.assertEqual(payload["parser_operation"], "pass")
+        self.assertTrue(payload["read_only"])
+        self.assertTrue(
+            any("Atlas" in item["raw"] for item in payload["raw_fallback"])
+        )
 
     def test_legacy_memory_tools_are_hidden_from_model_in_v5(self):
         tools = FoundationToolAdapter(
