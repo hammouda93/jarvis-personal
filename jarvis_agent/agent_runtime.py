@@ -2468,6 +2468,31 @@ class GroqResponsesAgent:
                 and settings.groq_browser_search
             ):
                 tools = [*tools, {"type": "browser_search"}]
+
+            if "BROWSER_GROUNDING_READ_ONLY:" in self._ephemeral_context:
+                browser_allowed = {
+                    "open_url",
+                    "browser_list_tabs",
+                    "browser_get_active_tab",
+                    "browser_activate_tab",
+                    "browser_navigate",
+                    "browser_observe_dom",
+                    "browser_find",
+                    "browser_click",
+                    "browser_write",
+                    "browser_press",
+                    "browser_back",
+                    "browser_forward",
+                    "browser_close_tab",
+                    "browser_download",
+                    "browser_verify",
+                }
+                tools = [
+                    item
+                    for item in tools
+                    if str((item.get("function") or {}).get("name") or "")
+                    in browser_allowed
+                ]
         return tools
 
     @staticmethod
@@ -2487,14 +2512,26 @@ class GroqResponsesAgent:
         msf_tool_names: set[str] | None = None,
     ):
         client = self._get_client()
+        tool_definitions = self._tool_definitions(
+            ms_football_only=ms_football_only,
+            msf_tool_names=msf_tool_names,
+        )
         try:
+            context_chars = len(
+                json.dumps(self._messages, ensure_ascii=False, separators=(",", ":"))
+            )
+            tools_chars = len(
+                json.dumps(tool_definitions, ensure_ascii=False, separators=(",", ":"))
+            )
+            print(
+                f"[AGENT_CONTEXT] provider={self.provider_name} "
+                f"messages_chars={context_chars} tools={len(tool_definitions)} "
+                f"tools_chars={tools_chars}"
+            )
             return client.chat.completions.create(
                 model=self.model,
                 messages=self._messages,
-                tools=self._tool_definitions(
-                    ms_football_only=ms_football_only,
-                    msf_tool_names=msf_tool_names,
-                ),
+                tools=tool_definitions,
                 tool_choice=tool_choice,
                 parallel_tool_calls=False,
                 reasoning_effort=self.reasoning_effort,
@@ -2546,6 +2583,61 @@ class GroqResponsesAgent:
             parsed = result.detail
 
         if isinstance(parsed, dict):
+            if (
+                name == "browser_write"
+                and isinstance(parsed.get("post_observation"), dict)
+            ):
+                observation = dict(parsed["post_observation"])
+                raw_controls = [
+                    dict(item)
+                    for item in list(observation.get("controls") or [])
+                    if isinstance(item, dict)
+                ]
+                def post_priority(item):
+                    role = str(item.get("type") or "").strip().lower()
+                    region = str(item.get("region") or "").strip().lower()
+                    score = 0
+                    if item.get("writable"):
+                        score += 10
+                    if region == "content":
+                        score += 8
+                    elif region in {"form", "dialog"}:
+                        score += 7
+                    if role in {"searchbox", "textbox", "combobox"}:
+                        score += 8
+                    elif role in {"button", "link"}:
+                        score += 6
+                    return (-score, int(item.get("visual_index") or 9999))
+                raw_controls.sort(key=post_priority)
+                compact_controls = []
+                for item in raw_controls[:20]:
+                    compact_controls.append(
+                        {
+                            key: item.get(key)
+                            for key in (
+                                "ref", "type", "name", "placeholder",
+                                "aria_label", "href", "value",
+                                "writable", "actionable", "region",
+                                "visual_index",
+                            )
+                            if item.get(key) not in (None, "", False)
+                        }
+                    )
+                visible = str(observation.get("visible_text") or "")
+                parsed["post_observation"] = {
+                    "observation_id": observation.get("observation_id"),
+                    "tab": observation.get("tab"),
+                    "sensor": observation.get("sensor") or "dom",
+                    "controls": compact_controls,
+                    "controls_omitted": max(
+                        0, len(raw_controls) - len(compact_controls)
+                    ),
+                    "visible_text": [
+                        line.strip()
+                        for line in visible.splitlines()
+                        if line.strip()
+                    ][:20],
+                }
             if name in {"inspect_active_window", "inspect_interface", "inspect_browser_page", "browser_observe_dom"}:
                 parsed = dict(parsed)
                 controls = [
@@ -3882,6 +3974,10 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 msf_tool_names=msf_tool_names,
             )
         except AgentRuntimeUnavailable as primary_error:
+            print(
+                "[AGENT] Cerebras primary error: "
+                + str(primary_error)[:900]
+            )
             if not self._should_try_secondary(primary_error):
                 raise
 
@@ -3906,6 +4002,10 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     )
                 except AgentRuntimeUnavailable as exc:
                     secondary_error = exc
+                    print(
+                        "[AGENT] Cerebras secondary error: "
+                        + str(exc)[:900]
+                    )
                 finally:
                     self.api_key = primary_api_key
                     self.base_url = primary_base_url
