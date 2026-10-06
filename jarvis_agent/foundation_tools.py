@@ -15,16 +15,35 @@ def enabled(name):
 
 
 _BROWSER_PROPS = {
-    "tab_id": {"type": "integer"}, "url": {"type": "string"},
-    "ref": {"type": "string"}, "text": {"type": "string"},
-    "type": {"type": "string"}, "exact": {"type": "boolean"},
+    "tab_id": {
+        "type": "integer",
+        "description": "ID exact d'un onglet obtenu via browser_list_tabs, browser_get_active_tab ou une observation."
+    },
+    "url": {"type": "string", "description": "URL http/https à ouvrir dans l'onglet explicitement ciblé."},
+    "ref": {"type": "string", "description": "Référence opaque provenant de la dernière observation DOM du même onglet."},
+    "text": {
+        "type": "string",
+        "description": (
+            "Pour browser_find: nom/label/placeholder visible ou accessible du contrôle à retrouver, "
+            "jamais le texte que vous voulez saisir dans ce contrôle. Pour browser_write: texte à saisir."
+        ),
+    },
+    "type": {
+        "type": "string",
+        "description": (
+            "Rôle sémantique observé dans browser_observe_dom, par ex. searchbox, textbox, link, button, "
+            "checkbox, combobox. Réutiliser le rôle réellement observé plutôt que deviner un tag HTML."
+        ),
+    },
+    "exact": {"type": "boolean"},
     "mode": {"type": "string", "enum": ["replace", "append"]},
-    "key": {"type": "string"}, "title": {"type": "string"},
+    "key": {"type": "string"},
+    "title": {"type": "string"},
     "download_id": {"type": "integer"},
 }
 _BROWSER_FIELDS = {
     "list_tabs": ([], []), "get_active_tab": ([], []),
-    "activate_tab": (["tab_id"], ["tab_id"]), "navigate": (["url", "tab_id"], ["url"]),
+    "activate_tab": (["tab_id"], ["tab_id"]), "navigate": (["url", "tab_id"], ["url", "tab_id"]),
     "observe_dom": (["tab_id"], ["tab_id"]),
     "find": (["tab_id", "text", "type", "exact"], ["tab_id"]),
     "click": (["tab_id", "ref"], ["tab_id", "ref"]),
@@ -34,6 +53,34 @@ _BROWSER_FIELDS = {
     "close_tab": (["tab_id"], ["tab_id"]), "download": (["url"], ["url"]),
     "verify": (["tab_id", "text", "url", "title", "download_id"], []),
 }
+_BROWSER_DESCRIPTIONS = {
+    "list_tabs": "Liste les onglets réels du profil Chrome normal avec tab_id, titre, URL et état.",
+    "get_active_tab": "Retourne l'onglet actif réel. Utilise son tab_id pour continuer la mission dans le même onglet.",
+    "activate_tab": "Active un onglet déjà observé.",
+    "navigate": (
+        "Navigue un onglet EXISTANT vers une URL. tab_id est obligatoire. "
+        "Cette primitive ne doit jamais servir à créer un nouvel onglet ou à contourner l'observation d'un résultat visible."
+    ),
+    "observe_dom": (
+        "CAPTEUR PRINCIPAL du contenu web. Observe la page réelle et retourne des contrôles DOM/accessibilité avec ref, "
+        "type/rôle, name, placeholder, value, href, writable/actionable, bbox et ordre visuel. "
+        "Utilise-le avant de deviner une cible ou un sélecteur."
+    ),
+    "find": (
+        "Filtre les contrôles de la page par nom/label/placeholder accessible et/ou rôle sémantique. "
+        "Le champ text décrit la CIBLE à retrouver; ce n'est pas le contenu à saisir. "
+        "Si la cible n'est pas déjà connue, préfère d'abord browser_observe_dom."
+    ),
+    "click": "Clique une ref réellement observée dans le même onglet puis vérifie l'état obtenu.",
+    "write": "Écrit dans une ref writable réellement observée dans le même onglet; la valeur écrite est vérifiée localement.",
+    "press": "Envoie une touche supportée à une ref observée/focalisable du même onglet.",
+    "back": "Navigue en arrière dans l'historique de l'onglet ciblé.",
+    "forward": "Navigue en avant dans l'historique de l'onglet ciblé.",
+    "close_tab": "Ferme uniquement le tab_id ciblé et vérifie son absence.",
+    "download": "Démarre un téléchargement http/https; le démarrage n'est pas la preuve de fin.",
+    "verify": "Observe à nouveau l'onglet et vérifie une postcondition explicite de titre, URL ou texte.",
+}
+
 _OS_MUTATIONS = {"press_key", "type_text_active_window", "write_ui_element", "click_ui_element",
                  "write_visual_target", "click_visual_target", "close_window", "close_tab",
                  "computer_click", "computer_write", "computer_press", "computer_shortcut",
@@ -125,10 +172,12 @@ class FoundationToolAdapter:
             tools = [t for t in tools if t["function"]["name"] not in legacy and
                      not (self.browser_mode and t["function"]["name"] in _OS_MUTATIONS)]
             for op, (fields, required) in _BROWSER_FIELDS.items():
-                tools.append(self.delegate._ollama("browser_" + op,
-                    "Primitive générique dans le vrai profil Chrome. tab_id/ref doivent provenir d'une observation. "
-                    "Après click/press/navigation, utilisez browser_verify avec une postcondition explicite.",
-                    {field: _BROWSER_PROPS[field] for field in fields}, required))
+                tools.append(self.delegate._ollama(
+                    "browser_" + op,
+                    _BROWSER_DESCRIPTIONS[op],
+                    {field: _BROWSER_PROPS[field] for field in fields},
+                    required,
+                ))
         if self.computer:
             fields = {"window_id": {"type": "string"}, "ref": {"type": "string"},
                       "text": {"type": "string"}, "type": {"type": "string"},
@@ -167,6 +216,8 @@ class FoundationToolAdapter:
         from .native_tools import AgentActionResult
         args = dict(arguments or {})
         try:
+            if name == "browser_navigate" and not isinstance(args.get("tab_id"), int):
+                raise RuntimeError("browser_navigate_requires_observed_tab_id")
             if name == "open_url" or (name.startswith("browser_") and name[8:] in {"navigate", "click", "write", "press", "back", "forward", "close_tab", "download"}):
                 if ("browser", args.get("tab_id")) in self.uncertain_scopes or ("browser", None) in self.uncertain_scopes:
                     raise RuntimeError("unknown_action_requires_verification_before_another_mutation")
