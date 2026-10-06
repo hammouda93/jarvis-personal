@@ -49,6 +49,7 @@ class FoundationToolAdapter:
         self.pending_verification = set()
         self.uncertain_scopes = set()
         self._semantic_memory_write_authorized = False
+        self.semantic_memory_engine = None
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
@@ -79,6 +80,9 @@ class FoundationToolAdapter:
             raise RuntimeError("semantic_memory_write_turn_mismatch")
         self._semantic_memory_write_authorized = True
 
+    def attach_semantic_memory_engine(self, engine):
+        self.semantic_memory_engine = engine
+
     def ollama_tools(self):
         tools = self.delegate.ollama_tools()
         if self.memory and enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED"):
@@ -91,6 +95,29 @@ class FoundationToolAdapter:
                 if item["function"]["name"]
                 not in {"remember_information", "recall_information"}
             ]
+            if self.semantic_memory_engine is not None:
+                tools.append(
+                    self.delegate._ollama(
+                        "semantic_memory_search",
+                        "Recherche READ-ONLY dans la mémoire personnelle V5. "
+                        "Utilise-la seulement quand une question personnelle "
+                        "nécessite d'autres souvenirs que les preuves déjà "
+                        "présentes. Fournis une question de recherche naturelle "
+                        "et précise; l'outil retourne des preuves brutes et des "
+                        "indices sémantiques, jamais une réponse à recopier "
+                        "aveuglément.",
+                        {
+                            "query": {
+                                "type": "string",
+                                "description": (
+                                    "Question naturelle décrivant exactement "
+                                    "l'information personnelle à retrouver."
+                                ),
+                            }
+                        },
+                        ["query"],
+                    )
+                )
         if self.browser:
             legacy = {"list_browser_pages", "inspect_browser_page", "activate_browser_page",
                       "write_browser_element", "click_browser_element", "press_browser_element",
@@ -190,6 +217,54 @@ class FoundationToolAdapter:
             elif name == "recall_information" and self.memory:
                 from .memory_retrieval import search
                 payload = [asdict(item) for item in search(self.memory, str(args.get("query", "")))]
+            elif (
+                name == "semantic_memory_search"
+                and self.semantic_memory_engine is not None
+            ):
+                query_text = str(args.get("query", "")).strip()
+                if not query_text:
+                    raise RuntimeError("semantic_memory_search_query_required")
+                intent = self.semantic_memory_engine.interpret_turn(query_text)
+                if intent.operation != "recall" or intent.query is None:
+                    raise RuntimeError(
+                        "semantic_memory_search_requires_personal_recall_query"
+                    )
+                resolution = self.semantic_memory_engine.resolve(intent.query)
+                hits = []
+                for hit in list(resolution.get("hits") or [])[:12]:
+                    projection = hit.fact.projection
+                    hits.append(
+                        {
+                            "memory_id": hit.fact.memory_id,
+                            "raw": str(hit.fact.raw_content or "")[:900],
+                            "subject": projection.subject,
+                            "relation": projection.relation,
+                            "value": projection.value,
+                            "kind": projection.kind,
+                            "qualifiers": dict(projection.qualifiers),
+                            "entities": list(projection.entities),
+                            "scope": projection.scope,
+                            "score": round(float(hit.score), 4),
+                            "provenance": hit.fact.provenance,
+                        }
+                    )
+                raw_fallback = []
+                if not hits and self.memory is not None:
+                    for item in self.memory.recent_memories(limit=12):
+                        raw_fallback.append(
+                            {
+                                "memory_id": item.id,
+                                "raw": str(item.content or "")[:900],
+                                "created_at": item.created_at,
+                            }
+                        )
+                payload = {
+                    "status": resolution.get("status"),
+                    "query": query_text,
+                    "hits": hits,
+                    "raw_fallback": raw_fallback,
+                    "read_only": True,
+                }
             elif name.startswith("computer_") and self.computer:
                 op = name[9:]
                 if op == "observe":
