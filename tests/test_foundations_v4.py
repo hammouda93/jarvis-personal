@@ -535,6 +535,18 @@ class RuntimePreflightTests(unittest.TestCase):
         )
 
 
+    def test_live_preflight_normalizes_mixed_and_repeated_separators(self):
+        from jarvis_agent.runtime_preflight import _normalized_live_path
+
+        left = _normalized_live_path(
+            r"D:\\Django_Projects//jarvis-main\\.cache//foundation-test-deps"
+        )
+        right = _normalized_live_path(
+            r"d:\Django_Projects\jarvis-main\.cache\foundation-test-deps"
+        )
+
+        self.assertEqual(left, right)
+
     def test_windows_automation_python_gate_allows_memory_only_legacy_runtime(self):
         from jarvis_agent.runtime_preflight import (
             _windows_automation_python_compatible,
