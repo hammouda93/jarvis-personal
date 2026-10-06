@@ -512,6 +512,7 @@ def _completed_action_capabilities(
 ) -> set[str]:
     completed: set[str] = set()
     browser_search_written = False
+    browser_search_origin_url = ""
     ui_search_written = False
     core_search_submitted = False
     core_search_scope = None
@@ -527,9 +528,31 @@ def _completed_action_capabilities(
             if action.name == "browser_write" and payload.get("verified") is True:
                 browser_search_written = True
                 core_search_scope = payload.get("scope")
-            if browser_search_written and action.name in {"browser_press", "browser_click"} and payload.get("dispatched"):
+                post = payload.get("post_observation") or {}
+                tab = post.get("tab") if isinstance(post, dict) else {}
+                if isinstance(tab, dict):
+                    browser_search_origin_url = str(tab.get("url") or "")
+            if (
+                browser_search_written
+                and action.name in {"browser_press", "browser_click"}
+                and payload.get("dispatched")
+            ):
                 core_search_submitted = True
-            if core_search_submitted and action.name == "browser_verify" and payload.get("verified") is True and payload.get("scope") == core_search_scope:
+                post = payload.get("post_observation") or {}
+                tab = post.get("tab") if isinstance(post, dict) else {}
+                post_url = str(tab.get("url") or "") if isinstance(tab, dict) else ""
+                if (
+                    post_url
+                    and browser_search_origin_url
+                    and post_url != browser_search_origin_url
+                ):
+                    completed.add("site_search")
+            if (
+                core_search_submitted
+                and action.name == "browser_verify"
+                and payload.get("verified") is True
+                and payload.get("scope") == core_search_scope
+            ):
                 completed.add("site_search")
         if action.name == "open_web_search":
             completed.add("site_search")
@@ -584,10 +607,22 @@ def _missing_requested_action_capabilities(
     user_text: str,
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
 ) -> set[str]:
-    return (
-        _requested_action_capabilities(user_text)
-        - _completed_action_capabilities(actions)
-    )
+    completed = _completed_action_capabilities(actions)
+    if _requests_search_submission(user_text):
+        for action in actions:
+            if not action.success or action.name not in {
+                "browser_press",
+                "browser_click",
+            }:
+                continue
+            payload = _action_detail_dict(action)
+            if (
+                payload.get("dispatched")
+                and isinstance(payload.get("post_observation"), dict)
+            ):
+                completed.add("site_search")
+                break
+    return _requested_action_capabilities(user_text) - completed
 
 
 def _requests_tab_close(text: str) -> bool:
@@ -2125,6 +2160,7 @@ class GroqResponsesAgent:
         self._lesson_write_allowed = False
         self._session_grounding: dict[str, str] = {}
         self._ephemeral_context = ""
+        self._request_turn_start_index = 1
 
     def reset(self) -> None:
         self._messages = [
@@ -2138,6 +2174,7 @@ class GroqResponsesAgent:
         self._lesson_write_allowed = False
         self._session_grounding = {}
         self._ephemeral_context = ""
+        self._request_turn_start_index = 1
 
     @staticmethod
     def _clean_grounding_value(value: Any, *, limit: int = 700) -> str:
@@ -2535,6 +2572,31 @@ class GroqResponsesAgent:
             or "ms_football" in normalized
         )
 
+    def _messages_for_request(self) -> list[dict[str, Any]]:
+        if "BROWSER_GROUNDING_READ_ONLY:" not in self._ephemeral_context:
+            return self._messages
+        if not self._messages:
+            return []
+        start = max(
+            1,
+            min(int(self._request_turn_start_index), len(self._messages)),
+        )
+        prior = []
+        for item in self._messages[1:start]:
+            role = str(item.get("role") or "")
+            if role not in {"user", "assistant"}:
+                continue
+            if item.get("tool_calls"):
+                continue
+            content = str(item.get("content") or "").strip()
+            if content:
+                prior.append({"role": role, "content": content})
+        # Two prior conversational exchanges are enough because the current
+        # browser snapshot is authoritative for UI state.
+        prior = prior[-4:]
+        current = self._messages[start:]
+        return [self._messages[0], *prior, *current]
+
     def _chat(
         self,
         *,
@@ -2548,8 +2610,9 @@ class GroqResponsesAgent:
             msf_tool_names=msf_tool_names,
         )
         try:
+            request_messages = self._messages_for_request()
             context_chars = len(
-                json.dumps(self._messages, ensure_ascii=False, separators=(",", ":"))
+                json.dumps(request_messages, ensure_ascii=False, separators=(",", ":"))
             )
             tools_chars = len(
                 json.dumps(tool_definitions, ensure_ascii=False, separators=(",", ":"))
@@ -2561,7 +2624,7 @@ class GroqResponsesAgent:
             )
             return client.chat.completions.create(
                 model=self.model,
-                messages=self._messages,
+                messages=request_messages,
                 tools=tool_definitions,
                 tool_choice=tool_choice,
                 parallel_tool_calls=False,
@@ -2947,6 +3010,7 @@ class GroqResponsesAgent:
         log: LogFn | None = None,
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
+        self._request_turn_start_index = len(self._messages)
         actions: list[AgentActionResult] = []
         end_session = False
         should_exit = False
