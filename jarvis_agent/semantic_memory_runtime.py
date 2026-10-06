@@ -794,6 +794,22 @@ def _memory_evidence_context(
     )
 
 
+def _looks_like_browser_operational_command(text: str) -> bool:
+    """Capability-level routing only; never decides the target or action."""
+    normalized = normalize_text(text)
+    return bool(
+        re.search(
+            r"\b(?:ouvre|ouvrir|open|ferme|fermer|close|"
+            r"cherche|recherche|search|lance|lancer|valide|valider|"
+            r"clique|cliquer|click|selectionne|selectionner|select|"
+            r"choisis|choisir|ecris|ecrire|write|saisis|saisir|type|"
+            r"envoie|envoyer|send|appuie|appuyer|press|"
+            r"retour|reviens|back|avance|forward)\b",
+            normalized,
+        )
+    )
+
+
 class SemanticMemoryRuntime:
     """Memory operation interpreter placed before the conversational agent."""
 
@@ -1078,12 +1094,18 @@ class SemanticMemoryRuntime:
             operational_intent = route(user_text)
         except Exception:
             operational_intent = None
-        if (
+        routed_browser = (
             operational_intent is not None
             and str(getattr(operational_intent, "name", "")).startswith(
                 "browser."
             )
-        ):
+        )
+        active_browser_operation = (
+            bool(getattr(self.tools, "browser_mode", False))
+            and self._pending_query is None
+            and _looks_like_browser_operational_command(user_text)
+        )
+        if routed_browser or active_browser_operation:
             if log:
                 log(
                     "[MEMORY_V5] operation=pass "
