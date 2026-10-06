@@ -623,7 +623,10 @@ class FoundationPromptTests(unittest.TestCase):
         }
         self.assertIn("tab_id", tools["browser_navigate"]["parameters"]["required"])
         self.assertIn("CAPTEUR PRINCIPAL", tools["browser_observe_dom"]["description"])
-        self.assertIn("jamais le texte", tools["browser_find"]["description"])
+        self.assertIn(
+            "ce n'est pas le contenu à saisir",
+            tools["browser_find"]["description"],
+        )
 
     def test_computer_core_prompt_requires_focus_probe_before_opaque_write(self):
         from unittest.mock import patch
