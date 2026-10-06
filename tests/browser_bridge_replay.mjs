@@ -12,6 +12,7 @@ let domItems = [];
 let observed = new Map();
 let failMouseRelease = false;
 let includeNullFrame = false;
+let invalidPointer = false;
 const event = () => {
   const listeners = [];
   return {
@@ -49,7 +50,7 @@ globalThis.chrome = {
     }
     if(method === 'preparePointer'){
       if(!observed.has(args[0])) throw Error('stale_browser_ref');
-      return [{result:{x:40,y:15}}];
+      return [{result:invalidPointer?{}:{x:40,y:15}}];
     }
     if(method === 'invalidate'){observed.clear();return []}
     if(method === 'act'){
@@ -79,6 +80,7 @@ beforeEach(()=>{
   tabs.clear();operations.length=0;observed.clear();
   failMouseRelease=false;
   includeNullFrame=false;
+  invalidPointer=false;
   tabs.set(1,{id:1,windowId:9,active:true,title:'Browser One',url:'https://one.example/'});
   tabs.set(2,{id:2,windowId:10,active:false,title:'Browser Two',url:'https://two.example/'});
   domItems=[{text:'Search',type:'searchbox',writable:true,bbox:[1,2,80,30]},
@@ -159,6 +161,17 @@ test('top frame click uses trusted Chrome Input bound to the observed tab',async
   assert(inputs.every(x=>x[1].tabId===1));
   assert(!operations.some(x=>x[0]==='dom_action'));
 });
+test('invalid pointer prep falls back to bounded DOM click without site rules',async()=>{
+  invalidPointer=true;
+  const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
+  const result=await request('click',{tab_id:1,ref});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.trusted,false);
+  assert.equal(result.dispatch_method,'dom_click_fallback');
+  assert(result.post_observation);
+  assert(operations.some(x=>x[0]==='dom_action'&&x[2][1]==='click'));
+  assert.equal(operations.filter(x=>x[0]==='cdp').length,0);
+});
 test('partial pointer failure reports unknown outcome and consumes reference',async()=>{
   const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
   failMouseRelease=true;
@@ -234,6 +247,59 @@ test('DOM references bind actual node; write verifies Unicode and expires',()=>{
   assert.equal(bridge.act(ref,'write',{text:'été عربي'}).verified,true);
   assert.equal(input.value,'été عربي');assert(input.events.includes('input'));
   assert.throws(()=>bridge.act(ref,'write',{text:'late'}),/stale/);
+});
+function fakeContentEditable(){
+  class Editor {
+    constructor(){
+      this.tagName='DIV';
+      this.type=undefined;
+      this.attributes={'role':'textbox','aria-label':'Message'};
+      this.rect={left:10,top:20,right:250,bottom:60,width:240,height:40};
+      this.isConnected=true;this.readOnly=false;this.disabled=false;
+      this.isContentEditable=true;this.innerText='Ancien texte';
+      this.textContent='Ancien texte';this.events=[];
+    }
+    getAttribute(key){return this.attributes[key]??null}
+    querySelector(){return null}
+    getBoundingClientRect(){return this.rect}
+    matches(){return true}
+    contains(other){return this===other}
+    getRootNode(){return document}
+    focus(){document.activeElement=this}
+    click(){this.clicked=true}
+    dispatchEvent(e){this.events.push(e.type);return true}
+  }
+  const editor=new Editor();
+  const document={
+    activeElement:null,
+    body:{innerText:'visible'},
+    querySelectorAll(){return[editor]},
+    getElementById(){return null},
+    elementFromPoint(){return editor},
+    execCommand(command,_ui,value){
+      if(command!=='insertText') return false;
+      this.activeElement.innerText=String(value);
+      this.activeElement.textContent=String(value);
+      return true;
+    }
+  };
+  const sandbox={
+    document,crypto:webcrypto,HTMLInputElement:class{},HTMLTextAreaElement:class{},
+    innerWidth:400,innerHeight:300,
+    getComputedStyle(){return{visibility:'visible',display:'block',opacity:'1'}},
+    Event:class{constructor(type){this.type=type}},
+    InputEvent:class{constructor(type){this.type=type}}
+  };
+  vm.runInNewContext(fs.readFileSync('extensions/personal-ai-browser-bridge/dom_bridge.js','utf8'),sandbox);
+  return{bridge:sandbox.__personalAIBridge,editor};
+}
+test('contenteditable write replaces and verifies rich-editor text',()=>{
+  const {bridge,editor}=fakeContentEditable();
+  const ref=bridge.observe().controls[0].ref;
+  const result=bridge.act(ref,'write',{text:'Nouveau message',mode:'replace'});
+  assert.equal(result.verified,true);
+  assert.equal(result.value,'Nouveau message');
+  assert.equal(editor.innerText,'Nouveau message');
 });
 test('DOM relocation and disabled controls block mutations',()=>{
   const {bridge,input}=fakeDOM();let ref=bridge.observe().controls[0].ref;
