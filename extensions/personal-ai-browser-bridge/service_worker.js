@@ -34,6 +34,15 @@ function invalidateSnapshot(tabId) {
   clearRefs(tabId);
   snapshots.delete(tabId);
 }
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function bestEffortPostObservation(tabId, delayMs=180) {
+  try {
+    if (delayMs > 0) await sleep(delayMs);
+    return await observe(tabId);
+  } catch (_error) {
+    return null;
+  }
+}
 async function observe(tabId) {
   await injected(tabId);
   clearRefs(tabId);
@@ -159,8 +168,10 @@ async function action(request) {
         {type:"mousePressed",button:"left",clickCount:1,...point});
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchMouseEvent",
         {type:"mouseReleased",button:"left",clickCount:1,...point});
+      const postObservation = await bestEffortPostObservation(tab.id);
       return {dispatched:true,verified:false,trusted:true,dispatch_method:"cdp_pointer",
-        postcondition:"click_dispatched_requires_verify"};
+        postcondition:"click_dispatched_requires_verify",
+        ...(postObservation ? {post_observation:postObservation} : {})};
     } catch(error) {
       if (attempted) throw Error("browser_outcome_unknown_do_not_retry: " + error.message);
       throw error;
@@ -184,7 +195,9 @@ async function action(request) {
       attempted = true;
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchKeyEvent",{type:"keyDown",...keys[a.key]});
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchKeyEvent",{type:"keyUp",...keys[a.key]});
-      return {dispatched:true, verified:false, postcondition:"key_dispatched_requires_verify"};
+      const postObservation = await bestEffortPostObservation(tab.id);
+      return {dispatched:true, verified:false, postcondition:"key_dispatched_requires_verify",
+        ...(postObservation ? {post_observation:postObservation} : {})};
     } catch(error) {
       if (attempted) throw Error("browser_outcome_unknown_do_not_retry: " + error.message);
       throw error;
