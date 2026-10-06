@@ -593,6 +593,7 @@ class FoundationPromptTests(unittest.TestCase):
         self.assertIn("browser_list_tabs", prompt)
         self.assertIn("browser_observe_dom", prompt)
         self.assertIn("browser_verify", prompt)
+        self.assertIn("Ne substitue jamais une", prompt)
         self.assertIn("placeholder", prompt)
         self.assertIn("ordre visuel", prompt)
         self.assertIn("browser_navigate exige", prompt)
@@ -656,6 +657,64 @@ class FoundationRuntimeTests(unittest.TestCase):
         self.assertTrue(adapter.pending_verification)
         adapter.execute("browser_verify",{"tab_id":7,"text":"correct tab"})
         self.assertFalse(adapter.pending_verification)
+
+    def test_browser_continuation_injects_live_dom_grounding(self):
+        class Delegate:
+            supports_grounded_context = True
+            def __init__(self): self.contexts = []
+            def run(self, user_text, **kwargs):
+                from jarvis_agent.agent_runtime import AgentTurnResult
+                return AgentTurnResult("plain")
+            def run_with_context(self, user_text, context, **kwargs):
+                self.contexts.append(context)
+                from jarvis_agent.agent_runtime import AgentTurnResult
+                return AgentTurnResult("grounded")
+            def reset(self): pass
+            def warm_up(self, **kwargs): pass
+            def record_external_turn(self, *args, **kwargs): pass
+
+        class Browser:
+            def get_active_tab(self):
+                return {"tab_id": 7, "title": "Site", "url": "https://example.com/", "active": True}
+            def observe_dom(self, tab_id):
+                self.observed = tab_id
+                return {
+                    "tab": self.get_active_tab(),
+                    "sensor": "dom",
+                    "controls": [
+                        {
+                            "ref": "r-search",
+                            "type": "searchbox",
+                            "name": "Search",
+                            "placeholder": "Search videos",
+                            "writable": True,
+                            "bbox": [10, 10, 200, 40],
+                            "visual_index": 1,
+                        }
+                    ],
+                    "visible_text": "Home\nResults",
+                    "frames_seen": 1,
+                    "frames_observed": 1,
+                    "frames_skipped": 0,
+                }
+
+        delegate = Delegate()
+        browser = Browser()
+        adapter = FoundationToolAdapter(None, browser=browser)
+        runtime = FoundationRuntime(delegate, adapter)
+
+        # First browser turn opens/establishes browser mode; no stale page
+        # observation is injected before the requested site is opened.
+        adapter.browser_mode = True
+        result = runtime.run("recherche Messi")
+
+        self.assertEqual(result.text, "grounded")
+        self.assertEqual(browser.observed, 7)
+        self.assertEqual(len(delegate.contexts), 1)
+        self.assertIn("BROWSER_GROUNDING_READ_ONLY", delegate.contexts[0])
+        self.assertIn('"type":"searchbox"', delegate.contexts[0])
+        self.assertIn('"placeholder":"Search videos"', delegate.contexts[0])
+        self.assertIn('"ref":"r-search"', delegate.contexts[0])
 
     def test_browser_navigate_rejects_missing_observed_tab_id(self):
         class Browser:
