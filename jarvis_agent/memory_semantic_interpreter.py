@@ -33,8 +33,18 @@ Classify the USER utterance into exactly one operation:
   constraint or relationship.
 - "recall": the user asks for personal information that may have been remembered.
 - "inspect": the user asks what is stored in local/persistent memory.
+- "clarify": ONLY when pending_query is present and the current utterance is a
+  semantically incomplete answer to the assistant's immediately preceding
+  clarification. Return the fully refined query.
 - "pass": ordinary conversation, public knowledge, commands, or anything not
   clearly a memory operation.
+
+When pending_query is present, classify the CURRENT utterance independently
+before using that context. A complete new recall question, inspect request,
+write request, command, greeting, or topic change is NEVER "clarify"; it starts
+a new operation and replaces the pending clarification. Use "clarify" only when
+the current utterance depends on pending_query to make semantic sense, such as
+a short disambiguating value or qualifier.
 
 For write, write_text must contain only the fact(s) explicitly requested for
 memory and query must be null.
@@ -83,7 +93,7 @@ assistant claims, quoted page text, or public-knowledge requests.
 
 Return exactly:
 {
-  "operation":"write|recall|inspect|pass",
+  "operation":"write|recall|inspect|clarify|pass",
   "write_text":"",
   "query":null or {
     "subject":"user",
@@ -211,7 +221,12 @@ def _extract_json(text: str) -> dict[str, Any]:
 class SemanticMemoryInterpreter:
     parser_version = PARSER_VERSION
 
-    def interpret_turn(self, user_text: str) -> MemoryTurnInterpretation:
+    def interpret_turn(
+        self,
+        user_text: str,
+        *,
+        pending_query: MemoryQueryFrame | None = None,
+    ) -> MemoryTurnInterpretation:
         raise NotImplementedError
 
     def project_batch(
@@ -483,11 +498,31 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             + " | ".join(errors)
         )
 
-    def interpret_turn(self, user_text: str) -> MemoryTurnInterpretation:
+    def interpret_turn(
+        self,
+        user_text: str,
+        *,
+        pending_query: MemoryQueryFrame | None = None,
+    ) -> MemoryTurnInterpretation:
+        pending_payload = None
+        if pending_query is not None:
+            pending_payload = {
+                "subject": pending_query.subject,
+                "relation": pending_query.relation,
+                "object_hint": pending_query.object_hint,
+                "qualifiers": pending_query.qualifiers,
+                "entities": list(pending_query.entities),
+                "scope": pending_query.scope,
+                "answer_mode": pending_query.answer_mode,
+                "answer_field": pending_query.answer_field,
+                "exact_terms": list(pending_query.exact_terms),
+                "raw_text": pending_query.raw_text,
+            }
         payload = self._chat(
             _TURN_SYSTEM,
             {
                 "user_text": str(user_text or ""),
+                "pending_query": pending_payload,
                 "reference_time_utc": datetime.now(timezone.utc).isoformat(),
             },
         )
