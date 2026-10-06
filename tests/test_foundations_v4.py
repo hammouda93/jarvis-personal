@@ -14,6 +14,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from jarvis_agent.browser_core import BrowserCore, NativeBrowserTransport, read_packet, write_packet
 from jarvis_agent.browser_native_host import NativeHost
@@ -38,6 +39,12 @@ class NoLLM:
 
 class MemoryCoreTests(unittest.TestCase):
     def setUp(self):
+        self._env_patch = patch.dict(
+            os.environ,
+            {"JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "0"},
+            clear=False,
+        )
+        self._env_patch.start()
         self.tmp = tempfile.TemporaryDirectory()
         self.memory = MemoryCoreStore(Path(self.tmp.name)/"memory.sqlite3")
         self.llm = NoLLM()
@@ -47,6 +54,7 @@ class MemoryCoreTests(unittest.TestCase):
     def tearDown(self):
         gc.collect()
         self.tmp.cleanup()
+        self._env_patch.stop()
 
     def test_explicit_write_is_persisted_without_model(self):
         for phrase in ["Mémorise que mon film test est Arrival", "garde en tête que j'ai une réunion vendredi",
@@ -659,7 +667,6 @@ class FoundationRuntimeTests(unittest.TestCase):
         self.assertTrue(_actions_have_verified_proof(actions))
 
     def test_memory_router_is_in_factory_for_every_provider(self):
-        from unittest.mock import patch
         from dataclasses import replace
         from jarvis_agent.config import settings
         from jarvis_agent.agent_runtime import build_agent_runtime
@@ -668,8 +675,8 @@ class FoundationRuntimeTests(unittest.TestCase):
             with self.subTest(provider=provider), tempfile.TemporaryDirectory() as folder:
                 memory = MemoryCoreStore(Path(folder)/"factory.sqlite3")
                 adapter = FoundationToolAdapter(None,memory=memory)
-                with patch.dict(os.environ,{"JARVIS_MEMORY_CORE_ENABLED":"1","JARVIS_BROWSER_CORE_ENABLED":"0",
-                                           "JARVIS_COMPUTER_CORE_ENABLED":"0"}), \
+                with patch.dict(os.environ,{"JARVIS_MEMORY_CORE_ENABLED":"1","JARVIS_SEMANTIC_MEMORY_V5_ENABLED":"0",
+                                           "JARVIS_BROWSER_CORE_ENABLED":"0","JARVIS_COMPUTER_CORE_ENABLED":"0"}), \
                      patch("jarvis_agent.agent_runtime.settings",replace(settings,agent_provider=provider,structured_tracing_enabled=False)), \
                      patch("jarvis_agent.agent_runtime."+cls,return_value=NoLLM()), \
                      patch("jarvis_agent.foundation_tools.build_foundation_tools",return_value=adapter):
