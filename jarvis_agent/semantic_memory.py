@@ -22,6 +22,7 @@ KINDS = {
 }
 CARDINALITIES = {"single", "collection", "history", "unknown"}
 ANSWER_MODES = {"single", "collection", "timeline", "inspect"}
+ANSWER_FIELDS = {"value", "subject"}
 OPERATIONS = {"write", "recall", "inspect", "pass"}
 
 
@@ -214,6 +215,7 @@ class MemoryQueryFrame:
     entities: tuple[str, ...] = ()
     scope: str = "global"
     answer_mode: str = "single"
+    answer_field: str = "value"
     exact_terms: tuple[str, ...] = ()
     raw_text: str = ""
     confidence: float = 0.0
@@ -229,6 +231,17 @@ class MemoryQueryFrame:
         answer_mode = normalize_key(str(data.get("answer_mode") or "single"))
         if answer_mode not in ANSWER_MODES:
             answer_mode = "single"
+        answer_field = normalize_key(
+            str(data.get("answer_field") or "value")
+        )
+        if answer_field not in ANSWER_FIELDS:
+            answer_field = "value"
+        raw_subject = data.get("subject", "user")
+        subject = (
+            normalize_key(str(raw_subject))
+            if raw_subject is not None
+            else "user"
+        )
         exact = data.get("exact_terms") or ()
         if not isinstance(exact, (list, tuple)):
             exact = ()
@@ -242,13 +255,14 @@ class MemoryQueryFrame:
         except (TypeError, ValueError):
             confidence = 0.0
         return cls(
-            subject=normalize_key(str(data.get("subject") or "user")) or "user",
+            subject=subject,
             relation=normalize_key(str(data.get("relation") or "")),
             object_hint=str(data.get("object_hint") or "").strip()[:1000],
             qualifiers=_clean_qualifiers(data.get("qualifiers")),
             entities=_clean_entities(data.get("entities")),
             scope=normalize_key(str(data.get("scope") or "global")) or "global",
             answer_mode=answer_mode,
+            answer_field=answer_field,
             exact_terms=exact_terms,
             raw_text=str(raw_text or "")[:2000],
             confidence=max(0.0, min(confidence, 1.0)),
