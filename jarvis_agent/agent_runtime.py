@@ -1195,11 +1195,13 @@ class OllamaToolAgent:
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": _effective_system_instructions()}
         ]
+        self._ephemeral_context = ""
 
     def reset(self) -> None:
         self._messages = [
             {"role": "system", "content": _effective_system_instructions()}
         ]
+        self._ephemeral_context = ""
 
     def record_external_turn(
         self,
@@ -1287,6 +1289,25 @@ class OllamaToolAgent:
                 "Le modèle local a mis trop de temps à répondre."
             ) from exc
 
+    def run_with_context(
+        self,
+        user_text: str,
+        context: str,
+        *,
+        log: LogFn | None = None,
+        phase: PhaseFn | None = None,
+    ) -> AgentTurnResult:
+        self._ephemeral_context = str(context or "").strip()
+        try:
+            return self.run(user_text, log=log, phase=phase)
+        finally:
+            self._ephemeral_context = ""
+            if self._messages:
+                self._messages[0] = {
+                    "role": "system",
+                    "content": _effective_system_instructions(),
+                }
+
     def run(
         self,
         user_text: str,
@@ -1294,6 +1315,11 @@ class OllamaToolAgent:
         log: LogFn | None = None,
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
+        if self._messages:
+            system = _effective_system_instructions()
+            if self._ephemeral_context:
+                system += "\n\n" + self._ephemeral_context
+            self._messages[0] = {"role": "system", "content": system}
         self._messages.append(
             {
                 "role": "user",
@@ -1506,6 +1532,7 @@ class OpenAIResponsesAgent:
         self._pending_function_approval: dict[str, Any] | None = None
         self._last_msf_grounding_at = 0.0
         self._pending_function_response_id: str | None = None
+        self._ephemeral_context = ""
 
     def reset(self) -> None:
         self._local_input_history = []
@@ -1514,6 +1541,7 @@ class OpenAIResponsesAgent:
         self._pending_mcp_response_id = None
         self._pending_function_approval = None
         self._pending_function_response_id = None
+        self._ephemeral_context = ""
 
     def warm_up(self, *, log: LogFn | None = None) -> None:
         return
@@ -1567,6 +1595,20 @@ class OpenAIResponsesAgent:
             tools.append({"type": self.web_search_tool_type})
         tools.extend(CONNECTORS.openai_tools())
         return tools
+
+    def run_with_context(
+        self,
+        user_text: str,
+        context: str,
+        *,
+        log: LogFn | None = None,
+        phase: PhaseFn | None = None,
+    ) -> AgentTurnResult:
+        self._ephemeral_context = str(context or "").strip()
+        try:
+            return self.run(user_text, log=log, phase=phase)
+        finally:
+            self._ephemeral_context = ""
 
     def run(
         self,
@@ -1690,7 +1732,14 @@ class OpenAIResponsesAgent:
 
             payload: dict[str, Any] = {
                 "model": self.model,
-                "instructions": _SYSTEM_INSTRUCTIONS,
+                "instructions": (
+                    _SYSTEM_INSTRUCTIONS
+                    + (
+                        "\n\n" + self._ephemeral_context
+                        if self._ephemeral_context
+                        else ""
+                    )
+                ),
                 "input": next_input,
                 "tools": self._tool_definitions(),
                 "reasoning": {
@@ -1973,6 +2022,7 @@ class GroqResponsesAgent:
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
         self._session_grounding: dict[str, str] = {}
+        self._ephemeral_context = ""
 
     def reset(self) -> None:
         self._messages = [
@@ -1985,6 +2035,7 @@ class GroqResponsesAgent:
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
         self._session_grounding = {}
+        self._ephemeral_context = ""
 
     @staticmethod
     def _clean_grounding_value(value: Any, *, limit: int = 700) -> str:
@@ -2067,7 +2118,10 @@ class GroqResponsesAgent:
             ]
         base = _effective_system_instructions()
         if not self._session_grounding:
-            self._messages[0] = {"role": "system", "content": base}
+            content = base
+            if self._ephemeral_context:
+                content += "\n\n" + self._ephemeral_context
+            self._messages[0] = {"role": "system", "content": content}
             return
 
         lines = [
@@ -2094,10 +2148,28 @@ class GroqResponsesAgent:
             "'it', 'the installer', 'continue', or 'the opened file'. "
             "Do not invent a replacement filename/path."
         )
+        content = base + "\n\n" + "\n".join(lines)
+        if self._ephemeral_context:
+            content += "\n\n" + self._ephemeral_context
         self._messages[0] = {
             "role": "system",
-            "content": base + "\n\n" + "\n".join(lines),
+            "content": content,
         }
+
+    def run_with_context(
+        self,
+        user_text: str,
+        context: str,
+        *,
+        log: LogFn | None = None,
+        phase: PhaseFn | None = None,
+    ) -> AgentTurnResult:
+        self._ephemeral_context = str(context or "").strip()
+        try:
+            return self.run(user_text, log=log, phase=phase)
+        finally:
+            self._ephemeral_context = ""
+            self._refresh_session_grounding_prompt()
 
     def record_external_turn(
         self,
