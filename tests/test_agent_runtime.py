@@ -669,6 +669,74 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("visible", result.text)
 
+    def test_browser_grounded_turn_exposes_only_browser_scope_tools(self):
+        class BrowserScopeTools(FakeTools):
+            def ollama_tools(self):
+                tools = super().ollama_tools()
+
+                def fn(name):
+                    return {
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": name,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {},
+                                "required": [],
+                                "additionalProperties": False,
+                            },
+                        },
+                    }
+
+                tools.extend(
+                    fn(name)
+                    for name in (
+                        "browser_get_active_tab",
+                        "browser_observe_dom",
+                        "browser_find",
+                        "browser_click",
+                        "browser_write",
+                        "browser_verify",
+                    )
+                )
+                return tools
+
+        agent = FakeGroqAgent(
+            BrowserScopeTools(),
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "ok"}
+                            ],
+                        }
+                    ]
+                }
+            ],
+        )
+        agent._ephemeral_context = (
+            'BROWSER_GROUNDING_READ_ONLY:{"tab":{"tab_id":7}}'
+        )
+
+        names = {
+            item["function"]["name"]
+            for item in agent._tool_definitions()
+            if item.get("type") == "function"
+        }
+
+        self.assertTrue(names)
+        self.assertTrue(
+            all(
+                name == "open_url" or name.startswith("browser_")
+                for name in names
+            )
+        )
+        self.assertNotIn("inspect_active_window", names)
+        self.assertNotIn("research_web", names)
+
     def test_groq_baseline_hides_new_learning_and_vision_tools(self):
         tools = FakeTools()
         tools.knowledge.context = {
@@ -1699,6 +1767,62 @@ class AgentRuntimeTests(unittest.TestCase):
             any(
                 item.get("ref") == "bobs1:e31"
                 for item in detail["capabilities"]["actionable"]
+            )
+        )
+
+    def test_browser_write_compacts_fresh_post_observation(self):
+        controls = []
+        for index in range(40):
+            controls.append(
+                {
+                    "ref": f"ref-{index}",
+                    "type": "link" if index >= 30 else "button",
+                    "name": f"Result {index}",
+                    "region": "content" if index >= 30 else "navigation",
+                    "actionable": True,
+                    "visual_index": index + 1,
+                    "href": f"https://example.com/{index}",
+                }
+            )
+        payload = {
+            "verified": True,
+            "value": "Messi",
+            "post_observation": {
+                "observation_id": "obs-fresh",
+                "tab": {
+                    "tab_id": 7,
+                    "url": "https://example.com/results",
+                },
+                "sensor": "dom",
+                "controls": controls,
+                "visible_text": "\n".join(
+                    f"line {i}" for i in range(60)
+                ),
+            },
+        }
+        result = AgentActionResult(
+            name="browser_write",
+            success=True,
+            message="ok",
+            detail=json.dumps(payload),
+        )
+
+        compact = json.loads(
+            GroqResponsesAgent._compact_tool_content(
+                "browser_write",
+                result,
+            )
+        )
+        detail = json.loads(compact["detail"])
+        post = detail["post_observation"]
+
+        self.assertEqual(post["observation_id"], "obs-fresh")
+        self.assertLessEqual(len(post["controls"]), 20)
+        self.assertLessEqual(len(post["visible_text"]), 20)
+        self.assertTrue(
+            any(
+                item.get("region") == "content"
+                for item in post["controls"]
             )
         )
 
