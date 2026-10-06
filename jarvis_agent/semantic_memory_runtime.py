@@ -331,6 +331,15 @@ class SemanticMemoryEngine:
         if not query_is_specific_enough(query):
             return {"status": "underspecified", "hits": []}
 
+        # Build at least the next lazy semantic-index batch before relation
+        # alignment. Otherwise a valid canonical relation may not exist in the
+        # catalog yet, allowing a lexical neighbor to win before semantics has
+        # a chance to align the query.
+        self.ensure_indexed(
+            log=log,
+            max_items=self.batch_size,
+        )
+
         effective_query = query
         if effective_query.relation:
             catalog = self.relation_catalog(session_facts)
