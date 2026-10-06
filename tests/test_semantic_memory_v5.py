@@ -1281,6 +1281,91 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
             {"Inception", "Gladiator"},
         )
 
+    def test_collection_prunes_weak_relation_neighbors_once_exact_relation_exists(self):
+        store, _, engine = self.make_engine(
+            {
+                "watch": (
+                    projection(
+                        "wants_to_watch",
+                        "Inception",
+                        kind="intention",
+                        cardinality="collection",
+                    ),
+                ),
+                "watch next": (
+                    projection(
+                        "wants_to_watch_next",
+                        "Arrival",
+                        kind="intention",
+                        cardinality="collection",
+                    ),
+                ),
+                "players": (
+                    projection(
+                        "wants_list_of_last_players",
+                        "5",
+                        cardinality="collection",
+                    ),
+                ),
+            }
+        )
+        store.remember("watch")
+        store.remember("watch next")
+        store.remember("players")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="wants_to_watch",
+                answer_mode="collection",
+                raw_text="Quels films est-ce que je veux regarder ?",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            {
+                hit.fact.projection.relation
+                for hit in result["hits"]
+            },
+            {"wants_to_watch", "wants_to_watch_next"},
+        )
+
+    def test_translated_exact_term_does_not_block_multilingual_semantic_recall(self):
+        store, _, engine = self.make_engine(
+            {
+                "Le projet Atlas inclut un module de paiement": (
+                    projection(
+                        "has_module",
+                        "module de paiement",
+                        subject="atlas",
+                        kind="project",
+                        entities=("Atlas",),
+                    ),
+                ),
+            }
+        )
+        store.remember("Le projet Atlas inclut un module de paiement")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                subject="",
+                relation="has_module",
+                object_hint="module de paiement",
+                answer_mode="single",
+                answer_field="subject",
+                exact_terms=("payment module",),
+                raw_text="module de paiement dans quel projet ?",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            result["hits"][0].fact.projection.subject,
+            "atlas",
+        )
+
     def test_exact_date_constraint_is_not_fuzzy(self):
         store, _, engine = self.make_engine(
             {
