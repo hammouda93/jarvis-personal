@@ -152,6 +152,28 @@ class NoLLM:
         )
 
 
+class GroundedDelegate(NoLLM):
+    def __init__(self, answer="grounded answer"):
+        super().__init__()
+        self.answer = answer
+        self.context_calls = []
+
+    def run_with_context(
+        self,
+        user_text,
+        context,
+        *,
+        log=None,
+        phase=None,
+    ):
+        self.calls += 1
+        self.context_calls.append((user_text, context))
+        return AgentTurnResult(
+            text=self.answer,
+            actions=(),
+        )
+
+
 class ToolSchemaDelegate:
     def ollama_tools(self):
         def tool(name):
@@ -1366,6 +1388,38 @@ class SemanticMemoryRetrievalTests(unittest.TestCase):
             "atlas",
         )
 
+    def test_relative_temporal_exact_term_defers_to_structured_date(self):
+        store, _, engine = self.make_engine(
+            {
+                "meeting evidence": (
+                    projection(
+                        "has_meeting",
+                        "meeting",
+                        kind="event",
+                        qualifiers={"date": "2026-10-08"},
+                    ),
+                ),
+            }
+        )
+        store.remember("meeting evidence")
+
+        result = engine.resolve(
+            MemoryQueryFrame(
+                relation="has_meeting",
+                qualifiers={"date": "2026-10-08"},
+                exact_terms=("apres demain",),
+                answer_mode="collection",
+                raw_text="j'ai quoi apres demain ?",
+                confidence=0.99,
+            )
+        )
+
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(
+            result["hits"][0].fact.projection.value,
+            "meeting",
+        )
+
     def test_exact_date_constraint_is_not_fuzzy(self):
         store, _, engine = self.make_engine(
             {
@@ -1959,6 +2013,79 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(
             store.semantic_facts()[0].projection.value,
             "Zeta",
+        )
+
+    def test_agentic_recall_passes_raw_memory_evidence_to_delegate(self):
+        question = "module de paiement dans quel projet ?"
+        query = MemoryQueryFrame(
+            subject="",
+            relation="adds_module_to_project",
+            object_hint="module de paiement",
+            answer_mode="single",
+            answer_field="subject",
+            raw_text=question,
+            confidence=0.99,
+        )
+        turns = {
+            question: MemoryTurnInterpretation(
+                operation="recall",
+                query=query,
+                confidence=0.99,
+                reason="inverse project recall",
+            )
+        }
+        projections = {
+            "Le projet Atlas inclut l’ajout d’un module de paiement.": (
+                projection(
+                    "adds_module_to_project",
+                    "module de paiement",
+                    subject="user",
+                    kind="project",
+                    entities=("Atlas",),
+                ),
+            )
+        }
+
+        store = MemoryCoreStore(Path(self.temp.name) / "agentic.sqlite3")
+        interpreter = FixtureInterpreter(
+            turns=turns,
+            projections=projections,
+        )
+        engine = SemanticMemoryEngine(
+            store,
+            interpreter,
+            min_score=0.45,
+        )
+        delegate = GroundedDelegate(
+            answer="Le module de paiement concerne le projet Atlas."
+        )
+        tools = FoundationToolAdapter(
+            ToolSchemaDelegate(),
+            memory=store,
+        )
+        runtime = SemanticMemoryRuntime(delegate, tools, engine)
+        store.remember(
+            "Le projet Atlas inclut l’ajout d’un module de paiement."
+        )
+
+        result = runtime.run(question)
+
+        self.assertEqual(
+            result.text,
+            "Le module de paiement concerne le projet Atlas.",
+        )
+        self.assertEqual(delegate.calls, 1)
+        self.assertEqual(len(delegate.context_calls), 1)
+        context = delegate.context_calls[0][1]
+        self.assertIn("MEMORY_EVIDENCE_FOR_CURRENT_TURN", context)
+        self.assertIn(
+            "Le projet Atlas inclut l’ajout d’un module de paiement.",
+            context,
+        )
+        self.assertIn("adds_module_to_project", context)
+        self.assertEqual(
+            [action.name for action in result.actions],
+            ["semantic_memory_recall"],
         )
 
     def test_semantic_recall_never_calls_conversational_llm(self):
