@@ -72,6 +72,41 @@ The system distinguishes broad memory behavior, not app-specific topics:
 
 These are retrieval/retention hints, not hard-coded business logic.
 
+## Directional semantic triples
+
+A semantic fact is stored as a directional triple plus context:
+
+    subject -> relation -> value
+
+The subject is not always the user. For a relational fact such as:
+
+    Alice owns Project North
+
+the projection is:
+
+    subject = alice
+    relation = owns
+    value = Project North
+    entities = [Alice, Project North]
+
+Queries carry an `answer_field`:
+
+- `value` when the user asks for the object/value of a known subject;
+- `subject` when the user asks who/what is the subject of a known relation
+  and object.
+
+Therefore the same fact can answer both:
+
+    What does Alice own? -> Project North
+    Who owns Project North? -> Alice
+
+This avoids inventing domain-specific inverse relation names merely to support
+different question directions.
+
+Broad set queries constrained by structured context do not need a synthetic
+relation. A question such as "what do I have on this date?" may use an empty
+relation, a date qualifier, and collection answer mode.
+
 ## Query understanding
 
 A recall request is converted into a query frame:
