@@ -33,8 +33,11 @@ async function observe(tabId) {
   await injected(tabId);
   clearRefs(tabId);
   const frames = await domCall(tabId,"observe");
+  const validFrames = (frames || []).filter(frame =>
+    frame?.result && Array.isArray(frame.result.controls)
+  );
   const controls = [];
-  outer: for (const frame of frames.slice(0,12)) {
+  outer: for (const frame of validFrames.slice(0,12)) {
     for (const item of frame.result.controls) {
       if (controls.length >= 400) break outer;
       refs.set(item.ref,{tabId, documentId:frame.documentId, frameId:frame.frameId});
@@ -44,8 +47,13 @@ async function observe(tabId) {
   }
   const tab = await tabOf(tabId);
   return {observation_id:crypto.randomUUID(), tab:cleanTab(tab), sensor:"dom", controls,
-    visible_text:frames.map(f=>f.result.visible_text).join("\n").slice(0,20000),
-    truncated:frames.length>12 || controls.length>=400 || frames.some(f=>f.result.truncated), tree_complete:false};
+    visible_text:validFrames.map(f=>String(f.result.visible_text || "")).join("\n").slice(0,20000),
+    truncated:(frames || []).length>12 || controls.length>=400 ||
+      validFrames.some(f=>f.result.truncated),
+    tree_complete:false,
+    frames_seen:(frames || []).length,
+    frames_observed:validFrames.length,
+    frames_skipped:Math.max(0,(frames || []).length-validFrames.length)};
 }
 async function action(request) {
   const a = request.arguments || {}, op = request.operation;
@@ -107,8 +115,20 @@ async function action(request) {
     }
     if (!String(a.text || "").trim() && !a.type) throw Error("find_requires_text_or_type");
     const norm = text => String(text).normalize("NFKC").trim().toLocaleLowerCase();
-    const matches = observation.controls.filter(e=>(!a.type || e.type === a.type) &&
-      (!a.text || (a.exact !== false ? norm(e.text) === norm(a.text) : norm(e.text).includes(norm(a.text)))));
+    const matches = observation.controls.filter(e => {
+      const requestedType = norm(a.type || "");
+      const typeMatches = !requestedType || norm(e.type) === requestedType ||
+        (requestedType === "input" && Boolean(e.writable));
+      const names = [e.text,e.name,e.placeholder,e.aria_label,e.value]
+        .map(norm).filter(Boolean);
+      const wanted = norm(a.text || "");
+      const textMatches = !wanted || (
+        a.exact !== false
+          ? names.some(value => value === wanted)
+          : names.some(value => value.includes(wanted))
+      );
+      return typeMatches && textMatches;
+    });
     return {matches, unique:matches.length === 1, observation_id:observation.observation_id};
   }
   const target = refs.get(a.ref);
