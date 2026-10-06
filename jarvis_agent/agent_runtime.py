@@ -302,8 +302,10 @@ FOUNDATION BROWSER CORE ACTIF:
   contourner une cible que tu n'as pas réussi à observer;
 - pour une recherche dans le site déjà ouvert, observe le DOM, choisis le champ
   writable pertinent, écris la requête puis déclenche explicitement la recherche
-  avec un contrôle/touche observé. Ne fabrique pas une URL de recherche spécifique
-  au site si l'interface actuelle peut être utilisée;
+  avec un contrôle/touche observé. UNE RECHERCHE N'EST PAS TERMINÉE après la seule
+  écriture dans le champ: elle doit être soumise et l'état résultant doit être
+  observé. Ne fabrique pas une URL de recherche spécifique au site si l'interface
+  actuelle peut être utilisée;
 - pour "premier/deuxième résultat", "première vidéo", etc., observe les éléments
   réellement affichés et raisonne sur rôle, nom, href, bbox/ordre visuel. Clique
   ensuite la ref choisie. N'invente jamais directement l'URL du résultat;
@@ -469,17 +471,23 @@ def _requested_action_capabilities(text: str) -> set[str]:
     if explicit_write or contextual_add_write or stt_write:
         required.add("write_ui")
 
-    site_search = bool(
-        re.search(r"\b(?:ouvre|ouvrir|open|lance)\b", normalized)
-        and re.search(r"\b(?:cherche|recherche|search)\b", normalized)
-    ) or bool(
-        re.search(
-            r"\b(?:vas y|continue|poursuis)\b.{0,30}"
-            r"\b(?:cherche|recherche|search)\b",
-            normalized,
+    site_search = (
+        bool(
+            re.search(r"\b(?:ouvre|ouvrir|open|lance)\b", normalized)
+            and re.search(r"\b(?:cherche|recherche|search)\b", normalized)
+        )
+        or bool(
+            re.search(
+                r"\b(?:vas y|continue|poursuis)\b.{0,30}"
+                r"\b(?:cherche|recherche|search)\b",
+                normalized,
+            )
+        )
+        or bool(
+            re.match(r"^(?:recherche|cherche|search)\b", normalized)
         )
     )
-    if site_search and not _requests_search_submission(text):
+    if site_search:
         required.add("site_search")
 
     close_requested = re.search(
@@ -584,6 +592,15 @@ def _missing_requested_action_capabilities(
 
 def _requests_tab_close(text: str) -> bool:
     return "close_tab" in _requested_action_capabilities(text)
+
+
+def _requests_open_and_search(text: str) -> bool:
+    """Capability-level detection of an explicit open-site + search request."""
+    normalized = normalize(text)
+    return bool(
+        re.search(r"\b(?:ouvre|ouvrir|open|lance|affiche)\b", normalized)
+        and re.search(r"\b(?:cherche|recherche|search)\b", normalized)
+    )
 
 
 def _requests_search_submission(text: str) -> bool:
@@ -3532,7 +3549,10 @@ class GroqResponsesAgent:
                 elif (
                     name == "open_url"
                     and (
-                        _requests_search_submission(user_text)
+                        (
+                            _requests_search_submission(user_text)
+                            and not _requests_open_and_search(user_text)
+                        )
                         or _requests_result_selection(user_text)
                     )
                 ):
