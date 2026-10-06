@@ -105,9 +105,13 @@ class SemanticMemoryEngine:
         self,
         text: str,
         *,
+        pending_query: MemoryQueryFrame | None = None,
         log=None,
     ) -> MemoryTurnInterpretation:
-        result = self.interpreter.interpret_turn(text)
+        result = self.interpreter.interpret_turn(
+            text,
+            pending_query=pending_query,
+        )
         self._log_interpreter(log, "intent")
         return result
 
@@ -747,13 +751,69 @@ class SemanticMemoryRuntime:
         if begin:
             begin(user_text)
 
-        if self._pending_query is not None:
-            try:
-                refined = self.engine.refine(
-                    self._pending_query,
+        try:
+            intent = self.engine.interpret_turn(
+                user_text,
+                pending_query=self._pending_query,
+                log=log,
+            )
+        except Exception as exc:
+            if log:
+                log(
+                    "[MEMORY_V5] interpreter_error="
+                    f"{type(exc).__name__}:{exc}"
+                )
+            # Semantic memory is fail-open for ordinary conversation: if the
+            # semantic classifier is unavailable, do not fabricate memory.
+            return self.delegate.run(
+                user_text,
+                log=log,
+                phase=phase,
+            )
+
+        if log:
+            log(
+                "[MEMORY_V5] operation="
+                f"{intent.operation} confidence={intent.confidence:.3f} "
+                f"reason={intent.reason}"
+            )
+            if intent.query is not None:
+                log(
+                    "[MEMORY_V5] query="
+                    + json.dumps(
+                        {
+                            "subject": intent.query.subject,
+                            "relation": intent.query.relation,
+                            "object_hint": intent.query.object_hint,
+                            "qualifiers": intent.query.qualifiers,
+                            "entities": list(intent.query.entities),
+                            "scope": intent.query.scope,
+                            "answer_mode": intent.query.answer_mode,
+                            "answer_field": intent.query.answer_field,
+                            "exact_terms": list(intent.query.exact_terms),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+
+        if intent.operation != "clarify" and self._pending_query is not None:
+            if log:
+                log(
+                    "[MEMORY_V5] pending_clarification_replaced "
+                    f"by={intent.operation}"
+                )
+            self._pending_query = None
+
+        if intent.operation == "clarify":
+            refined = intent.query
+            if refined is None:
+                self._pending_query = None
+                return self.delegate.run(
                     user_text,
                     log=log,
+                    phase=phase,
                 )
+            try:
                 resolution = self.engine.resolve(
                     refined,
                     log=log,
@@ -778,32 +838,10 @@ class SemanticMemoryRuntime:
                         f"{type(exc).__name__}:{exc}"
                     )
                 self._pending_query = None
-
-        try:
-            intent = self.engine.interpret_turn(
-                user_text,
-                log=log,
-            )
-        except Exception as exc:
-            if log:
-                log(
-                    "[MEMORY_V5] interpreter_error="
-                    f"{type(exc).__name__}:{exc}"
+                return self._result(
+                    "La mémoire sémantique n'est pas disponible pour le moment.",
+                    user_text=user_text,
                 )
-            # Semantic memory is fail-open for ordinary conversation: if the
-            # semantic classifier is unavailable, do not fabricate memory.
-            return self.delegate.run(
-                user_text,
-                log=log,
-                phase=phase,
-            )
-
-        if log:
-            log(
-                "[MEMORY_V5] operation="
-                f"{intent.operation} confidence={intent.confidence:.3f} "
-                f"reason={intent.reason}"
-            )
 
         if intent.session_facts and intent.operation in {"pass", "write"}:
             self._record_session_facts(
