@@ -41,7 +41,24 @@ memory and query must be null.
 
 For recall, return a query with:
 subject, canonical English snake_case relation, object_hint, qualifiers,
-entities, scope, answer_mode (single|collection|timeline), exact_terms and confidence.
+entities, scope, answer_mode (single|collection|timeline), answer_field
+(value|subject), exact_terms and confidence.
+
+Use semantic triple direction consistently:
+- subject is the entity/person/concept the predicate is about.
+- relation is the canonical predicate.
+- object_hint is a known object/value constraint, not the expected answer.
+- answer_field says which side of the triple the user is asking for.
+For personal attributes, subject is "user" and answer_field is usually "value".
+For relational inverse questions where the subject is unknown, subject may be
+the empty string and answer_field must be "subject".
+
+Generic examples:
+- Fact: X owns Y -> subject=X, relation=owns, value=Y.
+- Query: "Who owns Y?" -> subject="", relation=owns,
+  object_hint=Y, answer_field=subject.
+- Query: "What does X own?" -> subject=X, relation=owns,
+  object_hint="", answer_field=value.
 The input includes reference_time_utc. Resolve relative temporal expressions
 such as today/tomorrow/next Friday into structured qualifiers when confidence is
 high. Prefer qualifier keys date (YYYY-MM-DD), datetime (ISO 8601), start_at,
@@ -51,6 +68,10 @@ For entity-centric questions such as "what do you know about Project Atlas?",
 relation may be empty, entities must contain the explicit entity, and
 answer_mode should be "collection" so independent facts about that entity can
 be returned together.
+For broad set questions constrained mainly by date/time/entity/scope (for
+example "what do I have planned on this date?"), relation may also be empty and
+answer_mode should be "collection". Do not invent a vague predicate merely to
+fill the relation field when structured qualifiers already identify the set.
 
 For inspect, query can be null.
 
@@ -72,6 +93,7 @@ Return exactly:
     "entities":[],
     "scope":"global",
     "answer_mode":"single|collection|timeline",
+    "answer_field":"value|subject",
     "exact_terms":[],
     "confidence":0.0
   },
@@ -101,8 +123,16 @@ _PROJECTION_SYSTEM = """You are a semantic fact projector for a personal AI
 memory index. Return JSON only. You have no tools and cannot mutate state.
 
 For every raw memory item, project zero or more independent semantic facts.
-Each fact contains subject, canonical English snake_case relation, value,
-kind, qualifiers, entities, scope, cardinality and confidence.
+Each fact is a semantic triple plus context:
+subject -> canonical English snake_case relation -> value,
+with kind, qualifiers, entities, scope, cardinality and confidence.
+
+Preserve relation direction. subject is the entity/person/concept the predicate
+is about; use subject="user" only for facts about the user. value is the object
+or attribute value. Example: "Alice owns Project North" becomes
+subject="alice", relation="owns", value="Project North". Do not invert the
+triple just because another question might ask for the owner; query
+answer_field handles inverse lookup.
 
 entities is a list of concrete people, projects, organizations, products,
 places or named concepts explicitly present in the raw memory. Do not invent
@@ -137,8 +167,9 @@ Return:
 _REFINE_SYSTEM = """You refine an existing personal-memory query after the user
 provides a clarification. Return JSON only. Keep existing constraints unless
 the clarification changes them. Return subject, canonical English snake_case
-relation, object_hint, qualifiers, entities, scope, answer_mode, exact_terms,
-confidence. Preserve entity constraints from the previous query unless the
+relation, object_hint, qualifiers, entities, scope, answer_mode, answer_field,
+exact_terms, confidence. Preserve entity constraints and answer_field from the
+previous query unless the
 clarification changes them.
 Do not answer the memory question.
 """
@@ -556,6 +587,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
                     "entities": list(previous.entities),
                     "scope": previous.scope,
                     "answer_mode": previous.answer_mode,
+                    "answer_field": previous.answer_field,
                     "exact_terms": list(previous.exact_terms),
                 },
                 "clarification": str(clarification or ""),
@@ -589,6 +621,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
                     "entities": list(query.entities),
                     "scope": query.scope,
                     "answer_mode": query.answer_mode,
+                    "answer_field": query.answer_field,
                     "exact_terms": list(query.exact_terms),
                 },
                 "relation_catalog": list(relation_catalog[:200]),
@@ -612,6 +645,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             entities=query.entities,
             scope=query.scope,
             answer_mode=query.answer_mode,
+            answer_field=query.answer_field,
             exact_terms=query.exact_terms,
             raw_text=query.raw_text,
             confidence=max(query.confidence, min(confidence, 1.0)),
