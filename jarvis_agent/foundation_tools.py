@@ -67,9 +67,10 @@ _BROWSER_DESCRIPTIONS = {
         "Utilise-le avant de deviner une cible ou un sélecteur."
     ),
     "find": (
-        "Filtre les contrôles de la page par nom/label/placeholder accessible et/ou rôle sémantique. "
+        "Filtre le SNAPSHOT COURANT sans créer une nouvelle observation ni invalider ses refs. "
+        "Recherche par nom/label/placeholder accessible et/ou rôle sémantique. "
         "Le champ text décrit la CIBLE à retrouver; ce n'est pas le contenu à saisir. "
-        "Si la cible n'est pas déjà connue, préfère d'abord browser_observe_dom."
+        "S'il n'existe encore aucun snapshot, browser_find peut en créer un."
     ),
     "click": "Clique une ref réellement observée dans le même onglet puis vérifie l'état obtenu.",
     "write": "Écrit dans une ref writable réellement observée dans le même onglet; la valeur écrite est vérifiée localement.",
