@@ -23,7 +23,7 @@ KINDS = {
 CARDINALITIES = {"single", "collection", "history", "unknown"}
 ANSWER_MODES = {"single", "collection", "timeline", "inspect"}
 ANSWER_FIELDS = {"value", "subject"}
-OPERATIONS = {"write", "recall", "inspect", "pass"}
+OPERATIONS = {"write", "recall", "inspect", "clarify", "pass"}
 
 
 def normalize_text(value: str) -> str:
@@ -293,7 +293,7 @@ class MemoryTurnInterpretation:
         except (TypeError, ValueError):
             confidence = 0.0
         query = None
-        if operation == "recall":
+        if operation in {"recall", "clarify"}:
             query = MemoryQueryFrame.from_dict(
                 payload.get("query"),
                 raw_text=user_text,
