@@ -376,7 +376,47 @@ def _qualifier_score(query: MemoryQueryFrame, fact: MemoryProjection) -> float:
 
 
 def _literal_exact_terms(query: MemoryQueryFrame) -> tuple[str, ...]:
-    """Return only genuine opaque/literal anchors from the user surface.\n\n    The semantic parser can occasionally place ordinary concepts in\n    exact_terms. Retrieval must not turn words such as "films", "tests" or\n    translated concepts into brittle substring gates. Exact matching is\n    reserved for anchors whose surface identity matters: explicit quoted text,\n    dates/numbers and identifier/code-like tokens.\n    """\n    raw = normalize_text(str(query.raw_text or ""))\n    if not raw:\n        return ()\n\n    result = []\n    for exact in query.exact_terms:\n        surface = str(exact or "").strip()\n        normalized = normalize_text(surface)\n        if not normalized or normalized not in raw:\n            continue\n\n        quoted_literal = any(\n            marker + normalized + marker in raw\n            for marker in ('"', "'")\n        )\n        has_digit = bool(re.search(r"\\d", surface))\n        code_like = bool(\n            re.fullmatch(\n                r"[A-Za-z][A-Za-z0-9_.:/#-]*\\d[A-Za-z0-9_.:/#-]*",\n                surface,\n            )\n        )\n        date_like = bool(\n            re.fullmatch(\n                r"\\d{1,4}[-/.]\\d{1,2}(?:[-/.]\\d{1,4})?",\n                surface,\n            )\n        )\n\n        if quoted_literal or has_digit or code_like or date_like:\n            result.append(surface)\n\n    return tuple(result)\n
+    """Return only genuine opaque/literal anchors from the user surface.
+
+    The semantic parser can occasionally place ordinary concepts in
+    exact_terms. Retrieval must not turn words such as "films", "tests" or
+    translated concepts into brittle substring gates. Exact matching is
+    reserved for anchors whose surface identity matters: explicit quoted text,
+    dates/numbers and identifier/code-like tokens.
+    """
+    raw = normalize_text(str(query.raw_text or ""))
+    if not raw:
+        return ()
+
+    result = []
+    for exact in query.exact_terms:
+        surface = str(exact or "").strip()
+        normalized = normalize_text(surface)
+        if not normalized or normalized not in raw:
+            continue
+
+        quoted_literal = any(
+            marker + normalized + marker in raw
+            for marker in ('"', "'")
+        )
+        has_digit = bool(re.search(r"\d", surface))
+        code_like = bool(
+            re.fullmatch(
+                r"[A-Za-z][A-Za-z0-9_.:/#-]*\d[A-Za-z0-9_.:/#-]*",
+                surface,
+            )
+        )
+        date_like = bool(
+            re.fullmatch(
+                r"\d{1,4}[-/.]\d{1,2}(?:[-/.]\d{1,4})?",
+                surface,
+            )
+        )
+
+        if quoted_literal or has_digit or code_like or date_like:
+            result.append(surface)
+
+    return tuple(result)
 
 def query_is_specific_enough(query: MemoryQueryFrame) -> bool:
     if 0.0 < query.confidence < 0.55:
