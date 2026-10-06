@@ -2086,6 +2086,39 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(delegate.calls, 1)
         self.assertEqual(interpreter.turn_calls, 0)
 
+    def test_active_browser_imperative_skips_semantic_memory_model(self):
+        _, interpreter, delegate, tools, runtime = self.build_runtime(
+            turns={},
+            projections={},
+        )
+        tools.browser_mode = True
+
+        result = runtime.run("ouvre le premier résultat")
+
+        self.assertEqual(result.text, "delegate:ouvre le premier résultat")
+        self.assertEqual(delegate.calls, 1)
+        self.assertEqual(interpreter.turn_calls, 0)
+
+    def test_active_browser_personal_question_still_uses_memory_interpreter(self):
+        question = "Quels sont mes projets ?"
+        _, interpreter, delegate, tools, runtime = self.build_runtime(
+            turns={
+                question: MemoryTurnInterpretation(
+                    operation="pass",
+                    confidence=0.99,
+                    reason="fixture pass",
+                )
+            },
+            projections={},
+        )
+        tools.browser_mode = True
+
+        result = runtime.run(question)
+
+        self.assertEqual(result.text, "delegate:" + question)
+        self.assertEqual(delegate.calls, 1)
+        self.assertEqual(interpreter.turn_calls, 1)
+
     def test_arbitrary_explicit_write_is_admitted_by_semantic_intent_not_regex(self):
         user_text = "Please keep this detail for another day: codeword Zeta"
         raw = "codeword Zeta"
