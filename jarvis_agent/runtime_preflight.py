@@ -5,8 +5,8 @@ import argparse
 import importlib
 import json
 import platform
+import re
 import sys
-from pathlib import Path
 
 
 CORE_IMPORTS = (
@@ -55,11 +55,27 @@ def _check(module_name: str, purpose: str) -> dict[str, str | bool]:
     }
 
 
+def _normalized_live_path(value: str) -> str:
+    """Normalize path separators without depending on the host OS.
+
+    Validation can run under a non-Windows Python while checking Windows-style
+    sys.path entries. Collapse repeated slash/backslash separators so synthetic
+    replay paths and real Windows paths are evaluated by the same rule.
+    """
+    text = str(value or "").replace("/", "\\")
+    text = re.sub(r"\\+", r"\\", text)
+    return text.casefold()
+
+
 def _live_path_contamination() -> list[str]:
     bad = []
+    markers = tuple(
+        _normalized_live_path(marker)
+        for marker in FORBIDDEN_LIVE_PATH_MARKERS
+    )
     for value in sys.path:
-        normalized = str(value or "").replace("/", "\\").casefold()
-        if any(marker.casefold() in normalized for marker in FORBIDDEN_LIVE_PATH_MARKERS):
+        normalized = _normalized_live_path(value)
+        if any(marker in normalized for marker in markers):
             bad.append(str(value))
     return bad
 
