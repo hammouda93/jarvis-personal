@@ -331,6 +331,12 @@ class FoundationRuntime:
     def __getattr__(self, name):
         return getattr(self.delegate, name)
 
+    @property
+    def supports_grounded_context(self):
+        return callable(
+            getattr(self.delegate, "run_with_context", None)
+        )
+
     def run(self, user_text, *, log=None, phase=None):
         self.tools.begin_turn(user_text)
         result = self.delegate.run(user_text, log=log, phase=phase)
