@@ -3849,6 +3849,9 @@ def build_agent_runtime() -> AgentRuntime:
                     foundation_tools.memory,
                     build_semantic_memory_interpreter(),
                 )
+                foundation_tools.attach_semantic_memory_engine(
+                    semantic_engine
+                )
                 runtime = SemanticMemoryRuntime(
                     runtime,
                     tools,
