@@ -248,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
                         "entities": list(interpreted.query.entities),
                         "scope": interpreted.query.scope,
                         "answer_mode": interpreted.query.answer_mode,
+                        "answer_field": interpreted.query.answer_field,
                         "exact_terms": list(interpreted.query.exact_terms),
                         "confidence": interpreted.query.confidence,
                     }
@@ -279,6 +280,10 @@ def main(argv: list[str] | None = None) -> int:
                     "mode": resolution.get("mode"),
                     "effective_relation": resolution.get(
                         "effective_relation"
+                    ),
+                    "answer_field": resolution.get(
+                        "answer_field",
+                        interpreted.query.answer_field,
                     ),
                     "hits": [
                         {
