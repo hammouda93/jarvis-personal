@@ -159,7 +159,27 @@ async function action(request) {
     try {
       const result = await domCall(tab.id,"preparePointer",[a.ref],target.documentId);
       const point = result[0]?.result;
-      if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) throw Error("invalid_browser_pointer_target");
+      if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
+        checkDeadline(request);
+        const fallback = await domCall(
+          tab.id,
+          "act",
+          [a.ref,"click",{...a,deadline_ms:request.deadline_ms}],
+          target.documentId
+        );
+        invalidateSnapshot(tab.id);
+        const domResult = fallback[0]?.result;
+        if (!domResult?.dispatched) throw Error("browser_dom_click_fallback_unavailable");
+        const postObservation = await bestEffortPostObservation(tab.id);
+        return {
+          ...domResult,
+          trusted:false,
+          dispatch_method:"dom_click_fallback",
+          verified:false,
+          postcondition:"click_dispatched_requires_verify",
+          ...(postObservation ? {post_observation:postObservation} : {})
+        };
+      }
       checkDeadline(request);
       invalidateSnapshot(tab.id);
       await domCall(tab.id,"invalidate",[],target.documentId);
