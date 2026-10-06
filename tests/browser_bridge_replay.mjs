@@ -116,18 +116,22 @@ test('cross-tab ref is rejected before any mutation',async()=>{
   await assert.rejects(request('write',{tab_id:2,ref,text:'wrong'}),/cross_tab/);
   assert(!operations.some(x=>x[0]==='dom_action'));
 });
-test('refs expire after mutation and after reobservation',async()=>{
-  let ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
-  await request('write',{tab_id:1,ref,text:'hello'});
+test('read-only reobservation reuses snapshot; mutation expires old refs',async()=>{
+  const first=await request('observe_dom',{tab_id:1});
+  const ref=first.controls[0].ref;
+  const second=await request('observe_dom',{tab_id:1});
+  assert.equal(second.observation_id,first.observation_id);
+  assert.equal(second.controls[0].ref,ref);
+  const write=await request('write',{tab_id:1,ref,text:'hello'});
+  assert.equal(write.verified,true);
   await assert.rejects(request('write',{tab_id:1,ref,text:'again'}),/cross_tab/);
-  ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
-  await request('observe_dom',{tab_id:1});
-  await assert.rejects(request('click',{tab_id:1,ref}),/cross_tab/);
+  assert.notEqual(write.post_observation.observation_id,first.observation_id);
 });
 test('Chrome Input is targeted by tabId regardless of nonbrowser OS focus',async()=>{
   const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
   const result=await request('press',{tab_id:1,ref,key:'Enter'});
   assert.equal(result.verified,false);
+  assert(result.post_observation);
   const inputs=operations.filter(x=>x[0]==='cdp');
   assert.equal(inputs.length,2);
   assert(inputs.every(x=>x[1].tabId===1));
@@ -137,6 +141,8 @@ test('top frame click uses trusted Chrome Input bound to the observed tab',async
   const result=await request('click',{tab_id:1,ref});
   assert.equal(result.trusted,true);
   assert.equal(result.verified,false);
+  assert(result.post_observation);
+  assert.equal(result.post_observation.tab.tab_id,1);
   const inputs=operations.filter(x=>x[0]==='cdp');
   assert.deepEqual(inputs.map(x=>x[3].type),['mousePressed','mouseReleased']);
   assert(inputs.every(x=>x[1].tabId===1));
