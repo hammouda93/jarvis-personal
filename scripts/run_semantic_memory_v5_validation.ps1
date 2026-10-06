@@ -44,7 +44,8 @@ try {
         Write-Host ''
         Write-Host '5/5 Run synthetic live semantic-model acceptance...'
         $evalArgs = @(
-            'scripts/evaluate_semantic_memory_v5.py',
+            '-m',
+            'scripts.evaluate_semantic_memory_v5',
             '--provider', $SemanticProvider
         )
         if ($SemanticModel) {
