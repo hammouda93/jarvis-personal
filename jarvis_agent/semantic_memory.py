@@ -66,6 +66,55 @@ def lexical_similarity(left: str, right: str) -> float:
     return len(a & b) / max(1, len(a | b))
 
 
+def entity_context_similarity(query_entity: str, fact_entity: str) -> float:
+    """Directional alias similarity for named entities.
+
+    The query may be a shorter alias of the stored entity ("Atlas" ->
+    "Project Atlas"), but sharing only a generic-looking prefix must not make
+    peer entities equivalent ("Project North" != "Project South").
+
+    This stays domain-neutral by comparing token coverage rather than keeping a
+    vocabulary of entity types.
+    """
+    left = normalize_text(query_entity)
+    right = normalize_text(fact_entity)
+    if not left or not right:
+        return 0.0
+    if left == right:
+        return 1.0
+
+    left_tokens = re.findall(r"[\w]+", left, flags=re.UNICODE)
+    right_tokens = re.findall(r"[\w]+", right, flags=re.UNICODE)
+    if not left_tokens or not right_tokens:
+        return 0.0
+
+    # A query alias can be strictly shorter than the stored canonical surface.
+    if set(left_tokens).issubset(set(right_tokens)):
+        return 1.0
+
+    token_scores = []
+    for wanted in left_tokens:
+        best = max(
+            (
+                SequenceMatcher(None, wanted, actual).ratio()
+                for actual in right_tokens
+            ),
+            default=0.0,
+        )
+        token_scores.append(best)
+
+    directional = sum(token_scores) / len(token_scores)
+    whole = SequenceMatcher(None, left, right).ratio()
+
+    # Whole-string similarity alone is not enough: "Project North" and
+    # "Project South" have a long common prefix. Token coverage must also be
+    # strong for every part of the query entity.
+    weakest = min(token_scores)
+    if weakest < 0.72:
+        return min(directional, 0.79)
+    return max(directional, whole * 0.95)
+
+
 def _clean_entities(value: Any) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple, set)):
         return ()
@@ -385,16 +434,16 @@ def score_semantic_fact(
         for wanted in wanted_entities:
             best = max(
                 (
-                    semantic_key_similarity(wanted, actual)
+                    entity_context_similarity(wanted, actual)
                     for actual in fact_entities
                 ),
                 default=0.0,
             )
-            if best < 0.45 and wanted in normalized_combined:
+            if best < 0.82 and wanted in normalized_combined:
                 # Legacy/unprojected entity evidence can still be recognized
                 # from the raw fact text, but only by literal normalized span.
-                best = 0.72
-            if best < 0.45:
+                best = 0.88
+            if best < 0.82:
                 return None
             entity_matches.append(best)
         entity_score = (
