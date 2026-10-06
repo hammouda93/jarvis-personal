@@ -176,6 +176,125 @@ class ToolSchemaDelegate:
         }
 
 
+class SemanticStructuredOutputTests(unittest.TestCase):
+    def test_cloud_semantic_calls_request_native_json_mode(self):
+        class OptionsInterpreter(ModelSemanticMemoryInterpreter):
+            def _model_for(self, provider):
+                return "openai/gpt-oss-120b"
+
+        interpreter = OptionsInterpreter(
+            provider="cerebras",
+            allow_cloud=True,
+        )
+
+        cerebras = interpreter._structured_output_options("cerebras")
+        groq = interpreter._structured_output_options("groq")
+
+        self.assertEqual(
+            cerebras["response_format"],
+            {"type": "json_object"},
+        )
+        self.assertNotIn("extra_body", cerebras)
+        self.assertEqual(
+            groq["response_format"],
+            {"type": "json_object"},
+        )
+        self.assertEqual(
+            groq["extra_body"]["reasoning_format"],
+            "hidden",
+        )
+        self.assertEqual(
+            groq["extra_body"]["reasoning_effort"],
+            "low",
+        )
+
+    def test_truncated_structured_output_fails_closed_before_json_parse(self):
+        import sys
+        from types import SimpleNamespace
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            finish_reason="length",
+                            message=SimpleNamespace(
+                                content='{"items":['
+                            ),
+                        )
+                    ]
+                )
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.chat = SimpleNamespace(
+                    completions=FakeCompletions()
+                )
+
+        class TruncationInterpreter(ModelSemanticMemoryInterpreter):
+            @staticmethod
+            def _provider_config(provider):
+                return "https://example.invalid/v1", "test-key"
+
+        fake_openai = SimpleNamespace(OpenAI=FakeClient)
+        interpreter = TruncationInterpreter(
+            provider="cerebras",
+            model="gpt-oss-120b",
+            allow_cloud=True,
+        )
+
+        with patch.dict(sys.modules, {"openai": fake_openai}):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "semantic_memory_structured_output_truncated",
+            ):
+                interpreter._chat_openai_compatible(
+                    "cerebras",
+                    "Return JSON only.",
+                    "{}",
+                )
+
+    def test_invalid_primary_json_falls_back_without_silent_repair(self):
+        class FallbackInterpreter(ModelSemanticMemoryInterpreter):
+            def _provider_chain(self):
+                return ("cerebras", "groq")
+
+            def _model_for(self, provider):
+                return "gpt-oss-120b"
+
+            def _chat_openai_compatible(
+                self,
+                provider,
+                system,
+                user,
+            ):
+                if provider == "cerebras":
+                    return '{"operation":"pass"'
+                return json.dumps(
+                    {
+                        "operation": "pass",
+                        "write_text": "",
+                        "query": None,
+                        "session_facts": [],
+                        "confidence": 0.99,
+                        "reason": "ordinary conversation",
+                    }
+                )
+
+        interpreter = FallbackInterpreter(
+            provider="cerebras",
+            allow_cloud=True,
+        )
+        result = interpreter.interpret_turn("hello")
+
+        self.assertEqual(result.operation, "pass")
+        self.assertEqual(interpreter.last_provider, "groq")
+        self.assertEqual(
+            interpreter.last_attempts,
+            ("cerebras", "groq"),
+        )
+
+
 class SemanticProviderFallbackTests(unittest.TestCase):
     def test_cerebras_failure_falls_back_to_groq_with_provider_native_model(self):
         class FallbackInterpreter(ModelSemanticMemoryInterpreter):
