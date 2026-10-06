@@ -26,6 +26,7 @@ from jarvis_agent.agent_runtime import (
     _looks_like_clear_operational_feedback,
     _requested_action_capabilities,
     _missing_requested_action_capabilities,
+    _requests_open_and_search,
     _inspection_requests_visual_fallback,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -736,6 +737,57 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertNotIn("inspect_active_window", names)
         self.assertNotIn("research_web", names)
+
+    def test_browser_request_compacts_old_history_but_keeps_current_tool_loop(self):
+        agent = GroqResponsesAgent(FakeTools())
+        agent._messages = [
+            {"role": "system", "content": "system"},
+        ]
+        for index in range(6):
+            agent._messages.extend(
+                [
+                    {"role": "user", "content": f"old-user-{index}"},
+                    {"role": "assistant", "content": f"old-assistant-{index}"},
+                ]
+            )
+        agent._request_turn_start_index = len(agent._messages)
+        agent._messages.extend(
+            [
+                {"role": "user", "content": "current browser command"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "browser_write",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-1",
+                    "name": "browser_write",
+                    "content": '{"success":true}',
+                },
+            ]
+        )
+        agent._ephemeral_context = (
+            'BROWSER_GROUNDING_READ_ONLY:{"tab":{"tab_id":7}}'
+        )
+
+        request = agent._messages_for_request()
+
+        contents = [str(item.get("content") or "") for item in request]
+        self.assertNotIn("old-user-0", contents)
+        self.assertIn("old-user-5", contents)
+        self.assertIn("current browser command", contents)
+        self.assertTrue(any(item.get("tool_calls") for item in request))
+        self.assertTrue(any(item.get("role") == "tool" for item in request))
 
     def test_groq_baseline_hides_new_learning_and_vision_tools(self):
         tools = FakeTools()
@@ -3160,6 +3212,44 @@ class AgentRuntimeTests(unittest.TestCase):
             _requested_action_capabilities(
                 "Vas y recherche Messi."
             ),
+        )
+
+    def test_simple_browser_search_requires_real_submission(self):
+        self.assertIn(
+            "site_search",
+            _requested_action_capabilities("Recherche Lionel Messi."),
+        )
+        self.assertTrue(
+            _requests_open_and_search(
+                "Ouvre YouTube et lance la recherche de Lionel Messi."
+            )
+        )
+
+    def test_explicit_search_submit_with_post_observation_completes_goal(self):
+        action = AgentActionResult(
+            name="browser_press",
+            success=True,
+            message="pressed",
+            detail=json.dumps(
+                {
+                    "dispatched": True,
+                    "verified": False,
+                    "post_observation": {
+                        "observation_id": "after-submit",
+                        "tab": {
+                            "tab_id": 7,
+                            "url": "https://example.com/results?q=mess",
+                        },
+                    },
+                }
+            ),
+        )
+        self.assertEqual(
+            _missing_requested_action_capabilities(
+                "Lance la recherche.",
+                [action],
+            ),
+            set(),
         )
 
     def test_visible_search_url_satisfies_open_and_search_goal(self):
