@@ -1068,6 +1068,33 @@ class SemanticMemoryRuntime:
         if begin:
             begin(user_text)
 
+        # Operational browser commands are already classified by the generic
+        # local capability router. Calling the semantic-memory model again for
+        # "open/back/search/close tab" adds no memory value and consumes one
+        # scarce provider request before the real agent even starts. Unknown
+        # turns and every actual memory request still use the V5 interpreter.
+        try:
+            from .tools import route
+            operational_intent = route(user_text)
+        except Exception:
+            operational_intent = None
+        if (
+            operational_intent is not None
+            and str(getattr(operational_intent, "name", "")).startswith(
+                "browser."
+            )
+        ):
+            if log:
+                log(
+                    "[MEMORY_V5] operation=pass "
+                    "fast_path=operational_browser"
+                )
+            return self.delegate.run(
+                user_text,
+                log=log,
+                phase=phase,
+            )
+
         try:
             intent = self.engine.interpret_turn(
                 user_text,
