@@ -113,9 +113,9 @@ async function action(request) {
   }
   if (["observe_dom","find","verify"].includes(op)) {
     const observation = (
-      op === "find"
-        ? (snapshots.get(tab.id) || await observe(tab.id))
-        : await observe(tab.id)
+      op === "verify"
+        ? await observe(tab.id)
+        : (snapshots.get(tab.id) || await observe(tab.id))
     );
     if (op === "observe_dom") return observation;
     if (op === "verify") {
