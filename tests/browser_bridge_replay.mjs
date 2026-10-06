@@ -89,6 +89,15 @@ test('exact find avoids contact/result prefix confusion',async()=>{
   assert.equal(result.matches.length,1);
   assert.equal(result.matches[0].text,'Exact Person');
 });
+test('find filters the current snapshot without invalidating its refs',async()=>{
+  const observation=await request('observe_dom',{tab_id:1});
+  const ref=observation.controls[1].ref;
+  const found=await request('find',{tab_id:1,text:'Exact Person',exact:true});
+  assert.equal(found.observation_id,observation.observation_id);
+  assert.equal(found.matches[0].ref,ref);
+  const click=await request('click',{tab_id:1,ref});
+  assert.equal(click.dispatched,true);
+});
 test('partial or opaque frames do not invalidate the whole DOM observation',async()=>{
   includeNullFrame=true;
   const result=await request('observe_dom',{tab_id:1});
@@ -161,6 +170,15 @@ test('download dispatch requires separate completion proof',async()=>{
   assert.equal(start.verified,false);
   assert.equal((await request('verify',{download_id:77})).verified,true);
   assert.equal((await request('verify',{download_id:99})).verified,false);
+});
+test('verified write returns a fresh post-observation snapshot',async()=>{
+  const observation=await request('observe_dom',{tab_id:1});
+  const ref=observation.controls[0].ref;
+  const result=await request('write',{tab_id:1,ref,text:'hello'});
+  assert.equal(result.verified,true);
+  assert(result.post_observation);
+  assert.notEqual(result.post_observation.observation_id,observation.observation_id);
+  assert.equal(result.post_observation.tab.tab_id,1);
 });
 
 function fakeDOM(){
