@@ -147,6 +147,12 @@ class FoundationToolAdapter:
                     )
                 )
             observation = self.browser.observe_dom(tab_id)
+            # A fresh read-only observation establishes the current browser
+            # state for this new user turn. Old unverified dispatches must not
+            # poison the next mission once the actual current state is seen.
+            scope = ("browser", tab_id)
+            self.pending_verification.discard(scope)
+            self.uncertain_scopes.discard(scope)
             raw_controls = [
                 item
                 for item in list(observation.get("controls") or [])
