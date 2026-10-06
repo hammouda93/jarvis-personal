@@ -375,6 +375,26 @@ def _qualifier_score(query: MemoryQueryFrame, fact: MemoryProjection) -> float:
     return sum(scores) / max(1, len(scores))
 
 
+def _literal_exact_terms(query: MemoryQueryFrame) -> tuple[str, ...]:
+    """Return only exact constraints literally present in the user utterance.
+
+    Semantic providers may translate or paraphrase concepts while building a
+    query frame. Those semantic rewrites belong in relation/object/entity
+    fields, not in exact_terms: treating a translated phrase as literal would
+    make multilingual recall impossible. Exact constraints remain strict when
+    their normalized surface is actually present in the original utterance.
+    """
+    raw = normalize_text(query.raw_text)
+    if not raw:
+        return ()
+    result = []
+    for exact in query.exact_terms:
+        normalized = normalize_text(exact)
+        if normalized and normalized in raw:
+            result.append(str(exact))
+    return tuple(result)
+
+
 def query_is_specific_enough(query: MemoryQueryFrame) -> bool:
     if 0.0 < query.confidence < 0.55:
         return False
@@ -409,7 +429,7 @@ def semantic_rejection_reason(
         ]
     )
     normalized_combined = normalize_text(combined)
-    for exact in query.exact_terms:
+    for exact in _literal_exact_terms(query):
         if normalize_text(exact) not in normalized_combined:
             return "exact_term"
 
@@ -481,7 +501,7 @@ def score_semantic_fact(
         ]
     )
     normalized_combined = normalize_text(combined)
-    for exact in query.exact_terms:
+    for exact in _literal_exact_terms(query):
         if normalize_text(exact) not in normalized_combined:
             return None
 
