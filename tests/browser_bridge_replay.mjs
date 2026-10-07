@@ -293,6 +293,18 @@ test('DOM references expose accessible semantics and bind the actual node',()=>{
   assert.equal(item.visual_index,1);
   assert.equal(item.dom_index,1);
 });
+test('bounded DOM activation remains available when pointer hit testing is unavailable',()=>{
+  const {bridge,input,document}=fakeDOM();
+  document.elementFromPoint=()=>({notTheTarget:true});
+  const ref=bridge.observe().controls[0].ref;
+  assert.throws(()=>bridge.preparePointer(ref),/occluded/);
+  const result=bridge.act(ref,'click',{});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.trusted,false);
+  assert.equal(result.dispatch_method,'dom_click');
+  assert.equal(input.clicked,true);
+});
+
 test('DOM references bind actual node; write verifies Unicode and expires',()=>{
   const {bridge,input}=fakeDOM();const ref=bridge.observe().controls[0].ref;
   assert.equal(bridge.act(ref,'write',{text:'été عربي'}).verified,true);
