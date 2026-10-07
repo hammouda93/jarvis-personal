@@ -3378,6 +3378,95 @@ class AgentRuntimeTests(unittest.TestCase):
             set(),
         )
 
+    def test_send_request_requires_verified_submit_capability(self):
+        self.assertIn(
+            "submit_ui",
+            _requested_action_capabilities(
+                "Écris bonjour puis envoie le message."
+            ),
+        )
+        action = AgentActionResult(
+            name="browser_press",
+            success=True,
+            message="submitted",
+            detail=json.dumps(
+                {
+                    "dispatched": True,
+                    "verified": True,
+                    "postcondition": "editable_value_cleared",
+                }
+            ),
+        )
+        self.assertIn(
+            "submit_ui",
+            _completed_action_capabilities([action]),
+        )
+
+    def test_verified_browser_capability_finishes_without_extra_model_round(self):
+        class VerifiedBrowserTools(FakeTools):
+            def ollama_tools(self):
+                return [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "browser_close_tab",
+                            "description": "close verified tab",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "tab_id": {"type": "integer"},
+                                },
+                                "required": ["tab_id"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    }
+                ]
+
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="closed",
+                    detail=json.dumps(
+                        {
+                            "verified": True,
+                            "postcondition": "tab_absent",
+                            "scope": ["browser", arguments["tab_id"]],
+                        }
+                    ),
+                )
+
+        tools = VerifiedBrowserTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "close-fast",
+                            "name": "browser_close_tab",
+                            "arguments": '{"tab_id":7}',
+                        }
+                    ]
+                }
+            ],
+        )
+
+        result = agent.run("Ferme l'onglet actif.")
+
+        self.assertEqual(len(agent.payloads), 1)
+        self.assertEqual(
+            result.text,
+            "C'est fait et vérifié dans l'interface.",
+        )
+        self.assertEqual(
+            tools.calls,
+            [("browser_close_tab", {"tab_id": 7})],
+        )
+
     def test_simple_browser_search_requires_real_submission(self):
         self.assertIn(
             "site_search",
