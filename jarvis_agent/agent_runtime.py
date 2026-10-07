@@ -13,6 +13,10 @@ from typing import Any, Callable, Protocol
 from .agent_knowledge import AGENT_KNOWLEDGE
 from .config import settings
 from .connectors import CONNECTORS
+from .intent_guards import (
+    is_explicit_context_reset_request,
+    is_explicit_memory_write_request,
+)
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
 from .tools import normalize
 
@@ -743,22 +747,13 @@ def _looks_like_unnecessary_followup(text: str) -> bool:
 
 
 def _is_explicit_memory_write_request(text: str) -> bool:
-    """Allow persistent memory writes only when the user explicitly asks.
+    """Compatibility wrapper around the central durable-memory admission guard."""
+    return is_explicit_memory_write_request(text)
 
-    Model instructions are not a sufficient safety boundary: a model may still
-    choose remember_information for an ordinary statement. Keep the final
-    decision deterministic in the runtime so conversation context and
-    persistent memory remain separate.
-    """
-    normalized = (text or "").lower().replace("’", "'").strip()
-    patterns = (
-        r"\b(retiens|retenez|mémorise|memorise|mémorisez|memorisez)\b",
-        r"\b(garde|gardez|conserve|conservez)\b.{0,32}\ben mémoire\b",
-        r"\b(souviens-toi|souvenez-vous)\b",
-        r"\b(remember|memorize|memorise)\b",
-        r"\b(save|keep)\b.{0,24}\b(in )?(memory|mind)\b",
-    )
-    return any(re.search(pattern, normalized, flags=re.DOTALL) for pattern in patterns)
+
+def _is_explicit_context_reset_request(text: str) -> bool:
+    """Compatibility wrapper around the central context-reset admission guard."""
+    return is_explicit_context_reset_request(text)
 
 
 def _looks_like_clear_operational_feedback(text: str) -> bool:
@@ -1014,6 +1009,18 @@ def _record_operational_run(
         )
     except Exception:
         pass
+
+
+def _blocked_context_reset_result() -> AgentActionResult:
+    return AgentActionResult(
+        name="reset_conversation_context",
+        success=False,
+        message=(
+            "Je conserve le contexte de cette conversation car l'utilisateur "
+            "n'a pas demandé explicitement de le réinitialiser."
+        ),
+        detail="context_reset_blocked_not_explicit",
+    )
 
 
 def _blocked_memory_write_result() -> AgentActionResult:
@@ -1606,6 +1613,11 @@ class OllamaToolAgent:
                     and not _is_explicit_memory_write_request(user_text)
                 ):
                     result = _blocked_memory_write_result()
+                elif (
+                    name == "reset_conversation_context"
+                    and not _is_explicit_context_reset_request(user_text)
+                ):
+                    result = _blocked_context_reset_result()
                 else:
                     result = self.tools.execute(name, arguments)
                 if log:
@@ -2085,6 +2097,11 @@ class OpenAIResponsesAgent:
                     and not _is_explicit_memory_write_request(user_text)
                 ):
                     result = _blocked_memory_write_result()
+                elif (
+                    name == "reset_conversation_context"
+                    and not _is_explicit_context_reset_request(user_text)
+                ):
+                    result = _blocked_context_reset_result()
                 else:
                     result = self.tools.execute(name, arguments)
                 actions.append(result)
@@ -3588,6 +3605,11 @@ class GroqResponsesAgent:
                     and not _is_explicit_memory_write_request(user_text)
                 ):
                     result = _blocked_memory_write_result()
+                elif (
+                    name == "reset_conversation_context"
+                    and not _is_explicit_context_reset_request(user_text)
+                ):
+                    result = _blocked_context_reset_result()
                 elif (
                     settings.vision_enabled
                     and visual_fallback_required
