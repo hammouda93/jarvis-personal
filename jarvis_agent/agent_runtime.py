@@ -845,6 +845,81 @@ def _browser_result_selection_verified(
     return False
 
 
+def _verified_browser_submit_seen(
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> bool:
+    for action in reversed(actions):
+        if not action.success or action.name not in {"browser_press", "browser_click"}:
+            continue
+        payload = _action_detail_dict(action)
+        if (
+            payload.get("verified") is True
+            and payload.get("postcondition")
+            in {
+                "editable_value_cleared",
+                "focused_editable_value_cleared",
+                "navigation_observed",
+                "structural_transition_observed",
+            }
+        ):
+            return True
+    return False
+
+
+def _browser_readback_request(text: str) -> bool:
+    normalized = normalize(text)
+    return bool(
+        re.search(
+            r"\b(?:lis|lire|inspecte|inspectes|inspecter|"
+            r"donne|donnes|donnez|affiche|afficher|"
+            r"titre|titres|contenu|resultat|resultats|"
+            r"quel|quels|quelle|quelles)\b",
+            normalized,
+        )
+    )
+
+
+def _unsupported_browser_quoted_claims(
+    user_text: str,
+    response_text: str,
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+    context: str = "",
+) -> list[str]:
+    """Reject quoted page facts that are absent from all observed evidence."""
+    if not _browser_readback_request(user_text):
+        return []
+    claims = re.findall(
+        r'(?:«([^»\n]+)»|“([^”\n]+)”|"([^"\n]+)")',
+        response_text or "",
+    )
+    quoted = [
+        next((part for part in group if part), "").strip()
+        for group in claims
+    ]
+    quoted = [item for item in quoted if len(normalize(item)) >= 8]
+    if not quoted:
+        return []
+
+    evidence_parts = [str(context or "")]
+    for action in actions:
+        if action.name in {
+            "browser_observe_dom",
+            "browser_find",
+            "browser_verify",
+            "browser_click",
+            "browser_press",
+            "browser_write",
+            "browser_select",
+        }:
+            evidence_parts.append(str(action.detail or ""))
+    evidence = normalize("\n".join(evidence_parts))
+    return [
+        claim
+        for claim in quoted
+        if normalize(claim) not in evidence
+    ]
+
+
 def _browser_verified_fast_completion(
     user_text: str,
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
@@ -889,16 +964,7 @@ def _browser_verified_fast_completion(
         return last_browser.name == "browser_click"
 
     if _requests_ui_submission(user_text):
-        return (
-            last_browser.name in {"browser_press", "browser_click"}
-            and payload.get("postcondition")
-            in {
-                "editable_value_cleared",
-                "focused_editable_value_cleared",
-                "navigation_observed",
-                "structural_transition_observed",
-            }
-        )
+        return _verified_browser_submit_seen(actions)
 
     required = _requested_action_capabilities(user_text)
     if not required:
@@ -2837,6 +2903,7 @@ class GroqResponsesAgent:
                     "browser_navigate",
                     "browser_click",
                     "browser_write",
+                    "browser_select",
                     "browser_press",
                     "browser_back",
                     "browser_forward",
@@ -2861,6 +2928,7 @@ class GroqResponsesAgent:
                     "browser_find",
                     "browser_click",
                     "browser_write",
+                    "browser_select",
                     "browser_press",
                     "browser_back",
                     "browser_forward",
@@ -3455,6 +3523,7 @@ class GroqResponsesAgent:
         visual_fallback_repair_attempted = False
         structured_inspection_seen = False
         browser_result_selection_repair_attempted = False
+        browser_submit_repair_attempted = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -3562,6 +3631,34 @@ class GroqResponsesAgent:
                     browser_result_selection_repair_attempted = True
                     if log:
                         log("[AGENT] repair=browser_result_selection_required")
+                    continue
+
+                if (
+                    _requests_ui_submission(user_text)
+                    and not _verified_browser_submit_seen(actions)
+                    and not browser_submit_repair_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "L'utilisateur a explicitement demandé de soumettre/envoyer "
+                                "le contenu déjà présent, mais aucune preuve finale d'envoi "
+                                "n'existe encore. Ne réécris pas le contenu. Utilise l'état "
+                                "Browser frais: clique une cible de soumission réellement "
+                                "observée ou, si l'interface n'expose pas de bouton et qu'un "
+                                "composer writable réel est observé, utilise Enter sur ce "
+                                "composer. Termine seulement avec une preuve telle que champ "
+                                "vidé, navigation ou transition structurelle."
+                            ),
+                        }
+                    )
+                    browser_submit_repair_attempted = True
+                    if log:
+                        log("[AGENT] repair=verified_browser_submit_required")
                     continue
 
                 missing_capabilities = (
@@ -3795,6 +3892,23 @@ class GroqResponsesAgent:
                     text = (
                         "D'accord. Je garde cette information uniquement dans "
                         "le contexte de cette conversation."
+                    )
+
+                unsupported_claims = _unsupported_browser_quoted_claims(
+                    user_text,
+                    text,
+                    actions,
+                    self._ephemeral_context,
+                )
+                if unsupported_claims:
+                    if log:
+                        log(
+                            "[AGENT] blocked=unsupported_browser_quoted_claims "
+                            + json.dumps(unsupported_claims, ensure_ascii=False)
+                        )
+                    text = (
+                        "Je n'ai pas pu confirmer ces éléments dans l'observation "
+                        "réelle de la page, donc je ne vais pas les inventer."
                     )
 
                 if self._messages and self._messages[-1].get("role") == "assistant":
