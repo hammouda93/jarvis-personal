@@ -67,6 +67,11 @@ function successorControl(target, postObservation) {
     if (target?.documentId && item.document_id && target.documentId !== item.document_id) return false;
     if (before.tag && item.tag && before.tag !== item.tag) return false;
     if (before.type && item.type && before.type !== item.type) return false;
+    if (
+      before.editable_kind &&
+      item.editable_kind &&
+      before.editable_kind !== item.editable_kind
+    ) return false;
     const comparable = identityKeys.filter(key => normControl(before[key]));
     if (comparable.length) {
       return comparable.every(key => normControl(item[key]) === normControl(before[key]));
@@ -93,8 +98,85 @@ function successorControl(target, postObservation) {
 function compactTarget(item) {
   if (!item) return null;
   const keys = ["ref","type","name","placeholder","aria_label","tag","value",
-    "selected_text","writable","selectable","actionable","region","visual_index"];
+    "selected_text","editable_kind","writable","selectable","actionable",
+    "region","visual_index"];
   return Object.fromEntries(keys.filter(key => item[key] !== undefined).map(key => [key,item[key]]));
+}
+function normalizedEditable(value) {
+  return String(value ?? "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\u00A0/g, " ")
+    .replace(/\r\n/g, "\n");
+}
+function editableEquivalent(actual, expected) {
+  const a = normalizedEditable(actual);
+  const e = normalizedEditable(expected);
+  return a === e || (!e.endsWith("\n") && a === e + "\n");
+}
+function meaningfulControl(item) {
+  return Boolean(
+    item &&
+    (
+      item.writable ||
+      item.selectable ||
+      item.actionable ||
+      ["heading","textbox","searchbox","combobox","button","link","tab","dialog"]
+        .includes(String(item.type || ""))
+    )
+  );
+}
+function controlFingerprint(item) {
+  if (!meaningfulControl(item)) return "";
+  const type = normControl(item.type);
+  const tag = normControl(item.tag);
+  const region = normControl(item.region);
+  const stable = [
+    item.placeholder,
+    item.aria_label,
+    item.name,
+    item.href,
+  ].map(normControl).find(Boolean);
+  if (stable) return [type,tag,region,stable].join("|");
+  const box = Array.isArray(item.bbox) ? item.bbox : [];
+  if (box.length !== 4) return "";
+  const cx = (Number(box[0]) + Number(box[2])) / 2;
+  const cy = (Number(box[1]) + Number(box[3])) / 2;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) return "";
+  return [type,tag,region,Math.round(cx/64),Math.round(cy/48)].join("|");
+}
+function structuralTransitionProof(beforeObservation, postObservation) {
+  const beforeControls = Array.isArray(beforeObservation?.controls)
+    ? beforeObservation.controls.filter(meaningfulControl)
+    : [];
+  const afterControls = Array.isArray(postObservation?.controls)
+    ? postObservation.controls.filter(meaningfulControl)
+    : [];
+  if (!beforeControls.length || !afterControls.length) return {verified:false};
+
+  const beforeKeys = new Set(beforeControls.map(controlFingerprint).filter(Boolean));
+  const afterKeys = new Set(afterControls.map(controlFingerprint).filter(Boolean));
+  const newControls = afterControls.filter(item => {
+    const key = controlFingerprint(item);
+    return key && !beforeKeys.has(key);
+  });
+  const removedControls = beforeControls.filter(item => {
+    const key = controlFingerprint(item);
+    return key && !afterKeys.has(key);
+  });
+  const newWritable = newControls.filter(item => item.writable);
+  const verified = Boolean(
+    (newWritable.length >= 1 && newControls.length >= 2) ||
+    (newControls.length >= 3 && removedControls.length >= 2)
+  );
+  return {
+    verified,
+    postcondition: verified ? "structural_transition_observed" : "",
+    structural_delta: {
+      new_meaningful:newControls.length,
+      removed_meaningful:removedControls.length,
+      new_writable:newWritable.length,
+    },
+  };
 }
 function interactionProof(beforeTab, beforeObservation, target, postObservation, fallbackPostcondition) {
   const navigation = navigationProof(beforeTab, postObservation, fallbackPostcondition);
@@ -147,6 +229,16 @@ function interactionProof(beforeTab, beforeObservation, target, postObservation,
       };
     }
   }
+  const structural = structuralTransitionProof(
+    beforeObservation,
+    postObservation
+  );
+  if (structural.verified) {
+    return {
+      ...structural,
+      target_after:compactTarget(targetAfter),
+    };
+  }
   return {...navigation, target_after:compactTarget(targetAfter)};
 }
 async function observe(tabId) {
@@ -181,6 +273,28 @@ async function observe(tabId) {
     frames_skipped:Math.max(0,(frames || []).length-validFrames.length)};
   snapshots.set(tabId,observation);
   return observation;
+}
+async function navigateObservedHref(tab, target) {
+  const href = String(target?.control?.href || "").trim();
+  if (!href) return null;
+  const url = httpURL(href);
+  const beforeTab = cleanTab(tab);
+  const updated = await chrome.tabs.update(tab.id,{url});
+  invalidateSnapshot(tab.id);
+  const postObservation = await bestEffortPostObservation(tab.id);
+  const proof = navigationProof(
+    beforeTab,
+    postObservation,
+    "observed_href_navigation_pending"
+  );
+  return {
+    tab:cleanTab(updated),
+    dispatched:true,
+    trusted:false,
+    dispatch_method:"observed_href_navigation",
+    ...proof,
+    ...(postObservation ? {post_observation:postObservation} : {}),
+  };
 }
 async function action(request) {
   const a = request.arguments || {}, op = request.operation;
@@ -289,6 +403,8 @@ async function action(request) {
       const point = result[0]?.result;
       if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
         checkDeadline(request);
+        const hrefNavigation = await navigateObservedHref(tab,target);
+        if (hrefNavigation) return hrefNavigation;
         const fallback = await domCall(
           tab.id,
           "act",
@@ -346,6 +462,8 @@ async function action(request) {
         ...(postObservation ? {post_observation:postObservation} : {})};
     } catch(error) {
       if (attempted) throw Error("browser_outcome_unknown_do_not_retry: " + error.message);
+      const hrefNavigation = await navigateObservedHref(tab,target).catch(()=>null);
+      if (hrefNavigation) return hrefNavigation;
       throw error;
     } finally { await chrome.debugger.detach({tabId:tab.id}).catch(()=>{}); }
   }
@@ -383,6 +501,68 @@ async function action(request) {
       throw error;
     } finally { await chrome.debugger.detach({tabId:tab.id}).catch(()=>{}); }
   }
+  if (
+    op === "write" &&
+    target.frameId === 0 &&
+    target.control?.editable_kind === "contenteditable"
+  ) {
+    const mode = a.mode || "replace";
+    if (!["replace","append"].includes(mode)) throw Error("invalid_write_mode");
+    const previous = String(target.control?.value ?? "");
+    const requestedValue = mode === "append"
+      ? previous + String(a.text ?? "")
+      : String(a.text ?? "");
+    await chrome.debugger.attach({tabId:tab.id},"1.3");
+    let attempted = false;
+    try {
+      await domCall(
+        tab.id,
+        "prepareWrite",
+        [a.ref,mode],
+        target.documentId
+      );
+      checkDeadline(request);
+      invalidateSnapshot(tab.id);
+      await domCall(tab.id,"invalidate",[],target.documentId);
+      attempted = true;
+      await chrome.debugger.sendCommand(
+        {tabId:tab.id},
+        "Input.insertText",
+        {text:String(a.text ?? "")}
+      );
+      const postObservation = await bestEffortPostObservation(tab.id, 90);
+      const successor = successorControl(target,postObservation);
+      const actualValue = successor?.value ?? null;
+      const verified = Boolean(
+        successor &&
+        editableEquivalent(actualValue,requestedValue)
+      );
+      return {
+        dispatched:true,
+        trusted:true,
+        dispatch_method:"cdp_insert_text",
+        verified,
+        outcome_unknown:!verified,
+        postcondition:verified
+          ? "element_value_observed"
+          : "write_outcome_unknown_requires_verify",
+        requested_value:requestedValue,
+        value:actualValue,
+        target_after:compactTarget(successor),
+        ...(postObservation ? {post_observation:postObservation} : {}),
+      };
+    } catch(error) {
+      if (attempted) {
+        throw Error(
+          "browser_outcome_unknown_do_not_retry: " + error.message
+        );
+      }
+      throw error;
+    } finally {
+      await chrome.debugger.detach({tabId:tab.id}).catch(()=>{});
+    }
+  }
+
   checkDeadline(request);
   const results = await domCall(
     tab.id,
