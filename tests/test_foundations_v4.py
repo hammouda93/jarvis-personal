@@ -697,6 +697,73 @@ class FoundationRuntimeTests(unittest.TestCase):
         adapter.execute("browser_verify",{"tab_id":7,"text":"correct tab"})
         self.assertFalse(adapter.pending_verification)
 
+    def test_unrelated_pending_tab_does_not_mask_verified_browser_turn(self):
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        from jarvis_agent.native_tools import AgentActionResult
+
+        class Delegate:
+            def run(self, user_text, **kwargs):
+                return AgentTurnResult(
+                    "L'action courante est vérifiée.",
+                    actions=(
+                        AgentActionResult(
+                            name="browser_write",
+                            success=True,
+                            message="verified",
+                            detail=json.dumps(
+                                {
+                                    "verified": True,
+                                    "scope": ["browser", 7],
+                                    "postcondition": "element_value",
+                                }
+                            ),
+                        ),
+                    ),
+                )
+
+        adapter = FoundationToolAdapter(Delegate(), browser=object())
+        adapter.pending_verification.add(("browser", 99))
+        runtime = FoundationRuntime(adapter.delegate, adapter)
+
+        result = runtime.run("Écris le texte.")
+        self.assertEqual(result.text, "L'action courante est vérifiée.")
+        self.assertEqual(adapter.pending_verification, {("browser", 99)})
+
+    def test_current_unverified_browser_tab_still_masks_multi_step_turn(self):
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        from jarvis_agent.native_tools import AgentActionResult
+
+        class Delegate:
+            def run(self, user_text, **kwargs):
+                return AgentTurnResult(
+                    "Tout est fait.",
+                    actions=(
+                        AgentActionResult(
+                            name="browser_close_tab",
+                            success=True,
+                            message="closed",
+                            detail=json.dumps(
+                                {"verified": True, "scope": ["browser", 7]}
+                            ),
+                        ),
+                        AgentActionResult(
+                            name="open_url",
+                            success=True,
+                            message="opening",
+                            detail=json.dumps(
+                                {"verified": False, "scope": ["browser", 8]}
+                            ),
+                        ),
+                    ),
+                )
+
+        adapter = FoundationToolAdapter(Delegate(), browser=object())
+        adapter.pending_verification.add(("browser", 8))
+        runtime = FoundationRuntime(adapter.delegate, adapter)
+
+        result = runtime.run("Ferme l'onglet puis ouvre un autre site.")
+        self.assertIn("reste à vérifier", result.text)
+
     def test_stale_browser_ref_returns_fresh_grounding_without_retry(self):
         class Browser:
             def call(self, operation, **args):
