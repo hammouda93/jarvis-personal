@@ -38,7 +38,19 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function bestEffortPostObservation(tabId, delayMs=180) {
   try {
     if (delayMs > 0) await sleep(delayMs);
-    return await observe(tabId);
+    let observation = await observe(tabId);
+    // Chrome can report a navigation/SPA mutation before the target document is
+    // usable. Re-observe locally while the tab is still loading so the snapshot
+    // handed to the agent is not a transient pre-navigation DOM.
+    for (
+      let attempt = 0;
+      attempt < 4 && observation?.tab?.status === "loading";
+      attempt += 1
+    ) {
+      await sleep(140 + attempt * 60);
+      observation = await observe(tabId);
+    }
+    return observation;
   } catch (_error) {
     return null;
   }
@@ -363,9 +375,11 @@ async function action(request) {
       a.ref.trim()
     ) ? refs.get(a.ref) : null;
     const observation = (
-      op === "verify"
+      op === "observe_dom"
         ? await observe(tab.id)
-        : (snapshots.get(tab.id) || await observe(tab.id))
+        : op === "verify"
+          ? await observe(tab.id)
+          : (snapshots.get(tab.id) || await observe(tab.id))
     );
     if (op === "observe_dom") return observation;
     if (op === "verify") {
