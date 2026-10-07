@@ -10,6 +10,59 @@
     SUMMARY:"button"})[e.tagName] || (e.isContentEditable ? "textbox" :
     e.tagName === "INPUT" ? ({search:"searchbox", checkbox:"checkbox", radio:"radio",
       submit:"button", button:"button"})[e.type] || "textbox" : "generic");
+  function editableRootOf(e) {
+    if (!e?.isContentEditable) return e;
+    let root = e;
+    let parent = e.parentElement;
+    while (parent?.isContentEditable) {
+      root = parent;
+      parent = parent.parentElement;
+    }
+    return root;
+  }
+  function editableKindOf(e) {
+    if (e instanceof HTMLInputElement) return "input";
+    if (e instanceof HTMLTextAreaElement) return "textarea";
+    if (e?.isContentEditable) return "contenteditable";
+    return "";
+  }
+  function readEditableValue(e) {
+    if (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement) {
+      return String(e.value ?? "");
+    }
+    return String(e?.innerText ?? e?.textContent ?? "");
+  }
+  function semanticPlaceholderOf(e) {
+    const direct = (
+      e.getAttribute?.("placeholder") ||
+      e.getAttribute?.("aria-placeholder") ||
+      e.getAttribute?.("data-placeholder") ||
+      ""
+    );
+    if (direct) return String(direct);
+    if (!e?.isContentEditable) return "";
+    const local = e.querySelector?.(
+      "[aria-placeholder],[data-placeholder]"
+    );
+    if (local) {
+      return String(
+        local.getAttribute("aria-placeholder") ||
+        local.getAttribute("data-placeholder") ||
+        ""
+      );
+    }
+    const sibling = e.parentElement?.querySelector?.(
+      "[aria-placeholder],[data-placeholder]"
+    );
+    if (sibling && sibling !== e) {
+      return String(
+        sibling.getAttribute("aria-placeholder") ||
+        sibling.getAttribute("data-placeholder") ||
+        ""
+      );
+    }
+    return "";
+  }
   function regionOf(e) {
     const landmark = e.closest?.(
       "main,[role=main],form,[role=form],dialog,[role=dialog],nav,[role=navigation]," +
@@ -24,20 +77,31 @@
     if (role === "complementary" || landmark.tagName === "ASIDE") return "complementary";
     return "content";
   }
-  function describe(e) {
+  function describe(rawElement) {
+    const e = rawElement?.isContentEditable
+      ? editableRootOf(rawElement)
+      : rawElement;
     const r = e.getBoundingClientRect(), style = getComputedStyle(e);
     const ariaLabel = e.getAttribute("aria-label") || "";
-    const placeholder = e.getAttribute("placeholder") || "";
+    const placeholder = semanticPlaceholderOf(e);
     const labelled = (e.getAttribute("aria-labelledby") || "").split(/\s+/)
       .map(id => document.getElementById(id)?.textContent || "").join(" ").trim();
-    const text = (ariaLabel || labelled ||
-      Array.from(e.labels || []).map(x => x.textContent).join(" ") ||
-      placeholder || e.getAttribute("title") ||
-      e.querySelector("img")?.alt || e.querySelector("svg title")?.textContent ||
-      (e.tagName === "INPUT" ? "" : e.innerText || "")).trim().slice(0, 350);
+    const labelText = Array.from(e.labels || [])
+      .map(x => x.textContent).join(" ").trim();
+    const stableName = (
+      ariaLabel || labelled || labelText || placeholder ||
+      e.getAttribute("title") ||
+      e.querySelector("img")?.alt ||
+      e.querySelector("svg title")?.textContent ||
+      ""
+    ).trim().slice(0, 350);
     const writable = (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement ||
       e.isContentEditable) && !e.readOnly && e.type !== "password" &&
       !["checkbox","radio","submit","button","file","range","color","hidden"].includes(e.type);
+    const contentText = (
+      e.tagName === "INPUT" ? "" : (e.innerText || "")
+    ).trim().slice(0, 350);
+    const text = (stableName || contentText).slice(0, 350);
     const type = roleOf(e);
     const href = e.tagName === "A" ? String(e.href || e.getAttribute("href") || "") : "";
     const selected = Boolean(
@@ -57,13 +121,14 @@
     const selectedOption = selectable
       ? Array.from(e.options || []).find(option => option.selected)
       : null;
-    return {text, name:text, type, semantic_role:type,
+    const editableKind = editableKindOf(e);
+    return {text, name:stableName || (writable ? "" : text), type, semantic_role:type,
       tag:String(e.tagName || "").toLowerCase(),
       input_type:e.tagName === "INPUT" ? String(e.type || "text") : "",
       placeholder:placeholder.slice(0, 350), aria_label:ariaLabel.slice(0, 350),
       href:href.slice(0, 1200), region:regionOf(e),
       bbox:[r.left,r.top,r.right,r.bottom], confidence:1,
-      confidence_source:"dom", writable, selectable,
+      confidence_source:"dom", writable, selectable, editable_kind:editableKind,
       actionable:writable || selectable || ["button","link","checkbox","radio","tab","menuitem","option","combobox"].includes(type),
       visible:e.isConnected && r.width > 0 && r.height > 0 && style.visibility !== "hidden" &&
         style.display !== "none" && style.opacity !== "0" && r.bottom > 0 && r.right > 0 &&
@@ -71,7 +136,8 @@
       enabled:!e.disabled && e.getAttribute("aria-disabled") !== "true",
       selected,
       value:e.type === "password" ? null :
-        (writable || selectable) ? (e.value ?? e.innerText ?? "") : null,
+        writable ? readEditableValue(e) :
+        selectable ? String(e.value ?? "") : null,
       selected_text:selectedOption ? String(selectedOption.textContent || "").trim().slice(0,350) : "",
       options,
       focused:document.activeElement === e};
@@ -121,10 +187,7 @@
     return null;
   }
   function editableValue(e) {
-    if (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement) {
-      return String(e.value ?? "");
-    }
-    return String(e.innerText ?? e.textContent ?? "");
+    return readEditableValue(e);
   }
   function normalizedEditableValue(value) {
     return String(value ?? "")
@@ -194,9 +257,16 @@
     observe() {
       targets.clear();
       const nodes = [];
+      const seenNodes = new Set();
       function collect(root) {
         for (const e of root.querySelectorAll("*")) {
-          if (e.matches(selector)) nodes.push(e);
+          if (e.matches(selector)) {
+            const target = e.isContentEditable ? editableRootOf(e) : e;
+            if (target && !seenNodes.has(target)) {
+              seenNodes.add(target);
+              nodes.push(target);
+            }
+          }
           if (e.shadowRoot) collect(e.shadowRoot);
         }
       }
@@ -229,6 +299,35 @@
       if (document.activeElement !== e && e.getRootNode().activeElement !== e)
         throw Error("browser_target_focus_failed");
       return {type:item.type};
+    },
+    prepareWrite(ref, mode="replace") {
+      const [raw, item] = resolve(ref);
+      const e = raw.isContentEditable ? editableRootOf(raw) : raw;
+      if (!item.writable) throw Error("browser_target_not_editable");
+      if (!["replace","append"].includes(mode)) throw Error("invalid_write_mode");
+      e.focus({preventScroll:true});
+      if (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement) {
+        const end = String(e.value ?? "").length;
+        if (typeof e.setSelectionRange === "function") {
+          e.setSelectionRange(mode === "replace" ? 0 : end, end);
+        }
+      } else if (e.isContentEditable) {
+        const selection = globalThis.getSelection?.();
+        if (!selection || typeof document.createRange !== "function")
+          throw Error("browser_editable_selection_unavailable");
+        const range = document.createRange();
+        range.selectNodeContents(e);
+        if (mode === "append") range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } else {
+        throw Error("browser_target_not_editable");
+      }
+      return {
+        type:item.type,
+        editable_kind:editableKindOf(e),
+        value:editableValue(e),
+      };
     },
     preparePointer(ref) {
       const [e, _item, point] = resolve(ref, {requirePointer:true});
