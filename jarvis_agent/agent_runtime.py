@@ -301,6 +301,11 @@ FOUNDATION BROWSER CORE ACTIF:
 - browser_write sert uniquement aux champs texte/contenteditable. Si le snapshot
   indique un contrôle natif select/combobox avec selectable=true et des options,
   utilise browser_select avec le libellé ou la valeur EXACTE d'une option observée;
+- si l'utilisateur demande seulement d'envoyer/soumettre un contenu déjà écrit,
+  ne rappelle jamais browser_write: observe l'état frais puis utilise browser_press
+  ou browser_click sur une cible de soumission observée;
+- une demande "premier/deuxième/troisième résultat" doit finir par un browser_click
+  avec tab_id et ref réellement observés; ne fabrique ni URL ni clic sans cible;
 - pour "premier/deuxième/troisième résultat", si le snapshot courant contient les
   vrais liens/résultats et leur visual_index, choisis la ref correspondante et
   clique-la directement. Ne fais pas un round de lecture supplémentaire sans
@@ -701,8 +706,10 @@ def _requests_result_selection(text: str) -> bool:
     normalized = normalize(text)
     has_open = bool(
         re.search(
-            r"\b(?:ouvre|ouvrir|selectionne|selectionner|clique|cliquer|"
-            r"choisis|choisir|open|select|click)\b",
+            r"\b(?:ouvre|ouvres|ouvrez|ouvrir|"
+            r"selectionne|selectionnes|selectionnez|selectionner|"
+            r"clique|cliques|cliquez|cliquer|"
+            r"choisis|choisissez|choisir|open|select|click)\b",
             normalized,
         )
     )
@@ -747,6 +754,56 @@ def _requests_ui_submission(text: str) -> bool:
         )
     )
     return bool(submit_verb and submit_context and not submit_negated)
+
+
+def _requests_submit_without_rewrite(text: str) -> bool:
+    """True when the user wants to submit existing UI content, not rewrite it."""
+    if not _requests_ui_submission(text):
+        return False
+    normalized = normalize(text)
+    submit = re.search(
+        r"\b(?:envoie|envoies|envoyez|envoyer|send|"
+        r"soumet|soumets|soumettre|submit)\b",
+        normalized,
+    )
+    write = re.search(
+        r"\b(?:ecris|ecrire|saisis|saisir|tape|taper|"
+        r"insere|inserer|remplace|remplacer|write|type|append|insert|replace)\b",
+        normalized,
+    )
+    if not submit:
+        return False
+    if not write:
+        return True
+    if write.start() < submit.start():
+        return False
+
+    # "envoie ... puis écris bonjour" requests a later write as well.
+    tail = normalized[write.end():].strip(" :,-")
+    tail_tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", tail)
+        if token not in {
+            "le", "la", "les", "un", "une", "du", "de", "des",
+            "message", "texte", "text", "champ", "field",
+        }
+    ]
+    has_explicit_payload = bool(
+        re.search(r"[:\"']", normalized[write.start():])
+        or tail_tokens
+    )
+    return not has_explicit_payload
+
+
+def _browser_result_selection_verified(
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> bool:
+    for action in reversed(actions):
+        if action.name != "browser_click" or not action.success:
+            continue
+        payload = _action_detail_dict(action)
+        return payload.get("verified") is True
+    return False
 
 
 def _browser_verified_fast_completion(
@@ -800,6 +857,7 @@ def _browser_verified_fast_completion(
                 "editable_value_cleared",
                 "focused_editable_value_cleared",
                 "navigation_observed",
+                "structural_transition_observed",
             }
         )
 
@@ -2858,8 +2916,8 @@ class GroqResponsesAgent:
                             for key in (
                                 "ref", "type", "name", "placeholder",
                                 "aria_label", "href", "value", "tag",
-                                "selected_text", "options", "writable",
-                                "selectable", "actionable", "region",
+                                "selected_text", "options", "editable_kind",
+                                "writable", "selectable", "actionable", "region",
                                 "visual_index",
                             )
                             if item.get(key) not in (None, "", False)
@@ -2927,7 +2985,7 @@ class GroqResponsesAgent:
                                     "ref", "type", "name", "semantic_role",
                                     "placeholder", "aria_label", "input_type",
                                     "href", "value", "tag", "selected_text", "options",
-                                    "writable", "selectable", "actionable",
+                                    "editable_kind", "writable", "selectable", "actionable",
                                     "enabled", "selected", "focused", "region",
                                     "bbox", "visual_index", "dom_index",
                                 )
@@ -3287,6 +3345,7 @@ class GroqResponsesAgent:
         visual_fallback_required = False
         visual_fallback_repair_attempted = False
         structured_inspection_seen = False
+        browser_result_selection_repair_attempted = False
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -3367,6 +3426,33 @@ class GroqResponsesAgent:
                     visual_fallback_repair_attempted = True
                     if log:
                         log("[AGENT] repair=visual_fallback_required")
+                    continue
+
+                if (
+                    _requests_result_selection(user_text)
+                    and not _browser_result_selection_verified(actions)
+                    and not browser_result_selection_repair_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "La mission Browser demande de sélectionner un résultat "
+                                "ordinal déjà visible. Elle n'est pas terminée tant "
+                                "qu'un browser_click réel sur une ref observée n'est pas "
+                                "vérifié. Utilise l'observation Browser courante; si "
+                                "nécessaire appelle browser_observe_dom ou browser_find. "
+                                "Puis appelle browser_click avec tab_id ET ref. "
+                                "N'ouvre pas une URL inventée et ne relance pas la recherche."
+                            ),
+                        }
+                    )
+                    browser_result_selection_repair_attempted = True
+                    if log:
+                        log("[AGENT] repair=browser_result_selection_required")
                     continue
 
                 missing_capabilities = (
@@ -3697,6 +3783,36 @@ class GroqResponsesAgent:
 
                 tool_started = time.perf_counter()
                 if (
+                    name == "browser_click"
+                    and _requests_result_selection(user_text)
+                    and (
+                        not isinstance(arguments.get("tab_id"), int)
+                        or not str(arguments.get("ref") or "").strip()
+                    )
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La sélection d'un résultat Browser exige une cible "
+                            "réellement observée dans un onglet explicite."
+                        ),
+                        detail="result_selection_requires_grounded_browser_ref",
+                    )
+                elif (
+                    name == "browser_write"
+                    and _requests_submit_without_rewrite(user_text)
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La demande consiste à soumettre le contenu déjà présent. "
+                            "Je ne réécris pas le champ avant l'envoi."
+                        ),
+                        detail="browser_write_blocked_for_submit_only_request",
+                    )
+                elif (
                     name == "press_key"
                     and str(arguments.get("key", "")).strip().casefold()
                     in {"enter", "return"}
@@ -4083,7 +4199,21 @@ class GroqResponsesAgent:
                     )
 
                 if not result.success:
-                    if result.detail == "open_url_blocked_for_search_submission":
+                    if result.detail == "browser_write_blocked_for_submit_only_request":
+                        recovery = (
+                            "L'utilisateur demande de soumettre le contenu déjà présent, "
+                            "pas de le réécrire. Observe le champ/composer courant puis "
+                            "utilise browser_press Enter ou browser_click sur une cible "
+                            "de soumission réellement observée. Ne modifie pas le contenu."
+                        )
+                    elif result.detail == "result_selection_requires_grounded_browser_ref":
+                        recovery = (
+                            "La demande vise un résultat ordinal déjà visible. Utilise "
+                            "la post-observation Browser actuelle ou browser_observe_dom/"
+                            "browser_find pour identifier sa ref réelle, puis appelle "
+                            "browser_click avec tab_id et ref."
+                        )
+                    elif result.detail == "open_url_blocked_for_search_submission":
                         recovery = (
                             "Le site est déjà ouvert et la demande concerne la "
                             "recherche préparée dans l'interface actuelle. "
