@@ -967,6 +967,74 @@ class FoundationRuntimeTests(unittest.TestCase):
         self.assertNotIn(("browser", 7), adapter.pending_verification)
         self.assertNotIn(("browser", 7), adapter.uncertain_scopes)
 
+    def test_unknown_replace_verifies_then_retries_once_with_fresh_ref(self):
+        class Browser:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, operation, **kwargs):
+                self.calls.append((operation, dict(kwargs)))
+                if operation == "write" and kwargs.get("ref") == "observed":
+                    return {
+                        "dispatched": True,
+                        "verified": False,
+                        "outcome_unknown": True,
+                        "postcondition": "write_outcome_unknown_requires_verify",
+                        "requested_value": "Bonsoir",
+                        "value": "Ancien texteBonsoir",
+                        "target_after": {"ref": "after-unknown"},
+                    }
+                if operation == "verify":
+                    return {
+                        "verified": False,
+                        "postcondition": "target_value",
+                        "value": "Ancien texteBonsoir",
+                        "target_after": {"ref": "fresh-after-verify"},
+                        "observation": {"observation_id": "verify-fresh"},
+                    }
+                if operation == "write" and kwargs.get("ref") == "fresh-after-verify":
+                    return {
+                        "dispatched": True,
+                        "verified": True,
+                        "outcome_unknown": False,
+                        "postcondition": "element_value_observed",
+                        "requested_value": "Bonsoir",
+                        "value": "Bonsoir",
+                        "target_after": {"ref": "final-ref"},
+                    }
+                raise AssertionError((operation, kwargs))
+
+        browser = Browser()
+        adapter = FoundationToolAdapter(None, browser=browser)
+
+        result = adapter.execute(
+            "browser_write",
+            {
+                "tab_id": 7,
+                "ref": "observed",
+                "text": "Bonsoir",
+                "mode": "replace",
+            },
+        )
+
+        payload = json.loads(result.detail)
+        self.assertTrue(result.success)
+        self.assertTrue(payload["verified"])
+        self.assertEqual(payload["value"], "Bonsoir")
+        self.assertEqual(
+            payload["recovery"],
+            {
+                "kind": "bounded_unknown_replace_retry",
+                "retry_count": 1,
+            },
+        )
+        self.assertEqual(
+            [call[0] for call in browser.calls],
+            ["write", "verify", "write"],
+        )
+        self.assertNotIn(("browser", 7), adapter.pending_verification)
+        self.assertNotIn(("browser", 7), adapter.uncertain_scopes)
+
     def test_unknown_browser_action_outcome_cannot_be_announced_as_completed(self):
         class Browser:
             calls=0
