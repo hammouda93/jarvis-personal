@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 MAX_MESSAGE = 900_000
 OPERATIONS = frozenset({"list_tabs", "get_active_tab", "activate_tab", "navigate",
-                        "observe_dom", "find", "click", "write", "press", "back",
+                        "observe_dom", "find", "click", "write", "select", "press", "back",
                         "forward", "close_tab", "download", "verify"})
 
 
@@ -107,7 +107,7 @@ class BrowserCore:
                 raise ValueError("explicit_tab_id_required")
         if operation in {"navigate", "download"}:
             arguments["url"] = http_url(arguments.get("url", ""))
-        if operation in {"click", "write", "press"} and not arguments.get("ref"):
+        if operation in {"click", "write", "select", "press"} and not arguments.get("ref"):
             raise ValueError("observed_ref_required")
         if operation == "verify" and not any(k in arguments for k in ("text", "url", "title", "download_id")):
             raise ValueError("explicit_postcondition_required")
@@ -124,6 +124,8 @@ class BrowserCore:
     def click(self, tab_id, ref): return self.call("click", tab_id=tab_id, ref=ref)
     def write(self, tab_id, ref, text, *, mode="replace"):
         return self.call("write", tab_id=tab_id, ref=ref, text=text, mode=mode)
+    def select(self, tab_id, ref, text):
+        return self.call("select", tab_id=tab_id, ref=ref, text=text)
     def press(self, tab_id, ref, key): return self.call("press", tab_id=tab_id, ref=ref, key=key)
     def back(self, tab_id): return self.call("back", tab_id=tab_id)
     def forward(self, tab_id): return self.call("forward", tab_id=tab_id)
