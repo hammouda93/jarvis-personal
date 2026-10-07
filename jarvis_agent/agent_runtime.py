@@ -849,8 +849,9 @@ def _actions_have_verified_proof(
 ) -> bool:
     if not actions:
         return False
-    core_mutations = {"browser_navigate", "browser_click", "browser_write", "browser_press", "browser_back",
-                      "browser_forward", "browser_close_tab", "browser_download", "computer_click",
+    core_mutations = {"browser_navigate", "browser_click", "browser_write", "browser_select",
+                      "browser_press", "browser_back", "browser_forward", "browser_close_tab",
+                      "browser_download", "computer_click",
                       "computer_write", "computer_press", "computer_shortcut"}
     core_actions = [a for a in actions if a.name in core_mutations]
     if core_actions:
