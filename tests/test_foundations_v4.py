@@ -628,6 +628,10 @@ class FoundationPromptTests(unittest.TestCase):
             tools["browser_select"]["parameters"]["required"],
             ["tab_id", "ref", "text"],
         )
+        self.assertIn(
+            "expected_value",
+            tools["browser_verify"]["parameters"]["properties"],
+        )
         self.assertIn("CAPTEUR PRINCIPAL", tools["browser_observe_dom"]["description"])
         self.assertIn(
             "ce n'est pas le contenu à saisir",
