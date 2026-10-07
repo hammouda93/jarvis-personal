@@ -3378,6 +3378,13 @@ class AgentRuntimeTests(unittest.TestCase):
             set(),
         )
 
+    def test_negated_send_does_not_create_submit_capability(self):
+        required = _requested_action_capabilities(
+            "Change le statut à Livré sans envoyer de message."
+        )
+        self.assertIn("write_ui", required)
+        self.assertNotIn("submit_ui", required)
+
     def test_send_request_requires_verified_submit_capability(self):
         self.assertIn(
             "submit_ui",
