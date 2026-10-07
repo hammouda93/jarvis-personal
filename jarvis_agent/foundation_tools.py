@@ -9,6 +9,8 @@ import json
 import os
 from dataclasses import asdict
 
+from .intent_guards import is_explicit_memory_write_request
+
 
 def enabled(name):
     return os.getenv(name, "0").strip().lower() in {"1", "true", "yes", "on"}
