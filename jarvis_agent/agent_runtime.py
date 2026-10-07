@@ -3959,6 +3959,18 @@ class GroqResponsesAgent:
                             "réellement visible."
                         )
                     elif (
+                        _action_detail_dict(result).get("reason")
+                        == "stale_or_cross_tab_browser_ref"
+                    ):
+                        recovery = (
+                            "La référence Browser utilisée a expiré avant la "
+                            "mutation. Le résultat de l'outil contient déjà une "
+                            "post_observation fraîche du même onglet. N'utilise "
+                            "plus l'ancienne ref et ne répète pas le même appel. "
+                            "Choisis la cible demandée uniquement parmi les refs "
+                            "fraîches de cette observation puis poursuis."
+                        )
+                    elif (
                         result.detail
                         and "memory_grounded_subject_requires_local_recall_first"
                         in result.detail
