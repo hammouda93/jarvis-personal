@@ -96,6 +96,59 @@ function compactTarget(item) {
     "selected_text","writable","selectable","actionable","region","visual_index"];
   return Object.fromEntries(keys.filter(key => item[key] !== undefined).map(key => [key,item[key]]));
 }
+function interactionProof(beforeTab, beforeObservation, target, postObservation, fallbackPostcondition) {
+  const navigation = navigationProof(beforeTab, postObservation, fallbackPostcondition);
+  const targetAfter = successorControl(target, postObservation);
+  if (navigation.verified) {
+    return {...navigation, target_after:compactTarget(targetAfter)};
+  }
+  const before = target?.control || {};
+  if (
+    before.writable &&
+    normControl(before.value) &&
+    targetAfter &&
+    !normControl(targetAfter.value)
+  ) {
+    return {
+      verified:true,
+      postcondition:"editable_value_cleared",
+      target_after:compactTarget(targetAfter),
+    };
+  }
+  if (
+    typeof before.selected === "boolean" &&
+    targetAfter &&
+    typeof targetAfter.selected === "boolean" &&
+    before.selected !== targetAfter.selected
+  ) {
+    return {
+      verified:true,
+      postcondition:"target_state_changed",
+      target_after:compactTarget(targetAfter),
+    };
+  }
+  const focusedBefore = Array.isArray(beforeObservation?.controls)
+    ? beforeObservation.controls.filter(item =>
+        item?.writable && item?.focused && normControl(item?.value)
+      )
+    : [];
+  if (focusedBefore.length === 1) {
+    const source = focusedBefore[0];
+    const after = successorControl(
+      {documentId:source.document_id, control:source},
+      postObservation
+    );
+    if (after && !normControl(after.value)) {
+      return {
+        verified:true,
+        postcondition:"focused_editable_value_cleared",
+        target_after:compactTarget(targetAfter),
+        submitted_field_after:compactTarget(after),
+      };
+    }
+  }
+  return {...navigation, target_after:compactTarget(targetAfter)};
+}
 async function observe(tabId) {
   await injected(tabId);
   clearRefs(tabId);
@@ -222,6 +275,7 @@ async function action(request) {
   }
   const target = refs.get(a.ref);
   if (!target || target.tabId !== tab.id) throw Error("stale_or_cross_tab_browser_ref");
+  const beforeObservation = snapshots.get(tab.id) || null;
   if (op === "click" && target.frameId === 0) {
     await chrome.debugger.attach({tabId:tab.id},"1.3");
     let attempted = false;
@@ -239,8 +293,10 @@ async function action(request) {
         invalidateSnapshot(tab.id);
         const domResult = fallback[0]?.result;
         const postObservation = await bestEffortPostObservation(tab.id);
-        const proof = navigationProof(
+        const proof = interactionProof(
           cleanTab(tab),
+          beforeObservation,
+          target,
           postObservation,
           "click_dispatched_requires_verify"
         );
@@ -274,8 +330,10 @@ async function action(request) {
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchMouseEvent",
         {type:"mouseReleased",button:"left",clickCount:1,...point});
       const postObservation = await bestEffortPostObservation(tab.id);
-      const proof = navigationProof(
+      const proof = interactionProof(
         cleanTab(tab),
+        beforeObservation,
+        target,
         postObservation,
         "click_dispatched_requires_verify"
       );
@@ -306,8 +364,10 @@ async function action(request) {
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchKeyEvent",{type:"keyDown",...keys[a.key]});
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchKeyEvent",{type:"keyUp",...keys[a.key]});
       const postObservation = await bestEffortPostObservation(tab.id);
-      const proof = navigationProof(
+      const proof = interactionProof(
         cleanTab(tab),
+        beforeObservation,
+        target,
         postObservation,
         "key_dispatched_requires_verify"
       );
