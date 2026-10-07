@@ -258,16 +258,23 @@ test('cross-tab ref is rejected before any mutation',async()=>{
   await assert.rejects(request('write',{tab_id:2,ref,text:'wrong'}),/cross_tab/);
   assert(!operations.some(x=>x[0]==='dom_action'));
 });
-test('read-only reobservation reuses snapshot; mutation expires old refs',async()=>{
+test('explicit reobservation is fresh; find reuses snapshot; mutation expires old refs',async()=>{
   const first=await request('observe_dom',{tab_id:1});
-  const ref=first.controls[0].ref;
+  const firstRef=first.controls[0].ref;
+  const found=await request('find',{tab_id:1,type:'searchbox'});
+  assert.equal(found.observation_id,first.observation_id);
+  assert.equal(found.matches[0].ref,firstRef);
+
   const second=await request('observe_dom',{tab_id:1});
-  assert.equal(second.observation_id,first.observation_id);
-  assert.equal(second.controls[0].ref,ref);
-  const write=await request('write',{tab_id:1,ref,text:'hello'});
+  const secondRef=second.controls[0].ref;
+  assert.notEqual(second.observation_id,first.observation_id);
+  assert.notEqual(secondRef,firstRef);
+  await assert.rejects(request('write',{tab_id:1,ref:firstRef,text:'stale'}),/cross_tab/);
+
+  const write=await request('write',{tab_id:1,ref:secondRef,text:'hello'});
   assert.equal(write.verified,true);
-  await assert.rejects(request('write',{tab_id:1,ref,text:'again'}),/cross_tab/);
-  assert.notEqual(write.post_observation.observation_id,first.observation_id);
+  await assert.rejects(request('write',{tab_id:1,ref:secondRef,text:'again'}),/cross_tab/);
+  assert.notEqual(write.post_observation.observation_id,second.observation_id);
 });
 test('Chrome Input is targeted by tabId regardless of nonbrowser OS focus',async()=>{
   const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
