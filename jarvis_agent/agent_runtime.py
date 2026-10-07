@@ -522,35 +522,6 @@ def _requested_action_capabilities(text: str) -> set[str]:
     if site_search and not _requests_result_selection(text):
         required.add("site_search")
 
-    if _requests_result_selection(text):
-        required.add("result_selection")
-
-    submit_verb = re.search(
-        r"\b(?:envoie|envoies|envoyez|envoyer|send|"
-        r"soumet|soumets|soumettre|submit)\b",
-        normalized,
-    )
-    submit_context = re.search(
-        r"\b(?:message|discussion|formulaire|form|champ|field|"
-        r"texte|text|commentaire|comment)\b",
-        normalized,
-    )
-    submit_negated = bool(
-        re.search(
-            r"\b(?:sans|ne|n')\b.{0,24}"
-            r"\b(?:envoie|envoies|envoyez|envoyer|send|"
-            r"soumet|soumets|soumettre|submit)\b",
-            normalized,
-        )
-        or re.search(
-            r"\b(?:envoie|envoyer|send|soumet|soumettre|submit)\b"
-            r".{0,12}\b(?:pas|jamais)\b",
-            normalized,
-        )
-    )
-    if submit_verb and submit_context and not submit_negated:
-        required.add("submit_ui")
-
     close_requested = re.search(
         r"\b(?:ferme|fermer|close|fermez)\b",
         normalized,
@@ -586,21 +557,6 @@ def _completed_action_capabilities(
                 completed.add("write_ui")
             if action.name == "browser_close_tab" and payload.get("verified") is True:
                 completed.add("close_tab")
-            if (
-                action.name == "browser_click"
-                and payload.get("verified") is True
-            ):
-                completed.add("result_selection")
-            if (
-                action.name in {"browser_press", "browser_click"}
-                and payload.get("verified") is True
-                and payload.get("postcondition") in {
-                    "editable_value_cleared",
-                    "focused_editable_value_cleared",
-                    "navigation_observed",
-                }
-            ):
-                completed.add("submit_ui")
             if action.name == "browser_write" and payload.get("verified") is True:
                 browser_search_written = True
                 core_search_scope = payload.get("scope")
@@ -762,6 +718,95 @@ def _requests_result_selection(text: str) -> bool:
         )
     )
     return has_open and has_ordinal_target
+
+
+def _requests_ui_submission(text: str) -> bool:
+    """Detect an explicit submit/send action without making it a global UI contract."""
+    normalized = normalize(text)
+    submit_verb = re.search(
+        r"\b(?:envoie|envoies|envoyez|envoyer|send|"
+        r"soumet|soumets|soumettre|submit)\b",
+        normalized,
+    )
+    submit_context = re.search(
+        r"\b(?:message|discussion|formulaire|form|champ|field|"
+        r"texte|text|commentaire|comment)\b",
+        normalized,
+    )
+    submit_negated = bool(
+        re.search(
+            r"\b(?:sans|ne|n')\b.{0,24}"
+            r"\b(?:envoie|envoies|envoyez|envoyer|send|"
+            r"soumet|soumets|soumettre|submit)\b",
+            normalized,
+        )
+        or re.search(
+            r"\b(?:envoie|envoyer|send|soumet|soumettre|submit)\b"
+            r".{0,12}\b(?:pas|jamais)\b",
+            normalized,
+        )
+    )
+    return bool(submit_verb and submit_context and not submit_negated)
+
+
+def _browser_verified_fast_completion(
+    user_text: str,
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> bool:
+    """Stop only a Browser Core loop whose requested mutation is already proved.
+
+    This is deliberately separate from the global UI capability contract so
+    Windows, learning and legacy UI workflows keep their historical control
+    flow and final-response behavior.
+    """
+    browser_mutations = {
+        "browser_navigate",
+        "browser_click",
+        "browser_write",
+        "browser_select",
+        "browser_press",
+        "browser_back",
+        "browser_forward",
+        "browser_close_tab",
+        "browser_download",
+    }
+    last_browser = next(
+        (
+            action
+            for action in reversed(actions)
+            if action.name in browser_mutations
+        ),
+        None,
+    )
+    if last_browser is None or not last_browser.success:
+        return False
+    payload = _action_detail_dict(last_browser)
+    if payload.get("verified") is not True:
+        return False
+
+    # Never fast-complete while an older global capability requested by the
+    # user is still missing.
+    if _missing_requested_action_capabilities(user_text, actions):
+        return False
+
+    if _requests_result_selection(user_text):
+        return last_browser.name == "browser_click"
+
+    if _requests_ui_submission(user_text):
+        return (
+            last_browser.name in {"browser_press", "browser_click"}
+            and payload.get("postcondition")
+            in {
+                "editable_value_cleared",
+                "focused_editable_value_cleared",
+                "navigation_observed",
+            }
+        )
+
+    required = _requested_action_capabilities(user_text)
+    if not required:
+        return False
+    return required.issubset({"write_ui", "site_search", "close_tab"})
 
 
 def _looks_like_pseudo_tool_syntax(text: str) -> bool:
@@ -4001,23 +4046,27 @@ class GroqResponsesAgent:
                 requested_capabilities = _requested_action_capabilities(
                     user_text
                 )
-                if (
-                    result.success
-                    and requested_capabilities
-                    and not _missing_requested_action_capabilities(
-                        user_text,
-                        actions,
-                    )
-                    and _actions_have_verified_proof(actions)
+                if _browser_verified_fast_completion(
+                    user_text,
+                    actions,
                 ):
                     text = "C'est fait et vérifié dans l'interface."
                     self._messages.append(
                         {"role": "assistant", "content": text}
                     )
                     if log:
+                        fast_reason = (
+                            "result_selection"
+                            if _requests_result_selection(user_text)
+                            else (
+                                "submit_ui"
+                                if _requests_ui_submission(user_text)
+                                else ",".join(sorted(requested_capabilities))
+                            )
+                        )
                         log(
-                            "[AGENT] fast_complete=verified_capabilities "
-                            + ",".join(sorted(requested_capabilities))
+                            "[AGENT] fast_complete=verified_browser "
+                            + fast_reason
                         )
                     if settings.operational_learning_enabled:
                         _record_operational_run(
