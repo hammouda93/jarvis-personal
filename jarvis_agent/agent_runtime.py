@@ -525,14 +525,30 @@ def _requested_action_capabilities(text: str) -> set[str]:
     if _requests_result_selection(text):
         required.add("result_selection")
 
-    submit_requested = bool(
+    submit_verb = re.search(
+        r"\b(?:envoie|envoies|envoyez|envoyer|send|"
+        r"soumet|soumets|soumettre|submit)\b",
+        normalized,
+    )
+    submit_context = re.search(
+        r"\b(?:message|discussion|formulaire|form|champ|field|"
+        r"texte|text|commentaire|comment)\b",
+        normalized,
+    )
+    submit_negated = bool(
         re.search(
+            r"\b(?:sans|ne|n')\b.{0,24}"
             r"\b(?:envoie|envoies|envoyez|envoyer|send|"
             r"soumet|soumets|soumettre|submit)\b",
             normalized,
         )
+        or re.search(
+            r"\b(?:envoie|envoyer|send|soumet|soumettre|submit)\b"
+            r".{0,12}\b(?:pas|jamais)\b",
+            normalized,
+        )
     )
-    if submit_requested:
+    if submit_verb and submit_context and not submit_negated:
         required.add("submit_ui")
 
     close_requested = re.search(
