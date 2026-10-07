@@ -7,6 +7,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from typing import Any
 
+from .intent_guards import is_explicit_memory_write_request
 from .memory_core_store import MemoryCoreStore
 from .memory_semantic_interpreter import SemanticMemoryInterpreter
 from .semantic_memory import (
@@ -1274,6 +1275,17 @@ class SemanticMemoryRuntime:
             )
 
         if intent.operation == "write":
+            if not is_explicit_memory_write_request(user_text):
+                if log:
+                    log(
+                        "[MEMORY_V5] operation=pass "
+                        "guard=write_not_explicit"
+                    )
+                return self.delegate.run(
+                    user_text,
+                    log=log,
+                    phase=phase,
+                )
             raw = intent.write_text.strip()
             if not raw:
                 return self._result(
