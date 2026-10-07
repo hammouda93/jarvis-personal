@@ -3426,6 +3426,8 @@ class AgentRuntimeTests(unittest.TestCase):
             "Ouvres le troisième résultat.",
             "ouvres le troiseme resultat de recherche",
             "ouvre le 3eme résultat pertinent",
+            "ouvres le 3 eme resultat exclu les stories",
+            "ouvre le 3 ème vidéo",
             "cliquez le deuxième lien",
         ):
             with self.subTest(command=command):
