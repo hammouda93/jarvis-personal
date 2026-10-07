@@ -712,6 +712,52 @@ class FoundationRuntime:
             getattr(self.delegate, "run_with_context", None)
         )
 
+    def _pending_proof_affects_turn(self, result):
+        """Do not let unresolved mutations from unrelated tabs mask a proved turn.
+
+        Preserve legacy behavior for a turn without any mutation evidence.
+        Any current mutation without a reliable scope remains conservatively
+        unverified.
+        """
+        pending = self.tools.pending_verification
+        if not pending:
+            return False
+
+        mutating_names = {
+            "open_url", "browser_activate_tab", "browser_navigate",
+            "browser_click", "browser_write", "browser_select",
+            "browser_press", "browser_back", "browser_forward",
+            "browser_close_tab", "browser_download",
+            "computer_click", "computer_write", "computer_press",
+            "computer_shortcut",
+        }
+        current_actions = [
+            action
+            for action in getattr(result, "actions", ())
+            if action.name in mutating_names
+        ]
+        if not current_actions:
+            return True
+
+        scopes = set()
+        for action in current_actions:
+            try:
+                detail = json.loads(action.detail or "{}")
+            except (TypeError, ValueError):
+                return True
+            if not isinstance(detail, dict):
+                return True
+            scope = detail.get("scope")
+            if not isinstance(scope, (list, tuple)) or len(scope) != 2:
+                return True
+            scopes.add(tuple(scope))
+
+        if ("browser", None) in pending and any(
+            scope[0] == "browser" for scope in scopes
+        ):
+            return True
+        return bool(pending.intersection(scopes))
+
     def run(self, user_text, *, log=None, phase=None):
         was_browser_mode = self.tools.browser_mode
         self.tools.begin_turn(user_text)
@@ -730,7 +776,7 @@ class FoundationRuntime:
             )
         else:
             result = self.delegate.run(user_text, log=log, phase=phase)
-        if self.tools.pending_verification:
+        if self._pending_proof_affects_turn(result):
             from dataclasses import replace
             return replace(result,text="Des actions ont été envoyées, mais leur résultat reste à vérifier dans l'interface.")
         return result
@@ -756,7 +802,7 @@ class FoundationRuntime:
                 log=log,
                 phase=phase,
             )
-        if self.tools.pending_verification:
+        if self._pending_proof_affects_turn(result):
             from dataclasses import replace
             return replace(result,text="Des actions ont été envoyées, mais leur résultat reste à vérifier dans l'interface.")
         return result
