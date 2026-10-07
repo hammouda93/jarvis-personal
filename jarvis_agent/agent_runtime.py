@@ -645,10 +645,14 @@ def _requests_tab_close(text: str) -> bool:
 
 
 def _requests_open_and_search(text: str) -> bool:
-    """Capability-level detection of an explicit open-site + search request."""
+    """Detect an explicit request to open/show a site and then search there.
+
+    Submission verbs such as "lance la recherche" describe an action in the
+    current interface and must never authorize opening a new URL.
+    """
     normalized = normalize(text)
     return bool(
-        re.search(r"\b(?:ouvre|ouvrir|open|lance|affiche)\b", normalized)
+        re.search(r"\b(?:ouvre|ouvrir|open|affiche|afficher)\b", normalized)
         and re.search(r"\b(?:cherche|recherche|search)\b", normalized)
     )
 
