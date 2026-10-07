@@ -16,6 +16,8 @@ let invalidPointer = false;
 let navigationAfterInputUrl = "";
 let historyBackUrl = "";
 let historyForwardUrl = "";
+let nullDomMutationResult = false;
+let domFallbackNavigationUrl = "";
 const event = () => {
   const listeners = [];
   return {
@@ -66,7 +68,19 @@ globalThis.chrome = {
     if(method === 'act'){
       if(!observed.has(args[0])) throw Error('stale_browser_ref');
       operations.push(['dom_action',options.target.tabId,args]);
-      observed.clear();return [{result:{dispatched:true,verified:args[1] === 'write'}}];
+      if(domFallbackNavigationUrl && args[1] === 'click')
+        tabs.get(options.target.tabId).url=domFallbackNavigationUrl;
+      observed.clear();
+      if(nullDomMutationResult) return [{result:null}];
+      return [{result:{
+        dispatched:true,
+        verified:['write','select'].includes(args[1]),
+        ...(args[1] === 'select' ? {
+          postcondition:'selected_value',
+          value:String(args[2]?.text ?? ''),
+          selected_text:String(args[2]?.text ?? ''),
+        } : {})
+      }}];
     }
     throw Error('unexpected_dom_method');
   }},
@@ -103,6 +117,8 @@ beforeEach(()=>{
   navigationAfterInputUrl="";
   historyBackUrl="";
   historyForwardUrl="";
+  nullDomMutationResult=false;
+  domFallbackNavigationUrl="";
   tabs.set(1,{id:1,windowId:9,active:true,title:'Browser One',url:'https://one.example/'});
   tabs.set(2,{id:2,windowId:10,active:false,title:'Browser Two',url:'https://two.example/'});
   domItems=[{text:'Search',type:'searchbox',writable:true,bbox:[1,2,80,30]},
@@ -110,7 +126,7 @@ beforeEach(()=>{
             {text:'Exact Person Other',type:'link',bbox:[1,70,100,90]}];
 });
 test('all required generic primitives are present',()=>{
-  assert.equal(OPERATIONS.size,14);
+  assert.equal(OPERATIONS.size,15);
 });
 test('several tabs and activate target in different window',async()=>{
   assert.equal((await request('list_tabs')).length,2);
@@ -171,6 +187,15 @@ test('Chrome Input is targeted by tabId regardless of nonbrowser OS focus',async
   assert.equal(inputs.length,2);
   assert(inputs.every(x=>x[1].tabId===1));
 });
+test('Space is a generic tab-scoped browser key',async()=>{
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  const result=await request('press',{tab_id:1,ref,key:'Space'});
+  assert.equal(result.dispatched,true);
+  const inputs=operations.filter(x=>x[0]==='cdp');
+  assert.equal(inputs.length,2);
+  assert.equal(inputs[0][3].code,'Space');
+  assert.equal(inputs[0][3].key,' ');
+});
 test('top frame click uses trusted Chrome Input bound to the observed tab',async()=>{
   const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
   const result=await request('click',{tab_id:1,ref});
@@ -194,6 +219,29 @@ test('invalid pointer prep falls back to bounded DOM click without site rules',a
   assert(operations.some(x=>x[0]==='dom_action'&&x[2][1]==='click'));
   assert.equal(operations.filter(x=>x[0]==='cdp').length,0);
 });
+test('lost DOM click result is still verified when fresh navigation proves it',async()=>{
+  invalidPointer=true;
+  nullDomMutationResult=true;
+  domFallbackNavigationUrl='https://one.example/dom-fallback-target';
+  const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
+  const result=await request('click',{tab_id:1,ref});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,true);
+  assert.equal(result.postcondition,'navigation_observed');
+  assert.equal(result.dispatch_method,'dom_click_fallback');
+  assert.equal(result.post_observation.tab.url,domFallbackNavigationUrl);
+});
+test('lost DOM click result stays explicit unknown when no effect can be proved',async()=>{
+  invalidPointer=true;
+  nullDomMutationResult=true;
+  const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
+  const result=await request('click',{tab_id:1,ref});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,false);
+  assert.equal(result.outcome_unknown,true);
+  assert.equal(result.postcondition,'click_outcome_unknown_requires_verify');
+});
+
 test('fresh URL change is strong generic proof for click navigation',async()=>{
   navigationAfterInputUrl='https://one.example/opened-result';
   const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
@@ -251,6 +299,37 @@ test('download dispatch requires separate completion proof',async()=>{
   assert.equal(start.verified,false);
   assert.equal((await request('verify',{download_id:77})).verified,true);
   assert.equal((await request('verify',{download_id:99})).verified,false);
+});
+test('missing DOM write result never becomes silent success',async()=>{
+  nullDomMutationResult=true;
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  const result=await request('write',{tab_id:1,ref,text:'hello'});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,false);
+  assert.equal(result.outcome_unknown,true);
+  assert.equal(result.postcondition,'write_outcome_unknown_requires_verify');
+  assert(result.post_observation);
+});
+test('verified select is a first-class generic browser mutation',async()=>{
+  domItems=[{
+    text:'Status',name:'Status',type:'combobox',tag:'select',
+    selectable:true,actionable:true,value:'pending',
+    options:[
+      {text:'Pending',value:'pending',selected:true,disabled:false},
+      {text:'Delivered',value:'delivered',selected:false,disabled:false}
+    ],
+    bbox:[1,2,120,30]
+  }];
+  const observation=await request('observe_dom',{tab_id:1});
+  const result=await request('select',{
+    tab_id:1,
+    ref:observation.controls[0].ref,
+    text:'delivered'
+  });
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,true);
+  assert(result.post_observation);
+  assert(operations.some(x=>x[0]==='dom_action'&&x[2][1]==='select'));
 });
 test('verified write returns a fresh post-observation snapshot',async()=>{
   const observation=await request('observe_dom',{tab_id:1});
@@ -356,6 +435,70 @@ function fakeContentEditable(){
   vm.runInNewContext(fs.readFileSync('extensions/personal-ai-browser-bridge/dom_bridge.js','utf8'),sandbox);
   return{bridge:sandbox.__personalAIBridge,editor};
 }
+function fakeSelectDOM(){
+  class Option {
+    constructor(text,value,selected=false){
+      this.textContent=text;this.value=value;this.selected=selected;this.disabled=false;
+    }
+  }
+  class Select {
+    constructor(){
+      this.tagName='SELECT';this.type='select-one';
+      this.attributes={'aria-label':'Status'};
+      this.rect={left:10,top:10,right:200,bottom:42,width:190,height:32};
+      this.labels=[];this.isConnected=true;this.disabled=false;this.readOnly=false;
+      this.events=[];this.options=[
+        new Option('Pending','pending',true),
+        new Option('Livré','delivered',false)
+      ];
+    }
+    getAttribute(key){return this.attributes[key]??null}
+    querySelector(){return null}
+    getBoundingClientRect(){return this.rect}
+    matches(){return true}
+    contains(other){return this===other}
+    getRootNode(){return document}
+    focus(){document.activeElement=this}
+    click(){this.clicked=true}
+    dispatchEvent(e){this.events.push(e.type);return true}
+    get value(){return this.options.find(x=>x.selected)?.value ?? ''}
+    set value(v){
+      for(const option of this.options) option.selected=option.value===v;
+    }
+  }
+  const select=new Select();
+  const document={
+    activeElement:null,
+    body:{innerText:'Status'},
+    querySelectorAll(){return[select]},
+    getElementById(){return null},
+    elementFromPoint(){return select}
+  };
+  const sandbox={
+    document,crypto:webcrypto,HTMLInputElement:class{},HTMLTextAreaElement:class{},
+    innerWidth:400,innerHeight:300,
+    getComputedStyle(){return{visibility:'visible',display:'block',opacity:'1'}},
+    Event:class{constructor(type){this.type=type}},
+    InputEvent:class{constructor(type){this.type=type}}
+  };
+  vm.runInNewContext(fs.readFileSync('extensions/personal-ai-browser-bridge/dom_bridge.js','utf8'),sandbox);
+  return{bridge:sandbox.__personalAIBridge,select};
+}
+test('native select exposes options and verifies selected value',()=>{
+  const {bridge,select}=fakeSelectDOM();
+  const observed=bridge.observe().controls[0];
+  assert.equal(observed.type,'combobox');
+  assert.equal(observed.selectable,true);
+  assert.equal(observed.options.length,2);
+  assert.equal(observed.value,'pending');
+  const result=bridge.act(observed.ref,'select',{text:'Livré'});
+  assert.equal(result.verified,true);
+  assert.equal(result.value,'delivered');
+  assert.equal(result.selected_text,'Livré');
+  assert.equal(select.value,'delivered');
+  assert(select.events.includes('change'));
+});
+
 test('contenteditable write replaces and verifies rich-editor text',()=>{
   const {bridge,editor}=fakeContentEditable();
   const ref=bridge.observe().controls[0].ref;
