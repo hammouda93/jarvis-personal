@@ -233,6 +233,10 @@ class FoundationToolAdapter:
     def authorize_semantic_memory_write(self, user_text):
         if str(user_text or "") != str(self.current_user_text or ""):
             raise RuntimeError("semantic_memory_write_turn_mismatch")
+        if not is_explicit_memory_write_request(str(user_text or "")):
+            raise RuntimeError(
+                "persistent_write_requires_explicit_user_request"
+            )
         self._semantic_memory_write_authorized = True
 
     def attach_semantic_memory_engine(self, engine):
@@ -321,7 +325,8 @@ class FoundationToolAdapter:
         return self.delegate.requires_confirmation(name)
 
     def execute(self, name, arguments, *, approved=False):
-        from .native_tools import AgentActionResult
+        from .intent_guards import is_explicit_memory_write_request
+from .native_tools import AgentActionResult
         args = dict(arguments or {})
         try:
             if name == "browser_navigate" and not isinstance(args.get("tab_id"), int):
