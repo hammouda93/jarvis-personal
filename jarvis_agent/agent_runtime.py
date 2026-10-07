@@ -514,7 +514,7 @@ def _requested_action_capabilities(text: str) -> set[str]:
     )
     site_search = (
         bool(
-            re.search(r"\b(?:ouvre|ouvrir|open|lance)\b", normalized)
+            re.search(r"\b(?:ouvre|ouvres|ouvrez|ouvrir|open|lance|lances|lancez)\b", normalized)
             and re.search(r"\b(?:cherche|recherche|search)\b", normalized)
         )
         or bool(
@@ -694,7 +694,7 @@ def _requests_open_and_search(text: str) -> bool:
     """
     normalized = normalize(text)
     return bool(
-        re.search(r"\b(?:ouvre|ouvrir|open|affiche|afficher)\b", normalized)
+        re.search(r"\b(?:ouvre|ouvres|ouvrez|ouvrir|open|affiche|affiches|affichez|afficher)\b", normalized)
         and re.search(r"\b(?:cherche|recherche|search)\b", normalized)
     )
 
@@ -727,8 +727,8 @@ def _requests_result_selection(text: str) -> bool:
     )
     has_ordinal_target = bool(
         re.search(
-            r"\b(?:premier|premiere|deuxieme|troisieme|quatrieme|"
-            r"1er|1ere|2e|3e|4e)\b",
+            r"\b(?:premier|premiere|deuxieme|deuxeme|troisieme|troiseme|"
+            r"quatrieme|quatrieme|1er|1ere|2e|2eme|3e|3eme|4e|4eme)\b",
             normalized,
         )
         and re.search(
