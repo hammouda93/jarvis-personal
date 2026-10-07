@@ -3204,6 +3204,16 @@ class AgentRuntimeTests(unittest.TestCase):
                 "Garde ça en mémoire pour plus tard."
             )
         )
+        self.assertTrue(
+            _is_explicit_memory_write_request(
+                "Keep this durable: reference Sigma"
+            )
+        )
+        self.assertTrue(
+            _is_explicit_memory_write_request(
+                "Conserve cette information durablement."
+            )
+        )
 
     def test_groq_blocks_unsolicited_persistent_memory_write(self):
         tools = FakeTools()
