@@ -3424,6 +3424,32 @@ class AgentRuntimeTests(unittest.TestCase):
             _browser_verified_fast_completion(user_text, actions)
         )
 
+    def test_browser_fast_completion_never_consumes_windows_or_visual_proof(self):
+        user_text = "Écris bonjour dans le document."
+        for action_name in (
+            "write_ui_element",
+            "write_visual_target",
+            "computer_write",
+        ):
+            with self.subTest(action_name=action_name):
+                action = AgentActionResult(
+                    name=action_name,
+                    success=True,
+                    message="verified",
+                    detail=json.dumps(
+                        {
+                            "verified": True,
+                            "postcondition": "value_observed",
+                        }
+                    ),
+                )
+                self.assertFalse(
+                    _browser_verified_fast_completion(
+                        user_text,
+                        [action],
+                    )
+                )
+
     def test_verified_browser_capability_finishes_without_extra_model_round(self):
         class VerifiedBrowserTools(FakeTools):
             def ollama_tools(self):
