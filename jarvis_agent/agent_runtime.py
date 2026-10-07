@@ -807,14 +807,25 @@ def _requests_submit_without_rewrite(text: str) -> bool:
     return not has_explicit_payload
 
 
-def _browser_result_selection_verified(
+def _result_selection_action_seen(
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
 ) -> bool:
+    """Return True once a real grounded selection action has been executed.
+
+    This helper is intentionally weaker than final proof. Its only role is to
+    prevent the model from ending an ordinal-selection mission without acting.
+    Browser fast-complete and legacy UI verification still enforce after-state
+    proof independently.
+    """
     for action in reversed(actions):
-        if action.name != "browser_click" or not action.success:
+        if not action.success:
             continue
-        payload = _action_detail_dict(action)
-        return payload.get("verified") is True
+        if action.name in {
+            "browser_click",
+            "click_ui_element",
+            "click_visual_target",
+        }:
+            return True
     return False
 
 
@@ -3442,7 +3453,7 @@ class GroqResponsesAgent:
 
                 if (
                     _requests_result_selection(user_text)
-                    and not _browser_result_selection_verified(actions)
+                    and not _result_selection_action_seen(actions)
                     and not browser_result_selection_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
@@ -3452,13 +3463,13 @@ class GroqResponsesAgent:
                         {
                             "role": "user",
                             "content": (
-                                "La mission Browser demande de sélectionner un résultat "
-                                "ordinal déjà visible. Elle n'est pas terminée tant "
-                                "qu'un browser_click réel sur une ref observée n'est pas "
-                                "vérifié. Utilise l'observation Browser courante; si "
-                                "nécessaire appelle browser_observe_dom ou browser_find. "
-                                "Puis appelle browser_click avec tab_id ET ref. "
-                                "N'ouvre pas une URL inventée et ne relance pas la recherche."
+                                "La mission demande de sélectionner un résultat ordinal "
+                                "déjà visible. Elle n'est pas terminée tant qu'une vraie "
+                                "action de sélection groundée n'a pas été exécutée. En "
+                                "Browser Core, utilise l'observation courante puis appelle "
+                                "browser_click avec tab_id ET ref. Sur un chemin UI legacy "
+                                "déjà inspecté, utilise la ref UI observée. N'ouvre pas une "
+                                "URL inventée et ne relance pas la recherche."
                             ),
                         }
                     )
