@@ -153,14 +153,14 @@
     }
     e.dispatchEvent(new Event("change", {bubbles:true}));
   }
-  function resolve(ref) {
+  function resolve(ref, {requirePointer=false}={}) {
     const original = targets.get(ref), e = original?.node;
     if (!original || !e?.isConnected) throw Error("stale_browser_ref");
     const now = describe(e);
     if (!now.visible || !now.enabled || now.text !== original.text || now.type !== original.type ||
       now.bbox.some((x,i) => Math.abs(x-original.bbox[i]) > 4)) throw Error("browser_target_changed");
     const point = pointerPoint(e);
-    if (!point) throw Error("browser_target_occluded");
+    if (requirePointer && !point) throw Error("browser_target_occluded");
     return [e, now, point];
   }
   globalThis.__personalAIBridge = {
@@ -204,7 +204,7 @@
       return {type:item.type};
     },
     preparePointer(ref) {
-      const [e, _item, point] = resolve(ref);
+      const [e, _item, point] = resolve(ref, {requirePointer:true});
       if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y))
         throw Error("browser_pointer_unavailable");
       return point;
@@ -214,6 +214,8 @@
       const [e, item] = resolve(ref);
       let result = {dispatched:true, verified:false};
       if (operation === "click") {
+        if (!item.actionable || typeof e.click !== "function")
+          throw Error("browser_target_not_actionable");
         e.click();
         result.trusted = false;
         result.dispatch_method = "dom_click";
