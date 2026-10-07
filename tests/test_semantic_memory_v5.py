@@ -2119,6 +2119,51 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(delegate.calls, 1)
         self.assertEqual(interpreter.turn_calls, 1)
 
+    def test_semantic_write_false_positive_does_not_mutate_memory(self):
+        user_text = (
+            "nn pas agent performance je veux Abonnement performance "
+            "dans clients et reseau"
+        )
+        turns = {
+            user_text: MemoryTurnInterpretation(
+                operation="write",
+                write_text="Abonnement performance dans clients et reseau",
+                confidence=0.75,
+                reason="false positive write",
+            )
+        }
+        store, _, delegate, tools, runtime = self.build_runtime(
+            turns=turns,
+            projections={},
+        )
+
+        result = runtime.run(user_text)
+
+        self.assertEqual(
+            result.text,
+            "delegate:" + user_text,
+        )
+        self.assertEqual(delegate.calls, 1)
+        self.assertEqual(store.recent_memories(limit=10), [])
+        self.assertFalse(tools._semantic_memory_write_authorized)
+
+    def test_foundation_semantic_write_authorization_rejects_non_explicit_turn(self):
+        user_text = "Non, je veux Abonnement performance."
+        store, _, _, tools, _ = self.build_runtime(
+            turns={},
+            projections={},
+        )
+        tools.begin_turn(user_text)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "persistent_write_requires_explicit_user_request",
+        ):
+            tools.authorize_semantic_memory_write(user_text)
+
+        self.assertEqual(store.recent_memories(limit=10), [])
+        self.assertFalse(tools._semantic_memory_write_authorized)
+
     def test_arbitrary_explicit_write_is_admitted_by_semantic_intent_not_regex(self):
         user_text = "Please keep this detail for another day: codeword Zeta"
         raw = "codeword Zeta"
