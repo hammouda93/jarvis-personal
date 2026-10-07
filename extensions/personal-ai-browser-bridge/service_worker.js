@@ -261,8 +261,13 @@ async function action(request) {
       const requestedType = norm(a.type || "");
       const typeMatches = !requestedType || norm(e.type) === requestedType ||
         (requestedType === "input" && Boolean(e.writable));
-      const names = [e.text,e.name,e.placeholder,e.aria_label,e.value]
-        .map(norm).filter(Boolean);
+      const optionTerms = Array.isArray(e.options)
+        ? e.options.flatMap(option => [option?.text, option?.value])
+        : [];
+      const names = [
+        e.text,e.name,e.placeholder,e.aria_label,e.value,e.href,e.selected_text,
+        ...optionTerms
+      ].map(norm).filter(Boolean);
       const wanted = norm(a.text || "");
       const textMatches = !wanted || (
         a.exact !== false
