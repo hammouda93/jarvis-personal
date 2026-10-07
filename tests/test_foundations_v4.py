@@ -169,6 +169,32 @@ class BrowserContractTests(unittest.TestCase):
                         ("download",{"url":"https://user:password@example.com"})]:
             with self.assertRaises(ValueError): core.call(op,**args)
 
+    def test_browser_targeted_verify_requires_ref_and_expected_value(self):
+        class Transport:
+            def __init__(self):
+                self.calls = []
+
+            def request(self, operation, arguments):
+                self.calls.append((operation, dict(arguments)))
+                return {"verified": True, "postcondition": "target_value"}
+
+        transport = Transport()
+        core = BrowserCore(transport)
+        verified = core.call(
+            "verify", tab_id=7, ref="observed", expected_value="Top List",
+        )
+        self.assertTrue(verified["verified"])
+        self.assertEqual(
+            transport.calls,
+            [("verify", {"tab_id": 7, "ref": "observed", "expected_value": "Top List"})],
+        )
+        for args in (
+            {"tab_id": 7, "ref": "observed"},
+            {"tab_id": 7, "expected_value": "Top List"},
+        ):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                core.call("verify", **args)
+
     def test_browser_transport_reports_unavailable_before_dispatch(self):
         from unittest.mock import patch
 
