@@ -689,12 +689,27 @@ function fakeContentEditable(){
     dispatchEvent(e){this.events.push(e.type);return true}
   }
   const editor=new Editor();
+  const selection={
+    ranges:[],
+    removeAllRanges(){this.ranges=[]},
+    addRange(range){this.ranges=[range]}
+  };
   const document={
     activeElement:null,
     body:{innerText:'visible'},
     querySelectorAll(){return[editor]},
     getElementById(){return null},
     elementFromPoint(){return editor},
+    createRange(){
+      return {
+        selected:null,collapsed:null,
+        selectNodeContents(node){this.selected=node},
+        collapse(value){this.collapsed=value},
+        deleteContents(){},
+        insertNode(){},
+        setStartAfter(){}
+      };
+    },
     execCommand(command,_ui,value){
       if(command!=='insertText') return false;
       this.activeElement.innerText=String(value);
@@ -705,12 +720,13 @@ function fakeContentEditable(){
   const sandbox={
     document,crypto:webcrypto,HTMLInputElement:class{},HTMLTextAreaElement:class{},
     innerWidth:400,innerHeight:300,
+    getSelection(){return selection},
     getComputedStyle(){return{visibility:'visible',display:'block',opacity:'1'}},
     Event:class{constructor(type){this.type=type}},
     InputEvent:class{constructor(type){this.type=type}}
   };
   vm.runInNewContext(fs.readFileSync('extensions/personal-ai-browser-bridge/dom_bridge.js','utf8'),sandbox);
-  return{bridge:sandbox.__personalAIBridge,editor};
+  return{bridge:sandbox.__personalAIBridge,editor,selection};
 }
 function fakeNestedContentEditable(){
   class Placeholder {
@@ -856,6 +872,16 @@ test('native select exposes options and verifies selected value',()=>{
   assert(select.events.includes('change'));
 });
 
+test('prepareWrite selects the stable rich-editor root for replacement',()=>{
+  const {bridge,editor,selection}=fakeContentEditable();
+  const ref=bridge.observe().controls[0].ref;
+  const prepared=bridge.prepareWrite(ref,'replace');
+  assert.equal(prepared.editable_kind,'contenteditable');
+  assert.equal(prepared.value,'Ancien texte');
+  assert.equal(selection.ranges.length,1);
+  assert.equal(selection.ranges[0].selected,editor);
+  assert.equal(selection.ranges[0].collapsed,null);
+});
 test('contenteditable write replaces and verifies rich-editor text',()=>{
   const {bridge,editor}=fakeContentEditable();
   const ref=bridge.observe().controls[0].ref;
