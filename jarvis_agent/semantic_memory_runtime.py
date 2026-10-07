@@ -800,12 +800,20 @@ def _looks_like_browser_operational_command(text: str) -> bool:
     normalized = normalize_text(text)
     return bool(
         re.search(
-            r"\b(?:ouvre|ouvrir|open|ferme|fermer|close|"
-            r"cherche|recherche|search|lance|lancer|valide|valider|"
-            r"clique|cliquer|click|selectionne|selectionner|select|"
-            r"choisis|choisir|ecris|ecrire|write|saisis|saisir|type|"
-            r"envoie|envoyer|send|appuie|appuyer|press|"
-            r"retour|reviens|back|avance|forward)\b",
+            r"\b(?:ouvre|ouvres|ouvrez|ouvrir|open|"
+            r"ferme|fermes|fermez|fermer|close|"
+            r"cherche|cherches|cherchez|recherche|recherches|recherchez|search|"
+            r"lance|lances|lancez|lancer|valide|valides|validez|valider|"
+            r"clique|cliques|cliquez|cliquer|click|"
+            r"selectionne|selectionnes|selectionnez|selectionner|select|"
+            r"choisis|choisissez|choisir|ecris|ecrivez|ecrire|write|"
+            r"saisis|saisissez|saisir|type|"
+            r"envoie|envoies|envoyez|envoyer|send|"
+            r"appuie|appuies|appuyez|appuyer|press|"
+            r"pause|pauses|met|mets|mettre|reprends|reprendre|joue|jouer|"
+            r"inspecte|inspectes|inspectez|inspecter|"
+            r"change|changes|changez|changer|modifie|modifies|modifiez|modifier|"
+            r"retour|reviens|revenez|back|avance|forward)\b",
             normalized,
         )
     )
