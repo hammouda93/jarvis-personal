@@ -17,6 +17,7 @@ from jarvis_agent.agent_runtime import (
     _looks_like_pseudo_tool_syntax,
     _looks_like_unnecessary_followup,
     _is_explicit_memory_write_request,
+    _is_explicit_context_reset_request,
     _looks_like_memory_permission_prompt,
     _query_matches_recent_user_context,
     _query_matches_memory_grounded_answer,
@@ -3078,6 +3079,109 @@ class AgentRuntimeTests(unittest.TestCase):
             agent._messages[-1].get("content"),
             result.text,
         )
+
+    def test_context_reset_requires_explicit_user_request(self):
+        self.assertFalse(
+            _is_explicit_context_reset_request(
+                "Fermes l'onglet de MS Football dans Chrome."
+            )
+        )
+        self.assertFalse(
+            _is_explicit_context_reset_request(
+                "Non, je veux Abonnements performance."
+            )
+        )
+        self.assertTrue(
+            _is_explicit_context_reset_request(
+                "Oublie le contexte de cette conversation."
+            )
+        )
+        self.assertTrue(
+            _is_explicit_context_reset_request(
+                "Repars de zéro avec une nouvelle conversation."
+            )
+        )
+
+    def test_groq_blocks_unsolicited_context_reset(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_reset_blocked",
+                            "name": "reset_conversation_context",
+                            "arguments": "{}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Je ferme l'onglet demandé.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "Fermes l'onglet de MS Football dans Chrome."
+        )
+
+        self.assertNotIn(
+            ("reset_conversation_context", {}),
+            tools.calls,
+        )
+        blocked = [
+            action
+            for action in result.actions
+            if action.name == "reset_conversation_context"
+        ]
+        self.assertEqual(len(blocked), 1)
+        self.assertFalse(blocked[0].success)
+        self.assertEqual(
+            blocked[0].detail,
+            "context_reset_blocked_not_explicit",
+        )
+
+    def test_groq_allows_explicit_context_reset(self):
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_reset_allowed",
+                            "name": "reset_conversation_context",
+                            "arguments": "{}",
+                        }
+                    ]
+                }
+            ],
+        )
+
+        result = agent.run(
+            "Oublie le contexte de cette conversation et repars de zéro."
+        )
+
+        self.assertIn(
+            ("reset_conversation_context", {}),
+            tools.calls,
+        )
+        self.assertEqual(len(result.actions), 1)
+        self.assertTrue(result.actions[0].success)
+        self.assertIn("repart de zéro", result.text.lower())
 
     def test_memory_write_requires_explicit_user_request(self):
         self.assertFalse(
