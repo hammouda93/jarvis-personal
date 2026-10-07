@@ -661,6 +661,63 @@ class FoundationRuntimeTests(unittest.TestCase):
         adapter.execute("browser_verify",{"tab_id":7,"text":"correct tab"})
         self.assertFalse(adapter.pending_verification)
 
+    def test_stale_browser_ref_returns_fresh_grounding_without_retry(self):
+        class Browser:
+            def call(self, operation, **args):
+                if operation == "click":
+                    raise RuntimeError("stale_or_cross_tab_browser_ref")
+                raise AssertionError("unexpected browser mutation retry")
+
+            def observe_dom(self, tab_id):
+                self.observed = tab_id
+                return {
+                    "observation_id": "fresh-obs",
+                    "tab": {
+                        "tab_id": tab_id,
+                        "title": "Current page",
+                        "url": "https://example.com/current",
+                        "active": True,
+                    },
+                    "sensor": "dom",
+                    "controls": [
+                        {
+                            "ref": "fresh-ref",
+                            "type": "link",
+                            "name": "Requested target",
+                            "actionable": True,
+                            "href": "https://example.com/next",
+                        }
+                    ],
+                    "visible_text": "Requested target",
+                }
+
+        browser = Browser()
+        adapter = FoundationToolAdapter(None, browser=browser)
+
+        result = adapter.execute(
+            "browser_click",
+            {"tab_id": 7, "ref": "expired-ref"},
+        )
+
+        self.assertFalse(result.success)
+        payload = json.loads(result.detail)
+        self.assertEqual(
+            payload["reason"],
+            "stale_or_cross_tab_browser_ref",
+        )
+        self.assertTrue(payload["reobserve_required"])
+        self.assertEqual(
+            payload["post_observation"]["observation_id"],
+            "fresh-obs",
+        )
+        self.assertEqual(
+            payload["post_observation"]["controls"][0]["ref"],
+            "fresh-ref",
+        )
+        self.assertEqual(browser.observed, 7)
+        self.assertFalse(adapter.pending_verification)
+        self.assertFalse(adapter.uncertain_scopes)
+
     def test_browser_continuation_injects_live_dom_grounding(self):
         class Delegate:
             supports_grounded_context = True
