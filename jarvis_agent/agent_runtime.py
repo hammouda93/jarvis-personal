@@ -730,10 +730,13 @@ def _requests_result_selection(text: str) -> bool:
         )
     )
     has_ordinal_target = bool(
-        re.search(
-            r"\b(?:premier|premiere|deuxieme|deuxeme|troisieme|troiseme|"
-            r"quatrieme|quatrieme|1er|1ere|2e|2eme|3e|3eme|4e|4eme)\b",
-            normalized,
+        (
+            re.search(
+                r"\b(?:premier|premiere|deuxieme|deuxeme|troisieme|troiseme|"
+                r"quatrieme|1er|1ere|2e|2eme|3e|3eme|4e|4eme)\b",
+                normalized,
+            )
+            or re.search(r"\b[1-4]\s+(?:er|ere|eme|e)\b", normalized)
         )
         and re.search(
             r"\b(?:resultat|resultats|video|videos|lien|liens|element|elements)\b",
