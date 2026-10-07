@@ -3635,6 +3635,13 @@ class GroqResponsesAgent:
 
                 if (
                     _requests_ui_submission(user_text)
+                    and (
+                        "BROWSER_GROUNDING_READ_ONLY:" in self._ephemeral_context
+                        or any(
+                            action.name.startswith("browser_")
+                            for action in actions
+                        )
+                    )
                     and not _verified_browser_submit_seen(actions)
                     and not browser_submit_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
