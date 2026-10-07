@@ -325,8 +325,7 @@ class FoundationToolAdapter:
         return self.delegate.requires_confirmation(name)
 
     def execute(self, name, arguments, *, approved=False):
-        from .intent_guards import is_explicit_memory_write_request
-from .native_tools import AgentActionResult
+        from .native_tools import AgentActionResult
         args = dict(arguments or {})
         try:
             if name == "browser_navigate" and not isinstance(args.get("tab_id"), int):
