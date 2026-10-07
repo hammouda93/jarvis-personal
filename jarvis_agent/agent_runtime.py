@@ -326,10 +326,15 @@ FOUNDATION BROWSER CORE ACTIF:
 - les refs browser sont opaques, liées à un onglet/document et expirent après
   mutation ou nouvelle observation;
 - si une mutation retourne verified=true avec une postcondition forte
-  (navigation_observed, element_value, selected_value, tab_absent), considère
-  cette preuve comme suffisante et ne dépense pas un round browser_verify inutile.
-  Si verified=false ou outcome_unknown=true, observe/vérifie avant toute nouvelle
-  mutation du même scope;
+  (navigation_observed, structural_transition_observed, element_value,
+  element_value_observed, selected_value, selected_value_observed, tab_absent),
+  considère cette preuve comme suffisante et ne dépense pas un round
+  browser_verify inutile. Si browser_write/browser_select retourne verified=false
+  ou outcome_unknown=true et fournit target_after, vérifie CE contrôle avec
+  browser_verify(tab_id, ref=target_after.ref, expected_value=requested_value).
+  Ne considère jamais browser_verify(text=...) sur le texte global de la page
+  comme preuve qu'un champ précis a été écrit. Pour les autres mutations
+  incertaines, observe/vérifie avant toute nouvelle mutation du même scope;
 - browser_press supporte notamment Enter et Space sur une ref observée/focalisable;
 - browser_write agit uniquement dans le tab_id observé. Ne substitue jamais une
   saisie clavier Windows à une primitive browser_*.
