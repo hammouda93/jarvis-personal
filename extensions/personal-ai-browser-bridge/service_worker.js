@@ -427,9 +427,9 @@ async function action(request) {
             trusted:false,
             dispatch_method:"dom_click_fallback",
             outcome_unknown:!proof.verified,
-            verified:proof.verified,
+            ...proof,
             postcondition:proof.verified
-              ? "navigation_observed"
+              ? proof.postcondition
               : "click_outcome_unknown_requires_verify",
             ...(postObservation ? {post_observation:postObservation} : {})
           };
