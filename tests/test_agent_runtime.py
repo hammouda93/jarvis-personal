@@ -3214,6 +3214,14 @@ class AgentRuntimeTests(unittest.TestCase):
             ),
         )
 
+    def test_search_submission_never_counts_as_open_and_search(self):
+        self.assertFalse(_requests_open_and_search("Lance la recherche."))
+        self.assertTrue(
+            _requests_open_and_search(
+                "Ouvre YouTube et recherche Lionel Messi."
+            )
+        )
+
     def test_simple_browser_search_requires_real_submission(self):
         self.assertIn(
             "site_search",
