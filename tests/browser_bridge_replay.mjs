@@ -162,6 +162,42 @@ test('find filters the current snapshot without invalidating its refs',async()=>
   const click=await request('click',{tab_id:1,ref});
   assert.equal(click.dispatched,true);
 });
+test('find can filter observed links by href semantics',async()=>{
+  domItems=[
+    {text:'Result A',name:'Result A',type:'link',
+     href:'https://one.example/watch?id=123',bbox:[1,2,120,30]},
+    {text:'Result B',name:'Result B',type:'link',
+     href:'https://one.example/article?id=456',bbox:[1,40,120,70]}
+  ];
+  const result=await request('find',{
+    tab_id:1,
+    text:'watch',
+    type:'link',
+    exact:false
+  });
+  assert.equal(result.matches.length,1);
+  assert.equal(result.matches[0].text,'Result A');
+});
+test('find can filter observed select options without site rules',async()=>{
+  domItems=[{
+    text:'Status',name:'Status',type:'combobox',tag:'select',
+    selectable:true,actionable:true,value:'pending',
+    options:[
+      {text:'Pending',value:'pending',selected:true,disabled:false},
+      {text:'Livré',value:'delivered',selected:false,disabled:false}
+    ],
+    bbox:[1,2,120,30]
+  }];
+  const result=await request('find',{
+    tab_id:1,
+    text:'Livré',
+    type:'combobox',
+    exact:true
+  });
+  assert.equal(result.matches.length,1);
+  assert.equal(result.matches[0].name,'Status');
+});
+
 test('partial or opaque frames do not invalidate the whole DOM observation',async()=>{
   includeNullFrame=true;
   const result=await request('observe_dom',{tab_id:1});
