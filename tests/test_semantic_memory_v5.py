@@ -2118,6 +2118,26 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
                 self.assertEqual(result.text, "delegate:" + command)
                 self.assertEqual(interpreter.turn_calls, before_calls)
 
+    def test_active_browser_feedback_mention_does_not_skip_memory_interpreter(self):
+        user_text = "tu ouvres une mauvaise vidéo sans aucun rapport avec la recherche"
+        _, interpreter, delegate, tools, runtime = self.build_runtime(
+            turns={
+                user_text: MemoryTurnInterpretation(
+                    operation="pass",
+                    confidence=0.99,
+                    reason="feedback, not command",
+                )
+            },
+            projections={},
+        )
+        tools.browser_mode = True
+
+        result = runtime.run(user_text)
+
+        self.assertEqual(result.text, "delegate:" + user_text)
+        self.assertEqual(delegate.calls, 1)
+        self.assertEqual(interpreter.turn_calls, 1)
+
     def test_active_browser_personal_question_still_uses_memory_interpreter(self):
         question = "Quels sont mes projets ?"
         _, interpreter, delegate, tools, runtime = self.build_runtime(
