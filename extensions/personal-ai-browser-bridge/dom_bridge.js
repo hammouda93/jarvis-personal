@@ -45,20 +45,35 @@
       e.getAttribute("aria-selected") === "true" ||
       e.getAttribute("aria-pressed") === "true"
     );
+    const selectable = e.tagName === "SELECT";
+    const options = selectable
+      ? Array.from(e.options || []).slice(0, 80).map(option => ({
+          text:String(option.textContent || "").trim().slice(0,350),
+          value:String(option.value ?? "").slice(0,350),
+          selected:Boolean(option.selected),
+          disabled:Boolean(option.disabled),
+        }))
+      : [];
+    const selectedOption = selectable
+      ? Array.from(e.options || []).find(option => option.selected)
+      : null;
     return {text, name:text, type, semantic_role:type,
       tag:String(e.tagName || "").toLowerCase(),
       input_type:e.tagName === "INPUT" ? String(e.type || "text") : "",
       placeholder:placeholder.slice(0, 350), aria_label:ariaLabel.slice(0, 350),
       href:href.slice(0, 1200), region:regionOf(e),
       bbox:[r.left,r.top,r.right,r.bottom], confidence:1,
-      confidence_source:"dom", writable,
-      actionable:writable || ["button","link","checkbox","radio","tab","menuitem","option","combobox"].includes(type),
+      confidence_source:"dom", writable, selectable,
+      actionable:writable || selectable || ["button","link","checkbox","radio","tab","menuitem","option","combobox"].includes(type),
       visible:e.isConnected && r.width > 0 && r.height > 0 && style.visibility !== "hidden" &&
         style.display !== "none" && style.opacity !== "0" && r.bottom > 0 && r.right > 0 &&
         r.top < innerHeight && r.left < innerWidth,
       enabled:!e.disabled && e.getAttribute("aria-disabled") !== "true",
       selected,
-      value:e.type === "password" ? null : writable ? (e.value ?? e.innerText ?? "") : null,
+      value:e.type === "password" ? null :
+        (writable || selectable) ? (e.value ?? e.innerText ?? "") : null,
+      selected_text:selectedOption ? String(selectedOption.textContent || "").trim().slice(0,350) : "",
+      options,
       focused:document.activeElement === e};
   }
   function relatedTarget(e, top) {
@@ -231,6 +246,41 @@
         e.click();
         result.trusted = false;
         result.dispatch_method = "dom_click";
+      } else if (operation === "select") {
+        if (!item.selectable || e.tagName !== "SELECT")
+          throw Error("browser_target_not_selectable");
+        const wanted = String(options.text ?? "").normalize("NFKC").trim().toLocaleLowerCase();
+        if (!wanted) throw Error("select_option_required");
+        const choices = Array.from(e.options || []).filter(option => {
+          if (option.disabled) return false;
+          const value = String(option.value ?? "").normalize("NFKC").trim().toLocaleLowerCase();
+          const label = String(option.textContent || "").normalize("NFKC").trim().toLocaleLowerCase();
+          return value === wanted || label === wanted;
+        });
+        if (choices.length !== 1) throw Error(
+          choices.length ? "select_option_not_unique" : "select_option_not_found"
+        );
+        const choice = choices[0];
+        e.focus({preventScroll:true});
+        e.value = choice.value;
+        e.dispatchEvent(new InputEvent("input", {
+          bubbles:true,
+          inputType:"insertReplacementText",
+          data:String(choice.value ?? "")
+        }));
+        e.dispatchEvent(new Event("change", {bubbles:true}));
+        const actualOption = Array.from(e.options || []).find(option => option.selected);
+        const actualValue = String(e.value ?? "");
+        const actualText = String(actualOption?.textContent || "").trim();
+        result = {
+          dispatched:true,
+          verified:actualValue === String(choice.value ?? ""),
+          postcondition:"selected_value",
+          value:actualValue,
+          selected_text:actualText,
+          requested_value:String(choice.value ?? ""),
+          requested_text:String(choice.textContent || "").trim()
+        };
       } else if (operation === "write") {
         if (!item.writable) throw Error("browser_target_not_editable");
         const mode = options.mode || "replace";
