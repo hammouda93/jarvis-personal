@@ -292,10 +292,15 @@ FOUNDATION BROWSER CORE ACTIF:
   le texte que tu veux saisir. Réutilise les rôles retournés par l'observation
   (searchbox, textbox, link, button...) au lieu d'inventer un type HTML comme
   "input";
-- après browser_write, browser_click ou browser_press, utilise directement
-  post_observation si elle est fournie: elle contient l'état frais après mutation.
-  Ne rappelle ni observe_dom ni find si la cible suivante est déjà présente dans
-  cette post_observation;
+- après browser_write, browser_select, browser_click ou browser_press, utilise
+  directement post_observation si elle est fournie: elle contient l'état frais
+  après mutation. Si target_after est fourni, c'est la ref fraîche du même
+  contrôle après mutation: réutilise-la pour une action suivante sur ce contrôle
+  au lieu de l'ancienne ref. Ne rappelle ni observe_dom ni find si la cible
+  suivante est déjà présente dans cette post_observation;
+- browser_write sert uniquement aux champs texte/contenteditable. Si le snapshot
+  indique un contrôle natif select/combobox avec selectable=true et des options,
+  utilise browser_select avec le libellé ou la valeur EXACTE d'une option observée;
 - pour "premier/deuxième/troisième résultat", si le snapshot courant contient les
   vrais liens/résultats et leur visual_index, choisis la ref correspondante et
   clique-la directement. Ne fais pas un round de lecture supplémentaire sans
@@ -315,8 +320,12 @@ FOUNDATION BROWSER CORE ACTIF:
   ensuite la ref choisie. N'invente jamais directement l'URL du résultat;
 - les refs browser sont opaques, liées à un onglet/document et expirent après
   mutation ou nouvelle observation;
-- après navigation, click, press, back/forward ou download, utilise
-  browser_verify avec une postcondition explicite avant d'affirmer le succès;
+- si une mutation retourne verified=true avec une postcondition forte
+  (navigation_observed, element_value, selected_value, tab_absent), considère
+  cette preuve comme suffisante et ne dépense pas un round browser_verify inutile.
+  Si verified=false ou outcome_unknown=true, observe/vérifie avant toute nouvelle
+  mutation du même scope;
+- browser_press supporte notamment Enter et Space sur une ref observée/focalisable;
 - browser_write agit uniquement dans le tab_id observé. Ne substitue jamais une
   saisie clavier Windows à une primitive browser_*.
 """
@@ -472,7 +481,19 @@ def _requested_action_capabilities(text: str) -> set[str]:
         r"(?:^|\b(?:et|puis|ensuite)\s+)ecrivain\b",
         normalized,
     )
-    if explicit_write or contextual_add_write or stt_write:
+    contextual_selection_write = (
+        re.search(
+            r"\b(?:change|changer|modifie|modifier|mets|mettre|"
+            r"selectionne|selectionner|choisis|choisir|select|choose)\b",
+            normalized,
+        )
+        and re.search(
+            r"\b(?:statut|status|valeur|value|option|selection|"
+            r"champ|field|liste|list|menu)\b",
+            normalized,
+        )
+    )
+    if explicit_write or contextual_add_write or stt_write or contextual_selection_write:
         required.add("write_ui")
 
     explicit_general_web_research = bool(
@@ -498,7 +519,7 @@ def _requested_action_capabilities(text: str) -> set[str]:
             and not explicit_general_web_research
         )
     )
-    if site_search:
+    if site_search and not _requests_result_selection(text):
         required.add("site_search")
 
     close_requested = re.search(
@@ -532,7 +553,7 @@ def _completed_action_capabilities(
             continue
         if action.name.startswith(("browser_", "computer_")):
             payload = _action_detail_dict(action)
-            if action.name in {"browser_write", "computer_write"} and payload.get("verified") is True:
+            if action.name in {"browser_write", "browser_select", "computer_write"} and payload.get("verified") is True:
                 completed.add("write_ui")
             if action.name == "browser_close_tab" and payload.get("verified") is True:
                 completed.add("close_tab")
@@ -2714,7 +2735,7 @@ class GroqResponsesAgent:
 
         if isinstance(parsed, dict):
             if (
-                name in {"browser_write", "browser_click", "browser_press"}
+                name in {"browser_write", "browser_select", "browser_click", "browser_press"}
                 and isinstance(parsed.get("post_observation"), dict)
             ):
                 observation = dict(parsed["post_observation"])
@@ -2746,8 +2767,9 @@ class GroqResponsesAgent:
                             key: item.get(key)
                             for key in (
                                 "ref", "type", "name", "placeholder",
-                                "aria_label", "href", "value",
-                                "writable", "actionable", "region",
+                                "aria_label", "href", "value", "tag",
+                                "selected_text", "options", "writable",
+                                "selectable", "actionable", "region",
                                 "visual_index",
                             )
                             if item.get(key) not in (None, "", False)
@@ -2814,7 +2836,8 @@ class GroqResponsesAgent:
                                 for key in (
                                     "ref", "type", "name", "semantic_role",
                                     "placeholder", "aria_label", "input_type",
-                                    "href", "value", "writable", "actionable",
+                                    "href", "value", "tag", "selected_text", "options",
+                                    "writable", "selectable", "actionable",
                                     "enabled", "selected", "focused", "region",
                                     "bbox", "visual_index", "dom_index",
                                 )
