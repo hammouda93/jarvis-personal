@@ -19,6 +19,8 @@ let historyForwardUrl = "";
 let nullDomMutationResult = false;
 let domFallbackNavigationUrl = "";
 let clearFocusedValueAfterInput = false;
+let structuralControlsAfterInput = null;
+let preparedRichWrite = null;
 const event = () => {
   const listeners = [];
   return {
@@ -60,6 +62,19 @@ globalThis.chrome = {
     if(method === 'prepare'){
       if(!observed.has(args[0])) throw Error('stale_browser_ref');
       return [{result:{type:'textbox'}}];
+    }
+    if(method === 'prepareWrite'){
+      if(!observed.has(args[0])) throw Error('stale_browser_ref');
+      const item=observed.get(args[0]);
+      preparedRichWrite={
+        mode:String(args[1]||'replace'),
+        previous:String(item.value??'')
+      };
+      return [{result:{
+        type:item.type||'textbox',
+        editable_kind:item.editable_kind||'contenteditable',
+        value:String(item.value??'')
+      }}];
     }
     if(method === 'preparePointer'){
       if(!observed.has(args[0])) throw Error('stale_browser_ref');
@@ -109,6 +124,28 @@ globalThis.chrome = {
           item.focused && item.writable ? {...item,value:''} : item
         );
       }
+      if(method==='Input.insertText' && preparedRichWrite){
+        const text=String(args.text??'');
+        domItems=domItems.map(item =>
+          item.editable_kind==='contenteditable'
+            ? {
+                ...item,
+                value:preparedRichWrite.mode==='append'
+                  ? preparedRichWrite.previous+text
+                  : text
+              }
+            : item
+        );
+      }
+      if(
+        structuralControlsAfterInput &&
+        (
+          args.type==='mouseReleased' ||
+          (args.type==='keyUp' && args.key==='Enter')
+        )
+      ) {
+        domItems=structuralControlsAfterInput.map(item=>({...item}));
+      }
     },
     async detach(target){operations.push(['detach',target])}},
   downloads:{async download(args){operations.push(['download',args]);return 77},
@@ -132,6 +169,8 @@ beforeEach(()=>{
   nullDomMutationResult=false;
   domFallbackNavigationUrl="";
   clearFocusedValueAfterInput=false;
+  structuralControlsAfterInput=null;
+  preparedRichWrite=null;
   tabs.set(1,{id:1,windowId:9,active:true,title:'Browser One',url:'https://one.example/'});
   tabs.set(2,{id:2,windowId:10,active:false,title:'Browser Two',url:'https://two.example/'});
   domItems=[{text:'Search',type:'searchbox',writable:true,bbox:[1,2,80,30]},
@@ -291,6 +330,66 @@ test('lost DOM click result stays explicit unknown when no effect can be proved'
   assert.equal(result.postcondition,'click_outcome_unknown_requires_verify');
 });
 
+test('unavailable pointer on an observed link navigates only to its observed href',async()=>{
+  invalidPointer=true;
+  domItems=[{
+    text:'Observed result',name:'Observed result',type:'link',tag:'a',
+    href:'https://one.example/observed-target',actionable:true,
+    bbox:[1,2,180,30]
+  }];
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  const result=await request('click',{tab_id:1,ref});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,true);
+  assert.equal(result.postcondition,'navigation_observed');
+  assert.equal(result.dispatch_method,'observed_href_navigation');
+  assert.equal(tabs.get(1).url,'https://one.example/observed-target');
+  assert(!operations.some(x=>x[0]==='dom_action'));
+});
+test('same-URL SPA transition is verified only with a strong structural delta',async()=>{
+  domItems=[
+    {text:'Search',name:'Search',placeholder:'Search',type:'textbox',tag:'input',
+     writable:true,actionable:true,focused:true,value:'person',region:'content',
+     bbox:[10,10,200,40]}
+  ];
+  structuralControlsAfterInput=[
+    {text:'Search',name:'Search',placeholder:'Search',type:'textbox',tag:'input',
+     writable:true,actionable:true,focused:false,value:'person',region:'content',
+     bbox:[10,10,200,40]},
+    {text:'Message',name:'Message',placeholder:'Message',type:'textbox',tag:'div',
+     editable_kind:'contenteditable',writable:true,actionable:true,focused:false,
+     value:'',region:'content',bbox:[250,500,650,550]},
+    {text:'Send',name:'Send',type:'button',tag:'button',
+     writable:false,actionable:true,focused:false,value:null,region:'content',
+     bbox:[660,500,710,550]}
+  ];
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  const result=await request('press',{tab_id:1,ref,key:'Enter'});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,true);
+  assert.equal(result.postcondition,'structural_transition_observed');
+  assert.equal(result.structural_delta.new_writable,1);
+  assert.equal(tabs.get(1).url,'https://one.example/');
+});
+test('small dynamic DOM noise is not accepted as a structural transition',async()=>{
+  domItems=[
+    {text:'Search',name:'Search',placeholder:'Search',type:'textbox',tag:'input',
+     writable:true,actionable:true,focused:true,value:'person',region:'content',
+     bbox:[10,10,200,40]}
+  ];
+  structuralControlsAfterInput=[
+    {text:'Search',name:'Search',placeholder:'Search',type:'textbox',tag:'input',
+     writable:true,actionable:true,focused:true,value:'person',region:'content',
+     bbox:[10,10,200,40]},
+    {text:'Loading',name:'Loading',type:'button',tag:'button',
+     writable:false,actionable:true,region:'content',bbox:[300,10,360,40]}
+  ];
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  const result=await request('press',{tab_id:1,ref,key:'Enter'});
+  assert.equal(result.verified,false);
+  assert.equal(result.postcondition,'key_dispatched_requires_verify');
+});
+
 test('fresh URL change is strong generic proof for click navigation',async()=>{
   navigationAfterInputUrl='https://one.example/opened-result';
   const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
@@ -419,6 +518,28 @@ test('verified select is a first-class generic browser mutation',async()=>{
   assert.equal(result.verified,true);
   assert(result.post_observation);
   assert(operations.some(x=>x[0]==='dom_action'&&x[2][1]==='select'));
+});
+test('top-frame contenteditable write uses Chrome Input and verifies exact target value',async()=>{
+  domItems=[{
+    text:'Message',name:'Message',placeholder:'Message',type:'textbox',tag:'div',
+    editable_kind:'contenteditable',writable:true,actionable:true,focused:false,
+    value:'old',region:'content',bbox:[10,20,250,60]
+  }];
+  const observation=await request('observe_dom',{tab_id:1});
+  const result=await request('write',{
+    tab_id:1,
+    ref:observation.controls[0].ref,
+    text:'fresh message',
+    mode:'replace'
+  });
+  assert.equal(result.dispatched,true);
+  assert.equal(result.trusted,true);
+  assert.equal(result.dispatch_method,'cdp_insert_text');
+  assert.equal(result.verified,true);
+  assert.equal(result.value,'fresh message');
+  assert.equal(result.target_after.editable_kind,'contenteditable');
+  assert(operations.some(x=>x[0]==='cdp'&&x[2]==='Input.insertText'));
+  assert(!operations.some(x=>x[0]==='dom_action'&&x[2][1]==='write'));
 });
 test('verified write returns a fresh post-observation snapshot',async()=>{
   const observation=await request('observe_dom',{tab_id:1});
