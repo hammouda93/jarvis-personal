@@ -206,6 +206,35 @@ class FoundationToolAdapter:
                 return (-score, int(item.get("visual_index") or 9999))
 
             ranked_controls = sorted(raw_controls, key=priority)
+
+            # Keep a second, deterministic view for ordinal link/result requests.
+            # This is generic DOM evidence: no site names or URL patterns are
+            # hard-coded. Duplicate links (for example thumbnail + title pointing
+            # to the same target) collapse to one destination.
+            ordered_links = []
+            seen_link_targets = set()
+            for item in sorted(
+                raw_controls,
+                key=lambda value: int(value.get("visual_index") or 9999),
+            ):
+                if str(item.get("type") or "").strip().lower() != "link":
+                    continue
+                href = str(item.get("href") or "").strip()
+                if not href or href in seen_link_targets:
+                    continue
+                seen_link_targets.add(href)
+                ordered_links.append(
+                    {
+                        key: item.get(key)
+                        for key in (
+                            "ref", "name", "href", "region", "visual_index",
+                        )
+                        if item.get(key) not in (None, "", False)
+                    }
+                )
+                if len(ordered_links) >= 30:
+                    break
+
             controls = []
             for item in ranked_controls[:max_controls]:
                 controls.append(
@@ -228,6 +257,7 @@ class FoundationToolAdapter:
                 "sensor": observation.get("sensor") or "dom",
                 "controls": controls,
                 "controls_omitted": max(0, len(raw_controls) - len(controls)),
+                "ordered_links": ordered_links,
                 "visible_text": [
                     line.strip()
                     for line in visible.splitlines()
@@ -235,8 +265,9 @@ class FoundationToolAdapter:
                 ][:30],
                 "frames_skipped": observation.get("frames_skipped"),
                 "note": (
-                    "Read-only current-page snapshot. Reuse these refs while filtering; "
-                    "a browser mutation invalidates them and requires the fresh post-observation."
+                    "Fresh read-only current-page snapshot. ordered_links is de-duplicated "
+                    "and sorted by real visual order for ordinal selection. Reuse refs only while "
+                    "filtering; a browser mutation invalidates them and requires fresh evidence."
                 ),
             }
             return (
