@@ -471,6 +471,12 @@ def _requested_action_capabilities(text: str) -> set[str]:
     if explicit_write or contextual_add_write or stt_write:
         required.add("write_ui")
 
+    explicit_general_web_research = bool(
+        re.search(
+            r"\b(?:sur internet|internet|sur le web|web|en ligne|online)\b",
+            normalized,
+        )
+    )
     site_search = (
         bool(
             re.search(r"\b(?:ouvre|ouvrir|open|lance)\b", normalized)
@@ -485,6 +491,7 @@ def _requested_action_capabilities(text: str) -> set[str]:
         )
         or bool(
             re.match(r"^(?:recherche|cherche|search)\b", normalized)
+            and not explicit_general_web_research
         )
     )
     if site_search:
@@ -609,19 +616,27 @@ def _missing_requested_action_capabilities(
 ) -> set[str]:
     completed = _completed_action_capabilities(actions)
     if _requests_search_submission(user_text):
-        for action in actions:
-            if not action.success or action.name not in {
-                "browser_press",
-                "browser_click",
-            }:
+        submitted_index = None
+        for index, action in enumerate(actions):
+            if not action.success:
                 continue
-            payload = _action_detail_dict(action)
-            if (
-                payload.get("dispatched")
-                and isinstance(payload.get("post_observation"), dict)
+            if action.name in {"browser_press", "browser_click"}:
+                payload = _action_detail_dict(action)
+                if (
+                    payload.get("dispatched")
+                    and isinstance(payload.get("post_observation"), dict)
+                ):
+                    completed.add("site_search")
+                    break
+            if action.name in {"press_key", "click_ui_element"}:
+                submitted_index = index
+        if "site_search" not in completed and submitted_index is not None:
+            if any(
+                action.success
+                and action.name in {"inspect_active_window", "inspect_interface"}
+                for action in actions[submitted_index + 1 :]
             ):
                 completed.add("site_search")
-                break
     return _requested_action_capabilities(user_text) - completed
 
 
