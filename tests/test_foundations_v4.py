@@ -969,12 +969,14 @@ class FoundationRuntimeTests(unittest.TestCase):
             return AgentActionResult(name,True,"done",json.dumps(payload))
         actions=[action("browser_write",verified=True),action("browser_press",dispatched=True,verified=False)]
         self.assertIn("write_ui",_completed_action_capabilities(actions))
+        select_actions = [
+            action("browser_select", verified=True, postcondition="selected_value")
+        ]
         self.assertIn(
             "write_ui",
-            _completed_action_capabilities(
-                [action("browser_select", verified=True, postcondition="selected_value")]
-            ),
+            _completed_action_capabilities(select_actions),
         )
+        self.assertTrue(_actions_have_verified_proof(select_actions))
         self.assertNotIn("site_search",_completed_action_capabilities(actions))
         self.assertFalse(_actions_have_verified_proof(actions))
         actions.append(action("browser_verify",verified=True))
