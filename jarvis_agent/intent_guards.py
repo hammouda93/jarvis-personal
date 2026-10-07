@@ -16,6 +16,11 @@ def is_explicit_memory_write_request(text: str) -> bool:
         r"\b(souviens-toi|souvenez-vous)\b",
         r"\b(remember|memorize|memorise)\b",
         r"\b(save|keep)\b.{0,24}\b(in )?(memory|mind)\b",
+        r"\b(save|keep)\b.{0,48}\b(?:this|that|detail|information|fact)\b"
+        r".{0,40}\b(?:for later|for another day|for the future)\b",
+        r"\b(?:garde|gardez|conserve|conservez)\b.{0,32}"
+        r"\b(?:ça|ca|cela|ceci|cette information|ce détail|ce detail|ce fait)\b"
+        r".{0,32}\b(?:pour plus tard|pour l'avenir|pour une autre fois)\b",
     )
     return any(
         re.search(pattern, normalized, flags=re.DOTALL)
