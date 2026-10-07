@@ -26,6 +26,7 @@ from jarvis_agent.agent_runtime import (
     _actions_have_verified_proof,
     _looks_like_clear_operational_feedback,
     _requested_action_capabilities,
+    _completed_action_capabilities,
     _missing_requested_action_capabilities,
     _requests_open_and_search,
     _inspection_requests_visual_fallback,
@@ -3334,6 +3335,47 @@ class AgentRuntimeTests(unittest.TestCase):
             _requests_open_and_search(
                 "Ouvre YouTube et recherche Lionel Messi."
             )
+        )
+
+    def test_result_selection_does_not_request_a_new_site_search(self):
+        self.assertNotIn(
+            "site_search",
+            _requested_action_capabilities(
+                "Ouvre le troisième résultat de la recherche."
+            ),
+        )
+
+    def test_status_or_option_change_requires_verified_ui_mutation(self):
+        self.assertIn(
+            "write_ui",
+            _requested_action_capabilities(
+                "Change le statut à Livré."
+            ),
+        )
+        action = AgentActionResult(
+            name="browser_select",
+            success=True,
+            message="selected",
+            detail=json.dumps(
+                {
+                    "dispatched": True,
+                    "verified": True,
+                    "postcondition": "selected_value",
+                    "value": "delivered",
+                    "selected_text": "Livré",
+                }
+            ),
+        )
+        self.assertIn(
+            "write_ui",
+            _completed_action_capabilities([action]),
+        )
+        self.assertEqual(
+            _missing_requested_action_capabilities(
+                "Change le statut à Livré.",
+                [action],
+            ),
+            set(),
         )
 
     def test_simple_browser_search_requires_real_submission(self):
