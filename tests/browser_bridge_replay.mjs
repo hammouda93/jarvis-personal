@@ -647,6 +647,86 @@ function fakeContentEditable(){
   vm.runInNewContext(fs.readFileSync('extensions/personal-ai-browser-bridge/dom_bridge.js','utf8'),sandbox);
   return{bridge:sandbox.__personalAIBridge,editor};
 }
+function fakeNestedContentEditable(){
+  class Placeholder {
+    constructor(){this.attributes={'data-placeholder':'Entrer un Message'};this.textContent='';}
+    getAttribute(key){return this.attributes[key]??null}
+  }
+  class RootEditor {
+    constructor(){
+      this.tagName='DIV';this.type=undefined;
+      this.attributes={'contenteditable':'true'};
+      this.rect={left:20,top:200,right:360,bottom:250,width:340,height:50};
+      this.isConnected=true;this.readOnly=false;this.disabled=false;
+      this.isContentEditable=true;this.innerText='draft';this.textContent='draft';
+      this.parentElement=null;
+    }
+    getAttribute(key){return this.attributes[key]??null}
+    querySelector(){return null}
+    getBoundingClientRect(){return this.rect}
+    matches(){return true}
+    contains(other){return other===this||other===child}
+    getRootNode(){return document}
+    focus(){document.activeElement=this}
+    click(){}
+    dispatchEvent(){return true}
+  }
+  class ChildTextbox {
+    constructor(root){
+      this.tagName='P';this.type=undefined;
+      this.attributes={'role':'textbox'};
+      this.rect={left:22,top:202,right:358,bottom:248,width:336,height:46};
+      this.isConnected=true;this.readOnly=false;this.disabled=false;
+      this.isContentEditable=true;this.innerText='draft';this.textContent='draft';
+      this.parentElement=root;
+    }
+    getAttribute(key){return this.attributes[key]??null}
+    querySelector(){return null}
+    getBoundingClientRect(){return this.rect}
+    matches(){return true}
+    contains(other){return other===this}
+    getRootNode(){return document}
+    focus(){document.activeElement=this}
+    click(){}
+    dispatchEvent(){return true}
+  }
+  const placeholder=new Placeholder();
+  const root=new RootEditor();
+  const child=new ChildTextbox(root);
+  const container={
+    isContentEditable:false,
+    querySelector(selector){
+      return selector.includes('placeholder') ? placeholder : null;
+    }
+  };
+  root.parentElement=container;
+  const document={
+    activeElement:null,
+    body:{innerText:'visible'},
+    querySelectorAll(){return[root,child]},
+    getElementById(){return null},
+    elementFromPoint(){return root}
+  };
+  const sandbox={
+    document,crypto:webcrypto,HTMLInputElement:class{},HTMLTextAreaElement:class{},
+    innerWidth:500,innerHeight:400,
+    getComputedStyle(){return{visibility:'visible',display:'block',opacity:'1'}},
+    Event:class{constructor(type){this.type=type}},
+    InputEvent:class{constructor(type){this.type=type}}
+  };
+  vm.runInNewContext(fs.readFileSync('extensions/personal-ai-browser-bridge/dom_bridge.js','utf8'),sandbox);
+  return{bridge:sandbox.__personalAIBridge,root,child};
+}
+test('nested contenteditable descendants collapse to one stable rich-editor root',()=>{
+  const {bridge}=fakeNestedContentEditable();
+  const controls=bridge.observe().controls;
+  assert.equal(controls.length,1);
+  assert.equal(controls[0].editable_kind,'contenteditable');
+  assert.equal(controls[0].placeholder,'Entrer un Message');
+  assert.equal(controls[0].name,'Entrer un Message');
+  assert.equal(controls[0].value,'draft');
+});
+
 function fakeSelectDOM(){
   class Option {
     constructor(text,value,selected=false){
