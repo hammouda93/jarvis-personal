@@ -163,6 +163,7 @@ class BrowserContractTests(unittest.TestCase):
             def request(self,op,args): raise AssertionError("must not reach transport")
         core = BrowserCore(Transport())
         for op,args in [("write",{"tab_id":1,"text":"hello"}),
+                        ("select",{"tab_id":1,"text":"Delivered"}),
                         ("click",{"ref":"observed"}), ("verify",{"tab_id":1}),
                         ("navigate",{"url":"file:///C:/secret"}),
                         ("download",{"url":"https://user:password@example.com"})]:
@@ -622,6 +623,11 @@ class FoundationPromptTests(unittest.TestCase):
             for item in adapter.ollama_tools()
         }
         self.assertIn("tab_id", tools["browser_navigate"]["parameters"]["required"])
+        self.assertIn("browser_select", tools)
+        self.assertEqual(
+            tools["browser_select"]["parameters"]["required"],
+            ["tab_id", "ref", "text"],
+        )
         self.assertIn("CAPTEUR PRINCIPAL", tools["browser_observe_dom"]["description"])
         self.assertIn(
             "ce n'est pas le contenu à saisir",
@@ -877,6 +883,60 @@ class FoundationRuntimeTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("requires_observed_tab_id", result.detail)
 
+    def test_browser_mutation_missing_result_is_never_success(self):
+        class Browser:
+            def call(self, operation, **kwargs):
+                self.operation = operation
+                return None
+
+        browser = Browser()
+        adapter = FoundationToolAdapter(None, browser=browser)
+        result = adapter.execute(
+            "browser_write",
+            {"tab_id": 7, "ref": "observed", "text": "value"},
+        )
+
+        self.assertEqual(browser.operation, "write")
+        self.assertFalse(result.success)
+        self.assertIn("browser_mutation_missing_result", result.detail)
+
+    def test_explicit_unknown_browser_payload_blocks_repeat_until_proof(self):
+        class Browser:
+            calls = 0
+            def call(self, operation, **kwargs):
+                self.calls += 1
+                if operation == "verify":
+                    return {"verified": True}
+                return {
+                    "dispatched": True,
+                    "verified": False,
+                    "outcome_unknown": True,
+                    "postcondition": "write_outcome_unknown_requires_verify",
+                }
+
+        browser = Browser()
+        adapter = FoundationToolAdapter(None, browser=browser)
+        first = adapter.execute(
+            "browser_write",
+            {"tab_id": 7, "ref": "observed", "text": "draft"},
+        )
+
+        self.assertTrue(first.success)
+        self.assertIn(("browser", 7), adapter.pending_verification)
+        self.assertIn(("browser", 7), adapter.uncertain_scopes)
+        blocked = adapter.execute(
+            "browser_write",
+            {"tab_id": 7, "ref": "fresh", "text": "draft"},
+        )
+        self.assertFalse(blocked.success)
+        self.assertIn("verification_before", blocked.detail)
+        self.assertEqual(browser.calls, 1)
+        adapter.execute(
+            "browser_verify",
+            {"tab_id": 7, "text": "draft"},
+        )
+        self.assertFalse(adapter.uncertain_scopes)
+
     def test_unknown_browser_action_outcome_cannot_be_announced_as_completed(self):
         class Browser:
             calls=0
@@ -909,6 +969,12 @@ class FoundationRuntimeTests(unittest.TestCase):
             return AgentActionResult(name,True,"done",json.dumps(payload))
         actions=[action("browser_write",verified=True),action("browser_press",dispatched=True,verified=False)]
         self.assertIn("write_ui",_completed_action_capabilities(actions))
+        self.assertIn(
+            "write_ui",
+            _completed_action_capabilities(
+                [action("browser_select", verified=True, postcondition="selected_value")]
+            ),
+        )
         self.assertNotIn("site_search",_completed_action_capabilities(actions))
         self.assertFalse(_actions_have_verified_proof(actions))
         actions.append(action("browser_verify",verified=True))
