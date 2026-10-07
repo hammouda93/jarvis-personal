@@ -30,6 +30,8 @@ from jarvis_agent.agent_runtime import (
     _missing_requested_action_capabilities,
     _requests_open_and_search,
     _requests_ui_submission,
+    _requests_submit_without_rewrite,
+    _browser_result_selection_verified,
     _browser_verified_fast_completion,
     _inspection_requests_visual_fallback,
 )
@@ -3378,6 +3380,289 @@ class AgentRuntimeTests(unittest.TestCase):
                 [action],
             ),
             set(),
+        )
+
+    def test_submit_only_intent_never_authorizes_rewrite(self):
+        self.assertTrue(
+            _requests_submit_without_rewrite(
+                "Ok, tu l'as fait. Envoie le message."
+            )
+        )
+        self.assertTrue(
+            _requests_submit_without_rewrite(
+                "envoyer le message ecris"
+            )
+        )
+        self.assertFalse(
+            _requests_submit_without_rewrite(
+                "Écris bonjour puis envoie le message."
+            )
+        )
+
+    def test_submit_only_turn_blocks_browser_write_then_allows_verified_submit(self):
+        class BrowserSubmitTools(FakeTools):
+            def ollama_tools(self):
+                def fn(name, required):
+                    return {
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": name,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "tab_id": {"type": "integer"},
+                                    "ref": {"type": "string"},
+                                    "text": {"type": "string"},
+                                    "mode": {"type": "string"},
+                                    "key": {"type": "string"},
+                                },
+                                "required": required,
+                                "additionalProperties": False,
+                            },
+                        },
+                    }
+                return [
+                    fn("browser_write", ["tab_id", "ref", "text"]),
+                    fn("browser_press", ["tab_id", "ref", "key"]),
+                ]
+
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "browser_press":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="submitted",
+                        detail=json.dumps(
+                            {
+                                "dispatched": True,
+                                "verified": True,
+                                "postcondition": "editable_value_cleared",
+                                "scope": ["browser", arguments["tab_id"]],
+                            }
+                        ),
+                    )
+                return super().execute(name, arguments, approved=approved)
+
+        tools = BrowserSubmitTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "bad-rewrite",
+                            "name": "browser_write",
+                            "arguments": (
+                                '{"tab_id":7,"ref":"composer",'
+                                '"text":"Bonjour","mode":"replace"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "submit",
+                            "name": "browser_press",
+                            "arguments": (
+                                '{"tab_id":7,"ref":"composer","key":"Enter"}'
+                            ),
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ok, tu l'as fait. Envoie le message.")
+
+        self.assertNotIn(
+            (
+                "browser_write",
+                {
+                    "tab_id": 7,
+                    "ref": "composer",
+                    "text": "Bonjour",
+                    "mode": "replace",
+                },
+            ),
+            tools.calls,
+        )
+        self.assertIn(
+            (
+                "browser_press",
+                {"tab_id": 7, "ref": "composer", "key": "Enter"},
+            ),
+            tools.calls,
+        )
+        self.assertEqual(
+            result.actions[0].detail,
+            "browser_write_blocked_for_submit_only_request",
+        )
+        self.assertEqual(
+            result.text,
+            "C'est fait et vérifié dans l'interface.",
+        )
+
+    def test_ordinal_result_turn_repairs_silent_model_reply_into_real_browser_click(self):
+        class BrowserResultTools(FakeTools):
+            def ollama_tools(self):
+                return [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "browser_click",
+                            "description": "click observed browser ref",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "tab_id": {"type": "integer"},
+                                    "ref": {"type": "string"},
+                                },
+                                "required": ["tab_id", "ref"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    }
+                ]
+
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="opened",
+                    detail=json.dumps(
+                        {
+                            "dispatched": True,
+                            "verified": True,
+                            "postcondition": "navigation_observed",
+                            "scope": ["browser", arguments["tab_id"]],
+                        }
+                    ),
+                )
+
+        tools = BrowserResultTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "Je suis là."}
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "ordinal-click",
+                            "name": "browser_click",
+                            "arguments": '{"tab_id":7,"ref":"result-3"}',
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ouvres le troisième résultat.")
+
+        self.assertEqual(len(agent.payloads), 2)
+        self.assertIn(
+            ("browser_click", {"tab_id": 7, "ref": "result-3"}),
+            tools.calls,
+        )
+        self.assertTrue(_browser_result_selection_verified(result.actions))
+        self.assertEqual(
+            result.text,
+            "C'est fait et vérifié dans l'interface.",
+        )
+
+    def test_ordinal_result_turn_blocks_bare_browser_click(self):
+        class BrowserResultTools(FakeTools):
+            def ollama_tools(self):
+                return [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "browser_click",
+                            "description": "click observed browser ref",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "tab_id": {"type": "integer"},
+                                    "ref": {"type": "string"},
+                                },
+                                "required": ["tab_id", "ref"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    }
+                ]
+
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="opened",
+                    detail=json.dumps(
+                        {
+                            "dispatched": True,
+                            "verified": True,
+                            "postcondition": "navigation_observed",
+                            "scope": ["browser", arguments["tab_id"]],
+                        }
+                    ),
+                )
+
+        tools = BrowserResultTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "bare-click",
+                            "name": "browser_click",
+                            "arguments": "{}",
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "grounded-click",
+                            "name": "browser_click",
+                            "arguments": '{"tab_id":7,"ref":"result-2"}',
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Ouvres le deuxième résultat de recherche.")
+
+        self.assertEqual(
+            result.actions[0].detail,
+            "result_selection_requires_grounded_browser_ref",
+        )
+        self.assertEqual(
+            tools.calls,
+            [("browser_click", {"tab_id": 7, "ref": "result-2"})],
+        )
+        self.assertEqual(
+            result.text,
+            "C'est fait et vérifié dans l'interface.",
         )
 
     def test_negated_send_does_not_request_browser_submission(self):
