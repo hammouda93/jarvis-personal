@@ -829,6 +829,18 @@ def _result_selection_action_seen(
     return False
 
 
+def _browser_result_selection_verified(
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> bool:
+    """Strict proof helper retained for fast-completion/tests."""
+    for action in reversed(actions):
+        if action.name != "browser_click" or not action.success:
+            continue
+        payload = _action_detail_dict(action)
+        return payload.get("verified") is True
+    return False
+
+
 def _browser_verified_fast_completion(
     user_text: str,
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
