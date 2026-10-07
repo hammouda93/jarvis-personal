@@ -2099,6 +2099,25 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(delegate.calls, 1)
         self.assertEqual(interpreter.turn_calls, 0)
 
+    def test_active_browser_natural_imperative_variants_skip_memory_model(self):
+        _, interpreter, delegate, tools, runtime = self.build_runtime(
+            turns={},
+            projections={},
+        )
+        tools.browser_mode = True
+
+        for command in (
+            "ouvres le premier résultat",
+            "fermes l'onglet actif",
+            "pause la vidéo",
+            "inspectes l'onglet actuel",
+        ):
+            with self.subTest(command=command):
+                before_calls = interpreter.turn_calls
+                result = runtime.run(command)
+                self.assertEqual(result.text, "delegate:" + command)
+                self.assertEqual(interpreter.turn_calls, before_calls)
+
     def test_active_browser_personal_question_still_uses_memory_interpreter(self):
         question = "Quels sont mes projets ?"
         _, interpreter, delegate, tools, runtime = self.build_runtime(
