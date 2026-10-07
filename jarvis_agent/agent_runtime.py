@@ -522,6 +522,19 @@ def _requested_action_capabilities(text: str) -> set[str]:
     if site_search and not _requests_result_selection(text):
         required.add("site_search")
 
+    if _requests_result_selection(text):
+        required.add("result_selection")
+
+    submit_requested = bool(
+        re.search(
+            r"\b(?:envoie|envoies|envoyez|envoyer|send|"
+            r"soumet|soumets|soumettre|submit)\b",
+            normalized,
+        )
+    )
+    if submit_requested:
+        required.add("submit_ui")
+
     close_requested = re.search(
         r"\b(?:ferme|fermer|close|fermez)\b",
         normalized,
@@ -557,6 +570,21 @@ def _completed_action_capabilities(
                 completed.add("write_ui")
             if action.name == "browser_close_tab" and payload.get("verified") is True:
                 completed.add("close_tab")
+            if (
+                action.name == "browser_click"
+                and payload.get("verified") is True
+            ):
+                completed.add("result_selection")
+            if (
+                action.name in {"browser_press", "browser_click"}
+                and payload.get("verified") is True
+                and payload.get("postcondition") in {
+                    "editable_value_cleared",
+                    "focused_editable_value_cleared",
+                    "navigation_observed",
+                }
+            ):
+                completed.add("submit_ui")
             if action.name == "browser_write" and payload.get("verified") is True:
                 browser_search_written = True
                 core_search_scope = payload.get("scope")
@@ -3953,6 +3981,42 @@ class GroqResponsesAgent:
                         "content": self._compact_tool_content(name, result),
                     }
                 )
+
+                requested_capabilities = _requested_action_capabilities(
+                    user_text
+                )
+                if (
+                    result.success
+                    and requested_capabilities
+                    and not _missing_requested_action_capabilities(
+                        user_text,
+                        actions,
+                    )
+                    and _actions_have_verified_proof(actions)
+                ):
+                    text = "C'est fait et vérifié dans l'interface."
+                    self._messages.append(
+                        {"role": "assistant", "content": text}
+                    )
+                    if log:
+                        log(
+                            "[AGENT] fast_complete=verified_capabilities "
+                            + ",".join(sorted(requested_capabilities))
+                        )
+                    if settings.operational_learning_enabled:
+                        _record_operational_run(
+                            user_text,
+                            actions,
+                            self.knowledge,
+                        )
+                    self._trim_history()
+                    return AgentTurnResult(
+                        text=text,
+                        actions=tuple(actions),
+                        end_session=end_session,
+                        should_exit=should_exit,
+                    )
+
                 if not result.success:
                     if result.detail == "open_url_blocked_for_search_submission":
                         recovery = (
