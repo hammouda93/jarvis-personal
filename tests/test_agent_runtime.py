@@ -3424,6 +3424,48 @@ class AgentRuntimeTests(unittest.TestCase):
             _browser_verified_fast_completion(user_text, actions)
         )
 
+    def test_verified_browser_result_selection_can_fast_complete(self):
+        action = AgentActionResult(
+            name="browser_click",
+            success=True,
+            message="opened",
+            detail=json.dumps(
+                {
+                    "dispatched": True,
+                    "verified": True,
+                    "postcondition": "navigation_observed",
+                }
+            ),
+        )
+        self.assertTrue(
+            _browser_verified_fast_completion(
+                "Ouvre le troisième résultat de la recherche.",
+                [action],
+            )
+        )
+
+    def test_verified_browser_select_can_fast_complete_value_change(self):
+        action = AgentActionResult(
+            name="browser_select",
+            success=True,
+            message="selected",
+            detail=json.dumps(
+                {
+                    "dispatched": True,
+                    "verified": True,
+                    "postcondition": "selected_value",
+                    "selected_text": "Livré",
+                    "value": "delivered",
+                }
+            ),
+        )
+        self.assertTrue(
+            _browser_verified_fast_completion(
+                "Change le statut à Livré sans envoyer de message.",
+                [action],
+            )
+        )
+
     def test_browser_fast_completion_never_consumes_windows_or_visual_proof(self):
         user_text = "Écris bonjour dans le document."
         for action_name in (
