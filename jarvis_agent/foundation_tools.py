@@ -43,6 +43,13 @@ _BROWSER_PROPS = {
     "key": {"type": "string"},
     "title": {"type": "string"},
     "download_id": {"type": "integer"},
+    "expected_value": {
+        "type": "string",
+        "description": (
+            "Valeur attendue d'un contrôle observé. Pour browser_verify ciblé, "
+            "fournir aussi tab_id et la ref fraîche du contrôle."
+        ),
+    },
 }
 _BROWSER_FIELDS = {
     "list_tabs": ([], []), "get_active_tab": ([], []),
@@ -55,7 +62,10 @@ _BROWSER_FIELDS = {
     "press": (["tab_id", "ref", "key"], ["tab_id", "ref", "key"]),
     "back": (["tab_id"], ["tab_id"]), "forward": (["tab_id"], ["tab_id"]),
     "close_tab": (["tab_id"], ["tab_id"]), "download": (["url"], ["url"]),
-    "verify": (["tab_id", "text", "url", "title", "download_id"], []),
+    "verify": (
+        ["tab_id", "ref", "expected_value", "text", "url", "title", "download_id"],
+        [],
+    ),
 }
 _BROWSER_DESCRIPTIONS = {
     "list_tabs": "Liste les onglets réels du profil Chrome normal avec tab_id, titre, URL et état.",
@@ -87,7 +97,12 @@ _BROWSER_DESCRIPTIONS = {
     "forward": "Navigue en avant dans l'historique de l'onglet ciblé.",
     "close_tab": "Ferme uniquement le tab_id ciblé et vérifie son absence.",
     "download": "Démarre un téléchargement http/https; le démarrage n'est pas la preuve de fin.",
-    "verify": "Observe à nouveau l'onglet et vérifie une postcondition explicite de titre, URL ou texte.",
+    "verify": (
+        "Observe à nouveau l'onglet et vérifie une postcondition explicite. "
+        "Après un browser_write/browser_select incertain, utilise tab_id + ref fraîche "
+        "+ expected_value pour vérifier le contrôle ciblé; ne valide jamais une écriture "
+        "uniquement parce que le texte existe ailleurs dans la page."
+    ),
 }
 
 _OS_MUTATIONS = {"press_key", "type_text_active_window", "write_ui_element", "click_ui_element",
@@ -104,6 +119,7 @@ class FoundationToolAdapter:
         self.current_user_text = ""
         self.pending_verification = set()
         self.uncertain_scopes = set()
+        self.pending_mutations = {}
         self._semantic_memory_write_authorized = False
         self.semantic_memory_engine = None
 
@@ -161,6 +177,7 @@ class FoundationToolAdapter:
             scope = ("browser", tab_id)
             self.pending_verification.discard(scope)
             self.uncertain_scopes.discard(scope)
+            self.pending_mutations.pop(scope, None)
             raw_controls = [
                 item
                 for item in list(observation.get("controls") or [])
@@ -514,11 +531,35 @@ class FoundationToolAdapter:
                     "computer_press", "computer_shortcut"}
                 if mutating and payload.get("verified") is not True:
                     self.pending_verification.add(scope)
+                    self.pending_mutations[scope] = {
+                        "name": name,
+                        "ref": args.get("ref"),
+                        "requested_value": (
+                            payload.get("requested_value")
+                            if isinstance(payload, dict)
+                            else None
+                        ),
+                    }
                 if mutating and payload.get("outcome_unknown") is True:
                     self.uncertain_scopes.add(scope)
-                if payload.get("verified") is True and (mutating or name.endswith("_verify")):
+                if payload.get("verified") is True and mutating:
                     self.pending_verification.discard(scope)
                     self.uncertain_scopes.discard(scope)
+                    self.pending_mutations.pop(scope, None)
+                elif payload.get("verified") is True and name == "browser_verify":
+                    pending = self.pending_mutations.get(scope) or {}
+                    requires_targeted_value = pending.get("name") in {
+                        "browser_write",
+                        "browser_select",
+                    }
+                    targeted_value_proof = (
+                        payload.get("postcondition") == "target_value"
+                        and bool(payload.get("target_after"))
+                    )
+                    if not requires_targeted_value or targeted_value_proof:
+                        self.pending_verification.discard(scope)
+                        self.uncertain_scopes.discard(scope)
+                        self.pending_mutations.pop(scope, None)
             # A dispatched action is a successful tool invocation, but not
             # proof of the user's goal. Never encourage retry of a sent action.
             success = not isinstance(payload, dict) or payload.get("verified") is not False or bool(payload.get("dispatched"))
@@ -642,6 +683,7 @@ class FoundationRuntime:
         self.tools.browser_mode = False
         self.tools.pending_verification.clear()
         self.tools.uncertain_scopes.clear()
+        self.tools.pending_mutations.clear()
         self.delegate.reset()
 
     def warm_up(self, *, log=None):
