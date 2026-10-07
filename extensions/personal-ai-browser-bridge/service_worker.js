@@ -357,6 +357,11 @@ async function action(request) {
     };
   }
   if (["observe_dom","find","verify"].includes(op)) {
+    const verifyTarget = (
+      op === "verify" &&
+      typeof a.ref === "string" &&
+      a.ref.trim()
+    ) ? refs.get(a.ref) : null;
     const observation = (
       op === "verify"
         ? await observe(tab.id)
@@ -364,10 +369,43 @@ async function action(request) {
     );
     if (op === "observe_dom") return observation;
     if (op === "verify") {
-      if (!["url","title","text"].some(k => Object.hasOwn(a,k))) throw Error("explicit_postcondition_required");
-      const checks = Object.entries(a).filter(([k])=>["url","title","text"].includes(k)).map(([k,v]) =>
-        k === "text" ? observation.visible_text.includes(String(v)) : observation.tab[k] === String(v));
-      return {verified:checks.every(Boolean), postcondition:{url:a.url,title:a.title,text:a.text}, observation};
+      if (Object.hasOwn(a,"expected_value")) {
+        if (!verifyTarget || verifyTarget.tabId !== tab.id)
+          throw Error("targeted_verify_requires_fresh_observed_ref");
+        const targetAfter = successorControl(verifyTarget,observation);
+        const actualValue = targetAfter?.value ?? null;
+        const expectedValue = String(a.expected_value ?? "");
+        const verified = Boolean(
+          targetAfter &&
+          (
+            editableEquivalent(actualValue,expectedValue) ||
+            normControl(targetAfter.selected_text) === normControl(expectedValue)
+          )
+        );
+        return {
+          verified,
+          postcondition:"target_value",
+          expected_value:expectedValue,
+          value:actualValue,
+          selected_text:targetAfter?.selected_text ?? "",
+          target_after:compactTarget(targetAfter),
+          observation,
+        };
+      }
+      if (!["url","title","text"].some(k => Object.hasOwn(a,k)))
+        throw Error("explicit_postcondition_required");
+      const checks = Object.entries(a)
+        .filter(([k])=>["url","title","text"].includes(k))
+        .map(([k,v]) =>
+          k === "text"
+            ? observation.visible_text.includes(String(v))
+            : observation.tab[k] === String(v)
+        );
+      return {
+        verified:checks.every(Boolean),
+        postcondition:{url:a.url,title:a.title,text:a.text},
+        observation
+      };
     }
     if (!String(a.text || "").trim() && !a.type) throw Error("find_requires_text_or_type");
     const norm = text => String(text).normalize("NFKC").trim().toLocaleLowerCase();
