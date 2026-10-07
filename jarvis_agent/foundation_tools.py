@@ -27,7 +27,8 @@ _BROWSER_PROPS = {
         "type": "string",
         "description": (
             "Pour browser_find: nom/label/placeholder visible ou accessible du contrôle à retrouver, "
-            "jamais le texte que vous voulez saisir dans ce contrôle. Pour browser_write: texte à saisir."
+            "jamais le texte que vous voulez saisir dans ce contrôle. Pour browser_write: texte à saisir. "
+            "Pour browser_select: libellé ou valeur EXACTE de l'option observée à sélectionner."
         ),
     },
     "type": {
@@ -50,6 +51,7 @@ _BROWSER_FIELDS = {
     "find": (["tab_id", "text", "type", "exact"], ["tab_id"]),
     "click": (["tab_id", "ref"], ["tab_id", "ref"]),
     "write": (["tab_id", "ref", "text", "mode"], ["tab_id", "ref", "text"]),
+    "select": (["tab_id", "ref", "text"], ["tab_id", "ref", "text"]),
     "press": (["tab_id", "ref", "key"], ["tab_id", "ref", "key"]),
     "back": (["tab_id"], ["tab_id"]), "forward": (["tab_id"], ["tab_id"]),
     "close_tab": (["tab_id"], ["tab_id"]), "download": (["url"], ["url"]),
@@ -75,8 +77,12 @@ _BROWSER_DESCRIPTIONS = {
         "S'il n'existe encore aucun snapshot, browser_find peut en créer un."
     ),
     "click": "Clique une ref réellement observée dans le même onglet puis vérifie l'état obtenu.",
-    "write": "Écrit dans une ref writable réellement observée dans le même onglet; la valeur écrite est vérifiée localement.",
-    "press": "Envoie une touche supportée à une ref observée/focalisable du même onglet.",
+    "write": "Écrit uniquement dans une ref texte/contenteditable writable; la valeur écrite est vérifiée localement.",
+    "select": (
+        "Sélectionne une option d'un contrôle natif SELECT/combobox réellement observé. "
+        "Utilise uniquement une option présente dans le champ options du snapshot; la valeur sélectionnée est relue et vérifiée."
+    ),
+    "press": "Envoie une touche supportée (Enter, Space, Tab, Escape, flèches) à une ref observée/focalisable du même onglet.",
     "back": "Navigue en arrière dans l'historique de l'onglet ciblé.",
     "forward": "Navigue en avant dans l'historique de l'onglet ciblé.",
     "close_tab": "Ferme uniquement le tab_id ciblé et vérifie son absence.",
@@ -190,8 +196,9 @@ class FoundationToolAdapter:
                         key: item.get(key)
                         for key in (
                             "ref", "type", "name", "placeholder",
-                            "aria_label", "href", "value",
-                            "writable", "actionable", "region",
+                            "aria_label", "href", "value", "tag",
+                            "selected_text", "options", "writable",
+                            "selectable", "actionable", "region",
                             "visual_index",
                         )
                         if item.get(key) not in (None, "", False)
@@ -332,7 +339,7 @@ class FoundationToolAdapter:
         try:
             if name == "browser_navigate" and not isinstance(args.get("tab_id"), int):
                 raise RuntimeError("browser_navigate_requires_observed_tab_id")
-            if name == "open_url" or (name.startswith("browser_") and name[8:] in {"navigate", "click", "write", "press", "back", "forward", "close_tab", "download"}):
+            if name == "open_url" or (name.startswith("browser_") and name[8:] in {"navigate", "click", "write", "select", "press", "back", "forward", "close_tab", "download"}):
                 if ("browser", args.get("tab_id")) in self.uncertain_scopes or ("browser", None) in self.uncertain_scopes:
                     raise RuntimeError("unknown_action_requires_verification_before_another_mutation")
             if name.startswith("computer_") and name[9:] in {"click", "write", "press", "shortcut"} and self.computer:
@@ -487,6 +494,13 @@ class FoundationToolAdapter:
                             raise RuntimeError("browser_mission_requires_browser_navigate")
                     self.browser_mode = False
                 return self.delegate.execute(name, arguments, approved=approved)
+            browser_mutating_names = {
+                "open_url", "browser_navigate", "browser_click", "browser_write",
+                "browser_select", "browser_press", "browser_back",
+                "browser_forward", "browser_close_tab", "browser_download",
+            }
+            if name in browser_mutating_names and not isinstance(payload, dict):
+                raise RuntimeError("browser_mutation_missing_result")
             if isinstance(payload,dict):
                 scope = ("browser", (payload.get("tab") or {}).get("tab_id",args.get("tab_id"))) if self.browser and (
                     name.startswith("browser_") or name == "open_url" or "tab" in payload) else ("computer",args.get("window_id") or
@@ -494,11 +508,14 @@ class FoundationToolAdapter:
                 if "download_id" in payload:
                     scope = ("browser_download",payload["download_id"])
                 payload["scope"] = scope
-                mutating = name in {"open_url", "browser_navigate", "browser_click", "browser_write", "browser_press",
-                    "browser_back", "browser_forward", "browser_close_tab", "browser_download",
-                    "computer_click", "computer_write", "computer_press", "computer_shortcut"}
+                mutating = name in {"open_url", "browser_navigate", "browser_click", "browser_write",
+                    "browser_select", "browser_press", "browser_back", "browser_forward",
+                    "browser_close_tab", "browser_download", "computer_click", "computer_write",
+                    "computer_press", "computer_shortcut"}
                 if mutating and payload.get("verified") is not True:
                     self.pending_verification.add(scope)
+                if mutating and payload.get("outcome_unknown") is True:
+                    self.uncertain_scopes.add(scope)
                 if payload.get("verified") is True and (mutating or name.endswith("_verify")):
                     self.pending_verification.discard(scope)
                     self.uncertain_scopes.discard(scope)
