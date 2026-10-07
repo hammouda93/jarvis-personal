@@ -3833,6 +3833,38 @@ class AgentRuntimeTests(unittest.TestCase):
             ["Javier Zanetti – The Legend"],
         )
 
+    def test_browser_submit_repair_does_not_hijack_nonbrowser_send_turns(self):
+        for user_text in (
+            "Envoie un message.",
+            "Envoie un message avec WhatsApp.",
+        ):
+            with self.subTest(user_text=user_text):
+                tools = FakeTools()
+                agent = FakeGroqAgent(
+                    tools,
+                    [
+                        {
+                            "output": [
+                                {
+                                    "type": "message",
+                                    "content": [
+                                        {
+                                            "type": "output_text",
+                                            "text": "J'ai besoin du destinataire.",
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                )
+
+                result = agent.run(user_text)
+
+                self.assertEqual(result.text, "J'ai besoin du destinataire.")
+                self.assertEqual(len(agent.payloads), 1)
+                self.assertEqual(tools.calls, [])
+
     def test_unverified_submit_gets_one_repair_round_then_verified_press(self):
         class SubmitRepairTools(FakeTools):
             def ollama_tools(self):
