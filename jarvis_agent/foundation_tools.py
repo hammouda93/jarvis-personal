@@ -197,8 +197,8 @@ class FoundationToolAdapter:
                         for key in (
                             "ref", "type", "name", "placeholder",
                             "aria_label", "href", "value", "tag",
-                            "selected_text", "options", "writable",
-                            "selectable", "actionable", "region",
+                            "selected_text", "options", "editable_kind",
+                            "writable", "selectable", "actionable", "region",
                             "visual_index",
                         )
                         if item.get(key) not in (None, "", False)
