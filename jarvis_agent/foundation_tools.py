@@ -409,6 +409,63 @@ class FoundationToolAdapter:
             elif name.startswith("browser_") and self.browser:
                 payload = self.browser.call(name[8:], **args)
                 self.browser_mode = True
+
+                # A replace write is idempotent, so an unknown outcome can be
+                # recovered locally without risking a duplicate side effect:
+                # verify the fresh target value first, then retry at most once
+                # on the fresh successor ref when the requested value is absent.
+                if (
+                    name == "browser_write"
+                    and isinstance(payload, dict)
+                    and payload.get("outcome_unknown") is True
+                    and str(args.get("mode") or "replace") == "replace"
+                    and isinstance(args.get("tab_id"), int)
+                    and isinstance(payload.get("target_after"), dict)
+                    and str(payload["target_after"].get("ref") or "").strip()
+                ):
+                    expected_value = str(args.get("text") or "")
+                    try:
+                        verification = self.browser.call(
+                            "verify",
+                            tab_id=args["tab_id"],
+                            ref=str(payload["target_after"]["ref"]),
+                            expected_value=expected_value,
+                        )
+                    except Exception:
+                        verification = None
+
+                    if isinstance(verification, dict) and verification.get("verified") is True:
+                        payload = {
+                            **payload,
+                            "verified": True,
+                            "outcome_unknown": False,
+                            "postcondition": "target_value",
+                            "target_after": verification.get("target_after")
+                            or payload.get("target_after"),
+                            "post_observation": verification.get("observation")
+                            or payload.get("post_observation"),
+                            "recovery": {
+                                "kind": "verify_after_unknown_replace",
+                                "retry_count": 0,
+                            },
+                        }
+                    elif isinstance(verification, dict):
+                        fresh_target = verification.get("target_after") or {}
+                        fresh_ref = str(fresh_target.get("ref") or "").strip()
+                        if fresh_ref:
+                            retry = self.browser.call(
+                                "write",
+                                tab_id=args["tab_id"],
+                                ref=fresh_ref,
+                                text=expected_value,
+                                mode="replace",
+                            )
+                            if isinstance(retry, dict):
+                                retry["recovery"] = {
+                                    "kind": "bounded_unknown_replace_retry",
+                                    "retry_count": 1,
+                                }
+                                payload = retry
             elif self.browser and name in {"open_web_search", "close_tab"}:
                 raise RuntimeError("use_generic_browser_primitives_with_observed_tab_id")
             elif name == "remember_information" and self.memory:
