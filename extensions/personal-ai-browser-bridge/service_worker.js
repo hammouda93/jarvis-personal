@@ -500,8 +500,14 @@ async function action(request) {
         ...(postObservation ? {post_observation:postObservation} : {})};
     } catch(error) {
       if (attempted) throw Error("browser_outcome_unknown_do_not_retry: " + error.message);
-      const hrefNavigation = await navigateObservedHref(tab,target).catch(()=>null);
-      if (hrefNavigation) return hrefNavigation;
+      const pointerFailure = [
+        "browser_target_occluded",
+        "browser_pointer_unavailable",
+      ].some(code => String(error?.message || "").includes(code));
+      if (pointerFailure) {
+        const hrefNavigation = await navigateObservedHref(tab,target).catch(()=>null);
+        if (hrefNavigation) return hrefNavigation;
+      }
       throw error;
     } finally { await chrome.debugger.detach({tabId:tab.id}).catch(()=>{}); }
   }
