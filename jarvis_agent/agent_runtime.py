@@ -306,10 +306,14 @@ FOUNDATION BROWSER CORE ACTIF:
   ou browser_click sur une cible de soumission observée;
 - une demande "premier/deuxième/troisième résultat" doit finir par un browser_click
   avec tab_id et ref réellement observés; ne fabrique ni URL ni clic sans cible;
-- pour "premier/deuxième/troisième résultat", si le snapshot courant contient les
-  vrais liens/résultats et leur visual_index, choisis la ref correspondante et
-  clique-la directement. Ne fais pas un round de lecture supplémentaire sans
-  nécessité;
+- pour "premier/deuxième/troisième résultat", utilise en priorité
+  ordered_links lorsqu'il est fourni: il est dédupliqué et trié par ordre visuel
+  réel. Applique d'abord les critères exprimés par l'utilisateur aux name/href
+  réellement observés, puis compte dans cette liste filtrée. Ne compte jamais
+  les boutons, menus ou autres contrôles sans rapport comme des résultats;
+- si le snapshot courant contient déjà les vrais liens/résultats et leur
+  visual_index, choisis la ref correspondante et clique-la directement. Ne fais
+  pas un round de lecture supplémentaire sans nécessité;
 - open_url sert à ouvrir un nouveau site/onglet. Pour continuer une mission
   dans une page déjà ouverte, conserve le tab_id actuel. browser_navigate exige
   un tab_id et navigue cet onglet existant; ne crée pas un nouvel onglet pour
@@ -960,14 +964,61 @@ def _is_explicit_context_reset_request(text: str) -> bool:
 
 
 def _looks_like_clear_operational_feedback(text: str) -> bool:
-    normalized = (text or "").lower().replace("’", "'")
+    normalized = (text or "").lower().replace("’", "'").strip()
     correction_markers = (
-        "non,", "non ", "ce n'est pas", "c'est pas", "tu as juste",
+        "non,", "non ", "nn ", "ce n'est pas", "c'est pas", "tu as juste",
         "tu n'as pas", "je t'ai dit", "je voulais dire", "pas comme ça",
         "pas comme ca", "incorrect", "erreur", "wrong", "that's not",
-        "you only", "you didn't",
+        "you only", "you didn't", "mauvaise", "mauvais", "sans rapport",
+        "sans aucun rapport", "pas le bon", "pas la bonne",
     )
-    return any(marker in normalized for marker in correction_markers)
+    if any(marker in normalized for marker in correction_markers):
+        return True
+    declarative_browser = re.match(
+        r"^tu\s+(?:as\s+|n[' ]as\s+|viens\s+de\s+)?"
+        r"(?:ouvre|ouvres|ouvert|ferme|fermes|ferme|cherche|recherche|"
+        r"clique|cliques|selectionne|selectionnes|ecris|envoie|appuie)\b",
+        normalize(text),
+    )
+    problem_marker = re.search(
+        r"\b(?:mal|incorrect|erreur|probleme|mauvais|mauvaise|"
+        r"sans\s+(?:aucun\s+)?rapport|pas\s+(?:le|la)\s+bon(?:ne)?)\b",
+        normalize(text),
+    )
+    return bool(declarative_browser and problem_marker)
+
+
+def _looks_like_explicit_operational_request(text: str) -> bool:
+    """Detect a direct request, not a verb merely mentioned in feedback."""
+    normalized = normalize(text).strip()
+    verbs = (
+        r"(?:ouvre|ouvres|ouvrez|ouvrir|ferme|fermes|fermez|fermer|"
+        r"cherche|cherches|recherche|recherches|clique|cliques|cliquez|"
+        r"selectionne|selectionnes|selectionnez|choisis|choisissez|"
+        r"ecris|ecrivez|envoie|envoies|envoyez|appuie|appuies|appuyez|"
+        r"inspecte|inspectes|inspectez|retour|reviens|avance|change|modifie)"
+    )
+    prefix = (
+        r"(?:(?:ok|d accord|daccord|maintenant|alors|non|nn|vas y|stp|"
+        r"s il te plait|s il vous plait)\s+)*"
+    )
+    if re.match(r"^" + prefix + verbs + r"\b", normalized):
+        return True
+    return bool(
+        re.match(
+            r"^(?:peux tu|pourrais tu|tu peux|est ce que tu peux)\s+"
+            + verbs
+            + r"\b",
+            normalized,
+        )
+    )
+
+
+def _feedback_only_operational_turn(text: str) -> bool:
+    return (
+        _looks_like_clear_operational_feedback(text)
+        and not _looks_like_explicit_operational_request(text)
+    )
 
 
 def _action_detail_dict(action: AgentActionResult) -> dict[str, Any]:
@@ -2398,6 +2449,7 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+        self._feedback_only_turn = False
         self._session_grounding: dict[str, str] = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
@@ -2412,6 +2464,7 @@ class GroqResponsesAgent:
         self._memory_write_allowed = False
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
+        self._feedback_only_turn = False
         self._session_grounding = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
@@ -2776,6 +2829,26 @@ class GroqResponsesAgent:
                 and settings.groq_browser_search
             ):
                 tools = [*tools, {"type": "browser_search"}]
+
+            if self._feedback_only_turn:
+                blocked_feedback_mutations = {
+                    "open_url",
+                    "browser_activate_tab",
+                    "browser_navigate",
+                    "browser_click",
+                    "browser_write",
+                    "browser_press",
+                    "browser_back",
+                    "browser_forward",
+                    "browser_close_tab",
+                    "browser_download",
+                }
+                tools = [
+                    item
+                    for item in tools
+                    if str((item.get("function") or {}).get("name") or "")
+                    not in blocked_feedback_mutations
+                ]
 
             if "BROWSER_GROUNDING_READ_ONLY:" in self._ephemeral_context:
                 browser_allowed = {
@@ -3263,6 +3336,7 @@ class GroqResponsesAgent:
             settings.operational_learning_enabled
             and _looks_like_clear_operational_feedback(user_text)
         )
+        self._feedback_only_turn = _feedback_only_operational_turn(user_text)
         self._refresh_session_grounding_prompt()
 
         if self._pending_function_approval is not None:
@@ -3817,7 +3891,32 @@ class GroqResponsesAgent:
                     )
 
                 tool_started = time.perf_counter()
+                browser_mutation_names = {
+                    "open_url",
+                    "browser_activate_tab",
+                    "browser_navigate",
+                    "browser_click",
+                    "browser_write",
+                    "browser_press",
+                    "browser_back",
+                    "browser_forward",
+                    "browser_close_tab",
+                    "browser_download",
+                }
                 if (
+                    self._feedback_only_turn
+                    and name in browser_mutation_names
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "Ce tour est une correction ou un commentaire sur l'action "
+                            "précédente, pas une nouvelle autorisation de modifier le navigateur."
+                        ),
+                        detail="browser_mutation_blocked_for_feedback_only_turn",
+                    )
+                elif (
                     name == "browser_click"
                     and _requests_result_selection(user_text)
                     and (
@@ -4234,7 +4333,14 @@ class GroqResponsesAgent:
                     )
 
                 if not result.success:
-                    if result.detail == "browser_write_blocked_for_submit_only_request":
+                    if result.detail == "browser_mutation_blocked_for_feedback_only_turn":
+                        recovery = (
+                            "Le message utilisateur est un feedback/correctif sur ce qui "
+                            "s'est passé, pas une nouvelle commande. Ne lance aucune mutation "
+                            "Browser. Réponds au feedback et, si utile, utilise seulement une "
+                            "observation en lecture pour expliquer l'état réel."
+                        )
+                    elif result.detail == "browser_write_blocked_for_submit_only_request":
                         recovery = (
                             "L'utilisateur demande de soumettre le contenu déjà présent, "
                             "pas de le réécrire. Observe le champ/composer courant puis "
