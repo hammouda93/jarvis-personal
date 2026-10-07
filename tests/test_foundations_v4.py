@@ -900,18 +900,29 @@ class FoundationRuntimeTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("browser_mutation_missing_result", result.detail)
 
-    def test_explicit_unknown_browser_payload_blocks_repeat_until_proof(self):
+    def test_explicit_unknown_browser_payload_blocks_repeat_until_targeted_proof(self):
         class Browser:
             calls = 0
             def call(self, operation, **kwargs):
                 self.calls += 1
                 if operation == "verify":
-                    return {"verified": True}
+                    if "expected_value" in kwargs:
+                        return {
+                            "verified": True,
+                            "postcondition": "target_value",
+                            "value": kwargs["expected_value"],
+                            "target_after": {"ref": kwargs.get("ref")},
+                        }
+                    return {
+                        "verified": True,
+                        "postcondition": {"text": kwargs.get("text")},
+                    }
                 return {
                     "dispatched": True,
                     "verified": False,
                     "outcome_unknown": True,
                     "postcondition": "write_outcome_unknown_requires_verify",
+                    "requested_value": "draft",
                 }
 
         browser = Browser()
@@ -931,11 +942,26 @@ class FoundationRuntimeTests(unittest.TestCase):
         self.assertFalse(blocked.success)
         self.assertIn("verification_before", blocked.detail)
         self.assertEqual(browser.calls, 1)
-        adapter.execute(
+
+        global_text = adapter.execute(
             "browser_verify",
             {"tab_id": 7, "text": "draft"},
         )
-        self.assertFalse(adapter.uncertain_scopes)
+        self.assertTrue(global_text.success)
+        self.assertIn(("browser", 7), adapter.pending_verification)
+        self.assertIn(("browser", 7), adapter.uncertain_scopes)
+
+        targeted = adapter.execute(
+            "browser_verify",
+            {
+                "tab_id": 7,
+                "ref": "fresh-after",
+                "expected_value": "draft",
+            },
+        )
+        self.assertTrue(targeted.success)
+        self.assertNotIn(("browser", 7), adapter.pending_verification)
+        self.assertNotIn(("browser", 7), adapter.uncertain_scopes)
 
     def test_unknown_browser_action_outcome_cannot_be_announced_as_completed(self):
         class Browser:
