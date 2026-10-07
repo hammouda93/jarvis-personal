@@ -796,27 +796,38 @@ def _memory_evidence_context(
 
 
 def _looks_like_browser_operational_command(text: str) -> bool:
-    """Capability-level routing only; never decides the target or action."""
-    normalized = normalize_text(text)
-    return bool(
-        re.search(
-            r"\b(?:ouvre|ouvres|ouvrez|ouvrir|open|"
-            r"ferme|fermes|fermez|fermer|close|"
-            r"cherche|cherches|cherchez|recherche|recherches|recherchez|search|"
-            r"lance|lances|lancez|lancer|valide|valides|validez|valider|"
-            r"clique|cliques|cliquez|cliquer|click|"
-            r"selectionne|selectionnes|selectionnez|selectionner|select|"
-            r"choisis|choisissez|choisir|ecris|ecrivez|ecrire|write|"
-            r"saisis|saisissez|saisir|type|"
-            r"envoie|envoies|envoyez|envoyer|send|"
-            r"appuie|appuies|appuyez|appuyer|press|"
-            r"pause|pauses|met|mets|mettre|reprends|reprendre|joue|jouer|"
-            r"inspecte|inspectes|inspectez|inspecter|"
-            r"change|changes|changez|changer|modifie|modifies|modifiez|modifier|"
-            r"retour|reviens|revenez|back|avance|forward)\b",
-            normalized,
-        )
+    """Return True only for an explicit browser command/request.
+
+    A browser verb mentioned inside feedback ("tu as ouvert...", "tu ouvres la
+    mauvaise...") is descriptive context, not permission to mutate the UI.
+    """
+    normalized = normalize_text(text).strip()
+    verbs = (
+        r"(?:ouvre|ouvres|ouvrez|ouvrir|open|"
+        r"ferme|fermes|fermez|fermer|close|"
+        r"cherche|cherches|cherchez|recherche|recherches|recherchez|search|"
+        r"lance|lances|lancez|lancer|valide|valides|validez|valider|"
+        r"clique|cliques|cliquez|cliquer|click|"
+        r"selectionne|selectionnes|selectionnez|selectionner|select|"
+        r"choisis|choisissez|choisir|ecris|ecrivez|ecrire|write|"
+        r"saisis|saisissez|saisir|type|"
+        r"envoie|envoies|envoyez|envoyer|send|"
+        r"appuie|appuies|appuyez|appuyer|press|"
+        r"pause|pauses|met|mets|mettre|reprends|reprendre|joue|jouer|"
+        r"inspecte|inspectes|inspectez|inspecter|"
+        r"change|changes|changez|changer|modifie|modifies|modifiez|modifier|"
+        r"retour|reviens|revenez|back|avance|forward)"
     )
+    direct_prefix = (
+        r"(?:(?:ok|d accord|daccord|maintenant|alors|vas y|stp|"
+        r"s il te plait|s il vous plait)\s+)*"
+    )
+    direct = re.match(r"^" + direct_prefix + verbs + r"\b", normalized)
+    polite = re.match(
+        r"^(?:peux tu|pourrais tu|tu peux|est ce que tu peux)\s+" + verbs + r"\b",
+        normalized,
+    )
+    return bool(direct or polite)
 
 
 class SemanticMemoryRuntime:
