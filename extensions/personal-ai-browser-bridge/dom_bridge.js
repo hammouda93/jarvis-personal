@@ -62,7 +62,19 @@
       focused:document.activeElement === e};
   }
   function relatedTarget(e, top) {
-    return Boolean(top && (top === e || e.contains(top) || top.contains(e)));
+    const contains = (container, node) => Boolean(
+      container &&
+      typeof container.contains === "function" &&
+      container.contains(node)
+    );
+    return Boolean(
+      top &&
+      (
+        top === e ||
+        contains(e, top) ||
+        contains(top, e)
+      )
+    );
   }
   function visibleRects(e) {
     const raw = typeof e.getClientRects === "function"
