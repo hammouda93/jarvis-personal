@@ -13,6 +13,7 @@ let observed = new Map();
 let failMouseRelease = false;
 let includeNullFrame = false;
 let invalidPointer = false;
+let pointerPrepError = "";
 let navigationAfterInputUrl = "";
 let historyBackUrl = "";
 let historyForwardUrl = "";
@@ -78,6 +79,7 @@ globalThis.chrome = {
     }
     if(method === 'preparePointer'){
       if(!observed.has(args[0])) throw Error('stale_browser_ref');
+      if(pointerPrepError) throw Error(pointerPrepError);
       return [{result:invalidPointer?{}:{x:40,y:15}}];
     }
     if(method === 'invalidate'){observed.clear();return []}
@@ -163,6 +165,7 @@ beforeEach(()=>{
   failMouseRelease=false;
   includeNullFrame=false;
   invalidPointer=false;
+  pointerPrepError="";
   navigationAfterInputUrl="";
   historyBackUrl="";
   historyForwardUrl="";
@@ -328,6 +331,26 @@ test('lost DOM click result stays explicit unknown when no effect can be proved'
   assert.equal(result.verified,false);
   assert.equal(result.outcome_unknown,true);
   assert.equal(result.postcondition,'click_outcome_unknown_requires_verify');
+});
+
+test('changed or stale link target never falls through to observed href navigation',async()=>{
+  pointerPrepError='browser_target_changed';
+  domItems=[{
+    text:'Observed result',name:'Observed result',type:'link',tag:'a',
+    href:'https://one.example/old-target',actionable:true,
+    bbox:[1,2,180,30]
+  }];
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+
+  await assert.rejects(
+    request('click',{tab_id:1,ref}),
+    /browser_target_changed/
+  );
+  assert.equal(tabs.get(1).url,'https://one.example/');
+  assert(!operations.some(x =>
+    x[0]==='tab_update' &&
+    x[2]?.url==='https://one.example/old-target'
+  ));
 });
 
 test('unavailable pointer on an observed link navigates only to its observed href',async()=>{
