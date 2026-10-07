@@ -3252,6 +3252,37 @@ class AgentRuntimeTests(unittest.TestCase):
             set(),
         )
 
+    def test_explicit_general_web_research_does_not_force_site_ui_submission(self):
+        self.assertNotIn(
+            "site_search",
+            _requested_action_capabilities(
+                "Recherche AtlasScope sur Internet."
+            ),
+        )
+
+    def test_legacy_ui_search_submission_with_after_inspection_completes_goal(self):
+        actions = [
+            AgentActionResult(
+                name="click_ui_element",
+                success=True,
+                message="clicked",
+                detail="{}",
+            ),
+            AgentActionResult(
+                name="inspect_active_window",
+                success=True,
+                message="observed",
+                detail='{"title":"Results"}',
+            ),
+        ]
+        self.assertEqual(
+            _missing_requested_action_capabilities(
+                "Lance la recherche.",
+                actions,
+            ),
+            set(),
+        )
+
     def test_visible_search_url_satisfies_open_and_search_goal(self):
         actions = [
             AgentActionResult(
