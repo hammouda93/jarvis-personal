@@ -43,6 +43,20 @@ async function bestEffortPostObservation(tabId, delayMs=180) {
     return null;
   }
 }
+function navigationChanged(beforeTab, postObservation) {
+  const after = postObservation?.tab;
+  if (!beforeTab || !after || after.tab_id !== beforeTab.tab_id) return false;
+  const beforeUrl = String(beforeTab.url || "");
+  const afterUrl = String(after.url || "");
+  return Boolean(beforeUrl && afterUrl && beforeUrl !== afterUrl);
+}
+function navigationProof(beforeTab, postObservation, fallbackPostcondition) {
+  const verified = navigationChanged(beforeTab, postObservation);
+  return {
+    verified,
+    postcondition: verified ? "navigation_observed" : fallbackPostcondition,
+  };
+}
 async function observe(tabId) {
   await injected(tabId);
   clearRefs(tabId);
@@ -115,10 +129,21 @@ async function action(request) {
     return {verified:!all.some(t=>t.id === tab.id), postcondition:"tab_absent", tabs:all.map(cleanTab)};
   }
   if (["back","forward"].includes(op)) {
+    const beforeTab = cleanTab(tab);
     checkDeadline(request);
     await (op === "back" ? chrome.tabs.goBack(tab.id) : chrome.tabs.goForward(tab.id));
     invalidateSnapshot(tab.id);
-    return {dispatched:true, verified:false, postcondition:"history_navigation_pending"};
+    const postObservation = await bestEffortPostObservation(tab.id);
+    const proof = navigationProof(
+      beforeTab,
+      postObservation,
+      "history_navigation_pending"
+    );
+    return {
+      dispatched:true,
+      ...proof,
+      ...(postObservation ? {post_observation:postObservation} : {})
+    };
   }
   if (["observe_dom","find","verify"].includes(op)) {
     const observation = (
@@ -171,12 +196,16 @@ async function action(request) {
         const domResult = fallback[0]?.result;
         if (!domResult?.dispatched) throw Error("browser_dom_click_fallback_unavailable");
         const postObservation = await bestEffortPostObservation(tab.id);
+        const proof = navigationProof(
+          cleanTab(tab),
+          postObservation,
+          "click_dispatched_requires_verify"
+        );
         return {
           ...domResult,
           trusted:false,
           dispatch_method:"dom_click_fallback",
-          verified:false,
-          postcondition:"click_dispatched_requires_verify",
+          ...proof,
           ...(postObservation ? {post_observation:postObservation} : {})
         };
       }
@@ -189,8 +218,12 @@ async function action(request) {
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchMouseEvent",
         {type:"mouseReleased",button:"left",clickCount:1,...point});
       const postObservation = await bestEffortPostObservation(tab.id);
-      return {dispatched:true,verified:false,trusted:true,dispatch_method:"cdp_pointer",
-        postcondition:"click_dispatched_requires_verify",
+      const proof = navigationProof(
+        cleanTab(tab),
+        postObservation,
+        "click_dispatched_requires_verify"
+      );
+      return {dispatched:true,...proof,trusted:true,dispatch_method:"cdp_pointer",
         ...(postObservation ? {post_observation:postObservation} : {})};
     } catch(error) {
       if (attempted) throw Error("browser_outcome_unknown_do_not_retry: " + error.message);
@@ -216,7 +249,12 @@ async function action(request) {
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchKeyEvent",{type:"keyDown",...keys[a.key]});
       await chrome.debugger.sendCommand({tabId:tab.id},"Input.dispatchKeyEvent",{type:"keyUp",...keys[a.key]});
       const postObservation = await bestEffortPostObservation(tab.id);
-      return {dispatched:true, verified:false, postcondition:"key_dispatched_requires_verify",
+      const proof = navigationProof(
+        cleanTab(tab),
+        postObservation,
+        "key_dispatched_requires_verify"
+      );
+      return {dispatched:true, ...proof,
         ...(postObservation ? {post_observation:postObservation} : {})};
     } catch(error) {
       if (attempted) throw Error("browser_outcome_unknown_do_not_retry: " + error.message);
