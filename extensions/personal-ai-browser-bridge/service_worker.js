@@ -1,5 +1,5 @@
 export const OPERATIONS = new Set(["list_tabs","get_active_tab","activate_tab","navigate",
-  "observe_dom","find","click","write","press","back","forward","close_tab","download","verify"]);
+  "observe_dom","find","click","write","select","press","back","forward","close_tab","download","verify"]);
 let port;
 const refs = new Map();
 const snapshots = new Map();
@@ -57,6 +57,45 @@ function navigationProof(beforeTab, postObservation, fallbackPostcondition) {
     postcondition: verified ? "navigation_observed" : fallbackPostcondition,
   };
 }
+const normControl = value => String(value ?? "")
+  .normalize("NFKC").trim().replace(/\s+/g," ").toLocaleLowerCase();
+function successorControl(target, postObservation) {
+  const before = target?.control || {};
+  const controls = Array.isArray(postObservation?.controls) ? postObservation.controls : [];
+  const identityKeys = ["placeholder","aria_label","name"];
+  let candidates = controls.filter(item => {
+    if (target?.documentId && item.document_id && target.documentId !== item.document_id) return false;
+    if (before.tag && item.tag && before.tag !== item.tag) return false;
+    if (before.type && item.type && before.type !== item.type) return false;
+    const comparable = identityKeys.filter(key => normControl(before[key]));
+    if (comparable.length) {
+      return comparable.every(key => normControl(item[key]) === normControl(before[key]));
+    }
+    return true;
+  });
+  if (!candidates.length) return null;
+  if (candidates.length === 1) return candidates[0];
+  const beforeBox = Array.isArray(before.bbox) ? before.bbox : [];
+  if (beforeBox.length !== 4) return null;
+  const bx = (Number(beforeBox[0]) + Number(beforeBox[2])) / 2;
+  const by = (Number(beforeBox[1]) + Number(beforeBox[3])) / 2;
+  candidates = candidates.map(item => {
+    const box = Array.isArray(item.bbox) ? item.bbox : [];
+    if (box.length !== 4) return {item, distance:Number.POSITIVE_INFINITY};
+    const x = (Number(box[0]) + Number(box[2])) / 2;
+    const y = (Number(box[1]) + Number(box[3])) / 2;
+    return {item, distance:Math.hypot(x-bx,y-by)};
+  }).sort((a,b)=>a.distance-b.distance);
+  if (!Number.isFinite(candidates[0]?.distance)) return null;
+  if (candidates[1] && Math.abs(candidates[1].distance-candidates[0].distance) < 2) return null;
+  return candidates[0].item;
+}
+function compactTarget(item) {
+  if (!item) return null;
+  const keys = ["ref","type","name","placeholder","aria_label","tag","value",
+    "selected_text","writable","selectable","actionable","region","visual_index"];
+  return Object.fromEntries(keys.filter(key => item[key] !== undefined).map(key => [key,item[key]]));
+}
 async function observe(tabId) {
   await injected(tabId);
   clearRefs(tabId);
@@ -68,7 +107,12 @@ async function observe(tabId) {
   outer: for (const frame of validFrames.slice(0,12)) {
     for (const item of frame.result.controls) {
       if (controls.length >= 400) break outer;
-      refs.set(item.ref,{tabId, documentId:frame.documentId, frameId:frame.frameId});
+      refs.set(item.ref,{
+        tabId,
+        documentId:frame.documentId,
+        frameId:frame.frameId,
+        control:{...item, document_id:frame.documentId, frame_id:frame.frameId}
+      });
       controls.push({...item, document_id:frame.documentId, frame_id:frame.frameId,
         coordinate_space:"frame_css"});
     }
@@ -194,13 +238,25 @@ async function action(request) {
         );
         invalidateSnapshot(tab.id);
         const domResult = fallback[0]?.result;
-        if (!domResult?.dispatched) throw Error("browser_dom_click_fallback_unavailable");
         const postObservation = await bestEffortPostObservation(tab.id);
         const proof = navigationProof(
           cleanTab(tab),
           postObservation,
           "click_dispatched_requires_verify"
         );
+        if (!domResult?.dispatched) {
+          return {
+            dispatched:true,
+            trusted:false,
+            dispatch_method:"dom_click_fallback",
+            outcome_unknown:!proof.verified,
+            verified:proof.verified,
+            postcondition:proof.verified
+              ? "navigation_observed"
+              : "click_outcome_unknown_requires_verify",
+            ...(postObservation ? {post_observation:postObservation} : {})
+          };
+        }
         return {
           ...domResult,
           trusted:false,
@@ -232,6 +288,7 @@ async function action(request) {
   }
   if (op === "press") {
     const keys = {Enter:{key:"Enter",code:"Enter",windowsVirtualKeyCode:13},
+      Space:{key:" ",code:"Space",windowsVirtualKeyCode:32},
       Tab:{key:"Tab",code:"Tab",windowsVirtualKeyCode:9},
       Escape:{key:"Escape",code:"Escape",windowsVirtualKeyCode:27},
       ArrowDown:{key:"ArrowDown",code:"ArrowDown",windowsVirtualKeyCode:40},
@@ -262,12 +319,60 @@ async function action(request) {
     } finally { await chrome.debugger.detach({tabId:tab.id}).catch(()=>{}); }
   }
   checkDeadline(request);
-  const results = await domCall(tab.id,"act",[a.ref,op,{...a,deadline_ms:request.deadline_ms}],target.documentId);
+  const results = await domCall(
+    tab.id,
+    "act",
+    [a.ref,op,{...a,deadline_ms:request.deadline_ms}],
+    target.documentId
+  );
   invalidateSnapshot(tab.id);
-  const result = results[0].result;
-  if (op === "write" && result?.dispatched === true) {
+  let result = results?.[0]?.result ?? null;
+  if (["write","select"].includes(op)) {
     const postObservation = await bestEffortPostObservation(tab.id, 60);
+    const successor = successorControl(target, postObservation);
+    const targetAfter = compactTarget(successor);
+    if (!result || typeof result !== "object") {
+      let verified = false;
+      let actualValue = successor?.value ?? null;
+      let requestedValue = null;
+      if (op === "write") {
+        const previous = String(target.control?.value ?? "");
+        requestedValue = a.mode === "append"
+          ? previous + String(a.text ?? "")
+          : String(a.text ?? "");
+        verified = Boolean(
+          successor &&
+          normControl(actualValue) === normControl(requestedValue)
+        );
+      } else {
+        const wanted = normControl(a.text);
+        verified = Boolean(
+          successor &&
+          (
+            normControl(successor.value) === wanted ||
+            normControl(successor.selected_text) === wanted
+          )
+        );
+        requestedValue = String(a.text ?? "");
+      }
+      result = {
+        dispatched:true,
+        verified,
+        outcome_unknown:!verified,
+        postcondition:verified
+          ? (op === "select" ? "selected_value_observed" : "element_value_observed")
+          : (op === "select"
+              ? "select_outcome_unknown_requires_verify"
+              : "write_outcome_unknown_requires_verify"),
+        requested_value:requestedValue,
+        value:actualValue,
+      };
+    }
     if (postObservation) result.post_observation = postObservation;
+    if (targetAfter) result.target_after = targetAfter;
+  }
+  if (!result || typeof result !== "object") {
+    throw Error("browser_mutation_missing_result");
   }
   return result;
 }
