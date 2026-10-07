@@ -35,6 +35,7 @@ from jarvis_agent.agent_runtime import (
     _requests_submit_without_rewrite,
     _browser_result_selection_verified,
     _browser_verified_fast_completion,
+    _unsupported_browser_quoted_claims,
     _inspection_requests_visual_fallback,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -3800,6 +3801,155 @@ class AgentRuntimeTests(unittest.TestCase):
         ]
         self.assertTrue(
             _browser_verified_fast_completion(user_text, actions)
+        )
+
+    def test_browser_readback_rejects_quoted_facts_missing_from_observation(self):
+        observation = AgentActionResult(
+            name="browser_observe_dom",
+            success=True,
+            message="observed",
+            detail=json.dumps(
+                {
+                    "visible_text": (
+                        "This is Why Javier Zanetti was so SPECIAL!\n"
+                        "TOP 10 GOALS | ZANETTI"
+                    ),
+                    "controls": [],
+                }
+            ),
+        )
+
+        unsupported = _unsupported_browser_quoted_claims(
+            "inspectes les résultats et donne-moi les titres",
+            (
+                "1. « Javier Zanetti – The Legend »\n"
+                "2. « TOP 10 GOALS | ZANETTI »"
+            ),
+            [observation],
+        )
+
+        self.assertEqual(
+            unsupported,
+            ["Javier Zanetti – The Legend"],
+        )
+
+    def test_unverified_submit_gets_one_repair_round_then_verified_press(self):
+        class SubmitRepairTools(FakeTools):
+            def ollama_tools(self):
+                def fn(name):
+                    return {
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": name,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "tab_id": {"type": "integer"},
+                                    "ref": {"type": "string"},
+                                    "key": {"type": "string"},
+                                },
+                                "required": (
+                                    ["tab_id", "ref", "key"]
+                                    if name == "browser_press"
+                                    else ["tab_id", "ref"]
+                                ),
+                                "additionalProperties": False,
+                            },
+                        },
+                    }
+                return [fn("browser_click"), fn("browser_press")]
+
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, dict(arguments)))
+                if name == "browser_click":
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="click dispatched",
+                        detail=json.dumps(
+                            {
+                                "dispatched": True,
+                                "verified": False,
+                                "postcondition": "click_dispatched_requires_verify",
+                                "post_observation": {
+                                    "tab": {"tab_id": 7},
+                                    "controls": [
+                                        {
+                                            "ref": "composer-fresh",
+                                            "type": "textbox",
+                                            "writable": True,
+                                            "name": "Message",
+                                        }
+                                    ],
+                                },
+                                "scope": ["browser", 7],
+                            }
+                        ),
+                    )
+                return AgentActionResult(
+                    name=name,
+                    success=True,
+                    message="submitted",
+                    detail=json.dumps(
+                        {
+                            "dispatched": True,
+                            "verified": True,
+                            "postcondition": "editable_value_cleared",
+                            "scope": ["browser", 7],
+                        }
+                    ),
+                )
+
+        tools = SubmitRepairTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "uncertain-click",
+                            "name": "browser_click",
+                            "arguments": '{"tab_id":7,"ref":"send-control"}',
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "Message envoyé !"}
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "verified-enter",
+                            "name": "browser_press",
+                            "arguments": (
+                                '{"tab_id":7,"ref":"composer-fresh","key":"Enter"}'
+                            ),
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run("Envoie ce texte.")
+
+        self.assertEqual(len(agent.payloads), 3)
+        self.assertIn(
+            ("browser_press", {"tab_id": 7, "ref": "composer-fresh", "key": "Enter"}),
+            tools.calls,
+        )
+        self.assertEqual(
+            result.text,
+            "C'est fait et vérifié dans l'interface.",
         )
 
     def test_verified_browser_result_selection_can_fast_complete(self):
