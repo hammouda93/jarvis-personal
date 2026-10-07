@@ -488,6 +488,48 @@ test('download dispatch requires separate completion proof',async()=>{
   assert.equal((await request('verify',{download_id:77})).verified,true);
   assert.equal((await request('verify',{download_id:99})).verified,false);
 });
+test('targeted verify follows a fresh ref and checks the control value',async()=>{
+  domItems=[{
+    text:'Message',name:'Message',placeholder:'Message',type:'textbox',tag:'div',
+    editable_kind:'contenteditable',writable:true,actionable:true,focused:false,
+    value:'draft',region:'content',bbox:[10,20,250,60]
+  }];
+  const observation=await request('observe_dom',{tab_id:1});
+  const ref=observation.controls[0].ref;
+
+  domItems=domItems.map(item=>({...item,value:'expected text'}));
+  const proof=await request('verify',{
+    tab_id:1,
+    ref,
+    expected_value:'expected text'
+  });
+
+  assert.equal(proof.verified,true);
+  assert.equal(proof.postcondition,'target_value');
+  assert.equal(proof.value,'expected text');
+  assert(proof.target_after);
+  assert.notEqual(proof.target_after.ref,ref);
+});
+test('targeted verify rejects a different control value',async()=>{
+  domItems=[{
+    text:'Message',name:'Message',placeholder:'Message',type:'textbox',tag:'div',
+    editable_kind:'contenteditable',writable:true,actionable:true,focused:false,
+    value:'draft',region:'content',bbox:[10,20,250,60]
+  }];
+  const observation=await request('observe_dom',{tab_id:1});
+  const ref=observation.controls[0].ref;
+
+  const proof=await request('verify',{
+    tab_id:1,
+    ref,
+    expected_value:'something else'
+  });
+
+  assert.equal(proof.verified,false);
+  assert.equal(proof.postcondition,'target_value');
+  assert.equal(proof.value,'draft');
+});
+
 test('missing DOM write result never becomes silent success',async()=>{
   nullDomMutationResult=true;
   const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
