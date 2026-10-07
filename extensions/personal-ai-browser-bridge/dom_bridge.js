@@ -4,7 +4,7 @@
   let targets = new Map();
   const documentToken = crypto.randomUUID();
   const selector = "input:not([type=hidden]),textarea,select,button,a[href],[role]," +
-    "[contenteditable=true],h1,h2,h3,summary,[tabindex],[onclick]";
+    "[contenteditable]:not([contenteditable=false]),h1,h2,h3,summary,[tabindex],[onclick]";
   const roleOf = e => e.getAttribute("role") || ({BUTTON:"button", A:"link",
     TEXTAREA:"textbox", SELECT:"combobox", H1:"heading", H2:"heading", H3:"heading",
     SUMMARY:"button"})[e.tagName] || (e.isContentEditable ? "textbox" :
