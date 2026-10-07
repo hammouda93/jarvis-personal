@@ -18,6 +18,7 @@ let historyBackUrl = "";
 let historyForwardUrl = "";
 let nullDomMutationResult = false;
 let domFallbackNavigationUrl = "";
+let clearFocusedValueAfterInput = false;
 const event = () => {
   const listeners = [];
   return {
@@ -97,6 +98,17 @@ globalThis.chrome = {
       ) {
         tabs.get(target.tabId).url=navigationAfterInputUrl;
       }
+      if(
+        clearFocusedValueAfterInput &&
+        (
+          args.type==='mouseReleased' ||
+          (args.type==='keyUp' && args.key==='Enter')
+        )
+      ) {
+        domItems=domItems.map(item =>
+          item.focused && item.writable ? {...item,value:''} : item
+        );
+      }
     },
     async detach(target){operations.push(['detach',target])}},
   downloads:{async download(args){operations.push(['download',args]);return 77},
@@ -119,6 +131,7 @@ beforeEach(()=>{
   historyForwardUrl="";
   nullDomMutationResult=false;
   domFallbackNavigationUrl="";
+  clearFocusedValueAfterInput=false;
   tabs.set(1,{id:1,windowId:9,active:true,title:'Browser One',url:'https://one.example/'});
   tabs.set(2,{id:2,windowId:10,active:false,title:'Browser Two',url:'https://two.example/'});
   domItems=[{text:'Search',type:'searchbox',writable:true,bbox:[1,2,80,30]},
@@ -260,6 +273,46 @@ test('fresh URL change is strong generic proof for Enter submission',async()=>{
   assert.equal(result.postcondition,'navigation_observed');
   assert.equal(result.post_observation.tab.url,navigationAfterInputUrl);
 });
+test('Enter is verified when the observed writable target is consumed',async()=>{
+  clearFocusedValueAfterInput=true;
+  domItems=[
+    {text:'Message',name:'Message',type:'textbox',tag:'div',writable:true,
+     actionable:true,focused:true,value:'draft',bbox:[1,2,180,30]}
+  ];
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  const result=await request('press',{tab_id:1,ref,key:'Enter'});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,true);
+  assert.equal(result.postcondition,'editable_value_cleared');
+  assert.equal(result.target_after.value,'');
+});
+test('button click is verified when the focused writable field is consumed',async()=>{
+  clearFocusedValueAfterInput=true;
+  domItems=[
+    {text:'Message',name:'Message',type:'textbox',tag:'div',writable:true,
+     actionable:true,focused:true,value:'draft',bbox:[1,2,180,30]},
+    {text:'Send',name:'Send',type:'button',tag:'button',writable:false,
+     actionable:true,focused:false,value:null,bbox:[190,2,240,30]}
+  ];
+  const observation=await request('observe_dom',{tab_id:1});
+  const ref=observation.controls[1].ref;
+  const result=await request('click',{tab_id:1,ref});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,true);
+  assert.equal(result.postcondition,'focused_editable_value_cleared');
+  assert.equal(result.submitted_field_after.value,'');
+});
+test('in-place action remains unverified when no observable state changes',async()=>{
+  domItems=[
+    {text:'Message',name:'Message',type:'textbox',tag:'div',writable:true,
+     actionable:true,focused:true,value:'draft',bbox:[1,2,180,30]}
+  ];
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  const result=await request('press',{tab_id:1,ref,key:'Enter'});
+  assert.equal(result.verified,false);
+  assert.equal(result.postcondition,'key_dispatched_requires_verify');
+});
+
 test('history navigation is verified only when the observed URL changes',async()=>{
   historyBackUrl='https://one.example/previous';
   const back=await request('back',{tab_id:1});
@@ -339,6 +392,8 @@ test('verified write returns a fresh post-observation snapshot',async()=>{
   assert(result.post_observation);
   assert.notEqual(result.post_observation.observation_id,observation.observation_id);
   assert.equal(result.post_observation.tab.tab_id,1);
+  assert(result.target_after);
+  assert.notEqual(result.target_after.ref,ref);
 });
 
 function fakeDOM(){
