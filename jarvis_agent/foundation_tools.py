@@ -509,11 +509,43 @@ class FoundationToolAdapter:
                 message="Opération exécutée." if success else "Action exécutée ; résultat à vérifier explicitement.",
                 detail=json.dumps(payload, ensure_ascii=False))
         except Exception as exc:
-            if self.browser and ("outcome_unknown" in str(exc) or isinstance(exc, TimeoutError)):
+            error_text = str(exc)
+            if (
+                self.browser
+                and name.startswith("browser_")
+                and isinstance(args.get("tab_id"), int)
+                and (
+                    "stale_or_cross_tab_browser_ref" in error_text
+                    or "stale_browser_ref" in error_text
+                )
+            ):
+                try:
+                    observation = self.browser.observe_dom(args["tab_id"])
+                except Exception:
+                    observation = None
+                if isinstance(observation, dict):
+                    return AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "La référence observée a expiré. Une observation "
+                            "fraîche du même onglet est disponible."
+                        ),
+                        detail=json.dumps(
+                            {
+                                "reason": "stale_or_cross_tab_browser_ref",
+                                "reobserve_required": True,
+                                "post_observation": observation,
+                                "scope": ("browser", args["tab_id"]),
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+            if self.browser and ("outcome_unknown" in error_text or isinstance(exc, TimeoutError)):
                 scope = ("browser", args.get("tab_id"))
                 self.pending_verification.add(scope)
                 self.uncertain_scopes.add(scope)
-            if self.computer and "computer_outcome_unknown" in str(exc):
+            if self.computer and "computer_outcome_unknown" in error_text:
                 scope = ("computer", ((self.computer._observation or {}).get("window") or {}).get("window_id"))
                 self.pending_verification.add(scope)
                 self.uncertain_scopes.add(scope)
