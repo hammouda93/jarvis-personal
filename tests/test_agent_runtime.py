@@ -29,6 +29,7 @@ from jarvis_agent.agent_runtime import (
     _completed_action_capabilities,
     _missing_requested_action_capabilities,
     _requests_open_and_search,
+    _requests_result_selection,
     _requests_ui_submission,
     _requests_submit_without_rewrite,
     _browser_result_selection_verified,
@@ -3340,6 +3341,20 @@ class AgentRuntimeTests(unittest.TestCase):
                 "Ouvre YouTube et recherche Lionel Messi."
             )
         )
+
+    def test_result_selection_recovers_natural_and_stt_ordinal_variants(self):
+        for command in (
+            "Ouvres le troisième résultat.",
+            "ouvres le troiseme resultat de recherche",
+            "ouvre le 3eme résultat pertinent",
+            "cliquez le deuxième lien",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(_requests_result_selection(command))
+                self.assertNotIn(
+                    "site_search",
+                    _requested_action_capabilities(command),
+                )
 
     def test_result_selection_does_not_request_a_new_site_search(self):
         self.assertNotIn(
