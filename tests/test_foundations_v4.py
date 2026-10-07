@@ -820,6 +820,28 @@ class FoundationRuntimeTests(unittest.TestCase):
                         "visual_index": 61,
                     }
                 )
+                controls.append(
+                    {
+                        "ref": "result-link-duplicate",
+                        "type": "link",
+                        "name": "First real result thumbnail",
+                        "region": "content",
+                        "actionable": True,
+                        "href": "https://example.com/watch/1",
+                        "visual_index": 62,
+                    }
+                )
+                controls.append(
+                    {
+                        "ref": "result-link-2",
+                        "type": "link",
+                        "name": "Second real result",
+                        "region": "content",
+                        "actionable": True,
+                        "href": "https://example.com/watch/2",
+                        "visual_index": 63,
+                    }
+                )
                 return {
                     "observation_id": "obs-1",
                     "tab": self.get_active_tab(),
@@ -845,6 +867,17 @@ class FoundationRuntimeTests(unittest.TestCase):
                 item.get("ref") == "result-link"
                 for item in payload["controls"]
             )
+        )
+        self.assertEqual(
+            [item["href"] for item in payload["ordered_links"]],
+            [
+                "https://example.com/watch/1",
+                "https://example.com/watch/2",
+            ],
+        )
+        self.assertEqual(
+            [item["ref"] for item in payload["ordered_links"]],
+            ["result-link", "result-link-2"],
         )
 
     def test_fresh_browser_grounding_clears_prior_turn_pending_scope(self):
