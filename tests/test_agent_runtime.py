@@ -29,6 +29,8 @@ from jarvis_agent.agent_runtime import (
     _completed_action_capabilities,
     _missing_requested_action_capabilities,
     _requests_open_and_search,
+    _requests_ui_submission,
+    _browser_verified_fast_completion,
     _inspection_requests_visual_fallback,
 )
 from jarvis_agent.native_tools import AgentActionResult
@@ -3378,35 +3380,48 @@ class AgentRuntimeTests(unittest.TestCase):
             set(),
         )
 
-    def test_negated_send_does_not_create_submit_capability(self):
+    def test_negated_send_does_not_request_browser_submission(self):
         required = _requested_action_capabilities(
             "Change le statut à Livré sans envoyer de message."
         )
         self.assertIn("write_ui", required)
-        self.assertNotIn("submit_ui", required)
+        self.assertFalse(
+            _requests_ui_submission(
+                "Change le statut à Livré sans envoyer de message."
+            )
+        )
 
-    def test_send_request_requires_verified_submit_capability(self):
-        self.assertIn(
-            "submit_ui",
-            _requested_action_capabilities(
-                "Écris bonjour puis envoie le message."
+    def test_send_request_can_fast_complete_only_after_verified_browser_submit(self):
+        user_text = "Écris bonjour puis envoie le message."
+        self.assertTrue(_requests_ui_submission(user_text))
+        actions = [
+            AgentActionResult(
+                name="browser_write",
+                success=True,
+                message="written",
+                detail=json.dumps(
+                    {
+                        "verified": True,
+                        "postcondition": "element_value",
+                        "value": "bonjour",
+                    }
+                ),
             ),
-        )
-        action = AgentActionResult(
-            name="browser_press",
-            success=True,
-            message="submitted",
-            detail=json.dumps(
-                {
-                    "dispatched": True,
-                    "verified": True,
-                    "postcondition": "editable_value_cleared",
-                }
+            AgentActionResult(
+                name="browser_press",
+                success=True,
+                message="submitted",
+                detail=json.dumps(
+                    {
+                        "dispatched": True,
+                        "verified": True,
+                        "postcondition": "editable_value_cleared",
+                    }
+                ),
             ),
-        )
-        self.assertIn(
-            "submit_ui",
-            _completed_action_capabilities([action]),
+        ]
+        self.assertTrue(
+            _browser_verified_fast_completion(user_text, actions)
         )
 
     def test_verified_browser_capability_finishes_without_extra_model_round(self):
