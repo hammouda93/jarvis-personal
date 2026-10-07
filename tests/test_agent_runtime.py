@@ -3853,6 +3853,57 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_verified_spa_transition_completes_same_url_site_search(self):
+        actions = [
+            AgentActionResult(
+                name="browser_write",
+                success=True,
+                message="written",
+                detail=json.dumps(
+                    {
+                        "verified": True,
+                        "postcondition": "element_value",
+                        "scope": ["browser", 7],
+                        "post_observation": {
+                            "tab": {
+                                "tab_id": 7,
+                                "url": "https://example.com/app",
+                            }
+                        },
+                    }
+                ),
+            ),
+            AgentActionResult(
+                name="browser_press",
+                success=True,
+                message="submitted",
+                detail=json.dumps(
+                    {
+                        "dispatched": True,
+                        "verified": True,
+                        "postcondition": "structural_transition_observed",
+                        "post_observation": {
+                            "tab": {
+                                "tab_id": 7,
+                                "url": "https://example.com/app",
+                            }
+                        },
+                    }
+                ),
+            ),
+        ]
+        self.assertIn(
+            "site_search",
+            _completed_action_capabilities(actions),
+        )
+        self.assertEqual(
+            _missing_requested_action_capabilities(
+                "Recherche Mootaz.",
+                actions,
+            ),
+            set(),
+        )
+
     def test_explicit_search_submit_with_post_observation_completes_goal(self):
         action = AgentActionResult(
             name="browser_press",
