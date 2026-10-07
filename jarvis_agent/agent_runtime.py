@@ -579,9 +579,16 @@ def _completed_action_capabilities(
                 tab = post.get("tab") if isinstance(post, dict) else {}
                 post_url = str(tab.get("url") or "") if isinstance(tab, dict) else ""
                 if (
-                    post_url
-                    and browser_search_origin_url
-                    and post_url != browser_search_origin_url
+                    (
+                        post_url
+                        and browser_search_origin_url
+                        and post_url != browser_search_origin_url
+                    )
+                    or (
+                        payload.get("verified") is True
+                        and payload.get("postcondition")
+                        == "structural_transition_observed"
+                    )
                 ):
                     completed.add("site_search")
             if (
