@@ -13,6 +13,9 @@ let observed = new Map();
 let failMouseRelease = false;
 let includeNullFrame = false;
 let invalidPointer = false;
+let navigationAfterInputUrl = "";
+let historyBackUrl = "";
+let historyForwardUrl = "";
 const event = () => {
   const listeners = [];
   return {
@@ -29,7 +32,14 @@ globalThis.chrome = {
     async create({url}){const tab={id:100+tabs.size,windowId:9,active:true,title:'New',url};tabs.set(tab.id,tab);return tab},
     async update(id,change){Object.assign(tabs.get(id),change); operations.push(['tab_update',id,change]); return tabs.get(id)},
     async remove(id){operations.push(['remove',id]);tabs.delete(id)},
-    async goBack(id){operations.push(['back',id])}, async goForward(id){operations.push(['forward',id])},
+    async goBack(id){
+      operations.push(['back',id]);
+      if(historyBackUrl) tabs.get(id).url=historyBackUrl;
+    },
+    async goForward(id){
+      operations.push(['forward',id]);
+      if(historyForwardUrl) tabs.get(id).url=historyForwardUrl;
+    },
     onRemoved:tabRemovedEvent,onUpdated:tabUpdatedEvent
   },
   windows:{async update(id,args){operations.push(['window_update',id,args])},async get(id){return{id,focused:true}}},
@@ -64,6 +74,15 @@ globalThis.chrome = {
     async sendCommand(target,method,args){
       operations.push(['cdp',target,method,args]);
       if(failMouseRelease && args.type==='mouseReleased') throw Error('transport_lost');
+      if(
+        navigationAfterInputUrl &&
+        (
+          args.type==='mouseReleased' ||
+          (args.type==='keyUp' && args.key==='Enter')
+        )
+      ) {
+        tabs.get(target.tabId).url=navigationAfterInputUrl;
+      }
     },
     async detach(target){operations.push(['detach',target])}},
   downloads:{async download(args){operations.push(['download',args]);return 77},
@@ -81,6 +100,9 @@ beforeEach(()=>{
   failMouseRelease=false;
   includeNullFrame=false;
   invalidPointer=false;
+  navigationAfterInputUrl="";
+  historyBackUrl="";
+  historyForwardUrl="";
   tabs.set(1,{id:1,windowId:9,active:true,title:'Browser One',url:'https://one.example/'});
   tabs.set(2,{id:2,windowId:10,active:false,title:'Browser Two',url:'https://two.example/'});
   domItems=[{text:'Search',type:'searchbox',writable:true,bbox:[1,2,80,30]},
@@ -172,6 +194,35 @@ test('invalid pointer prep falls back to bounded DOM click without site rules',a
   assert(operations.some(x=>x[0]==='dom_action'&&x[2][1]==='click'));
   assert.equal(operations.filter(x=>x[0]==='cdp').length,0);
 });
+test('fresh URL change is strong generic proof for click navigation',async()=>{
+  navigationAfterInputUrl='https://one.example/opened-result';
+  const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
+  const result=await request('click',{tab_id:1,ref});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,true);
+  assert.equal(result.postcondition,'navigation_observed');
+  assert.equal(result.post_observation.tab.url,navigationAfterInputUrl);
+});
+test('fresh URL change is strong generic proof for Enter submission',async()=>{
+  navigationAfterInputUrl='https://one.example/results?q=test';
+  const ref=(await request('observe_dom',{tab_id:1})).controls[0].ref;
+  const result=await request('press',{tab_id:1,ref,key:'Enter'});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.verified,true);
+  assert.equal(result.postcondition,'navigation_observed');
+  assert.equal(result.post_observation.tab.url,navigationAfterInputUrl);
+});
+test('history navigation is verified only when the observed URL changes',async()=>{
+  historyBackUrl='https://one.example/previous';
+  const back=await request('back',{tab_id:1});
+  assert.equal(back.verified,true);
+  assert.equal(back.postcondition,'navigation_observed');
+  historyForwardUrl='';
+  const forward=await request('forward',{tab_id:1});
+  assert.equal(forward.verified,false);
+  assert.equal(forward.postcondition,'history_navigation_pending');
+});
+
 test('partial pointer failure reports unknown outcome and consumes reference',async()=>{
   const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
   failMouseRelease=true;
