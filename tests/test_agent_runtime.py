@@ -25,6 +25,7 @@ from jarvis_agent.agent_runtime import (
     _visible_text,
     _actions_have_verified_proof,
     _looks_like_clear_operational_feedback,
+    _feedback_only_operational_turn,
     _requested_action_capabilities,
     _completed_action_capabilities,
     _missing_requested_action_capabilities,
@@ -2382,11 +2383,88 @@ class AgentRuntimeTests(unittest.TestCase):
                 "Non, tu as juste recherché le contact, tu n'as pas envoyé le message."
             )
         )
+        self.assertTrue(
+            _feedback_only_operational_turn(
+                "tu ouvres une mauvaise vidéo sans aucun rapport avec la recherche"
+            )
+        )
+        self.assertFalse(
+            _feedback_only_operational_turn(
+                "non ferme l'onglet youtube"
+            )
+        )
         self.assertFalse(
             _looks_like_clear_operational_feedback(
                 "Oui, maintenant c'est bon."
             )
         )
+
+    def test_feedback_only_turn_blocks_browser_mutation_even_if_model_requests_it(self):
+        class FeedbackBrowserTools(FakeTools):
+            def ollama_tools(self):
+                return [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "browser_write",
+                            "description": "write browser field",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "tab_id": {"type": "integer"},
+                                    "ref": {"type": "string"},
+                                    "text": {"type": "string"},
+                                },
+                                "required": ["tab_id", "ref", "text"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    }
+                ]
+
+        tools = FeedbackBrowserTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "bad-feedback-mutation",
+                            "name": "browser_write",
+                            "arguments": (
+                                '{"tab_id":7,"ref":"search-box","text":"Messi"}'
+                            ),
+                        }
+                    ]
+                },
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Tu as raison, cette action ne correspondait pas à ta demande.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ],
+        )
+
+        result = agent.run(
+            "tu ouvres une mauvaise vidéo de Messi sans aucun rapport avec ce qu'on a"
+        )
+
+        self.assertEqual(tools.calls, [])
+        self.assertEqual(result.actions[0].success, False)
+        self.assertEqual(
+            result.actions[0].detail,
+            "browser_mutation_blocked_for_feedback_only_turn",
+        )
+        self.assertIn("ne correspondait pas", result.text)
 
     @patch(
         "jarvis_agent.agent_runtime.settings",
