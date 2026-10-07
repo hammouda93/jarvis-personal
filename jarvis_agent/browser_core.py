@@ -109,8 +109,17 @@ class BrowserCore:
             arguments["url"] = http_url(arguments.get("url", ""))
         if operation in {"click", "write", "select", "press"} and not arguments.get("ref"):
             raise ValueError("observed_ref_required")
-        if operation == "verify" and not any(k in arguments for k in ("text", "url", "title", "download_id")):
-            raise ValueError("explicit_postcondition_required")
+        if operation == "verify":
+            targeted_value = (
+                isinstance(arguments.get("tab_id"), int)
+                and bool(str(arguments.get("ref") or "").strip())
+                and "expected_value" in arguments
+            )
+            generic_condition = any(
+                k in arguments for k in ("text", "url", "title", "download_id")
+            )
+            if not (targeted_value or generic_condition):
+                raise ValueError("explicit_postcondition_required")
         return self.transport.request(operation, arguments)
 
     def list_tabs(self): return self.call("list_tabs")
