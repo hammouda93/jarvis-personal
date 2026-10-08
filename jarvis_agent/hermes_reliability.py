@@ -259,6 +259,10 @@ class ReliabilityToolRegistry:
             # Actual outcome may have happened; report uncertainty, not success.
             return self._blocked(name, "result_checkpoint_failed_outcome_unknown")
 
+        if unknown:
+            # An existing tool might report success while explicitly saying
+            # its effect is unknown. Never promote this to verified success.
+            return self._blocked(name, "tool_reported_outcome_unknown")
         if not success:
             failures[digest] = failures.get(digest, 0) + 1
             self._local.failures = failures
