@@ -167,6 +167,8 @@ class OperatorConsole(QFrame):
         )
         self.mission_plan_button = QPushButton("⊕ Enregistrer les critères de réussite")
         self.mission_plan_button.setObjectName("missionButton")
+        self.mission_route_button = QPushButton("⬡ Proposer agents / capacités MCP")
+        self.mission_route_button.setObjectName("missionButton")
         self.mission_review_button = QPushButton("◇ Vérifier la progression")
         self.mission_review_button.setObjectName("missionButton")
         self.mission_detach_button = QPushButton("Ⅱ Détacher sans conclure")
@@ -188,6 +190,7 @@ class OperatorConsole(QFrame):
         mission_layout.addWidget(self.mission_criteria_input)
         mission_layout.addWidget(self.mission_plan_button)
         mission_layout.addWidget(self.mission_review_button)
+        mission_layout.addWidget(self.mission_route_button)
         mission_layout.addLayout(buttons)
         mission_layout.addWidget(self.mission_feedback)
         layout.addWidget(controls_box)
@@ -199,6 +202,9 @@ class OperatorConsole(QFrame):
         )
         self.mission_review_button.clicked.connect(
             lambda: self._request_mission("review", self.mission_id_input.text())
+        )
+        self.mission_route_button.clicked.connect(
+            lambda: self._request_mission("route", self.mission_id_input.text())
         )
         self.mission_plan_button.clicked.connect(
             lambda: self._request_mission("plan", self.mission_criteria_input.text())
@@ -224,6 +230,7 @@ class OperatorConsole(QFrame):
             ("missions", "◉   MISSIONS / OBJECTIFS"),
             ("tasks", "◇   ÉTAPES / SUPERVISION"),
             ("supervisor", "◉   CONTRÔLE SÉMANTIQUE / PREUVES"),
+            ("routing", "⬡   PROPOSITIONS D'AGENTS / MCP (NON EXÉCUTÉES)"),
             ("actions", "⚙   OUTILS / VÉRIFICATIONS"),
             ("events", "⌁   JOURNAL DES ÉVÉNEMENTS"),
             ("live", "◈   ACTIVITÉ DE CETTE SESSION"),
@@ -306,6 +313,38 @@ class OperatorConsole(QFrame):
             self.mission_criteria_input.clear()
             self.mission_feedback.setText(
                 "Critères enregistrés. Aucun justificatif validé automatiquement."
+            )
+            return
+        if success and operation == "route":
+            proposal = result.get("proposal") or {}
+            steps = list(proposal.get("steps") or [])[:18]
+            blocks = [
+                '<p><b>PLANIFICATION EN LECTURE SEULE</b><br>'
+                'Candidats uniquement : aucune action, délégation ou '
+                'preuve de réussite automatique.</p>'
+            ]
+            for step in steps:
+                blocks.append(
+                    f'<p><b>{_escape(step.get("step_id"), 70)}</b> '
+                    f'· {_escape(step.get("routing_status"), 60)}<br>'
+                    f'{_escape(step.get("intent"), 150)}</p>'
+                )
+                for item in list(step.get("candidates") or [])[:4]:
+                    blocks.append(
+                        f'<p style="margin-left:9px">'
+                        f'<span style="color:#84dfdb">{_escape(item.get("agent"), 80)}</span>'
+                        f' · {_escape(item.get("capability"), 100)}'
+                        f'<br>Score de correspondance : {_escape(item.get("match_score"), 16)}'
+                        f' · autorisation requise : {_escape(item.get("requires"), 80)}'
+                        f'<br><span style="color:#e6bb7f">Candidat non approuvé pour exécution</span>'
+                        '</p>'
+                    )
+            if not steps:
+                blocks.append('<p>Aucun plan sémantique applicable enregistré.</p>')
+            self._render_html("routing", "".join(blocks))
+            self.mission_feedback.setText(
+                "Propositions calculées, sans exécution. "
+                "Choix final soumis au modèle et aux permissions existantes."
             )
             return
         if success and operation == "review":
@@ -455,6 +494,7 @@ class OperatorConsole(QFrame):
         self.mission_resume_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_detach_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_review_button.setEnabled(bool(data.get("mission_enabled")))
+        self.mission_route_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_plan_button.setEnabled(bool(data.get("mission_enabled")))
         mission_on = bool(data.get("mission_enabled"))
         reliability_on = bool(data.get("reliability_enabled"))
