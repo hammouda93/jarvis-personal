@@ -233,7 +233,17 @@ class ReliabilityToolRegistry:
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
 
-    def begin_turn(self) -> str:
+    def begin_turn(self, user_text: str | None = None) -> str | None:
+        # Two independently defined interfaces share this method name:
+        # HermesReliabilityRuntime begins an action-ledger turn without input,
+        # while SemanticMemoryRuntime prepares the foundation tool context
+        # with the user's text before running its interpreter.
+        # Never replace the ledger turn id when forwarding that text.
+        if user_text is not None:
+            prepare = getattr(self.delegate, "begin_turn", None)
+            if callable(prepare):
+                prepare(user_text)
+            return None
         turn_id = "turn_" + uuid.uuid4().hex
         self._local.turn_id = turn_id
         self._local.failures = {}
