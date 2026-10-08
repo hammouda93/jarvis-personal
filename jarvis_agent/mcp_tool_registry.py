@@ -123,15 +123,21 @@ class MCPToolRegistry:
                 detail='{"verified":false,"outcome_unknown":true}',
             )
         successful = result.get("success") is True
+        structured = result.get("data")
+        if not isinstance(structured, dict):
+            structured = None
+        elif len(json.dumps(structured, ensure_ascii=False, default=str)) > 1500:
+            structured = {"truncated": True}
+        # Always keep valid JSON. Never mark remote content as verification.
+        safe_detail = json.dumps({
+            "verified": False,
+            "outcome_unknown": False,
+            "mcp_output": str(result.get("message") or "")[:2200],
+            "mcp_structured": structured,
+        }, ensure_ascii=False, default=str)
         return AgentActionResult(
             name=name, success=successful,
             message="MCP exécuté : sortie du serveur non vérifiée."
                     if successful else "Le serveur MCP a signalé un échec.",
-            detail=json.dumps({
-                "verified": False,
-                "outcome_unknown": False,
-                "mcp_output": str(result.get("message") or "")[:2600],
-                "mcp_structured": result.get("data")
-                if isinstance(result.get("data"), dict) else None,
-            }, ensure_ascii=False, default=str)[:5000],
+            detail=safe_detail,
         )
