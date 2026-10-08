@@ -34,7 +34,13 @@ class MCPToolRegistry:
     def _available(self) -> dict[str, dict]:
         found: dict[str, dict] = {}
         collided = set()
-        for tool in self.registry.exposed_tools():
+        try:
+            allowed = self.registry.exposed_tools()
+        except (OSError, ValueError, TypeError, KeyError):
+            # A damaged/unavailable optional MCP file must never take down
+            # the original Windows/browser assistant.
+            return {}
+        for tool in allowed:
             alias = _alias(tool["server"], tool["tool"])
             if alias in found:
                 collided.add(alias)
