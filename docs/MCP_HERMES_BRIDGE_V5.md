@@ -103,3 +103,21 @@ different shell command.
 
 Roadmap: stages 1–8 code/CI verified previously; stage 9 MCP foundations
 under development. All real Windows acceptance gates are still pending.
+
+
+## Automated checks, initial V5 branch result
+
+GitHub Actions V5 run `37790071623`, on the implementation HEAD before
+final roadmap copy changes: **445/445 Python Windows**, **45/45 Browser
+Bridge Node**, **626/626 Python Linux** passed.
+
+The current milestone remains **stage 9 in progress** because the
+autonomous planner, centrally verified permission tickets, seamless OAuth,
+Cerebras MCP-tool routing and true third-party end-to-end connections are
+not yet delivered. CI of the MCP foundation does not claim those features
+are complete. The real Windows acceptance gate is still open.
+
+Official Hermes server exposes only its messaging tool surface over
+`hermes mcp serve`; for Google Maps/Sheets, Jarvis's own remote MCP
+connection remains necessary unless a future explicit hosted relay is
+implemented.
