@@ -105,11 +105,18 @@ class ActionLedger:
     def _load_key(self) -> bytes:
         path = self.root / "action_hmac.key"
         try:
-            with path.open("xb") as f:
-                key = secrets.token_bytes(32)
-                f.write(key)
+            # 0600 prevents other local Unix users reading the HMAC key.
+            # On Windows, the parent is inside the user's profile.
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
             pass
+        else:
+            with os.fdopen(fd, "wb") as f:
+                f.write(secrets.token_bytes(32))
+                f.flush()
+                os.fsync(f.fileno())
+        if os.name != "nt":
+            os.chmod(path, 0o600)
         key = path.read_bytes()
         if len(key) != 32:
             raise RuntimeError("action_integrity_key_invalid")
@@ -177,7 +184,9 @@ class ActionLedger:
                 raise RuntimeError("action_not_uncertain")
             cx.execute(
                 "UPDATE actions SET status='resolved',verified=?,evidence_ref=?,updated_at=? WHERE action_id=?",
-                (int(independently_observed == "effect_observed"), str(evidence_ref)[:300], _now(), action_id),
+                (int(independently_observed == "effect_observed"),
+                 hmac.new(self._key, ("proof:" + str(evidence_ref)).encode("utf-8"),
+                          hashlib.sha256).hexdigest(), _now(), action_id),
             )
 
     def recent(self, *, turn_id: str) -> list[dict[str, Any]]:
