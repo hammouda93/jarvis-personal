@@ -84,3 +84,22 @@ New negative/regression cases cover stalled perception, changed screens,
 cross-turn reset, an unknown potentially mutating tool, persisted guard
 reasons, privacy of journal arguments and the irreversible uncertain
 side-effect barrier.
+
+
+## Live session activity (independent of Kernel Shadow)
+
+A new `AssistantWorker.operator_event` Qt signal reports a bounded and
+privacy-minimal summary when an action turn actually completes or fails.
+It covers **direct/legacy fast-path** operations as well as LLM-driven turns
+even when `JARVIS_KERNEL_SHADOW_ENABLED=0`.
+
+The operator console keeps a session-only ring buffer (36 recent entries)
+for this view: source, tool names, outcome. It does **not** include user
+utterances, messages, tool arguments, provider credentials, or full responses.
+No cross-session recovery relies on these ephemeral events; durable evidence
+still belongs to the existing opt-in journals.
+
+The interface explicitly says *objectif : non vérifié* on this stream:
+neither a successful tool nor an LLM reply is independent proof that the
+user's entire mission succeeded. The UI does not activate or override any
+existing permission or app-specific tool.
