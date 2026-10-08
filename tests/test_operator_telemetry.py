@@ -127,6 +127,11 @@ class OperatorTelemetryTests(unittest.TestCase):
             provider_name="cerebras", reliability_round_budget=8,
             reliability_rounds_used=3,
             reliability_last_failure_category="rate_limit",
+            reliability_last_usage={
+                "input_tokens": 50,
+                "output_tokens": 20,
+                "total_tokens": 70,
+            },
         )
         runtime = SimpleNamespace(delegate=SimpleNamespace(delegate=brain))
         state = runtime_model_snapshot(runtime)
@@ -134,6 +139,7 @@ class OperatorTelemetryTests(unittest.TestCase):
         self.assertEqual(state["rounds_used"], 3)
         self.assertEqual(state["rounds_limit"], 8)
         self.assertEqual(state["failure_category"], "rate_limit")
+        self.assertEqual(state["reported_usage"]["total_tokens"], 70)
         self.assertIsNone(runtime_model_snapshot(object())["rounds_limit"])
 
 
