@@ -1,0 +1,49 @@
+name: Runtime convergence V1 regression
+
+on:
+  push:
+    branches:
+      - feature/personal-agent-runtime-convergence-v1
+  pull_request:
+    branches:
+      - fix/browser-live-contracts-v2
+  workflow_dispatch:
+
+jobs:
+  runtime-convergence:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Python requirements
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Check modified module and important runtime imports
+        shell: pwsh
+        run: |
+          python -m py_compile jarvis_agent/runtime_convergence.py jarvis_agent/agent_runtime.py jarvis_agent/mission_context_store.py jarvis_agent/task_graph_store.py
+
+      - name: Mission checkpoints and existing Python regressions
+        shell: pwsh
+        env:
+          JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
+          JARVIS_CUA_DRIVER_ENABLED: "0"
+        run: |
+          python -m unittest tests.test_runtime_convergence tests.test_foundations_v4 tests.test_browser_dom_contract tests.test_agent_runtime tests.test_semantic_memory_v5 -q
+
+      - name: Browser bridge replay tests
+        shell: pwsh
+        run: |
+          node --test tests/browser_bridge_replay.mjs
