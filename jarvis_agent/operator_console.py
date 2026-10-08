@@ -199,6 +199,7 @@ class OperatorConsole(QFrame):
         for key, label in [
             ("missions", "◉   MISSIONS / OBJECTIFS"),
             ("tasks", "◇   ÉTAPES / SUPERVISION"),
+            ("supervisor", "◉   CONTRÔLE SÉMANTIQUE / PREUVES"),
             ("actions", "⚙   OUTILS / VÉRIFICATIONS"),
             ("events", "⌁   JOURNAL DES ÉVÉNEMENTS"),
             ("live", "◈   ACTIVITÉ DE CETTE SESSION"),
@@ -328,6 +329,42 @@ class OperatorConsole(QFrame):
             self._mission_choices = candidates
         self._render_html("missions", missions)
         self._render_html("tasks", steps)
+        review = data.get("supervisor")
+        if not data.get("mission_enabled"):
+            review_html = "<p>Superviseur indisponible : missions désactivées.</p>"
+        elif not isinstance(review, dict):
+            review_html = "<p>Aucune mission à superviser.</p>"
+        else:
+            current = _escape(review.get("state") or "non_renseigné", 65)
+            next_action = _escape(review.get("next_action") or "non_renseigné", 65)
+            count = len(review.get("recorded_evidence") or [])
+            needed = len(review.get("required_evidence") or [])
+            pending = len(review.get("missing_evidence") or [])
+            color = "#70dbbe" if review.get("goal_verified") is True else "#f3c481"
+            review_html = (
+                f'<p><span style="color:{color}"><b>État : {current}</b></span><br>'
+                f'Prochaine vérification : <b>{next_action}</b><br>'
+                f'Preuves étape enregistrées : {count}/{needed} · manquantes : {pending}<br>'
+                '<span style="color:#a8cbd7">Un outil OK ne prouve pas l\'objectif final.</span></p>'
+            )
+            for entry in list(review.get("steps") or [])[:14]:
+                missing = ", ".join(entry.get("waiting_for") or [])[:160]
+                deps = ", ".join(entry.get("unmet_dependencies") or [])[:160]
+                review_html += (
+                    f'<p style="margin-bottom:7px"><b>{_escape(entry.get("id"), 65)}</b>'
+                    f' · {_escape(entry.get("state"), 65)}<br>'
+                    f'{_escape(entry.get("intent"), 140)}'
+                    + (f'<br><span style="color:#f3c481">Preuves : {_escape(missing)}</span>' if missing else "")
+                    + (f'<br><span style="color:#e2b18d">Dépendances : {_escape(deps)}</span>' if deps else "")
+                    + '</p>'
+                )
+            if review.get("unresolved"):
+                review_html += (
+                    '<p style="color:#f3c481">Ambiguïtés : '
+                    + _escape(", ".join(review["unresolved"])[:160])
+                    + "</p>"
+                )
+        self._render_html("supervisor", review_html)
         self._render_html("actions", actions)
         entries = data.get("events") or []
         if not data.get("mission_enabled"):
