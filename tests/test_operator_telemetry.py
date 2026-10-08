@@ -57,6 +57,26 @@ class OperatorTelemetryTests(unittest.TestCase):
         self.assertTrue((self.actions_root / "actions.sqlite3").is_file())
         self.assertEqual(len(_readonly(ledger.db, "SELECT action_id FROM actions")), 1)
 
+    def test_guard_denial_has_visible_reason_but_no_sensitive_arguments(self):
+        ledger = ActionLedger(self.actions_root)
+        ledger.record_guard(
+            turn_id="t1", name="browser_click",
+            arguments={"recipient": "PRIVATE PERSON", "text": "PRIVATE CONTENT"},
+            code="prior_outcome_unknown",
+        )
+        data = snapshot(max_items=7)
+        self.assertEqual(data["guarded_visible"], 1)
+        self.assertEqual(data["unresolved_visible"], 0)
+        self.assertEqual(data["actions"][0]["status"], "guarded")
+        self.assertEqual(
+            data["actions"][0]["guard_reason"], "prior_outcome_unknown"
+        )
+        html = "".join(render_snapshot(data))
+        self.assertIn("BLOQUÉ PAR PROTECTION", html)
+        self.assertIn("prior_outcome_unknown", html)
+        self.assertNotIn("PRIVATE PERSON", repr(data) + html)
+        self.assertNotIn("PRIVATE CONTENT", repr(data) + html)
+
     def test_current_and_other_user_mission_isolation(self):
         db = self.missions_root / "mission_context.sqlite3"
         with closing(sqlite3.connect(db)) as cx, cx:
