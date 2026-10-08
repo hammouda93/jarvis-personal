@@ -19,7 +19,7 @@ class MissionCommand:
 class MissionControlInbox:
     """FIFO commands, consumed by the worker rather than Qt's UI thread."""
 
-    _OPS = frozenset({"begin", "resume", "detach"})
+    _OPS = frozenset({"begin", "resume", "detach", "review"})
 
     def __init__(self) -> None:
         self._items: queue.Queue[MissionCommand] = queue.Queue(maxsize=32)
@@ -32,7 +32,9 @@ class MissionControlInbox:
             return False
         if op == "begin" and not (1 <= len(raw) <= 2000):
             return False
-        if op == "resume" and not re.fullmatch(r"live_[a-f0-9]{32}", raw):
+        if op in {"resume", "review"} and raw and not re.fullmatch(r"live_[a-f0-9]{32}", raw):
+            return False
+        if op == "resume" and not raw:
             return False
         if op == "detach":
             if raw:
@@ -80,6 +82,19 @@ def perform_mission_command(agent, command: MissionCommand) -> dict:
         return {"success": True, "operation": op,
                 "mission_id": command.value, "status": status,
                 "manual_review_required": status == "blocked"}
+    if op == "review":
+        method = getattr(agent, "review_mission", None)
+        if not callable(method):
+            return {"success": False, "operation": op,
+                    "reason": "convergence_not_enabled"}
+        report = method(command.value or None)
+        return {
+            "success": True, "operation": op,
+            "mission_id": report.get("mission_id", ""),
+            "status": report.get("state", "review_available"),
+            "manual_review_required": report.get("state") == "manual_review",
+            "review": report,
+        }
     if op == "detach":
         method = getattr(agent, "detach_mission", None)
         if not callable(method):
