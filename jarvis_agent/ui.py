@@ -1534,6 +1534,10 @@ class JarvisWindow(QWidget):
         self._refresh_operator_console()
 
     def _set_clean_view(self, enabled: bool) -> None:
+        if enabled and self.operator_full_button.isChecked():
+            # Clean view must never become an empty screen while expanded
+            # supervision has hidden the normal animated canvas.
+            self.operator_full_button.setChecked(False)
         self.side_tabs.setVisible(not enabled and not self._compact_mode)
         self.detail_label.setVisible(not enabled)
 
