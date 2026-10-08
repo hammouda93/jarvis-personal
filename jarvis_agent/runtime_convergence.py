@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,34 @@ from .task_graph_store import TaskGraphStore
 def _default_dir() -> Path:
     root = Path(os.getenv("LOCALAPPDATA") or os.getenv("XDG_STATE_HOME") or Path.home())
     return root / "JarvisPersonal" / "runtime_convergence"
+
+
+class _ClosingMissionContextStore(MissionContextStore):
+    """The legacy with-connection pattern commits but does not close SQLite.
+
+    Close connections deterministically so Windows can cleanly delete temporary
+    test workspaces, and release file handles after every checkpoint.
+    """
+
+    @contextmanager
+    def _connect(self):
+        conn = super()._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+
+class _ClosingTaskGraphStore(TaskGraphStore):
+    @contextmanager
+    def _connect(self):
+        conn = super()._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
 
 class LiveMissionContinuityRuntime:
@@ -39,8 +68,8 @@ class LiveMissionContinuityRuntime:
     ):
         self.delegate = delegate
         root = Path(base_dir) if base_dir is not None else _default_dir()
-        self.context_store = MissionContextStore(root / "mission_context.sqlite3")
-        self.graph_store = TaskGraphStore(root / "task_graphs.sqlite3")
+        self.context_store = _ClosingMissionContextStore(root / "mission_context.sqlite3")
+        self.graph_store = _ClosingTaskGraphStore(root / "task_graphs.sqlite3")
         self.owner_user_id = str(owner_user_id or "local-user")
         self._active_mission_id: str | None = None
         self._explicit = False
