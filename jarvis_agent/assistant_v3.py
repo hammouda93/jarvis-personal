@@ -11,6 +11,8 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from .agent_runtime import AgentRuntimeUnavailable, build_agent_runtime
 from .mission_workbench import MissionControlInbox, perform_mission_command
+from .mcp_control import MCPControlInbox, perform_mcp_command
+from .mcp_server_registry import MCPRegistry
 from .audio import record_utterance, wait_for_double_clap
 from .config import settings
 from .language import normalize_language, repeat_prompt, tool_message
@@ -114,6 +116,7 @@ class AssistantWorker(QObject):
     telemetry_changed = Signal(dict)
     operator_event = Signal(dict)
     mission_control_result = Signal(dict)
+    mcp_control_result = Signal(dict)
     finished = Signal()
 
     def __init__(self) -> None:
@@ -131,6 +134,8 @@ class AssistantWorker(QObject):
         self._active_surface_kind = ""
         self._text_inbox = TextTurnInbox()
         self._mission_control = MissionControlInbox()
+        self._mcp_control = MCPControlInbox()
+        self._mcp_registry = MCPRegistry()
         self._input_mode = InputModeGate(self._text_inbox)
         self._announced_input_generation = -1
         self._reply_with_voice = True
@@ -241,6 +246,28 @@ class AssistantWorker(QObject):
         if accepted:
             self._input_mode.changed.set()
         return accepted
+
+    def submit_mcp_control(self, operation: str, server_id: str = "",
+                           value: str = "") -> bool:
+        """No connection or subprocess is opened from the UI thread."""
+        accepted = self._mcp_control.submit(operation, server_id, value)
+        if accepted:
+            self._input_mode.changed.set()
+        return accepted
+
+    def _run_mcp_control(self, command) -> None:
+        try:
+            result = perform_mcp_command(self._mcp_registry, command)
+        except Exception as exc:
+            # Never leak API tokens, bearer headers or arbitrary MCP output.
+            result = {"success": False, "operation": command.operation,
+                      "server_id": command.server_id,
+                      "reason": type(exc).__name__}
+        self.mcp_control_result.emit(result)
+        self.log_line.emit(
+            "[MCP_CONTROL] operation=" + command.operation
+            + " success=" + str(bool(result.get("success")))
+        )
 
     def _run_mission_control(self, command) -> None:
         """Run only from AssistantWorker.run; do not bypass safety proof gates."""
@@ -939,6 +966,11 @@ class AssistantWorker(QObject):
                 text_mode, generation = self._apply_input_mode()
                 self.transcript_changed.emit("")
                 self.detail_changed.emit("")
+
+                mcp_command = self._mcp_control.pop_nowait()
+                if mcp_command is not None:
+                    self._run_mcp_control(mcp_command)
+                    continue
 
                 mission_command = self._mission_control.pop_nowait()
                 if mission_command is not None:
