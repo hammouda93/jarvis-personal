@@ -1,0 +1,137 @@
+"""Model-facing, user-approved MCP tools on the SINGLE Jarvis tool registry.
+
+All MCP tools require explicit confirmation, even ones described as read only
+by an untrusted external MCP server. No capability is exposed before the
+user enables that server AND that particular discovered tool.
+"""
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from .mcp_server_registry import MCPRegistry
+from .mcp_sdk_transport import OfficialMCPTransport
+from .native_tools import AgentActionResult
+
+
+def _alias(server: str, tool: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9_]", "_", str(tool))
+    return "mcp__" + str(server) + "__" + clean
+
+
+class MCPToolRegistry:
+    def __init__(self, delegate: Any, *,
+                 registry: MCPRegistry | None = None,
+                 transport: Any | None = None):
+        self.delegate = delegate
+        self.registry = registry or MCPRegistry()
+        self.transport = transport or OfficialMCPTransport()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.delegate, name)
+
+    def _available(self) -> dict[str, dict]:
+        found: dict[str, dict] = {}
+        collided = set()
+        for tool in self.registry.exposed_tools():
+            alias = _alias(tool["server"], tool["tool"])
+            if alias in found:
+                collided.add(alias)
+            else:
+                found[alias] = tool
+        for alias in collided:
+            found.pop(alias, None)  # ambiguous alias never reaches the model
+        return found
+
+    def ollama_tools(self) -> list[dict]:
+        original = list(self.delegate.ollama_tools())
+        occupied = {
+            item.get("function", {}).get("name")
+            for item in original if isinstance(item, dict)
+        }
+        for alias, tool in self._available().items():
+            if alias in occupied:
+                continue
+            schema = tool.get("input_schema") or {"type": "object"}
+            if not isinstance(schema, dict) or schema.get("type", "object") != "object":
+                continue
+            original.append({
+                "type": "function",
+                "function": {
+                    "name": alias,
+                    "description": (
+                        "MCP externe : " + str(tool["server"]) + " / "
+                        + str(tool["tool"]) + ". "
+                        + str(tool.get("description") or "")[:300]
+                        + " Confirmation utilisateur explicite obligatoire "
+                        "pour chaque exécution; vérifier indépendamment le résultat."
+                    )[:650],
+                    "parameters": schema,
+                }
+            })
+        return original
+
+    def openai_tools(self) -> list[dict]:
+        return [
+            {"type": "function", "name": item["function"]["name"],
+             "description": item["function"]["description"],
+             "parameters": item["function"]["parameters"],
+             "strict": False}
+            for item in self.ollama_tools()
+        ]
+
+    def requires_confirmation(self, name: str) -> bool:
+        if str(name).startswith("mcp__"):
+            return True
+        return self.delegate.requires_confirmation(name)
+
+    def execute(self, name: str, arguments: dict, *, approved: bool = False):
+        if not str(name).startswith("mcp__"):
+            return self.delegate.execute(name, arguments, approved=approved)
+        if not approved:
+            return AgentActionResult(
+                name=name, success=False,
+                message="Confirmation utilisateur explicite requise.",
+                detail=json.dumps({"approval_required": True, "verified": False}),
+            )
+        tool = self._available().get(str(name))
+        if tool is None:
+            return AgentActionResult(
+                name=name, success=False,
+                message="Outil MCP inconnu, désactivé ou ambigu.",
+                detail=json.dumps({"guard": "not_allowlisted", "verified": False}),
+            )
+        server_id, native_name = tool["server"], tool["tool"]
+        entry = self.registry.get_server(server_id)
+        if not entry or not self.registry.is_allowed(server_id, native_name):
+            return AgentActionResult(
+                name=name, success=False, message="MCP non autorisé.",
+                detail='{"verified":false,"guard":"permission_changed"}',
+            )
+        # Never trust the model's ability to pick a tool name or remote
+        # description to authorize a previously hidden capability.
+        try:
+            result = self.transport.call_tool(
+                {"id": server_id, **entry}, native_name, dict(arguments or {})
+            )
+        except Exception:
+            return AgentActionResult(
+                name=name, success=False,
+                message="Résultat de l'appel MCP incertain : vérifier l'effet "
+                        "extérieur avant toute nouvelle tentative.",
+                detail='{"verified":false,"outcome_unknown":true}',
+            )
+        successful = result.get("success") is True
+        return AgentActionResult(
+            name=name, success=successful,
+            message="MCP exécuté : sortie du serveur non vérifiée."
+                    if successful else "Le serveur MCP a signalé un échec.",
+            detail=json.dumps({
+                "verified": False,
+                "outcome_unknown": False,
+                "mcp_output": str(result.get("message") or "")[:2600],
+                "mcp_structured": result.get("data")
+                if isinstance(result.get("data"), dict) else None,
+            }, ensure_ascii=False, default=str)[:5000],
+        )
