@@ -158,6 +158,33 @@ class OperatorTelemetryTests(unittest.TestCase):
         self.assertIn("objectif non prouvé", html)
         self.assertIn("INCERTAIN", html)
 
+    def test_worker_reports_real_direct_turn_even_when_kernel_shadow_off(self):
+        from PySide6.QtCore import QObject
+        from jarvis_agent.assistant_v3 import AssistantWorker
+        # Avoid microphone, STT, TTS and model startup in this signal test.
+        with patch.object(
+            AssistantWorker, "__init__", lambda self: QObject.__init__(self)
+        ):
+            worker = AssistantWorker()
+        worker._kernel_shadow = None
+        emitted = []
+        worker.operator_event.connect(emitted.append)
+        worker._shadow_observe(
+            "SECRET USER REQUEST",
+            source="direct_fast_path",
+            actions=(SimpleNamespace(
+                name="open_application", success=True,
+                detail="SECRET RESPONSE DETAILS",
+            ),),
+            response_text="SECRET reply",
+        )
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual(emitted[0]["source"], "direct_fast_path")
+        self.assertEqual(emitted[0]["tools"], ["open_application"])
+        self.assertTrue(emitted[0]["success"])
+        self.assertFalse(emitted[0]["verified"])
+        self.assertNotIn("SECRET", repr(emitted))
+
     def test_model_counters_are_measured_no_fake_usage(self):
         brain = SimpleNamespace(
             provider_name="cerebras", reliability_round_budget=8,
