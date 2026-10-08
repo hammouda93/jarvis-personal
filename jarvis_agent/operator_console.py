@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from .operator_telemetry import snapshot
 from .project_roadmap import snapshot as roadmap_snapshot
+from .mcp_operator_panel import MCPConnectionsPanel
 
 
 _STATUS = {
@@ -90,6 +91,7 @@ class OperatorConsole(QFrame):
     """Live projection plus explicit UI-only command signal (no direct agent access)."""
 
     mission_requested = Signal(str, str)
+    mcp_requested = Signal(str, str, str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -205,6 +207,10 @@ class OperatorConsole(QFrame):
             lambda: self._request_mission("detach", "")
         )
 
+        self.mcp_panel = MCPConnectionsPanel(self)
+        self.mcp_panel.requested.connect(self.mcp_requested.emit)
+        layout.addWidget(self.mcp_panel)
+
         self._views = {}
         scroll = QScrollArea(self)
         scroll.setObjectName("operatorScroll")
@@ -285,6 +291,9 @@ class OperatorConsole(QFrame):
             return
         self.mission_requested.emit(operation, raw)
 
+    def show_mcp_result(self, result: dict) -> None:
+        self.mcp_panel.show_result(result)
+
     def show_mission_result(self, result: dict) -> None:
         success = result.get("success") is True
         operation = str(result.get("operation") or "")
@@ -337,6 +346,7 @@ class OperatorConsole(QFrame):
 
     def apply_snapshot(self, data: dict) -> None:
         self._last_snapshot = dict(data)
+        self.mcp_panel.apply_snapshot(data.get("mcp") or {})
         missions, steps, actions = render_snapshot(data)
         candidates = tuple(
             (str(m.get("id") or ""),
