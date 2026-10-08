@@ -17,7 +17,9 @@ from .agent_router import AgentRoutingContext, CapabilityAgentRouter
 from .capability_registry import DEFAULT_CAPABILITY_REGISTRY
 from .event_journal import StructuredEventJournal
 from .kernel_contracts import EventKind, MissionContext, MissionStatus
+from .kernel_service import JarvisKernel
 from .mission_context_store import MissionContextStore
+from .mission_orchestrator import MissionOrchestrator
 from .mission_semantics import MissionContract
 from .task_graph import MissionTaskGraph, TaskNode, TaskStatus
 from .task_graph_store import TaskGraphStore
@@ -88,6 +90,14 @@ class LiveMissionContinuityRuntime:
         self.graph_store = _ClosingTaskGraphStore(root / "task_graphs.sqlite3")
         self.journal = _ClosingEventJournal(root / "mission_events.sqlite3")
         self.agent_router = CapabilityAgentRouter(DEFAULT_CAPABILITY_REGISTRY)
+        # Use existing mission ownership/orchestration contracts, while the
+        # dispatcher remains strictly inactive until a later live gate.
+        self.kernel = JarvisKernel()
+        self.orchestrator = MissionOrchestrator(
+            kernel=self.kernel,
+            context_store=self.context_store,
+            graph_store=self.graph_store,
+        )
         self.owner_user_id = str(owner_user_id or "local-user")
         self._active_mission_id: str | None = None
         self._explicit = False
@@ -121,8 +131,7 @@ class LiveMissionContinuityRuntime:
                 },
                 tags=["runtime-convergence", "non-authoritative"],
             )
-            self.graph_store.save(MissionTaskGraph(mission_id))
-            self.context_store.save(context, expected_version=0)
+            self.orchestrator.register(context, MissionTaskGraph(mission_id))
             self.journal.create_mission(
                 mission_id=mission_id,
                 goal_summary=context.user_goal[:600],
@@ -139,7 +148,7 @@ class LiveMissionContinuityRuntime:
             if self._active_mission_id is not None:
                 raise RuntimeError("mission_already_active")
             loaded = self.context_store.load(mission_id)
-            graph = self.graph_store.load(mission_id)
+            graph = self.orchestrator.graph(mission_id)
             if loaded is None or graph is None:
                 raise KeyError("mission_checkpoint_not_found")
             context, version = loaded
@@ -302,7 +311,7 @@ class LiveMissionContinuityRuntime:
                 raise ValueError("recovery_requires_independent_proof")
             mission_id = self._active_mission_id
             loaded = self.context_store.load(mission_id)
-            graph = self.graph_store.load(mission_id)
+            graph = self.orchestrator.graph(mission_id)
             if loaded is None or graph is None:
                 raise KeyError("mission_checkpoint_not_found")
             state, version = loaded
@@ -446,7 +455,7 @@ class LiveMissionContinuityRuntime:
     def mission_snapshot(self, mission_id: str) -> dict[str, Any]:
         """Inspect durable progress without asking the model or running tools."""
         loaded = self.context_store.load(mission_id)
-        graph = self.graph_store.load(mission_id)
+        graph = self.orchestrator.graph(mission_id)
         if loaded is None or graph is None:
             raise KeyError("mission_checkpoint_not_found")
         state, version = loaded
@@ -494,7 +503,7 @@ class LiveMissionContinuityRuntime:
                 self._explicit = False
             mission_id = self._active_mission_id
             loaded = self.context_store.load(mission_id)
-            graph = self.graph_store.load(mission_id)
+            graph = self.orchestrator.graph(mission_id)
             if loaded is None or graph is None:
                 raise RuntimeError("mission_checkpoint_not_found")
             state, version = loaded
