@@ -97,6 +97,7 @@ def perform_mcp_command(
         provider = transport or OfficialMCPTransport()
         discovered = provider.discover({"id": sid, **entry})
         count = registry.discover(sid, discovered)
+        registry.note_successful_discovery(sid)
         return {
             "success": True, "operation": op, "server_id": sid,
             "tool_count": count,
