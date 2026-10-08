@@ -28,12 +28,24 @@ class HermesBudgetedCerebrasAgent(CerebrasResponsesAgent):
         self.reliability_rounds_used = 0
         self.reliability_last_failure_category = None
         self.reliability_last_usage = None
+        self.reliability_last_effective_provider = ""
 
     def run(self, user_text, *, log=None, phase=None):
         self.reliability_rounds_used = 0
         self.reliability_last_failure_category = None
         self.reliability_last_usage = None
+        self.reliability_last_effective_provider = ""
         return super().run(user_text, log=log, phase=phase)
+
+    def _chat_via_groq_fallback(self, *, tool_choice, ms_football_only, msf_tool_names):
+        # Only record Groq after its actual API response succeeds.
+        response = super()._chat_via_groq_fallback(
+            tool_choice=tool_choice,
+            ms_football_only=ms_football_only,
+            msf_tool_names=msf_tool_names,
+        )
+        self.reliability_last_effective_provider = "groq"
+        return response
 
     def _chat(self, *, tool_choice="auto", ms_football_only=False, msf_tool_names=None):
         if self.reliability_rounds_used >= self.reliability_round_budget:
@@ -42,6 +54,7 @@ class HermesBudgetedCerebrasAgent(CerebrasResponsesAgent):
                 "Budget des tours Cerebras atteint : arrêt contrôlé sans nouvelle requête."
             )
         self.reliability_rounds_used += 1
+        self.reliability_last_effective_provider = "cerebras"
         try:
             response = super()._chat(
                 tool_choice=tool_choice,
