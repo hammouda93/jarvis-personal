@@ -193,6 +193,40 @@ class SemanticSupervisorTests(unittest.TestCase):
         self.assertIsNone(self.runtime.active_mission_id)
         self.assertEqual(self.brain.calls, ["bonjour"])
 
+    def test_user_defined_plan_adds_no_proof_or_model_call(self):
+        mid = self.runtime.begin_mission("inspecter les deux documents")
+        original = len(self.brain.calls)
+        plan = perform_mission_command(
+            self.runtime,
+            MissionCommand("plan", "source_confirmee, cible_confirmee"),
+        )
+        self.assertTrue(plan["success"])
+        self.assertEqual(plan["criteria_count"], 2)
+        view = self.runtime.review_mission(mid)
+        self.assertEqual(view["state"], "evidence_missing")
+        self.assertEqual(view["missing_evidence"],
+                         ["source_confirmee", "cible_confirmee"])
+        self.assertEqual(len(self.brain.calls), original)
+        self.assertFalse(view["goal_verified"])
+        with self.assertRaises(RuntimeError):
+            self.runtime.complete_mission(proof_ref="not independently checked")
+        with self.assertRaises(RuntimeError):
+            perform_mission_command(
+                self.runtime, MissionCommand("plan", "different"),
+            )
+
+    def test_invalid_criteria_cannot_register_or_execute(self):
+        mid = self.runtime.begin_mission("contrôler")
+        for value in (
+            "x; DROP TABLE", "a, b, c, d, e, f, g, h, i", "///", "x y",
+        ):
+            outcome = perform_mission_command(
+                self.runtime, MissionCommand("plan", value),
+            )
+            self.assertFalse(outcome["success"])
+        self.assertIsNone(self.runtime.mission_snapshot(mid)["semantic_plan"])
+        self.assertEqual(self.brain.calls, [])
+
     def test_supervisor_review_command_does_not_invoke_brain(self):
         mid = self.runtime.begin_mission("analyser")
         result = perform_mission_command(
@@ -272,6 +306,33 @@ class SemanticOperatorUiTests(unittest.TestCase):
                 },
             })
             self.assertIn("Aucun outil exécuté", ui.mission_feedback.text())
+        finally:
+            ui.close()
+
+    def test_criteria_button_submits_only_user_checklist(self):
+        ui = OperatorConsole()
+        try:
+            requests = []
+            ui.mission_requested.connect(
+                lambda operation, value: requests.append((operation, value))
+            )
+            ui.apply_snapshot({
+                "mission_enabled": True, "reliability_enabled": False,
+                "missions": [], "actions": [], "events": [],
+            })
+            ui.mission_criteria_input.setText(
+                "source_observee, document_relue"
+            )
+            ui.mission_plan_button.click()
+            self.assertEqual(requests, [
+                ("plan", "source_observee, document_relue")
+            ])
+            ui.show_mission_result({
+                "operation": "plan", "success": True,
+                "status": "criteria_registered_unverified",
+            })
+            self.assertIn("Aucun justificatif validé",
+                          ui.mission_feedback.text())
         finally:
             ui.close()
 
