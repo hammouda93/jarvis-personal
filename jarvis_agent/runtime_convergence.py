@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .agent_router import AgentRoutingContext, CapabilityAgentRouter
+from .capability_registry import DEFAULT_CAPABILITY_REGISTRY
 from .event_journal import StructuredEventJournal
 from .kernel_contracts import EventKind, MissionContext, MissionStatus
 from .mission_context_store import MissionContextStore
@@ -84,6 +86,7 @@ class LiveMissionContinuityRuntime:
         self.context_store = _ClosingMissionContextStore(root / "mission_context.sqlite3")
         self.graph_store = _ClosingTaskGraphStore(root / "task_graphs.sqlite3")
         self.journal = _ClosingEventJournal(root / "mission_events.sqlite3")
+        self.agent_router = CapabilityAgentRouter(DEFAULT_CAPABILITY_REGISTRY)
         self.owner_user_id = str(owner_user_id or "local-user")
         self._active_mission_id: str | None = None
         self._explicit = False
@@ -310,6 +313,46 @@ class LiveMissionContinuityRuntime:
             + "\n[END MISSION CHECKPOINT]"
         )
 
+    def _observe_routes(self, action_names: list[str], goal: str) -> list[dict]:
+        """Compare real tools with registered agents; no authority to dispatch."""
+        manifest_list = DEFAULT_CAPABILITY_REGISTRY.agents()
+        available = tuple(m.agent_id for m in manifest_list) + ("interaction",)
+        last_agent = ""
+        decisions: list[dict] = []
+        for name in action_names:
+            prefix = name.split("_", 1)[0] if "_" in name else ""
+            candidates = tuple(
+                manifest.agent_id for manifest in manifest_list
+                if (
+                    name in manifest.allowed_tools
+                    or (
+                        prefix in ("browser", "computer")
+                        and manifest.agent_id == (
+                            "browser" if prefix == "browser" else "windows"
+                        )
+                    )
+                )
+            )
+            context = AgentRoutingContext(
+                user_goal=str(goal or "")[:650],
+                current_tool=name, previous_agent=last_agent,
+                available_agents=available,
+            )
+            decision = self.agent_router.route_contextual(
+                context, candidate_agents=candidates
+            )
+            decisions.append({
+                "tool": name,
+                "candidate_agents": list(decision.candidate_agents),
+                "proposed_agent": decision.agent_id,
+                "reason": decision.reason,
+                "needs_review": decision.needs_review,
+                "authoritative": False,
+            })
+            if not decision.needs_review:
+                last_agent = decision.agent_id
+        return decisions
+
     def mission_snapshot(self, mission_id: str) -> dict[str, Any]:
         """Inspect durable progress without asking the model or running tools."""
         loaded = self.context_store.load(mission_id)
@@ -332,6 +375,7 @@ class LiveMissionContinuityRuntime:
             "tasks": [
                 {"id": node.task_id, "status": node.status.value,
                  "action_names": list(node.result.get("action_names", [])),
+                 "agent_routes": list(node.result.get("agent_routes", [])),
                  "error": node.error}
                 for node in graph.nodes()
             ],
@@ -440,17 +484,23 @@ class LiveMissionContinuityRuntime:
             actions = tuple(getattr(result, "actions", ()) or ())
             failed = sum(not bool(getattr(action, "success", False)) for action in actions)
             node.status = TaskStatus.FAILED if failed else TaskStatus.COMPLETED
+            action_names = [
+                str(getattr(action, "name", "") or "")[:100]
+                for action in actions
+            ]
+            routes = self._observe_routes(action_names, state.user_goal)
             node.result = {
                 "action_count": len(actions),
                 "failed_action_count": failed,
-                "action_names": [
-                    str(getattr(action, "name", "") or "")[:100]
-                    for action in actions
-                ],
+                "action_names": action_names,
+                "agent_routes": routes,
             }
             state.observed_state["completed_turns"] = index
             state.observed_state["last_action_count"] = len(actions)
             state.observed_state["last_failed_action_count"] = failed
+            state.observed_state["last_routing_needs_review"] = any(
+                route["needs_review"] for route in routes
+            )
             state.observed_state["goal_verified"] = False
             # A successful click/write does not prove the intended recipient,
             # target, or overall mission. Explicit missions always await proof.
