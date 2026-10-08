@@ -19,7 +19,7 @@ class MissionCommand:
 class MissionControlInbox:
     """FIFO commands, consumed by the worker rather than Qt's UI thread."""
 
-    _OPS = frozenset({"begin", "resume", "detach", "review", "plan"})
+    _OPS = frozenset({"begin", "resume", "detach", "review", "plan", "route"})
 
     def __init__(self) -> None:
         self._items: queue.Queue[MissionCommand] = queue.Queue(maxsize=32)
@@ -34,7 +34,7 @@ class MissionControlInbox:
             return False
         if op == "plan" and not (1 <= len(raw) <= 500):
             return False
-        if op in {"resume", "review"} and raw and not re.fullmatch(r"live_[a-f0-9]{32}", raw):
+        if op in {"resume", "review", "route"} and raw and not re.fullmatch(r"live_[a-f0-9]{32}", raw):
             return False
         if op == "resume" and not raw:
             return False
@@ -127,6 +127,19 @@ def perform_mission_command(agent, command: MissionCommand) -> dict:
             "success": True, "operation": op,
             "mission_id": mission_id, "status": "criteria_registered_unverified",
             "criteria_count": len(requirements),
+        }
+    if op == "route":
+        method = getattr(agent, "propose_mission_capabilities", None)
+        if not callable(method):
+            return {"success": False, "operation": op,
+                    "reason": "capability_planner_not_enabled"}
+        report = method(command.value or None)
+        return {
+            "success": True, "operation": op,
+            "mission_id": report.get("mission_id", ""),
+            "status": report.get("status", "routes_proposed"),
+            "authoritative": False, "will_execute": False,
+            "proposal": report,
         }
     if op == "review":
         method = getattr(agent, "review_mission", None)
