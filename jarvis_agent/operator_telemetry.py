@@ -59,7 +59,8 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
     mission_on = _flag("JARVIS_RUNTIME_CONVERGENCE_ENABLED")
     rows = _readonly(
         _action_path(),
-        "SELECT action_id,turn_id,name,status,success,verified,created_at "
+        "SELECT action_id,turn_id,name,status,success,verified,created_at, "
+        "CASE WHEN status='guarded' THEN evidence_ref ELSE '' END AS guard_reason "
         "FROM actions ORDER BY created_at DESC, rowid DESC LIMIT ?",
         (limit,),
     ) if reliability_on else []
@@ -71,6 +72,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
             "status": str(row["status"])[:35],
             "verified": row["verified"] == 1,
             "success": row["success"] == 1,
+            "guard_reason": str(row["guard_reason"] or "")[:50],
             "when": str(row["created_at"])[:35],
         }
         for row in rows
@@ -206,6 +208,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         "tasks": current_tasks,
         "events": events,
         "unresolved_visible": unknown,
+        "guarded_visible": sum(row["status"] == "guarded" for row in actions),
         "sample_limit": limit,
         "observed_at": time.time(),
     }
