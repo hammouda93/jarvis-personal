@@ -19,7 +19,7 @@ class MissionCommand:
 class MissionControlInbox:
     """FIFO commands, consumed by the worker rather than Qt's UI thread."""
 
-    _OPS = frozenset({"begin", "resume", "detach", "review"})
+    _OPS = frozenset({"begin", "resume", "detach", "review", "plan"})
 
     def __init__(self) -> None:
         self._items: queue.Queue[MissionCommand] = queue.Queue(maxsize=32)
@@ -31,6 +31,8 @@ class MissionControlInbox:
         if op not in self._OPS:
             return False
         if op == "begin" and not (1 <= len(raw) <= 2000):
+            return False
+        if op == "plan" and not (1 <= len(raw) <= 500):
             return False
         if op in {"resume", "review"} and raw and not re.fullmatch(r"live_[a-f0-9]{32}", raw):
             return False
@@ -82,6 +84,50 @@ def perform_mission_command(agent, command: MissionCommand) -> dict:
         return {"success": True, "operation": op,
                 "mission_id": command.value, "status": status,
                 "manual_review_required": status == "blocked"}
+    if op == "plan":
+        from .mission_semantics import MissionContract, MissionStep
+
+        getter = getattr(agent, "mission_snapshot", None)
+        recorder = getattr(agent, "register_semantic_plan", None)
+        mission_id = str(getattr(agent, "active_mission_id", "") or "")
+        if not callable(getter) or not callable(recorder):
+            return {"success": False, "operation": op,
+                    "reason": "convergence_not_enabled"}
+        if not mission_id:
+            return {"success": False, "operation": op,
+                    "reason": "no_active_mission"}
+        requirements = tuple(dict.fromkeys(
+            item.strip() for item in command.value.split(",")
+            if item.strip()
+        ))
+        if not (1 <= len(requirements) <= 8):
+            return {"success": False, "operation": op,
+                    "reason": "one_to_eight_criteria_required"}
+        if any(not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.-]{0,62}", item)
+               for item in requirements):
+            return {"success": False, "operation": op,
+                    "reason": "criteria_must_be_identifiers"}
+        target = getter(mission_id)
+        goal = str(target.get("user_goal") or "").strip()
+        if not goal:
+            raise RuntimeError("mission_goal_required")
+        contract = MissionContract(
+            source_text=goal,
+            objective=goal,
+            steps=(MissionStep(
+                step_id="verify_goal", intent="verify_user_objective",
+                required_evidence=requirements,
+            ),),
+            metadata={"origin": "user_defined_verification_criteria"},
+        )
+        # Registering a plan is NOT registering a proof. The model/tool cannot
+        # auto-approve these conditions or verify its own external side effect.
+        recorder(contract)
+        return {
+            "success": True, "operation": op,
+            "mission_id": mission_id, "status": "criteria_registered_unverified",
+            "criteria_count": len(requirements),
+        }
     if op == "review":
         method = getattr(agent, "review_mission", None)
         if not callable(method):
