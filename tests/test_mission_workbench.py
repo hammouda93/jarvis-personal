@@ -157,6 +157,41 @@ class MissionWorkbenchTests(unittest.TestCase):
         self.assertEqual(turns, [("Tester notre mission", "text")])
         self.assertEqual(self.model.calls, [])
 
+    def test_attached_mission_never_dispatches_legacy_direct_follow_up(self):
+        import threading
+        from jarvis_agent.tools import ToolIntent
+        with patch.object(AssistantWorker, "__init__",
+                          lambda self: QObject.__init__(self)):
+            worker = AssistantWorker()
+        worker._agent = self.runtime
+        worker._conversation_language = "fr"
+        worker._pending_direct_follow_up = "search_query"
+        worker._active_surface_kind = "browser"
+        worker._stop = threading.Event()
+        worker._input_mode = SimpleNamespace(snapshot=lambda: (True, 1))
+        worker._kernel_shadow = None
+        worker._handle_lifecycle = lambda text: (False, True)
+        worker._state = lambda *args: None
+        worker._deliver_reply = lambda text: None
+        worker._shadow_observe = lambda *args, **kwargs: None
+        worker._level = lambda level: None
+        worker._emit_operator_model = lambda: None
+        direct_calls = []
+        worker._handle_simple_direct_action = (
+            lambda *args: direct_calls.append(args) or True
+        )
+        perform_mission_command(
+            self.runtime, MissionCommand("begin", "Analyser la recherche"),
+        )
+        result = worker._process_user_text(
+            "ouvre YouTube", source="text",
+            legacy_intent=ToolIntent("browser.search", {"query": "test"}),
+        )
+        self.assertTrue(result)
+        self.assertEqual(direct_calls, [])
+        self.assertEqual(self.model.calls[0][0], "context")
+        self.assertIn("Analyser la recherche", self.model.calls[0][2])
+
     def test_explicit_mode_does_not_consume_unrelated_prior_input(self):
         with patch.object(AssistantWorker, "__init__",
                           lambda self: QObject.__init__(self)):
