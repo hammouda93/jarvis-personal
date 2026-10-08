@@ -205,7 +205,7 @@ class MissionWorkbenchTests(unittest.TestCase):
 
     def test_roadmap_is_ordered_and_never_claims_desktop_acceptance(self):
         data = roadmap_snapshot()
-        self.assertEqual(data["current"], 8)
+        self.assertEqual(data["current"], 9)
         self.assertEqual(data["total"], len(STAGES))
         self.assertEqual([x["number"] for x in data["stages"]],
                          list(range(1, len(STAGES) + 1)))
@@ -215,7 +215,7 @@ class MissionWorkbenchTests(unittest.TestCase):
         self.assertEqual(data["stages"][6]["implementation"], "integrated")
         self.assertEqual(data["stages"][6]["automated"], "green_ancestor")
         self.assertEqual(data["stages"][7]["implementation"], "integrated")
-        self.assertEqual(data["stages"][7]["automated"], "green_current")
+        self.assertEqual(data["stages"][7]["automated"], "green_ancestor")
 
 
 class MissionOperatorUiTests(unittest.TestCase):
@@ -240,7 +240,7 @@ class MissionOperatorUiTests(unittest.TestCase):
                 "mission_id": "live_" + "a" * 32,
             })
             self.assertEqual(ui.mission_goal_input.text(), "")
-            self.assertIn("8/11", ui.progress_line.text())
+            self.assertIn("9/11", ui.progress_line.text())
             self.assertIn("Windows réel : non validé",
                           ui._views["roadmap"].toPlainText())
             ui.mission_resume_button.click()
