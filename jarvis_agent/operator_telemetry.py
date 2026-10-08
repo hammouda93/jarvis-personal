@@ -192,6 +192,7 @@ def runtime_model_snapshot(runtime: Any) -> dict[str, Any]:
     used = None
     provider = ""
     category = ""
+    last_usage = None
     seen = set()
     for _ in range(12):
         if current is None or id(current) in seen:
@@ -200,6 +201,13 @@ def runtime_model_snapshot(runtime: Any) -> dict[str, Any]:
         if budget is None:
             budget = getattr(current, "reliability_round_budget", None)
             used = getattr(current, "reliability_rounds_used", None)
+        if last_usage is None:
+            value = getattr(current, "reliability_last_usage", None)
+            if isinstance(value, dict):
+                last_usage = {
+                    key: int(value[key]) if isinstance(value.get(key), int) else None
+                    for key in ("input_tokens", "output_tokens", "total_tokens")
+                }
         if not provider:
             provider = str(getattr(current, "provider_name", "") or "")
         if not category:
@@ -213,4 +221,5 @@ def runtime_model_snapshot(runtime: Any) -> dict[str, Any]:
         "rounds_used": used if isinstance(used, int) else None,
         "rounds_limit": budget if isinstance(budget, int) else None,
         "failure_category": category[:50],
+        "reported_usage": last_usage,
     }
