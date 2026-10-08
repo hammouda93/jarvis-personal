@@ -66,7 +66,11 @@ critères utilisateur validés et sans possibilité d'injection de commande.
 
 Les étapes 1–7 sont dans les branches parents, intégrées et passées dans
 des suites automatisées. La validation **réelle Windows reste ouverte**.
-Étape 8 : code intégré et CI validée (**426/426 Python Windows**, **45/45 replays\nBrowser Bridge**, **607/607 Python Linux**). Ce résultat correspond à\nGitHub Actions V4 avant le dernier commit documentaire; le HEAD final doit\nconserver le même niveau de validation. **Tests Windows réels non réalisés.**\nLes étapes 9–11 restent à développer.
+Étape 8 : code intégré et CI validée (**426/426 Python Windows**, **45/45 replays
+Browser Bridge**, **607/607 Python Linux**). Ce résultat correspond à
+GitHub Actions V4 avant la dernière mise à jour; le HEAD final doit
+conserver le même niveau de validation. **Tests Windows réels non réalisés.**
+Les étapes 9–11 restent à développer.
 
 Branche stable protégée : `fix/browser-live-contracts-v2` @ `aff001fd`.
 Aucune fusion sans validation réelle complète.
