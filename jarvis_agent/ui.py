@@ -29,10 +29,13 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QTextBrowser,
     QVBoxLayout,
+    QTabWidget,
     QWidget,
 )
 
 from .assistant_v3 import AssistantWorker
+from .operator_console import OperatorConsole
+from .operator_telemetry import snapshot as operator_snapshot
 from .config import settings
 from .states import AssistantState, STATE_LABELS
 
@@ -947,6 +950,13 @@ class JarvisWindow(QWidget):
 
         self.canvas = PersonalJarvisCanvas(self)
         self.flow_panel = FlowPanel(self)
+        self.operator_console = OperatorConsole(self)
+        self.side_tabs = QTabWidget(self)
+        self.side_tabs.setObjectName("sideTabs")
+        self.side_tabs.setMinimumWidth(340)
+        self.side_tabs.setMaximumWidth(410)
+        self.side_tabs.addTab(self.operator_console, "◉  CONTRÔLE")
+        self.side_tabs.addTab(self.flow_panel, "◇  TRAJET")
         self.canvas.setMinimumSize(520, 360)
 
         title = QLabel("PERSONAL JARVIS")
@@ -1020,7 +1030,7 @@ class JarvisWindow(QWidget):
         middle = QHBoxLayout()
         middle.setSpacing(14)
         middle.addWidget(self.canvas, 1)
-        middle.addWidget(self.flow_panel)
+        middle.addWidget(self.side_tabs)
 
         self.status_label = QLabel("Initialisation de Personal Jarvis…")
         self.status_label.setObjectName("liveStatus")
@@ -1184,6 +1194,23 @@ class JarvisWindow(QWidget):
                 max-width: 28px;
                 padding: 5px 3px;
                 border-radius: 9px;
+            }
+            QTabWidget#sideTabs::pane {
+                border: 1px solid rgba(54, 160, 196, 84);
+                border-radius: 13px;
+                background: rgba(2, 13, 27, 220);
+            }
+            QTabWidget#sideTabs QTabBar::tab {
+                background: #061a2b;
+                color: #82bcc9;
+                padding: 8px 12px;
+                margin-right: 3px;
+                border-radius: 8px;
+                font-size: 9px;
+            }
+            QTabWidget#sideTabs QTabBar::tab:selected {
+                background: #124158;
+                color: #e9fdff;
             }
             QFrame#flowPanel {
                 background: rgba(2, 13, 27, 220);
@@ -1365,6 +1392,7 @@ class JarvisWindow(QWidget):
         self._worker.log_line.connect(self._on_log)
         self._worker.log_line.connect(_safe_console_log)
         self._worker.conversation_message.connect(self._on_conversation_message)
+        self._worker.telemetry_changed.connect(self.operator_console.update_model)
 
         self.canvas.route_changed.connect(self._on_route_changed)
 
@@ -1378,10 +1406,25 @@ class JarvisWindow(QWidget):
         self.max_button.clicked.connect(self._toggle_maximize)
         self.close_button.clicked.connect(self.close)
 
+        # The console reads only local, already-persisted snapshots. No UI
+        # polling ever calls the model, any action tool, or the worker thread.
+        self._operator_timer = QTimer(self)
+        self._operator_timer.setInterval(1400)
+        self._operator_timer.timeout.connect(self._refresh_operator_console)
+        self._operator_timer.start()
         self._thread.start()
 
         if settings.ui_fullscreen:
             self.showFullScreen()
+
+    def _refresh_operator_console(self) -> None:
+        if self._compact_mode or self.clean_button.isChecked():
+            return
+        try:
+            self.operator_console.apply_snapshot(operator_snapshot())
+        except (OSError, ValueError, RuntimeError):
+            # Read-only monitoring must never stop user interaction.
+            self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
 
     def _set_text_panel(self, enabled: bool) -> None:
         self._worker.set_text_mode(bool(enabled))
@@ -1463,7 +1506,7 @@ class JarvisWindow(QWidget):
                 self.canvas._append_route("respond")
 
     def _set_clean_view(self, enabled: bool) -> None:
-        self.flow_panel.setVisible(not enabled)
+        self.side_tabs.setVisible(not enabled and not self._compact_mode)
         self.detail_label.setVisible(not enabled)
 
     def _set_animations_frozen(self, frozen: bool) -> None:
@@ -1486,7 +1529,7 @@ class JarvisWindow(QWidget):
             self.showNormal()
             self.setMinimumSize(*COMPACT_MIN_SIZE)
             self.canvas.hide()
-            self.flow_panel.hide()
+            self.side_tabs.hide()
             self.brand_tagline.hide()
             self.chip_msf.hide()
             self.chip_research.hide()
@@ -1506,7 +1549,7 @@ class JarvisWindow(QWidget):
             self.setMinimumSize(*NORMAL_MIN_SIZE)
             self.canvas.show()
             if not self.clean_button.isChecked():
-                self.flow_panel.show()
+                self.side_tabs.show()
                 self.detail_label.show()
             self.brand_tagline.show()
             self.chip_msf.show()
