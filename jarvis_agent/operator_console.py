@@ -157,6 +157,14 @@ class OperatorConsole(QFrame):
         self.mission_id_input.setPlaceholderText("Identifiant live_… d'une mission existante")
         self.mission_resume_button = QPushButton("↻ Reprendre le suivi")
         self.mission_resume_button.setObjectName("missionButton")
+        self.mission_criteria_input = QLineEdit()
+        self.mission_criteria_input.setObjectName("missionGoal")
+        self.mission_criteria_input.setMaxLength(500)
+        self.mission_criteria_input.setPlaceholderText(
+            "Critères de preuve : resultat_observe, cible_confirmee…"
+        )
+        self.mission_plan_button = QPushButton("⊕ Enregistrer les critères de réussite")
+        self.mission_plan_button.setObjectName("missionButton")
         self.mission_review_button = QPushButton("◇ Vérifier la progression")
         self.mission_review_button.setObjectName("missionButton")
         self.mission_detach_button = QPushButton("Ⅱ Détacher sans conclure")
@@ -175,6 +183,8 @@ class OperatorConsole(QFrame):
         mission_layout.addWidget(self.mission_begin_button)
         mission_layout.addWidget(self.mission_picker)
         mission_layout.addWidget(self.mission_id_input)
+        mission_layout.addWidget(self.mission_criteria_input)
+        mission_layout.addWidget(self.mission_plan_button)
         mission_layout.addWidget(self.mission_review_button)
         mission_layout.addLayout(buttons)
         mission_layout.addWidget(self.mission_feedback)
@@ -187,6 +197,9 @@ class OperatorConsole(QFrame):
         )
         self.mission_review_button.clicked.connect(
             lambda: self._request_mission("review", self.mission_id_input.text())
+        )
+        self.mission_plan_button.clicked.connect(
+            lambda: self._request_mission("plan", self.mission_criteria_input.text())
         )
         self.mission_detach_button.clicked.connect(
             lambda: self._request_mission("detach", "")
@@ -267,7 +280,7 @@ class OperatorConsole(QFrame):
     def _request_mission(self, operation: str, value: str) -> None:
         """Signal request only. Worker is authoritative and owns runtime."""
         raw = str(value or "").strip()
-        if operation in {"begin", "resume"} and not raw:
+        if operation in {"begin", "resume", "plan"} and not raw:
             self.mission_feedback.setText("Objectif ou identifiant de mission requis.")
             return
         self.mission_requested.emit(operation, raw)
@@ -280,6 +293,12 @@ class OperatorConsole(QFrame):
             self.mission_id_input.setText(mid)
         if success and operation == "begin":
             self.mission_goal_input.clear()
+        if success and operation == "plan":
+            self.mission_criteria_input.clear()
+            self.mission_feedback.setText(
+                "Critères enregistrés. Aucun justificatif validé automatiquement."
+            )
+            return
         if success and operation == "review":
             report = result.get("review") or {}
             state = str(report.get("state") or "non_renseigné")[:60]
@@ -426,6 +445,7 @@ class OperatorConsole(QFrame):
         self.mission_resume_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_detach_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_review_button.setEnabled(bool(data.get("mission_enabled")))
+        self.mission_plan_button.setEnabled(bool(data.get("mission_enabled")))
         mission_on = bool(data.get("mission_enabled"))
         reliability_on = bool(data.get("reliability_enabled"))
         kernel_mode = "Shadow configuré (passif)" if data.get("kernel_shadow_enabled") else "Shadow désactivé"
