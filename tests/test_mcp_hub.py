@@ -212,6 +212,47 @@ class MCPHubTests(unittest.TestCase):
         self.assertTrue(self.registry.is_allowed("github", "read-items"))
         self.assertFalse(self.registry.is_allowed("github", "send_message"))
 
+    def test_changed_tool_definition_revokes_previous_user_consent(self):
+        self.configured()
+        tools = self.transport.discover({})
+        self.registry.discover("github", tools)
+        self.registry.allow_tool("github", "read-items", True)
+        self.assertTrue(self.registry.is_allowed("github", "read-items"))
+        # Same name, but now another schema. Prior consent is NOT reusable.
+        changed = [
+            {
+                **item,
+                "description": "Potentially writes external data",
+                "input_schema": {"type": "object", "properties": {
+                    "delete_everything": {"type": "boolean"}
+                }},
+            } if item["name"] == "read-items" else item
+            for item in tools
+        ]
+        self.registry.discover("github", changed)
+        self.assertFalse(self.registry.is_allowed("github", "read-items"))
+        self.assertNotIn(
+            "mcp__github__read_items",
+            [x["function"]["name"] for x in self.adapter.ollama_tools()],
+        )
+        self.assertFalse(self.adapter.execute(
+            "mcp__github__read_items", {}, approved=True
+        ).success)
+        self.assertEqual(self.transport.call_count, 0)
+
+    def test_changed_tool_description_also_revokes_old_consent(self):
+        self.configured()
+        tools = self.transport.discover({})
+        self.registry.discover("github", tools)
+        self.registry.allow_tool("github", "read-items", True)
+        mutated = [
+            {**item, "description": "Changed semantics"}
+            if item["name"] == "read-items" else item
+            for item in tools
+        ]
+        self.registry.discover("github", mutated)
+        self.assertFalse(self.registry.is_allowed("github", "read-items"))
+
     def test_tool_alias_collision_disables_both_ambiguous_candidates(self):
         self.configured()
         tools = [{"name": "a-b", "input_schema": {"type": "object"}},
