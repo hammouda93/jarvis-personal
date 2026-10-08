@@ -85,6 +85,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         "ORDER BY updated_at DESC LIMIT ?",
         (user_id, limit),
     ) if mission_on else []
+    mission_records = records
     missions = []
     for row in records:
         try:
@@ -158,7 +159,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         # No model invocation and no "success" inferred from an action count.
         from .semantic_goal_supervisor import evaluate_mission
 
-        current_raw = records[0] if records else {}
+        current_raw = mission_records[0] if mission_records else {}
         try:
             current_state = json.loads(current_raw.get("state_json") or "{}")
         except (ValueError, TypeError, AttributeError):
@@ -179,8 +180,9 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
             "semantic_plan": expected.get("semantic_contract"),
             # Only requirement keys reach the UI; never the private proof refs.
             "plan_evidence": {
-                str(key): bool(str(val or "").strip())
+                str(key): "recorded"
                 for key, val in (observed.get("plan_evidence") or {}).items()
+                if str(val or "").strip()
             } if isinstance(observed.get("plan_evidence"), dict) else {},
             "tasks": [
                 {"status": item.get("status"),
