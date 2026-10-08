@@ -209,7 +209,6 @@ class OperatorConsole(QFrame):
 
         self.mcp_panel = MCPConnectionsPanel(self)
         self.mcp_panel.requested.connect(self.mcp_requested.emit)
-        layout.addWidget(self.mcp_panel)
 
         self._views = {}
         scroll = QScrollArea(self)
@@ -246,6 +245,7 @@ class OperatorConsole(QFrame):
             group_layout.addWidget(header)
             group_layout.addWidget(view)
             event_list.addWidget(group)
+        event_list.addWidget(self.mcp_panel)
         event_list.addStretch(1)
         scroll.setWidget(content)
         layout.addWidget(scroll, 1)
