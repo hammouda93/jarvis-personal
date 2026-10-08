@@ -126,6 +126,41 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
                         "tools": [str(x)[:50] for x in (node.get("result") or {}).get("action_names", [])[:5]],
                     })
     unknown = sum(row["status"] in ("unknown", "dispatched") for row in actions)
+    # Numeric summaries only: never read or expose personal memory content,
+    # skill procedures, knowledge lessons or learned application identities.
+    skills_root = (
+        Path(os.getenv("LOCALAPPDATA")) / "JarvisPersonal"
+        if os.getenv("LOCALAPPDATA")
+        else Path.home() / ".jarvis_personal"
+    )
+    knowledge_path = skills_root / "agent_knowledge.sqlite3"
+    knowledge_stats = {}
+    for table, condition in (
+        ("skills", "active=1"),
+        ("lessons", "active=1"),
+        ("app_profiles", "1=1"),
+    ):
+        total = _readonly(
+            knowledge_path, f"SELECT COUNT(*) AS n FROM {table} WHERE {condition}"
+        )
+        knowledge_stats[table] = (
+            int(total[0]["n"]) if total else None
+        )
+    memory_stats = None
+    if _flag("JARVIS_MEMORY_CORE_ENABLED"):
+        memory_db = skills_root / "memory.sqlite3"
+        stored = _readonly(
+            memory_db, "SELECT COUNT(*) AS n FROM memories"
+        )
+        facts = _readonly(
+            memory_db,
+            "SELECT COUNT(*) AS n FROM memory_semantic_facts WHERE status='active'"
+        )
+        memory_stats = {
+            "raw_count": int(stored[0]["n"]) if stored else None,
+            "active_semantic_facts": int(facts[0]["n"]) if facts else None,
+        }
+
     from .config import settings
     return {
         "reliability_enabled": reliability_on,
@@ -139,6 +174,8 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         "browser_core_enabled": _flag("JARVIS_BROWSER_CORE_ENABLED"),
         "computer_core_enabled": _flag("JARVIS_COMPUTER_CORE_ENABLED"),
         "learning_enabled": bool(settings.operational_learning_enabled),
+        "knowledge_stats": knowledge_stats,
+        "memory_stats": memory_stats,
         "actions": actions,
         "missions": missions,
         "tasks": current_tasks,
