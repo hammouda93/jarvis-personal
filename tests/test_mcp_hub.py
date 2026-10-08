@@ -329,6 +329,32 @@ class MCPOperatorWidgetTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_provider_catalog_does_not_invent_urls_or_connect(self):
+        from jarvis_agent.mcp_service_catalog import SERVICE_CARDS
+        ids = {x.identifier for x in SERVICE_CARDS}
+        self.assertTrue({
+            "gmail", "google_sheets", "google_maps", "google_drive",
+            "whatsapp", "github", "hermes",
+        } <= ids)
+        panel = MCPConnectionsPanel()
+        try:
+            outbound = []
+            panel.requested.connect(lambda *args: outbound.append(args))
+            idx = panel.catalog_picker.findData("google_sheets")
+            self.assertGreater(idx, 0)
+            panel.catalog_picker.setCurrentIndex(idx)
+            self.assertEqual(panel.server_name.text(), "google_sheets")
+            self.assertEqual(panel.server_url.text(), "")
+            self.assertIn("Aucune URL", panel.catalog_note.text())
+            self.assertEqual(outbound, [])
+            panel.catalog_picker.setCurrentIndex(
+                panel.catalog_picker.findData("whatsapp")
+            )
+            self.assertIn("Business", panel.catalog_note.text())
+            self.assertEqual(outbound, [])
+        finally:
+            panel.close()
+
     def test_widget_issues_only_explicit_requests(self):
         panel = MCPConnectionsPanel()
         try:
