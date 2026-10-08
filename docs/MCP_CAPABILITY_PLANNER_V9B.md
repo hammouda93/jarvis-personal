@@ -84,3 +84,21 @@ la preuve de réussite, la confirmation et le contrôle anti-replay existants.
 Ne pas fusionner sans essais en conditions réelles sur Windows, y compris
 Chrome, WhatsApp, messages à confirmation, mémoire, TTS, MCP Hermes local
 facultatif et gestion des autorisations.
+
+
+### Référence Hermes vérifiée dans le code source
+
+- `hermes mcp serve` (voir `hermes_cli/subcommands/mcp.py` et
+  `mcp_serve.py`) publie principalement les **conversations et canaux**
+  de Hermes en tant qu'outils MCP. Il **ne transforme pas automatiquement**
+  les connexions Google Sheets/Maps/WhatsApp internes à Hermes en serveurs
+  indépendants accessibles à Jarvis.
+- Hermes possède aussi un mécanisme distinct
+  `agent.transports.hermes_tools_mcp_server` pour certains outils Hermes
+  dans un contexte de runtime spécifique. Nous ne l'exécutons pas
+  automatiquement : il exige sa propre installation, sa configuration et
+  une validation de sécurité.
+- Les cartes Gmail, Google Sheets, Google Maps, Google Drive, WhatsApp et
+  GitHub sont des **raccourcis de configuration** sans URL inventée, sans
+  clé secrète et sans connexion silencieuse. L'utilisateur doit ajouter
+  séparément un serveur MCP fiable pour chacun.
