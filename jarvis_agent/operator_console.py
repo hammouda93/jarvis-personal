@@ -350,6 +350,38 @@ class OperatorConsole(QFrame):
         """)
         self.apply_snapshot(snapshot())
 
+    def _mcp_choose(self, index: int) -> None:
+        selected = str(self.mcp_picker.itemData(index) or "")
+        if selected:
+            self.mcp_id_input.setText(selected)
+
+    def show_mcp_result(self, result: dict) -> None:
+        if result.get("success") is not True:
+            self.mcp_feedback.setText(
+                "Opération MCP refusée ou échouée : "
+                + str(result.get("reason") or "erreur inconnue")[:90]
+            )
+            return
+        operation = str(result.get("operation") or "")
+        if operation == "discover":
+            items = list((result.get("result") or {}).get("tools") or [])
+            names = ", ".join(str(x.get("name") or "")[:50] for x in items[:24])
+            self.mcp_feedback.setText(
+                f"Outils accessibles ({len(items)}) : "
+                + (names or "aucun outil autorisé correspondant")
+                + ". Lecture seule, aucune action d'outil lancée."
+            )
+        elif operation == "save":
+            self.mcp_feedback.setText(
+                "Serveur enregistré DÉSACTIVÉ. Activer séparément, "
+                "après la configuration d'une autorisation si nécessaire."
+            )
+        else:
+            self.mcp_feedback.setText(
+                "MCP " + str(result.get("server_id") or "")[:64] + " : "
+                + ("activé" if operation == "enable" else "désactivé")
+            )
+
     def _select_saved_mission(self) -> None:
         selected = str(self.mission_picker.currentData() or "")
         if selected:
@@ -519,6 +551,43 @@ class OperatorConsole(QFrame):
                 '<br><span style="color:#edbe8c">Windows réel : non validé</span></p>'
             )
         self._render_html("roadmap", "".join(parts))
+        servers = tuple(
+            (str(item.get("id") or ""),
+             bool(item.get("enabled")),
+             bool(item.get("auth_ready")),
+             tuple(item.get("approved_tools") or ()))
+            for item in (data.get("mcp_servers") or [])
+        )
+        if servers != self._mcp_choices:
+            chosen = str(self.mcp_picker.currentData() or "")
+            self.mcp_picker.blockSignals(True)
+            self.mcp_picker.clear()
+            self.mcp_picker.addItem("Choisir un serveur MCP…", "")
+            for sid, enabled, auth, allowed in servers:
+                self.mcp_picker.addItem(
+                    sid + (" · ACTIF" if enabled else " · DÉSACTIVÉ")
+                    + ("" if auth else " · AUTH REQUISE"),
+                    sid,
+                )
+            choice = self.mcp_picker.findData(chosen)
+            if choice >= 0:
+                self.mcp_picker.setCurrentIndex(choice)
+            self.mcp_picker.blockSignals(False)
+            self._mcp_choices = servers
+        mcp_html = []
+        for sid, enabled, auth, allowed in servers:
+            mcp_html.append(
+                '<p style="margin-bottom:7px"><b>'
+                + _escape(sid, 64) + '</b>'
+                + (' · <span style="color:#70d6b1">ACTIF</span>'
+                   if enabled else ' · DÉSACTIVÉ')
+                + (' · auth disponible' if auth else ' · autorisation nécessaire')
+                + '<br>Outils autorisés : '
+                + _escape(", ".join(allowed), 250)
+                + '</p>'
+            )
+        self._render_html("mcp", "".join(mcp_html) or
+                          "<p>Aucun serveur MCP configuré. Connexions désactivées par défaut.</p>")
         self.mission_begin_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_resume_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_detach_button.setEnabled(bool(data.get("mission_enabled")))
