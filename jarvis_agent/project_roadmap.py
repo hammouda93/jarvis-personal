@@ -46,9 +46,9 @@ STAGES: tuple[Stage, ...] = (
     Stage(6, "observability", "Interface / supervision observables", "integrated",
           "green_ancestor", "not_validated", "tests/test_operator_console_ui.py"),
     Stage(7, "mission_live", "Missions contrôlables depuis l'interface", "integrated",
-          "green_current", "not_validated", "tests/test_mission_workbench.py"),
-    Stage(8, "semantic_supervisor", "Preuves de mission & superviseur actif", "planned",
-          "not_applicable", "not_validated", "supervision sémantique réelle"),
+          "green_ancestor", "not_validated", "tests/test_mission_workbench.py"),
+    Stage(8, "semantic_supervisor", "Preuves et superviseur sémantique", "integrated",
+          "green_current", "not_validated", "tests/test_semantic_goal_supervisor.py"),
     Stage(9, "multi_agent", "Délégation d'agents & planification autonome", "planned",
           "not_applicable", "not_validated", "orchestrateur de missions autonome"),
     Stage(10, "skills_learning", "Apprentissage & Skills validés", "planned",
@@ -56,7 +56,7 @@ STAGES: tuple[Stage, ...] = (
     Stage(11, "integrations", "Intégrations personnelles et tâches durables", "planned",
           "not_applicable", "not_validated", "connecteurs + planificateur durable"),
 )
-CURRENT_STAGE_KEY = "mission_live"
+CURRENT_STAGE_KEY = "semantic_supervisor"
 
 
 def snapshot() -> dict:
@@ -70,9 +70,10 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "notice": (
-            "Étapes 1–6 intégrées et testées sur la branche précédente. "
-            "Étape 7 intégrée et vérifiée en CI (410 Windows Python, "
-            "45 Browser Bridge, 591 Linux Python) ; "
-            "tests réels Windows encore nécessaires. Étapes 8–11 non livrées."
+            "Étapes 1–8 intégrées et validées en CI (426 Windows Python, "
+            "45 Browser Bridge, 607 Linux Python dans V4). "
+            "Les tests réels Windows restent nécessaires. "
+            "Supervision déterministe sans nouvelle collecte autonome de preuve. "
+            "Étapes 9–11 non livrées."
         ),
     }

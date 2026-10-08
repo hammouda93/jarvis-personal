@@ -85,6 +85,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         "ORDER BY updated_at DESC LIMIT ?",
         (user_id, limit),
     ) if mission_on else []
+    mission_records = records
     missions = []
     for row in records:
         try:
@@ -152,6 +153,43 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
                         "status": str(node.get("status") or "")[:35],
                         "tools": [str(x)[:50] for x in (node.get("result") or {}).get("action_names", [])[:5]],
                     })
+    supervisor = None
+    if missions:
+        # Recompute from the same read-only SQLite mission/graph snapshot.
+        # No model invocation and no "success" inferred from an action count.
+        from .semantic_goal_supervisor import evaluate_mission
+
+        current_raw = mission_records[0] if mission_records else {}
+        try:
+            current_state = json.loads(current_raw.get("state_json") or "{}")
+        except (ValueError, TypeError, AttributeError):
+            current_state = {}
+        if not isinstance(current_state, dict):
+            current_state = {}
+        expected = current_state.get("expected_state") or {}
+        observed = current_state.get("observed_state") or {}
+        if not isinstance(expected, dict):
+            expected = {}
+        if not isinstance(observed, dict):
+            observed = {}
+        supervisor = evaluate_mission({
+            "mission_id": missions[0]["id"],
+            "status": missions[0]["status"],
+            "goal_verified": missions[0]["verified"],
+            "manual_review_required": missions[0]["needs_review"],
+            "semantic_plan": expected.get("semantic_contract"),
+            # Only requirement keys reach the UI; never the private proof refs.
+            "plan_evidence": {
+                str(key): "recorded"
+                for key, val in (observed.get("plan_evidence") or {}).items()
+                if str(val or "").strip()
+            } if isinstance(observed.get("plan_evidence"), dict) else {},
+            "tasks": [
+                {"status": item.get("status"),
+                 "action_names": item.get("tools", [])}
+                for item in current_tasks
+            ],
+        })
     unknown = sum(row["status"] in ("unknown", "dispatched") for row in actions)
     # Numeric summaries only: never read or expose personal memory content,
     # skill procedures, knowledge lessons or learned application identities.
@@ -206,6 +244,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         "actions": actions,
         "missions": missions,
         "tasks": current_tasks,
+        "supervisor": supervisor,
         "events": events,
         "unresolved_visible": unknown,
         "guarded_visible": sum(row["status"] == "guarded" for row in actions),
