@@ -1,0 +1,168 @@
+"""Read-only, bounded operator telemetry for the existing Jarvis runtime.
+
+No model calls, no tool execution, no key loading, and no writes.
+A missing/disabled subsystem is never represented as active.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
+
+
+def _flag(name: str) -> bool:
+    return os.getenv(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _state_root() -> Path:
+    env = os.getenv("LOCALAPPDATA") or os.getenv("XDG_STATE_HOME")
+    return Path(env) if env else Path.home()
+
+
+def _action_path() -> Path:
+    root = os.getenv("JARVIS_HERMES_RELIABILITY_DIR")
+    if root:
+        return Path(root) / "actions.sqlite3"
+    env = os.getenv("LOCALAPPDATA") or os.getenv("XDG_STATE_HOME")
+    home = Path(env) / "JarvisPersonal" / "action_reliability" if env else Path.home() / ".jarvis_personal" / "action_reliability"
+    return home / "actions.sqlite3"
+
+
+def _mission_root() -> Path:
+    env = os.getenv("JARVIS_RUNTIME_CONVERGENCE_DIR")
+    return Path(env) if env else _state_root() / "JarvisPersonal" / "runtime_convergence"
+
+
+def _readonly(db: Path, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+    """Tiny read-only queries with bounded SQLite busy timeout; never initialize DB."""
+    if not db.is_file():
+        return []
+    try:
+        # The URI is platform aware and never opens SQLite in write mode.
+        uri = db.resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=0.12) as con:
+            con.row_factory = sqlite3.Row
+            con.execute("PRAGMA query_only=ON")
+            return [dict(row) for row in con.execute(sql, params).fetchall()]
+    except (OSError, sqlite3.Error, ValueError):
+        return []
+
+
+def snapshot(*, max_items: int = 7) -> dict[str, Any]:
+    """Local UI projection. Displays *recorded* events, never hypothetical ones."""
+    limit = max(1, min(20, int(max_items)))
+    reliability_on = _flag("JARVIS_HERMES_RELIABILITY_ENABLED")
+    mission_on = _flag("JARVIS_RUNTIME_CONVERGENCE_ENABLED")
+    rows = _readonly(
+        _action_path(),
+        "SELECT action_id,turn_id,name,status,success,verified,created_at "
+        "FROM actions ORDER BY created_at DESC, rowid DESC LIMIT ?",
+        (limit,),
+    ) if reliability_on else []
+    actions = [
+        {
+            "id": str(row["action_id"])[:40],
+            "turn_id": str(row["turn_id"])[:40],
+            "tool": str(row["name"])[:100],
+            "status": str(row["status"])[:35],
+            "verified": row["verified"] == 1,
+            "success": row["success"] == 1,
+            "when": str(row["created_at"])[:35],
+        }
+        for row in rows
+    ]
+    user_id = os.getenv("JARVIS_KERNEL_SHADOW_USER_ID") or "local-user"
+    records = _readonly(
+        _mission_root() / "mission_context.sqlite3",
+        "SELECT mission_id,goal_summary,status,updated_at,state_json "
+        "FROM mission_contexts WHERE user_id=? "
+        "ORDER BY updated_at DESC LIMIT ?",
+        (user_id, limit),
+    ) if mission_on else []
+    missions = []
+    for row in records:
+        try:
+            state = json.loads(row.get("state_json") or "{}")
+        except (TypeError, ValueError):
+            state = {}
+        if not isinstance(state, dict):
+            state = {}
+        observed = state.get("observed_state") or {}
+        if not isinstance(observed, dict):
+            observed = {}
+        pending = state.get("pending_action") or {}
+        if not isinstance(pending, dict):
+            pending = {}
+        missions.append({
+            "id": str(row["mission_id"])[:70],
+            "goal": str(row["goal_summary"])[:150],
+            "status": str(row["status"])[:35],
+            "verified": observed.get("goal_verified") is True,
+            "needs_review": pending.get("manual_review_required") is True,
+            "updated_at": float(row["updated_at"]),
+        })
+    current_tasks = []
+    if missions:
+        graph = _readonly(
+            _mission_root() / "task_graphs.sqlite3",
+            "SELECT graph_json FROM mission_task_graphs WHERE mission_id=?",
+            (missions[0]["id"],),
+        )
+        if graph:
+            try:
+                nodes = json.loads(graph[0]["graph_json"]).get("nodes", [])[-limit:]
+            except (ValueError, AttributeError, TypeError):
+                nodes = []
+            for node in nodes:
+                if isinstance(node, dict):
+                    current_tasks.append({
+                        "name": str(node.get("task_id") or "")[:50],
+                        "capability": str(node.get("capability") or "")[:65],
+                        "status": str(node.get("status") or "")[:35],
+                        "tools": [str(x)[:50] for x in (node.get("result") or {}).get("action_names", [])[:5]],
+                    })
+    unknown = sum(row["status"] in ("unknown", "dispatched") for row in actions)
+    return {
+        "reliability_enabled": reliability_on,
+        "mission_enabled": mission_on,
+        "actions": actions,
+        "missions": missions,
+        "tasks": current_tasks,
+        "unresolved_visible": unknown,
+        "sample_limit": limit,
+        "observed_at": time.time(),
+    }
+
+
+def runtime_model_snapshot(runtime: Any) -> dict[str, Any]:
+    """Extract existing local counters only; never call a provider."""
+    current = runtime
+    budget = None
+    used = None
+    provider = ""
+    category = ""
+    seen = set()
+    for _ in range(12):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        if budget is None:
+            budget = getattr(current, "reliability_round_budget", None)
+            used = getattr(current, "reliability_rounds_used", None)
+        if not provider:
+            provider = str(getattr(current, "provider_name", "") or "")
+        if not category:
+            category = str(
+                getattr(current, "last_api_error_category", "")
+                or getattr(current, "reliability_last_failure_category", "") or ""
+            )
+        current = getattr(current, "delegate", None)
+    return {
+        "provider": provider or "non renseigné",
+        "rounds_used": used if isinstance(used, int) else None,
+        "rounds_limit": budget if isinstance(budget, int) else None,
+        "failure_category": category[:50],
+    }
