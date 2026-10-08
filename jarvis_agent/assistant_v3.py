@@ -264,9 +264,10 @@ class AssistantWorker(QObject):
             f"[MISSION_CONTROL] operation={command.operation} status="
             f"{result.get('status', '')} id={result.get('mission_id', '')}"
         )
-        if command.operation == "begin":
-            # Old direct-app questions must not hijack the new goal.
+        if command.operation in ("begin", "resume"):
+            # Old direct-app questions must not hijack an attached mission.
             self._pending_direct_follow_up = ""
+        if command.operation == "begin":
             # One ordinary model turn, same runtime/voice/chat path; no second
             # model, no separate planning executor, no pseudo-tool instructions.
             self._process_user_text(command.value, source="text")
