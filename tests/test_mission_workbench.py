@@ -214,7 +214,8 @@ class MissionWorkbenchTests(unittest.TestCase):
         self.assertFalse(data["release_ready"])
         self.assertEqual(data["stages"][6]["implementation"], "integrated")
         self.assertEqual(data["stages"][6]["automated"], "green_ancestor")
-        self.assertEqual(data["stages"][7]["implementation"], "in_progress")
+        self.assertEqual(data["stages"][7]["implementation"], "integrated")
+        self.assertEqual(data["stages"][7]["automated"], "green_current")
 
 
 class MissionOperatorUiTests(unittest.TestCase):
