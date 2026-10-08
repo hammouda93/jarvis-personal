@@ -461,7 +461,7 @@ class LiveMissionContinuityRuntime:
         state, version = loaded
         if state.user_id != self.owner_user_id:
             raise PermissionError("mission_owner_mismatch")
-        return {
+        result = {
             "mission_id": state.mission_id,
             "user_goal": state.user_goal,
             "status": state.status.value,
@@ -481,6 +481,17 @@ class LiveMissionContinuityRuntime:
                 for node in graph.nodes()
             ],
         }
+        from .semantic_goal_supervisor import evaluate_mission
+
+        result["supervisor"] = evaluate_mission(result)
+        return result
+
+    def review_mission(self, mission_id: str | None = None) -> dict[str, Any]:
+        """Read only; owner-scoped, no model/tool calls or persisted mutation."""
+        target = str(mission_id or self._active_mission_id or "")
+        if not target:
+            raise RuntimeError("no_active_mission")
+        return self.mission_snapshot(target)["supervisor"]
 
     def detach_mission(self) -> None:
         """Stop tracking locally without changing persistent state or replaying."""
