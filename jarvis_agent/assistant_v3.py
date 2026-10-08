@@ -110,6 +110,8 @@ class AssistantWorker(QObject):
     audio_level_changed = Signal(float)
     log_line = Signal(str)
     conversation_message = Signal(str, str, str)
+    telemetry_changed = Signal(dict)
+    operator_event = Signal(dict)
     finished = Signal()
 
     def __init__(self) -> None:
@@ -146,6 +148,14 @@ class AssistantWorker(QObject):
                 self._kernel_shadow_boot_error = (
                     f"{type(exc).__name__}: {exc}"
                 )
+
+    def _emit_operator_model(self) -> None:
+        """Send measured counters to GUI; GUI never touches the live agent."""
+        try:
+            from .operator_telemetry import runtime_model_snapshot
+            self.telemetry_changed.emit(runtime_model_snapshot(self._agent))
+        except (AttributeError, RuntimeError, TypeError):
+            pass
 
     def _state(self, state: AssistantState, status: str | None = None) -> None:
         self.state_changed.emit(state.value)
@@ -263,6 +273,32 @@ class AssistantWorker(QObject):
         success: bool | None = None,
     ) -> None:
         """Best-effort passive mirror; never affect the live control path."""
+        # Show *all* observed runtime turns, including direct fast-paths,
+        # even when Kernel Shadow and durable reliability are switched off.
+        # Do not transmit typed text, tool arguments or result bodies.
+        try:
+            observed = tuple(actions or ())
+            names = (
+                tuple(str(name)[:80] for name in action_names or ())
+                if action_names is not None
+                else tuple(str(getattr(action, "name", "") or "")[:80]
+                           for action in observed)
+            )
+            outcome = (
+                bool(success) if success is not None
+                else all(bool(getattr(action, "success", False))
+                         for action in observed)
+            )
+            self.operator_event.emit({
+                "source": str(source)[:50],
+                "tools": list(names[:8]),
+                "count": len(observed),
+                "success": outcome,
+                "verified": False,  # Final goal proof must be independent.
+            })
+        except Exception:
+            # Observability can never interrupt a voice, text or tool turn.
+            pass
         if self._kernel_shadow is None:
             return
         try:
@@ -638,6 +674,7 @@ class AssistantWorker(QObject):
                 phase=self._agent_phase,
             )
         except AgentRuntimeUnavailable as exc:
+            self._emit_operator_model()
             self.log_line.emit(f"[AGENT] unavailable: {exc}")
             self._shadow_observe(
                 user_text,
@@ -652,6 +689,7 @@ class AssistantWorker(QObject):
             )
             return True
 
+        self._emit_operator_model()
         self._shadow_observe(
             user_text,
             source="agent_runtime",
@@ -806,6 +844,7 @@ class AssistantWorker(QObject):
     @Slot()
     def run(self) -> None:
         self.log_line.emit("[BOOT] Jarvis native agent runtime started")
+        self._emit_operator_model()
         if self._kernel_shadow is not None:
             self.log_line.emit(
                 "[KERNEL_SHADOW] enabled=1 authoritative=0 "

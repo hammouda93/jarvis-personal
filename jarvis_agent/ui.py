@@ -29,10 +29,13 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QTextBrowser,
     QVBoxLayout,
+    QTabWidget,
     QWidget,
 )
 
 from .assistant_v3 import AssistantWorker
+from .operator_console import OperatorConsole
+from .operator_telemetry import snapshot as operator_snapshot
 from .config import settings
 from .states import AssistantState, STATE_LABELS
 
@@ -947,6 +950,13 @@ class JarvisWindow(QWidget):
 
         self.canvas = PersonalJarvisCanvas(self)
         self.flow_panel = FlowPanel(self)
+        self.operator_console = OperatorConsole(self)
+        self.side_tabs = QTabWidget(self)
+        self.side_tabs.setObjectName("sideTabs")
+        self.side_tabs.setMinimumWidth(340)
+        self.side_tabs.setMaximumWidth(410)
+        self.side_tabs.addTab(self.operator_console, "◉  CONTRÔLE")
+        self.side_tabs.addTab(self.flow_panel, "◇  TRAJET")
         self.canvas.setMinimumSize(520, 360)
 
         title = QLabel("PERSONAL JARVIS")
@@ -980,6 +990,13 @@ class JarvisWindow(QWidget):
         self.clean_button.setObjectName("topButton")
         self.clean_button.setCheckable(True)
 
+        self.operator_full_button = QPushButton("▤  Supervision")
+        self.operator_full_button.setObjectName("topButton")
+        self.operator_full_button.setCheckable(True)
+        self.operator_full_button.setToolTip(
+            "Agrandir la console réelle de missions, actions, mémoire et modèle."
+        )
+
         self.freeze_button = QPushButton("Ⅱ  Figer les animations")
         self.freeze_button.setObjectName("topButton")
         self.freeze_button.setCheckable(True)
@@ -1001,6 +1018,7 @@ class JarvisWindow(QWidget):
         controls = QHBoxLayout()
         controls.setSpacing(6)
         controls.addWidget(self.clean_button)
+        controls.addWidget(self.operator_full_button)
         controls.addWidget(self.freeze_button)
         controls.addWidget(self.compact_button)
         controls.addSpacing(6)
@@ -1020,7 +1038,7 @@ class JarvisWindow(QWidget):
         middle = QHBoxLayout()
         middle.setSpacing(14)
         middle.addWidget(self.canvas, 1)
-        middle.addWidget(self.flow_panel)
+        middle.addWidget(self.side_tabs)
 
         self.status_label = QLabel("Initialisation de Personal Jarvis…")
         self.status_label.setObjectName("liveStatus")
@@ -1184,6 +1202,23 @@ class JarvisWindow(QWidget):
                 max-width: 28px;
                 padding: 5px 3px;
                 border-radius: 9px;
+            }
+            QTabWidget#sideTabs::pane {
+                border: 1px solid rgba(54, 160, 196, 84);
+                border-radius: 13px;
+                background: rgba(2, 13, 27, 220);
+            }
+            QTabWidget#sideTabs QTabBar::tab {
+                background: #061a2b;
+                color: #82bcc9;
+                padding: 8px 12px;
+                margin-right: 3px;
+                border-radius: 8px;
+                font-size: 9px;
+            }
+            QTabWidget#sideTabs QTabBar::tab:selected {
+                background: #124158;
+                color: #e9fdff;
             }
             QFrame#flowPanel {
                 background: rgba(2, 13, 27, 220);
@@ -1358,6 +1393,7 @@ class JarvisWindow(QWidget):
         self._worker.finished.connect(self._thread.quit)
         self._thread.finished.connect(self._on_worker_thread_finished)
         self._worker.state_changed.connect(self._on_state)
+        self._worker.state_changed.connect(self.operator_console.update_phase)
         self._worker.status_changed.connect(self.status_label.setText)
         self._worker.transcript_changed.connect(self._on_transcript)
         self._worker.detail_changed.connect(self._on_detail)
@@ -1365,10 +1401,13 @@ class JarvisWindow(QWidget):
         self._worker.log_line.connect(self._on_log)
         self._worker.log_line.connect(_safe_console_log)
         self._worker.conversation_message.connect(self._on_conversation_message)
+        self._worker.telemetry_changed.connect(self.operator_console.update_model)
+        self._worker.operator_event.connect(self.operator_console.update_live_event)
 
         self.canvas.route_changed.connect(self._on_route_changed)
 
         self.clean_button.toggled.connect(self._set_clean_view)
+        self.operator_full_button.toggled.connect(self._set_operator_full_mode)
         self.freeze_button.toggled.connect(self._set_animations_frozen)
         self.compact_button.toggled.connect(self._set_compact_mode)
         self.conversation_button.toggled.connect(self._set_text_panel)
@@ -1378,10 +1417,29 @@ class JarvisWindow(QWidget):
         self.max_button.clicked.connect(self._toggle_maximize)
         self.close_button.clicked.connect(self.close)
 
+        # The console reads only local, already-persisted snapshots. No UI
+        # polling ever calls the model, any action tool, or the worker thread.
+        self._operator_timer = QTimer(self)
+        self._operator_timer.setInterval(1400)
+        self._operator_timer.timeout.connect(self._refresh_operator_console)
+        self._operator_timer.start()
         self._thread.start()
 
         if settings.ui_fullscreen:
             self.showFullScreen()
+
+    def _refresh_operator_console(self) -> None:
+        if self._compact_mode or self.clean_button.isChecked():
+            return
+        try:
+            self.operator_console.apply_snapshot(
+                operator_snapshot(
+                    max_items=18 if self.operator_full_button.isChecked() else 7
+                )
+            )
+        except (OSError, ValueError, RuntimeError):
+            # Read-only monitoring must never stop user interaction.
+            self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
 
     def _set_text_panel(self, enabled: bool) -> None:
         self._worker.set_text_mode(bool(enabled))
@@ -1462,8 +1520,26 @@ class JarvisWindow(QWidget):
             else:
                 self.canvas._append_route("respond")
 
+    def _set_operator_full_mode(self, enabled: bool) -> None:
+        if enabled and self.clean_button.isChecked():
+            self.clean_button.setChecked(False)
+        if enabled and self._compact_mode:
+            self.operator_full_button.setChecked(False)
+            return
+        self.side_tabs.setCurrentWidget(self.operator_console)
+        self.side_tabs.setMaximumWidth(16777215 if enabled else 410)
+        self.canvas.setVisible(not enabled and not self._compact_mode)
+        self.operator_full_button.setText(
+            "◉  Revenir au graphe" if enabled else "▤  Supervision"
+        )
+        self._refresh_operator_console()
+
     def _set_clean_view(self, enabled: bool) -> None:
-        self.flow_panel.setVisible(not enabled)
+        if enabled and self.operator_full_button.isChecked():
+            # Clean view must never become an empty screen while expanded
+            # supervision has hidden the normal animated canvas.
+            self.operator_full_button.setChecked(False)
+        self.side_tabs.setVisible(not enabled and not self._compact_mode)
         self.detail_label.setVisible(not enabled)
 
     def _set_animations_frozen(self, frozen: bool) -> None:
@@ -1486,11 +1562,13 @@ class JarvisWindow(QWidget):
             self.showNormal()
             self.setMinimumSize(*COMPACT_MIN_SIZE)
             self.canvas.hide()
-            self.flow_panel.hide()
+            self.side_tabs.hide()
             self.brand_tagline.hide()
             self.chip_msf.hide()
             self.chip_research.hide()
             self.clean_button.hide()
+            self.operator_full_button.setChecked(False)
+            self.operator_full_button.hide()
             self.freeze_button.hide()
             self.detail_label.hide()
             self.transcript_label.hide()
@@ -1504,9 +1582,10 @@ class JarvisWindow(QWidget):
             self.chat_input.setFocus()
         else:
             self.setMinimumSize(*NORMAL_MIN_SIZE)
-            self.canvas.show()
+            self.canvas.setVisible(not self.operator_full_button.isChecked())
+            self.operator_full_button.show()
             if not self.clean_button.isChecked():
-                self.flow_panel.show()
+                self.side_tabs.show()
                 self.detail_label.show()
             self.brand_tagline.show()
             self.chip_msf.show()
@@ -1572,6 +1651,17 @@ class JarvisWindow(QWidget):
 
         if text.startswith("[AGENT] provider=cerebras"):
             self.chip_cerebras.detail.setText("Actif")
+
+        # Actual numbered model rounds, emitted by the existing runtime.
+        current_round = re.search(
+            r"^\[AGENT\] provider=([^\s]+) model=([^\s]+) round=(\d+)",
+            text,
+        )
+        if current_round:
+            previous = dict(self.operator_console._last_model)
+            previous["provider"] = current_round.group(1)
+            previous["rounds_used"] = int(current_round.group(3))
+            self.operator_console.update_model(previous)
 
         call = re.search(r"\[AGENT_TOOL\] call=([^\s]+)", text)
         if call:

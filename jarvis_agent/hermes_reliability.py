@@ -159,6 +159,28 @@ class ActionLedger:
             )
         return action_id, ""
 
+    def record_guard(self, *, turn_id: str, name: str, arguments: dict[str, Any], code: str) -> None:
+        """Record a *denied* action without dispatching it or exposing raw args.
+
+        Guard records are never candidates for replay blocking. Only fixed
+        machine-readable reasons can be stored here.
+        """
+        allowed = {
+            "repeated_exact_failure", "no_observable_progress",
+            "checkpoint_unavailable", "prior_outcome_unknown",
+            "result_checkpoint_failed_outcome_unknown",
+            "tool_reported_outcome_unknown",
+        }
+        if code not in allowed:
+            raise ValueError("invalid_guard_code")
+        with self._lock, self._connect() as cx:
+            cx.execute(
+                "INSERT INTO actions (action_id,turn_id,name,argument_digest,status,success,verified,evidence_ref,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("act_" + uuid.uuid4().hex, str(turn_id)[:90], str(name)[:120],
+                 self.signature(name, arguments), "guarded", 0, 0, code, _now(), _now()),
+            )
+
     def finish(self, action_id: str, *, success: bool, unknown: bool = False, verified: bool = False) -> None:
         with self._lock, self._connect() as cx:
             cx.execute(
@@ -192,7 +214,9 @@ class ActionLedger:
     def recent(self, *, turn_id: str) -> list[dict[str, Any]]:
         with self._connect() as cx:
             rows = cx.execute(
-                "SELECT action_id,name,status,success,verified FROM actions WHERE turn_id=? ORDER BY created_at,action_id",
+                "SELECT action_id,name,status,success,verified, "
+                "CASE WHEN status='guarded' THEN evidence_ref ELSE '' END AS guard_reason "
+                "FROM actions WHERE turn_id=? ORDER BY created_at,action_id",
                 (turn_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -213,14 +237,25 @@ class ReliabilityToolRegistry:
         turn_id = "turn_" + uuid.uuid4().hex
         self._local.turn_id = turn_id
         self._local.failures = {}
+        self._local.observations = {}
         return turn_id
 
     def end_turn(self) -> None:
         self._local.turn_id = None
         self._local.failures = {}
+        self._local.observations = {}
 
-    @staticmethod
-    def _blocked(name: str, reason: str) -> AgentActionResult:
+    def _blocked(self, name: str, reason: str, args: dict[str, Any] | None = None) -> AgentActionResult:
+        code = reason.split(":", 1)[0]
+        try:
+            self.ledger.record_guard(
+                turn_id=getattr(self._local, "turn_id", None)
+                or "external_" + uuid.uuid4().hex,
+                name=name, arguments=args or {}, code=code,
+            )
+        except (OSError, sqlite3.Error, ValueError, RuntimeError):
+            # The tool remains denied even if diagnostic storage is unavailable.
+            pass
         return AgentActionResult(
             name=name, success=False,
             message="Action non répétée : état incertain ou aucun progrès vérifiable. Une nouvelle observation est nécessaire.",
@@ -232,7 +267,13 @@ class ReliabilityToolRegistry:
         digest = self.ledger.signature(name, args)
         failures = getattr(self._local, "failures", {})
         if failures.get(digest, 0) >= 2:
-            return self._blocked(name, "repeated_exact_failure")
+            return self._blocked(name, "repeated_exact_failure", args)
+        # For observational tools only, three *identical* successful results
+        # without any content change signal a stalled inspection loop.
+        # Mutating tools are NEVER automatically reclassified as read-only.
+        observations = getattr(self._local, "observations", {})
+        if not is_mutating(name) and observations.get(digest, ("", 0))[1] >= 3:
+            return self._blocked(name, "no_observable_progress", args)
         turn_id = getattr(self._local, "turn_id", None) or "external_" + uuid.uuid4().hex
         try:
             action_id, unresolved = self.ledger.begin(
@@ -240,9 +281,9 @@ class ReliabilityToolRegistry:
             )
         except (OSError, sqlite3.Error, RuntimeError):
             # Never execute a side effect if durable pre-dispatch failed.
-            return self._blocked(name, "checkpoint_unavailable")
+            return self._blocked(name, "checkpoint_unavailable", args)
         if action_id is None:
-            return self._blocked(name, "prior_outcome_unknown:" + unresolved)
+            return self._blocked(name, "prior_outcome_unknown:" + unresolved, args)
 
         try:
             result = self.delegate.execute(name, args, approved=approved)
@@ -266,15 +307,29 @@ class ReliabilityToolRegistry:
             self.ledger.finish(action_id, success=success, unknown=unknown, verified=verified)
         except (OSError, sqlite3.Error):
             # Actual outcome may have happened; report uncertainty, not success.
-            return self._blocked(name, "result_checkpoint_failed_outcome_unknown")
+            return self._blocked(name, "result_checkpoint_failed_outcome_unknown", args)
 
         if unknown:
             # An existing tool might report success while explicitly saying
             # its effect is unknown. Never promote this to verified success.
-            return self._blocked(name, "tool_reported_outcome_unknown")
+            return self._blocked(name, "tool_reported_outcome_unknown", args)
         if not success:
             failures[digest] = failures.get(digest, 0) + 1
             self._local.failures = failures
+        elif not is_mutating(name):
+            # Never store observation bodies in the journal. Per-turn HMAC
+            # fingerprints only, so a changed screen resets the stall counter.
+            raw = json.dumps(
+                [bool(success), str(getattr(result, "message", "") or ""),
+                 str(getattr(result, "detail", "") or "")],
+                ensure_ascii=False, separators=(",", ":"),
+            ).encode("utf-8")
+            fingerprint = hmac.new(self.ledger._key, raw, hashlib.sha256).hexdigest()
+            previous, count = observations.get(digest, ("", 0))
+            observations[digest] = (
+                fingerprint, count + 1 if previous == fingerprint else 1
+            )
+            self._local.observations = observations
         return result
 
 

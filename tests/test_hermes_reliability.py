@@ -149,6 +149,71 @@ class HermesReliabilityTests(unittest.TestCase):
         self.assertFalse(self.tools.execute("inspect_interface", {"title": "other"}).success)
         self.assertEqual(len(self.delegate.calls), 3)
 
+    def test_identical_observations_stop_only_after_three_without_progress(self):
+        self.delegate.result = action(
+            "browser_observe_dom", True, '{"observation":"page unchanged"}'
+        )
+        for _ in range(3):
+            self.assertTrue(
+                self.tools.execute("browser_observe_dom", {"tab_id": 8}).success
+            )
+        blocked = self.tools.execute("browser_observe_dom", {"tab_id": 8})
+        self.assertFalse(blocked.success)
+        self.assertIn("no_observable_progress", blocked.detail)
+        self.assertEqual(len(self.delegate.calls), 3)
+        recorded = self.ledger.recent(turn_id=self.turn_id)
+        self.assertEqual(len(recorded), 4)
+        self.assertEqual(recorded[-1]["status"], "guarded")
+        self.assertEqual(recorded[-1]["guard_reason"], "no_observable_progress")
+        # A different target is a separate observation, never blocked.
+        self.assertTrue(
+            self.tools.execute("browser_observe_dom", {"tab_id": 9}).success
+        )
+        self.assertEqual(len(self.delegate.calls), 4)
+
+    def test_changed_observation_resets_stall_detection(self):
+        args = {"title": "unknown app"}
+        self.delegate.result = action("inspect_active_window", True, '{"screen":1}')
+        for _ in range(2):
+            self.assertTrue(self.tools.execute("inspect_active_window", args).success)
+        self.delegate.result = action("inspect_active_window", True, '{"screen":2}')
+        self.assertTrue(self.tools.execute("inspect_active_window", args).success)
+        self.assertTrue(self.tools.execute("inspect_active_window", args).success)
+        self.assertEqual(len(self.delegate.calls), 4)
+        self.tools.end_turn()
+        self.tools.begin_turn()
+        self.assertTrue(self.tools.execute("inspect_active_window", args).success)
+        self.assertEqual(len(self.delegate.calls), 5)
+
+    def test_unknown_mutation_not_reclassified_as_observation(self):
+        self.assertTrue(is_mutating("send_message_via_new_provider"))
+        for i in range(4):
+            self.assertTrue(
+                self.tools.execute(
+                    "send_message_via_new_provider", {"message": "test", "index": i}
+                ).success
+            )
+        self.assertEqual(len(self.delegate.calls), 4)
+        self.assertFalse(any(
+            x["status"] == "guarded"
+            for x in self.ledger.recent(turn_id=self.turn_id)
+        ))
+
+    def test_guarded_history_does_not_hide_unknown_side_effect(self):
+        args = {"tab_id": 2, "ref": "obs3:e6"}
+        self.delegate.error = TimeoutError("action may have happened")
+        with self.assertRaises(TimeoutError):
+            self.tools.execute("browser_click", args)
+        self.delegate.error = None
+        failed = self.tools.execute("browser_click", args)
+        self.assertFalse(failed.success)
+        self.assertEqual(len(self.delegate.calls), 1)
+        rows = self.ledger.recent(turn_id=self.turn_id)
+        self.assertEqual([x["status"] for x in rows], ["unknown", "guarded"])
+        self.assertEqual(rows[-1]["guard_reason"], "prior_outcome_unknown")
+        self.assertNotIn("obs3:e6", repr(rows))
+        self.assertNotIn("obs3:e6", self.ledger.db.read_text("latin-1"))
+
     def test_failed_prewrite_aborts_before_any_effect(self):
         with patch.object(self.ledger, "begin", side_effect=sqlite3.OperationalError("disk full")):
             reply = self.tools.execute("click_ui_element", {"ref": "obs3:e6"})
