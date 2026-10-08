@@ -157,6 +157,8 @@ class OperatorConsole(QFrame):
         self.mission_id_input.setPlaceholderText("Identifiant live_… d'une mission existante")
         self.mission_resume_button = QPushButton("↻ Reprendre le suivi")
         self.mission_resume_button.setObjectName("missionButton")
+        self.mission_review_button = QPushButton("◇ Vérifier la progression")
+        self.mission_review_button.setObjectName("missionButton")
         self.mission_detach_button = QPushButton("Ⅱ Détacher sans conclure")
         self.mission_detach_button.setObjectName("missionButton")
         buttons = QHBoxLayout()
@@ -173,6 +175,7 @@ class OperatorConsole(QFrame):
         mission_layout.addWidget(self.mission_begin_button)
         mission_layout.addWidget(self.mission_picker)
         mission_layout.addWidget(self.mission_id_input)
+        mission_layout.addWidget(self.mission_review_button)
         mission_layout.addLayout(buttons)
         mission_layout.addWidget(self.mission_feedback)
         layout.addWidget(controls_box)
@@ -181,6 +184,9 @@ class OperatorConsole(QFrame):
         )
         self.mission_resume_button.clicked.connect(
             lambda: self._request_mission("resume", self.mission_id_input.text())
+        )
+        self.mission_review_button.clicked.connect(
+            lambda: self._request_mission("review", self.mission_id_input.text())
         )
         self.mission_detach_button.clicked.connect(
             lambda: self._request_mission("detach", "")
@@ -274,6 +280,15 @@ class OperatorConsole(QFrame):
             self.mission_id_input.setText(mid)
         if success and operation == "begin":
             self.mission_goal_input.clear()
+        if success and operation == "review":
+            report = result.get("review") or {}
+            state = str(report.get("state") or "non_renseigné")[:60]
+            missing = len(report.get("missing_evidence") or [])
+            self.mission_feedback.setText(
+                f"Supervision : {state} · {missing} preuve(s) manquante(s). "
+                "Aucun outil exécuté ni objectif automatiquement déclaré réussi."
+            )
+            return
         if not success:
             description = str(result.get("reason") or "commande refusée")[:160]
             self.mission_feedback.setText("Refus : " + description)
@@ -410,6 +425,7 @@ class OperatorConsole(QFrame):
         self.mission_begin_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_resume_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_detach_button.setEnabled(bool(data.get("mission_enabled")))
+        self.mission_review_button.setEnabled(bool(data.get("mission_enabled")))
         mission_on = bool(data.get("mission_enabled"))
         reliability_on = bool(data.get("reliability_enabled"))
         kernel_mode = "Shadow configuré (passif)" if data.get("kernel_shadow_enabled") else "Shadow désactivé"
