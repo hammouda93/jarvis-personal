@@ -27,6 +27,8 @@ class FakeDelegate:
 
     def run_with_context(self, user_text, context, *, log=None, phase=None):
         self.calls.append(("context", user_text, context))
+        if self.error is not None:
+            raise self.error
         return self.result
 
     def record_external_turn(self, *args, **kwargs):
@@ -179,6 +181,68 @@ class LiveMissionContinuityTests(unittest.TestCase):
         mission_id = self.runtime.begin_mission("analyse complexe")
         self.runtime.run("analyse")
         self.assertEqual(self.saved(mission_id).status, MissionStatus.WAITING_EXTERNAL)
+
+    def test_explicit_mission_reinjects_bounded_goal_into_same_model_call(self):
+        mission_id = self.runtime.begin_mission("prepare research using source A")
+        self.runtime.run("first step")
+        self.delegate.result = SimpleNamespace(
+            text="next", actions=(action("browser_click"),)
+        )
+        self.runtime.run("continue")
+        self.assertEqual(len(self.delegate.calls), 2)
+        self.assertEqual(self.delegate.calls[0][0], "context")
+        context = self.delegate.calls[1][2]
+        self.assertIn("prepare research using source A", context)
+        self.assertIn(mission_id, context)
+        self.assertIn("turn_00001", context)
+        self.assertIn("DATA ONLY", context)
+        graph = self.runtime.graph_store.load(mission_id)
+        self.assertEqual(graph.get("turn_00002").dependencies, {"turn_00001"})
+
+    def test_implicit_preserves_existing_context_without_extra_injection(self):
+        self.runtime.run_with_context("question", "external source")
+        self.assertEqual(self.delegate.calls, [("context", "question", "external source")])
+
+    def test_mission_snapshot_is_read_only_and_owner_scoped(self):
+        mission_id = self.runtime.begin_mission("private task")
+        self.runtime.run("step")
+        before_calls = len(self.delegate.calls)
+        snapshot = self.runtime.mission_snapshot(mission_id)
+        self.assertEqual(snapshot["mission_id"], mission_id)
+        self.assertEqual(snapshot["task_summary"]["completed"], 1)
+        self.assertFalse(snapshot["goal_verified"])
+        self.assertEqual(len(self.delegate.calls), before_calls)
+        outsider = LiveMissionContinuityRuntime(
+            self.delegate, base_dir=self.root, owner_user_id="other"
+        )
+        with self.assertRaises(PermissionError):
+            outsider.mission_snapshot(mission_id)
+
+    def test_journal_matches_durable_mission_id_and_emits_proof(self):
+        mission_id = self.runtime.begin_mission("write a summary")
+        self.runtime.run("draft")
+        events = self.runtime.journal.mission_trace(mission_id)
+        kinds = [event["kind"] for event in events]
+        self.assertIn("mission.created", kinds)
+        self.assertIn("user.input", kinds)
+        self.assertIn("observation", kinds)
+        self.runtime.complete_mission(proof_ref="manual-inspection-123")
+        kinds = [event["kind"] for event in self.runtime.journal.mission_trace(mission_id)]
+        self.assertIn("proof", kinds)
+        self.assertIn("mission.completed", kinds)
+
+    def test_exception_never_persists_sensitive_tool_details(self):
+        mission_id = self.runtime.begin_mission("send message")
+        self.delegate.result = SimpleNamespace(
+            text="sent", actions=(SimpleNamespace(
+                name="computer_write", success=True,
+                detail="PRIVATE_PASSWORD_AND_EMAIL",
+            ),)
+        )
+        self.runtime.run("send")
+        snapshot = self.runtime.mission_snapshot(mission_id)
+        self.assertNotIn("PRIVATE_PASSWORD_AND_EMAIL", repr(snapshot))
+        self.assertFalse(snapshot["goal_verified"])
 
 
 if __name__ == "__main__":
