@@ -3989,7 +3989,9 @@ class GroqResponsesAgent:
                     }
                     return AgentTurnResult(
                         text=(
-                            "Cette action va modifier les données MS Football. "
+                            ("Cet appel MCP transmet des arguments au serveur externe sélectionné. "
+                            if name == "mcp_call_tool" else
+                            "Cette action va modifier les données MS Football. ")
                             "J'ai besoin de votre confirmation explicite. "
                             "Dites oui pour exécuter ou non pour annuler."
                         ),
