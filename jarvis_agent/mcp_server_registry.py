@@ -58,6 +58,12 @@ class MCPRegistry:
             raise ValueError("invalid_mcp_registry")
         if raw.get("version") != 1:
             raise ValueError("unsupported_mcp_registry_version")
+        for server, entry in raw["servers"].items():
+            if (not _ID.fullmatch(str(server)) or not isinstance(entry, dict)
+                    or entry.get("kind") not in {"http", "stdio"}
+                    or not isinstance(entry.get("tools", {}), dict)
+                    or not all(isinstance(tool, dict) for tool in entry.get("tools", {}).values())):
+                raise ValueError("invalid_mcp_server_record")
         return raw
 
     def _write(self, data: dict) -> None:
@@ -81,7 +87,7 @@ class MCPRegistry:
         with self._lock:
             servers = self._load()["servers"]
         # Never return raw env values, tokens, or internal connection handles.
-        return [
+        result = [
             {
                 "id": name,
                 "kind": entry.get("kind"),
@@ -93,6 +99,7 @@ class MCPRegistry:
                     entry.get("last_discovery_success_utc") or ""
                 )[:40],
                 "connected_now": False,
+                "credential_source": entry.get("credential_source", "environment") if entry.get("kind") == "http" else "scoped_environment",
                 "discovered": len(entry.get("tools") or {}),
                 "allowed": sum(
                     (tool.get("allowed") is True)
@@ -107,6 +114,31 @@ class MCPRegistry:
             for name, entry in sorted(servers.items())
             if isinstance(entry, dict)
         ][:40]
+        from .mcp_activity import quota_limits
+        for row in result:
+            try:
+                row["quotas"] = quota_limits(servers[row["id"]])
+                row["activity"] = self.activity().summary(row["id"])
+            except Exception:
+                row["activity"] = {"unavailable": True}
+        return result
+
+    def activity(self):
+        from .mcp_activity import MCPActivityStore
+        return MCPActivityStore(self.path.with_suffix(".activity.sqlite3"))
+
+    def set_quotas(self, server_id: str, quotas: dict):
+        from .mcp_activity import quota_limits
+        if not isinstance(quotas, dict) or set(quotas) != {"sessions_per_hour", "calls_per_hour"}:
+            raise ValueError("invalid_mcp_quota")
+        validated = quota_limits({"quotas": quotas})
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not isinstance(entry, dict):
+                raise KeyError("mcp_server_not_found")
+            entry["quotas"] = validated
+            self._write(data)
 
     def get_server(self, server_id: str) -> dict | None:
         with self._lock:
@@ -142,10 +174,57 @@ class MCPRegistry:
             data = self._load()
             if "hermes" in data["servers"]:
                 raise ValueError("mcp_server_already_exists")
+            if len(data["servers"]) >= 30:
+                raise ValueError("mcp_server_limit")
             data["servers"]["hermes"] = {
                 "kind": "stdio", "command": "hermes",
                 "args": ["mcp", "serve"], "enabled": False, "tools": {},
             }
+            self._write(data)
+
+    def add_stdio(self, server_id: str, command: str, args: list[str], *,
+                  trusted: bool = False, env_refs: dict | None = None) -> None:
+        from .mcp_security import validate_stdio
+        server_id = self._check_id(server_id)
+        entry = {"kind": "stdio", "command": command, "args": args,
+                 "trusted_stdio": trusted is True, "env_refs": {} if env_refs is None else env_refs,
+                 "enabled": False, "tools": {}}
+        validate_stdio(entry)
+        with self._lock:
+            data = self._load()
+            if server_id in data["servers"]:
+                raise ValueError("mcp_server_already_exists")
+            if len(data["servers"]) >= 30:
+                raise ValueError("mcp_server_limit")
+            data["servers"][server_id] = entry
+            self._write(data)
+
+    def revoke_tools(self, server_id: str) -> None:
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not isinstance(entry, dict):
+                raise KeyError("mcp_server_not_found")
+            for tool in (entry.get("tools") or {}).values():
+                tool["allowed"] = False
+            self._write(data)
+
+    def set_credential_source(self, server_id: str, source: str) -> None:
+        if source not in {"environment", "vault", "none", "oauth"}:
+            raise ValueError("invalid_mcp_credential_source")
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not isinstance(entry, dict) or entry.get("kind") != "http":
+                raise ValueError("http_server_required_for_bearer")
+            entry["credential_source"] = source
+            self._write(data)
+
+    def remove_server(self, server_id: str) -> None:
+        with self._lock:
+            data = self._load()
+            if data["servers"].pop(self._check_id(server_id), None) is None:
+                raise KeyError("mcp_server_not_found")
             self._write(data)
 
     def set_enabled(self, server_id: str, enabled: bool) -> None:

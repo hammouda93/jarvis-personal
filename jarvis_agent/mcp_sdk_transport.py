@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 from typing import Any
 
 
 class MCPUnavailable(RuntimeError):
-    pass
+    def __init__(self, message: str, *, outcome_unknown: bool = False):
+        super().__init__(message)
+        self.outcome_unknown = outcome_unknown
 
 
 class OfficialMCPTransport:
@@ -19,7 +22,8 @@ class OfficialMCPTransport:
 
     @staticmethod
     async def _with_session(entry: dict, operation: str, *,
-                            tool: str = "", arguments: dict | None = None) -> Any:
+                            tool: str = "", arguments: dict | None = None,
+                            oauth_flow=None, vault=None) -> Any:
         try:
             from mcp import ClientSession
             from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -81,13 +85,18 @@ class OfficialMCPTransport:
         if kind == "stdio":
             # A stdio command is ONLY launched after explicit discovery or
             # an already approved tool call. Never interpolate with a shell.
-            if entry.get("command") != "hermes" or entry.get("args") != ["mcp", "serve"]:
-                raise MCPUnavailable("stdio_profile_not_trusted")
-            params = StdioServerParameters(
-                command="hermes", args=["mcp", "serve"], env=None,
-            )
-            async with stdio_client(params) as (read, write):
-                return await proceed(read, write)
+            from .mcp_security import stdio_command, stdio_environment
+            try:
+                env = stdio_environment(entry)
+                command = stdio_command(entry)
+            except ValueError as exc:
+                raise MCPUnavailable(str(exc)) from exc
+            # Avoid giving a server the repository's .env through its cwd or
+            # leaking arbitrary server stderr into the conversation/log files.
+            with tempfile.TemporaryDirectory(prefix="jarvis_mcp_") as workdir, open(os.devnull, "w") as errlog:
+                params = StdioServerParameters(command=command, args=entry["args"], env=env, cwd=workdir)
+                async with stdio_client(params, errlog=errlog) as (read, write):
+                    return await proceed(read, write)
         if kind == "http":
             from .mcp_server_registry import _valid_remote
             url = str(entry.get("url") or "")
@@ -96,21 +105,41 @@ class OfficialMCPTransport:
             # Env credentials are not stored in mcp_servers.json or UI.
             server_id = str(entry.get("id") or "")
             env_key = "JARVIS_MCP_BEARER_" + server_id.upper()
-            bearer = os.getenv(env_key, "").strip()
-            if bearer:
-                # MCP SDK 2.3+ takes a preconfigured httpx2 client rather than
-                # a legacy headers= argument. Tokens stay in process memory.
-                import httpx2
-
-                async with httpx2.AsyncClient(
-                    headers={"Authorization": "Bearer " + bearer}
-                ) as http_client:
-                    async with streamable_http_client(
-                        url, http_client=http_client
-                    ) as streams:
-                        return await proceed(streams[0], streams[1])
-            async with streamable_http_client(url) as streams:
-                return await proceed(streams[0], streams[1])
+            source = entry.get("credential_source", "environment")
+            auth = None
+            if source == "vault":
+                from .mcp_credentials import CredentialUnavailable, CredentialVault
+                try:
+                    bearer = CredentialVault(entry.get("_credential_root")).read(server_id, url)
+                except CredentialUnavailable as exc:
+                    raise MCPUnavailable(str(exc)) from exc
+                if not bearer:
+                    raise MCPUnavailable("mcp_secure_credential_missing")
+            elif source == "environment":
+                bearer = os.getenv(env_key, "").strip()
+            elif source == "none":
+                bearer = ""
+            elif source == "oauth":
+                from .mcp_oauth import build_oauth_provider
+                auth, storage = build_oauth_provider(entry, flow=oauth_flow, vault=vault)
+                if oauth_flow is not None:
+                    oauth_flow.storage = storage
+                bearer = ""
+            else:
+                raise MCPUnavailable("unknown_mcp_credential_source")
+            if any(c in bearer for c in "\r\n\x00"):
+                raise MCPUnavailable("invalid_mcp_bearer")
+            # The SDK follows selected same-origin redirects independently of
+            # httpx's follow_redirects. The request hook gates those too.
+            import httpx2
+            from .mcp_oauth import guarded_http_request
+            async def guard(request):
+                await guarded_http_request(request, url, oauth=auth is not None)
+            headers = {"Authorization": "Bearer " + bearer} if bearer else {}
+            async with httpx2.AsyncClient(headers=headers, auth=auth, trust_env=False,
+                    follow_redirects=False, event_hooks={"request": [guard]}) as http_client:
+                async with streamable_http_client(url, http_client=http_client) as streams:
+                    return await proceed(streams[0], streams[1])
         raise MCPUnavailable("unknown_mcp_transport")
 
     def invoke(self, entry: dict, operation: str, *,
@@ -121,13 +150,25 @@ class OfficialMCPTransport:
                 self._with_session(entry, operation, tool=tool,
                                    arguments=arguments), timeout=timeout
             ))
+        except MCPUnavailable:
+            raise
         except (TimeoutError, OSError, RuntimeError) as exc:
             # No automatic retry. For a *call* the remote side effect may
             # already have happened, even if a response was lost.
-            raise MCPUnavailable(type(exc).__name__) from exc
+            raise MCPUnavailable(type(exc).__name__, outcome_unknown=operation == "call") from exc
 
     def discover(self, entry: dict) -> list[dict]:
         return self.invoke(entry, "discover")
 
     def call_tool(self, entry: dict, tool: str, arguments: dict) -> dict:
         return self.invoke(entry, "call", tool=tool, arguments=arguments)
+
+    def authorize(self, entry: dict, *, stop_event=None, vault=None, opener=None, options=None) -> list[dict]:
+        from .mcp_oauth import LoopbackOAuth, until_cancelled
+        async def connect():
+            async with LoopbackOAuth(entry["url"], opener=opener, options=options) as flow:
+                result = await self._with_session({**entry, "credential_source": "oauth"},
+                    "discover", oauth_flow=flow, vault=vault)
+                flow.storage.commit()
+                return result
+        return asyncio.run(until_cancelled(connect(), stop_event))

@@ -1,2 +1,4 @@
 # Optional official Model Context Protocol SDK. Install only when connecting Jarvis to MCP servers.
 mcp>=2.3,<3
+# Linux desktop credentials use the official Secret Service backend; no plaintext fallback.
+keyring>=25.5,<26

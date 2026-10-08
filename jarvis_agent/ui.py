@@ -1448,17 +1448,15 @@ class JarvisWindow(QWidget):
     def _on_mcp_request(self, operation: str, server_id: str, value: str) -> None:
         """UI merely queues explicit MCP setup/discovery/policy commands."""
         if not self._thread.isRunning():
-            self.operator_console.mcp_panel.feedback.setText(
-                "Moteur Jarvis non démarré."
-            )
+            self.operator_console.mcp_panel.show_result({"success": False, "operation": operation,
+                "reason": "Moteur Jarvis non demarre."})
             return
         accepted = self._worker.submit_mcp_control(
             operation, server_id, value
         )
         if not accepted:
-            self.operator_console.mcp_panel.feedback.setText(
-                "Commande MCP rejetée : nom, outil ou adresse invalide."
-            )
+            self.operator_console.mcp_panel.show_result({"success": False, "operation": operation,
+                "reason": "Commande invalide ou consentement OAuth deja en cours."})
         else:
             self.operator_console.mcp_panel.feedback.setText(
                 "Commande en attente dans le worker ; aucune action de modèle lancée."

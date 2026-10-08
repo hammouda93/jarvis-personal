@@ -257,12 +257,16 @@ class AssistantWorker(QObject):
 
     def _run_mcp_control(self, command) -> None:
         try:
-            result = perform_mcp_command(self._mcp_registry, command)
+            result = perform_mcp_command(self._mcp_registry, command,
+                stop_event=self._mcp_control.stop_requested)
         except Exception as exc:
             # Never leak API tokens, bearer headers or arbitrary MCP output.
             result = {"success": False, "operation": command.operation,
                       "server_id": command.server_id,
                       "reason": type(exc).__name__}
+        finally:
+            if command.operation == "oauth_authorize":
+                self._mcp_control.finish_authorization()
         self.mcp_control_result.emit(result)
         self.log_line.emit(
             "[MCP_CONTROL] operation=" + command.operation
