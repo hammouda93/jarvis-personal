@@ -493,6 +493,26 @@ class LiveMissionContinuityRuntime:
             raise RuntimeError("no_active_mission")
         return self.mission_snapshot(target)["supervisor"]
 
+    def propose_mission_capabilities(self, mission_id: str | None = None) -> dict[str, Any]:
+        """Owner-scoped read-only specialist/MCP plan; NEVER delegates or calls a model."""
+        target = str(mission_id or self._active_mission_id or "")
+        if not target:
+            raise RuntimeError("no_active_mission")
+        saved = self.mission_snapshot(target)  # ownership is enforced here
+        from .capability_planner import propose_capabilities
+
+        tools = []
+        try:
+            from .mcp_server_registry import MCPRegistry
+            if os.getenv("JARVIS_MCP_ENABLED", "0").lower() in (
+                "1", "true", "yes", "on"
+            ):
+                tools = MCPRegistry().exposed_tools()
+        except (OSError, ValueError, KeyError, TypeError):
+            # Broken/absent MCP config never prevents native mission review.
+            tools = []
+        return propose_capabilities(saved, allowed_mcp=tools)
+
     def detach_mission(self) -> None:
         """Stop tracking locally without changing persistent state or replaying."""
         with self._lock:

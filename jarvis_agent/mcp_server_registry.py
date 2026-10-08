@@ -6,11 +6,13 @@ unexposed. Discovery does not grant model access or call any server tool.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
 import tempfile
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -87,6 +89,10 @@ class MCPRegistry:
                 if entry.get("kind") == "http"
                 else str(entry.get("command") or ""),
                 "enabled": entry.get("enabled") is True,
+                "last_discovery_success_utc": str(
+                    entry.get("last_discovery_success_utc") or ""
+                )[:40],
+                "connected_now": False,
                 "discovered": len(entry.get("tools") or {}),
                 "allowed": sum(
                     (tool.get("allowed") is True)
@@ -170,16 +176,44 @@ class MCPRegistry:
                 schema = tool.get("input_schema") or {}
                 if not isinstance(schema, dict) or len(json.dumps(schema)) > 15000:
                     continue
+                description = str(tool.get("description") or "")[:400]
+                definition = json.dumps(
+                    {"name": tool_name, "description": description,
+                     "input_schema": schema},
+                    sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+                ).encode("utf-8")
+                fingerprint = hashlib.sha256(definition).hexdigest()
                 old = existing.get(tool_name) or {}
+                # A server can replace a formerly benign tool under the same
+                # name. Any schema/description change REVOKES past consent.
+                allowed = (
+                    old.get("allowed") is True
+                    and old.get("fingerprint") == fingerprint
+                )
                 updated[tool_name] = {
-                    "description": str(tool.get("description") or "")[:400],
+                    "description": description,
                     "input_schema": schema,
-                    "allowed": old.get("allowed") is True,
+                    "fingerprint": fingerprint,
+                    "allowed": allowed,
                 }
             entry["tools"] = updated
             # Even after discovering, enabling and tool selection are separate.
             self._write(data)
             return len(updated)
+
+    def note_successful_discovery(self, server_id: str) -> None:
+        """Record last successful *transport discovery*, not current connectivity."""
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not isinstance(entry, dict):
+                raise KeyError("mcp_server_not_found")
+            if entry.get("enabled") is not True:
+                raise RuntimeError("mcp_server_disabled")
+            entry["last_discovery_success_utc"] = (
+                datetime.now(timezone.utc).isoformat(timespec="seconds")
+            )
+            self._write(data)
 
     def allow_tool(self, server_id: str, tool_name: str, allowed: bool) -> None:
         with self._lock:

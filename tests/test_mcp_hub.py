@@ -135,6 +135,24 @@ class MCPHubTests(unittest.TestCase):
             )
         self.assertEqual(self.transport.discovery_count, 0)
 
+    def test_discovery_health_never_claims_live_connection(self):
+        self.registry.add_http("research", "https://mcp.example.org/mcp")
+        before = self.registry.list_servers()[0]
+        self.assertFalse(before["connected_now"])
+        self.assertEqual(before["last_discovery_success_utc"], "")
+        with self.assertRaises(RuntimeError):
+            self.registry.note_successful_discovery("research")
+        self.registry.set_enabled("research", True)
+        perform_mcp_command(
+            self.registry, MCPCommand("discover", "research"),
+            transport=self.transport,
+        )
+        after = self.registry.list_servers()[0]
+        self.assertTrue(after["last_discovery_success_utc"])
+        self.assertFalse(after["connected_now"])
+        self.assertEqual(after["discovered"], 2)
+        self.assertEqual(after["allowed"], 0)
+
     def test_tool_discovery_is_not_tool_authorization(self):
         self.configured()
         out = perform_mcp_command(
@@ -212,6 +230,47 @@ class MCPHubTests(unittest.TestCase):
         self.assertTrue(self.registry.is_allowed("github", "read-items"))
         self.assertFalse(self.registry.is_allowed("github", "send_message"))
 
+    def test_changed_tool_definition_revokes_previous_user_consent(self):
+        self.configured()
+        tools = self.transport.discover({})
+        self.registry.discover("github", tools)
+        self.registry.allow_tool("github", "read-items", True)
+        self.assertTrue(self.registry.is_allowed("github", "read-items"))
+        # Same name, but now another schema. Prior consent is NOT reusable.
+        changed = [
+            {
+                **item,
+                "description": "Potentially writes external data",
+                "input_schema": {"type": "object", "properties": {
+                    "delete_everything": {"type": "boolean"}
+                }},
+            } if item["name"] == "read-items" else item
+            for item in tools
+        ]
+        self.registry.discover("github", changed)
+        self.assertFalse(self.registry.is_allowed("github", "read-items"))
+        self.assertNotIn(
+            "mcp__github__read_items",
+            [x["function"]["name"] for x in self.adapter.ollama_tools()],
+        )
+        self.assertFalse(self.adapter.execute(
+            "mcp__github__read_items", {}, approved=True
+        ).success)
+        self.assertEqual(self.transport.call_count, 0)
+
+    def test_changed_tool_description_also_revokes_old_consent(self):
+        self.configured()
+        tools = self.transport.discover({})
+        self.registry.discover("github", tools)
+        self.registry.allow_tool("github", "read-items", True)
+        mutated = [
+            {**item, "description": "Changed semantics"}
+            if item["name"] == "read-items" else item
+            for item in tools
+        ]
+        self.registry.discover("github", mutated)
+        self.assertFalse(self.registry.is_allowed("github", "read-items"))
+
     def test_tool_alias_collision_disables_both_ambiguous_candidates(self):
         self.configured()
         tools = [{"name": "a-b", "input_schema": {"type": "object"}},
@@ -269,6 +328,32 @@ class MCPOperatorWidgetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_provider_catalog_does_not_invent_urls_or_connect(self):
+        from jarvis_agent.mcp_service_catalog import SERVICE_CARDS
+        ids = {x.identifier for x in SERVICE_CARDS}
+        self.assertTrue({
+            "gmail", "google_sheets", "google_maps", "google_drive",
+            "whatsapp", "github", "hermes",
+        } <= ids)
+        panel = MCPConnectionsPanel()
+        try:
+            outbound = []
+            panel.requested.connect(lambda *args: outbound.append(args))
+            idx = panel.catalog_picker.findData("google_sheets")
+            self.assertGreater(idx, 0)
+            panel.catalog_picker.setCurrentIndex(idx)
+            self.assertEqual(panel.server_name.text(), "google_sheets")
+            self.assertEqual(panel.server_url.text(), "")
+            self.assertIn("Aucune URL", panel.catalog_note.text())
+            self.assertEqual(outbound, [])
+            panel.catalog_picker.setCurrentIndex(
+                panel.catalog_picker.findData("whatsapp")
+            )
+            self.assertIn("Business", panel.catalog_note.text())
+            self.assertEqual(outbound, [])
+        finally:
+            panel.close()
 
     def test_widget_issues_only_explicit_requests(self):
         panel = MCPConnectionsPanel()
