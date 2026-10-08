@@ -45,9 +45,37 @@ jobs:
           JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
           JARVIS_CUA_DRIVER_ENABLED: "0"
         run: |
-          python -m unittest discover -s tests -p "test_*.py" -q
+          python -m unittest tests.test_runtime_convergence tests.test_foundations_v4 tests.test_browser_dom_contract tests.test_agent_runtime tests.test_semantic_memory_v5 tests.test_assistant_v3 tests.test_windows_perception tests.test_tools tests.test_text_input_mode_v3 -q
 
       - name: Browser bridge replay tests
         shell: pwsh
         run: |
           node --test tests/browser_bridge_replay.mjs
+
+  full-python-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install audio and GUI system libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libportaudio2 libasound2-dev libegl1
+
+      - name: Install Python requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run broad Python regressions
+        env:
+          QT_QPA_PLATFORM: offscreen
+          JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
+          JARVIS_CUA_DRIVER_ENABLED: "0"
+        run: |
+          python -m unittest discover -s tests -p 'test_*.py' -q
