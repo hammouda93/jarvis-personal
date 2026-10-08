@@ -51,7 +51,7 @@ SERVICE_CARDS: tuple[ServiceCard, ...] = (
     ServiceCard(
         "hermes", "Hermes (serveur local)", "Agents",
         "Hermes doit déjà être installé pour le profil local facultatif.",
-        "Ce pont expose seulement les outils MCP réellement offerts par Hermes.",
+        "hermes mcp serve expose les conversations ; il ne relaie pas les autres MCP.",
     ),
 )
 
