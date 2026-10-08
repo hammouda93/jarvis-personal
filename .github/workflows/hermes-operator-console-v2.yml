@@ -37,7 +37,7 @@ jobs:
           JARVIS_HERMES_RELIABILITY_ENABLED: "0"
           JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
         run: |
-          python -m unittest tests.test_operator_telemetry tests.test_hermes_reliability tests.test_runtime_convergence tests.test_ui_logging tests.test_foundations_v4 tests.test_browser_dom_contract tests.test_agent_runtime tests.test_semantic_memory_v5 tests.test_assistant_v3 tests.test_windows_perception tests.test_tools tests.test_text_input_mode_v3 -q
+          python -m unittest tests.test_operator_telemetry tests.test_operator_console_ui tests.test_hermes_reliability tests.test_runtime_convergence tests.test_ui_logging tests.test_foundations_v4 tests.test_browser_dom_contract tests.test_agent_runtime tests.test_semantic_memory_v5 tests.test_assistant_v3 tests.test_windows_perception tests.test_tools tests.test_text_input_mode_v3 -q
       - name: Browser Bridge replay
         run: |
           node --test tests/browser_bridge_replay.mjs
