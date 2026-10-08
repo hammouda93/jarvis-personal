@@ -47,8 +47,8 @@ STAGES: tuple[Stage, ...] = (
           "green_ancestor", "not_validated", "tests/test_operator_console_ui.py"),
     Stage(7, "mission_live", "Missions contrôlables depuis l'interface", "integrated",
           "green_ancestor", "not_validated", "tests/test_mission_workbench.py"),
-    Stage(8, "semantic_supervisor", "Preuves et superviseur sémantique", "in_progress",
-          "pending", "not_validated", "tests/test_semantic_goal_supervisor.py"),
+    Stage(8, "semantic_supervisor", "Preuves et superviseur sémantique", "integrated",
+          "green_current", "not_validated", "tests/test_semantic_goal_supervisor.py"),
     Stage(9, "multi_agent", "Délégation d'agents & planification autonome", "planned",
           "not_applicable", "not_validated", "orchestrateur de missions autonome"),
     Stage(10, "skills_learning", "Apprentissage & Skills validés", "planned",
@@ -70,9 +70,10 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "notice": (
-            "Étapes 1–7 intégrées et testées automatiquement ; "
-            "étape 8 en développement (preuves et supervision sémantique). "
-            "Tests réels Windows encore nécessaires pour toutes les étapes. "
+            "Étapes 1–8 intégrées et validées en CI (426 Windows Python, "
+            "45 Browser Bridge, 607 Linux Python dans V4). "
+            "Les tests réels Windows restent nécessaires. "
+            "Supervision déterministe sans nouvelle collecte autonome de preuve. "
             "Étapes 9–11 non livrées."
         ),
     }
