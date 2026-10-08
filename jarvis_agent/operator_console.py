@@ -210,13 +210,13 @@ class OperatorConsole(QFrame):
         self._render_html("events", journal_html)
         mission_on = bool(data.get("mission_enabled"))
         reliability_on = bool(data.get("reliability_enabled"))
-        kernel_mode = "observateur" if data.get("kernel_shadow_enabled") else "non connecté"
+        kernel_mode = "Shadow configuré (passif)" if data.get("kernel_shadow_enabled") else "Shadow désactivé"
         self.mode_line.setText(
             f"Kernel : {kernel_mode}  ·  Missions : {'ON' if mission_on else 'OFF'}"
             f"  ·  Fiabilité : {'ON' if reliability_on else 'OFF'}"
         )
         self.capabilities_line.setText(
-            f"Mémoire V5 : {'ON' if data.get('semantic_memory_enabled') else 'OFF'}"
+            f"Mémoire V5 config : {'ON' if data.get('semantic_memory_enabled') else 'OFF'}"
             f"  ·  Navigateur : {'ON' if data.get('browser_core_enabled') else 'OFF'}"
             f"  ·  PC : {'ON' if data.get('computer_core_enabled') else 'OFF'}"
             f"  ·  Apprentissage : {'ON' if data.get('learning_enabled') else 'OFF'}"
