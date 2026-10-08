@@ -257,6 +257,7 @@ class OperatorConsole(QFrame):
     def update_model(self, data: dict) -> None:
         self._last_model = dict(data or {})
         name = str(self._last_model.get("provider") or "non renseigné")[:40]
+        effective = str(self._last_model.get("effective_provider") or "")[:40]
         used = self._last_model.get("rounds_used")
         budget = self._last_model.get("rounds_limit")
         suffix = (
@@ -267,6 +268,8 @@ class OperatorConsole(QFrame):
         err = str(self._last_model.get("failure_category") or "").strip()
         if err:
             suffix += f" · erreur : {err[:35]}"
+        if effective and effective != name:
+            suffix += f" · réponse via {effective}"
         usage = self._last_model.get("reported_usage")
         if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
             suffix += f" · tokens API {usage['total_tokens']}"
