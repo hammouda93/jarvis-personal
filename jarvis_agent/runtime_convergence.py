@@ -215,6 +215,47 @@ class LiveMissionContinuityRuntime:
                  "tool_execution": False},
             )
 
+    def generate_semantic_plan(self, *, mission_id: str | None = None) -> dict[str, Any]:
+        """Explicit one-request model draft; no tools, no task dispatch, no proof.
+
+        The worker thread is the only caller and the existing convergence
+        store verifies mission ownership and the absence of a prior plan.
+        """
+        with self._lock:
+            mid = str(mission_id or self._active_mission_id or "")
+            if not mid or mid != self._active_mission_id:
+                raise RuntimeError("planning_requires_active_mission")
+            loaded = self.context_store.load(mid)
+            if loaded is None:
+                raise KeyError("mission_checkpoint_not_found")
+            state, _version = loaded
+            if state.user_id != self.owner_user_id:
+                raise PermissionError("mission_owner_mismatch")
+            if state.status in (MissionStatus.COMPLETED, MissionStatus.FAILED):
+                raise RuntimeError("mission_terminal")
+            if state.status == MissionStatus.BLOCKED:
+                raise RuntimeError("mission_recovery_requires_review")
+            if state.expected_state.get("semantic_contract") is not None:
+                raise RuntimeError("mission_plan_already_registered")
+
+            from .llm_mission_planner import generate_draft
+
+            # Unlike a normal agent turn, this does NOT supply or execute
+            # native/MCP tools, even when the model proposes to use one.
+            proposal = generate_draft(self.delegate, state.user_goal)
+            self.register_semantic_plan(proposal)
+            return {
+                "mission_id": mid,
+                "status": "llm_plan_registered_unverified",
+                "step_count": len(proposal.steps),
+                "evidence_count": len(proposal.completion_requirements()),
+                "unresolved_count": len(proposal.unresolved),
+                "model_request_count": 1,
+                "tool_execution": False,
+                "goal_verified": False,
+                "review": self.review_mission(mid),
+            }
+
     def register_goal_evidence(self, requirement: str, *, proof_ref: str) -> None:
         """Trusted external verifier records evidence against a planned goal."""
         with self._lock:
