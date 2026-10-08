@@ -111,6 +111,7 @@ class AssistantWorker(QObject):
     log_line = Signal(str)
     conversation_message = Signal(str, str, str)
     telemetry_changed = Signal(dict)
+    operator_event = Signal(dict)
     finished = Signal()
 
     def __init__(self) -> None:
@@ -272,6 +273,32 @@ class AssistantWorker(QObject):
         success: bool | None = None,
     ) -> None:
         """Best-effort passive mirror; never affect the live control path."""
+        # Show *all* observed runtime turns, including direct fast-paths,
+        # even when Kernel Shadow and durable reliability are switched off.
+        # Do not transmit typed text, tool arguments or result bodies.
+        try:
+            observed = tuple(actions or ())
+            names = (
+                tuple(str(name)[:80] for name in action_names or ())
+                if action_names is not None
+                else tuple(str(getattr(action, "name", "") or "")[:80]
+                           for action in observed)
+            )
+            outcome = (
+                bool(success) if success is not None
+                else all(bool(getattr(action, "success", False))
+                         for action in observed)
+            )
+            self.operator_event.emit({
+                "source": str(source)[:50],
+                "tools": list(names[:8]),
+                "count": len(observed),
+                "success": outcome,
+                "verified": False,  # Final goal proof must be independent.
+            })
+        except Exception:
+            # Observability can never interrupt a voice, text or tool turn.
+            pass
         if self._kernel_shadow is None:
             return
         try:
