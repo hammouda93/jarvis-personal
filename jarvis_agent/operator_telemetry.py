@@ -105,6 +105,31 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
             "needs_review": pending.get("manual_review_required") is True,
             "updated_at": float(row["updated_at"]),
         })
+    # Only events belonging to the current user-owned visible missions.
+    events = []
+    if missions:
+        mission_ids = [mission["id"] for mission in missions]
+        query_args = ",".join("?" for _ in mission_ids)
+        records = _readonly(
+            _mission_root() / "mission_events.sqlite3",
+            "SELECT mission_id,kind,component,success,created_at "
+            "FROM events WHERE mission_id IN (" + query_args + ") "
+            "ORDER BY created_at DESC LIMIT ?",
+            tuple(mission_ids) + (limit,),
+        )
+        events = [
+            {
+                "mission_id": str(row["mission_id"])[:65],
+                "kind": str(row["kind"])[:90],
+                "component": str(row["component"] or "")[:80],
+                "success": (
+                    True if row["success"] == 1
+                    else False if row["success"] == 0
+                    else None
+                ),
+            }
+            for row in records
+        ]
     current_tasks = []
     if missions:
         graph = _readonly(
@@ -179,6 +204,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         "actions": actions,
         "missions": missions,
         "tasks": current_tasks,
+        "events": events,
         "unresolved_visible": unknown,
         "sample_limit": limit,
         "observed_at": time.time(),
