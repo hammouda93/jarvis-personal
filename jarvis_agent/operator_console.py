@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+from collections import deque
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -94,6 +95,7 @@ class OperatorConsole(QFrame):
         self._last_model = {}
         self._last_snapshot = {}
         self._render_cache: dict[str, str] = {}
+        self._live_events: deque[dict] = deque(maxlen=36)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(13, 13, 13, 13)
@@ -139,6 +141,7 @@ class OperatorConsole(QFrame):
             ("tasks", "◇   ÉTAPES / SUPERVISION"),
             ("actions", "⚙   OUTILS / VÉRIFICATIONS"),
             ("events", "⌁   JOURNAL DES ÉVÉNEMENTS"),
+            ("live", "◈   ACTIVITÉ DE CETTE SESSION"),
         ]:
             group = QFrame()
             group.setObjectName("operatorGroup")
@@ -243,6 +246,35 @@ class OperatorConsole(QFrame):
             f"  ·  protections : {data.get('guarded_visible', 0)}"
         )
         self.update_model(self._last_model)
+
+    def update_live_event(self, event: dict) -> None:
+        """Local Qt-worker signal; shows real activity even with shadow OFF."""
+        if not isinstance(event, dict):
+            return
+        safe = {
+            "source": str(event.get("source") or "inconnu")[:50],
+            "tools": [str(x)[:70] for x in
+                      list(event.get("tools") or [])[:8]],
+            "count": max(0, min(100, int(event.get("count") or 0))),
+            "success": event.get("success") is True,
+            "verified": event.get("verified") is True,
+        }
+        self._live_events.appendleft(safe)
+        lines = []
+        for item in self._live_events:
+            title = "OBSERVÉ" if item["success"] else "ÉCHEC / INCOMPLET"
+            color = "#70dbbe" if item["success"] else "#f8a4a4"
+            # A working tool is not independent evidence that the goal is met.
+            tools_text = ", ".join(item["tools"]) or "conversation / raisonnement"
+            lines.append(
+                f'<p style="margin-bottom:7px">'
+                f'<span style="color:{color}">{title}</span> '
+                f'<b>{_escape(item["source"], 50)}</b><br>'
+                f'<span style="color:#abcad5">{_escape(tools_text, 190)}</span><br>'
+                '<span style="color:#eec28c">objectif : non vérifié</span>'
+                '</p>'
+            )
+        self._render_html("live", "".join(lines))
 
     def update_phase(self, phase: str) -> None:
         allowed = {
