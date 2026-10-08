@@ -227,7 +227,16 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         }
 
     from .config import settings
+    from .mcp_server_registry import MCPRegistry
+    try:
+        mcp_servers = MCPRegistry().list_servers()
+    except (OSError, ValueError, TypeError, KeyError):
+        mcp_servers = []
     return {
+        "mcp": {
+            "enabled": _flag("JARVIS_MCP_ENABLED"),
+            "servers": mcp_servers,
+        },
         "reliability_enabled": reliability_on,
         "mission_enabled": mission_on,
         "kernel_shadow_enabled": bool(settings.kernel_shadow_enabled),

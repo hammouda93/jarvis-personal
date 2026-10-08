@@ -48,15 +48,15 @@ STAGES: tuple[Stage, ...] = (
     Stage(7, "mission_live", "Missions contrôlables depuis l'interface", "integrated",
           "green_ancestor", "not_validated", "tests/test_mission_workbench.py"),
     Stage(8, "semantic_supervisor", "Preuves et superviseur sémantique", "integrated",
-          "green_current", "not_validated", "tests/test_semantic_goal_supervisor.py"),
-    Stage(9, "multi_agent", "Délégation d'agents & planification autonome", "planned",
-          "not_applicable", "not_validated", "orchestrateur de missions autonome"),
+          "green_ancestor", "not_validated", "tests/test_semantic_goal_supervisor.py"),
+    Stage(9, "multi_agent", "Agents, planification et connexions MCP", "in_progress",
+          "pending", "not_validated", "tests/test_mcp_hub.py"),
     Stage(10, "skills_learning", "Apprentissage & Skills validés", "planned",
           "not_applicable", "not_validated", "promotion contrôlée des expériences"),
     Stage(11, "integrations", "Intégrations personnelles et tâches durables", "planned",
           "not_applicable", "not_validated", "connecteurs + planificateur durable"),
 )
-CURRENT_STAGE_KEY = "semantic_supervisor"
+CURRENT_STAGE_KEY = "multi_agent"
 
 
 def snapshot() -> dict:
@@ -70,10 +70,9 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "notice": (
-            "Étapes 1–8 intégrées et validées en CI (426 Windows Python, "
-            "45 Browser Bridge, 607 Linux Python dans V4). "
-            "Les tests réels Windows restent nécessaires. "
-            "Supervision déterministe sans nouvelle collecte autonome de preuve. "
-            "Étapes 9–11 non livrées."
+            "Étapes 1–8 intégrées et testées automatiquement. "
+            "Étape 9 en développement : MCP Hub 9A ajouté, planification autonome "
+            "et délégation pas encore achevées. Connexions réelles et tests Windows "
+            "restent à valider. Étapes 10–11 non livrées."
         ),
     }
