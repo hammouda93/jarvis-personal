@@ -33,7 +33,7 @@ def _valid_remote(url: str) -> bool:
         return (
             bool(host)
             and not parsed.username and not parsed.password
-            and not parsed.fragment
+            and not parsed.fragment and not parsed.query
             and (
                 parsed.scheme == "https"
                 or (parsed.scheme == "http" and host in ("localhost", "127.0.0.1", "::1"))
