@@ -131,3 +131,33 @@ C:\jv312\Scripts\python.exe -m unittest tests.test_runtime_convergence tests.tes
 Enable the convergence flag only after completing the baseline-off comparison.
 The normal Jarvis launcher and existing Memory/Browser/Computer feature flags
 remain unchanged. No automatic migration or merge happens.
+
+### Semantic Mission Contract gate
+
+A trusted application controller may attach a general semantic plan using
+the existing `MissionContract` and `MissionStep` types through
+`register_semantic_plan(contract)`. This validates dependency cycles and
+stores the declared objective, entities, constraints, ordered prerequisites
+and required evidence under the same persistent mission context. It never
+calls a model or executes a step.
+
+`register_goal_evidence(requirement, proof_ref=...)` records evidence from
+an independent checker. `complete_mission` refuses to finish when required
+evidence is missing or unresolved semantic ambiguity remains.
+
+This is **not automatic autonomous planning**: the voice/text UI does not
+yet call `register_semantic_plan` or `begin_mission` on its own.
+An authoritative task dispatcher, real goal-evidence checker, safe
+cross-app planning and budgets/routing for Cerebras are separate later gates.
+No skill or learning engine was altered.
+
+## Release checklist before requesting Windows live tests
+
+- Entire Windows Python and Node CI suites green at **the same branch HEAD**.
+- With the flag OFF, all existing Chrome/Windows/memory/voice behavior remains
+  as before (same model, same tools, same returns).
+- With the flag ON, independent new missions are checkpointed, but no action
+  is executed more than once by the adapter.
+- Restart and unknown external effects require review before continuing;
+  no guessed completed mission claims.
+- Distinguish automated CI validation from real Windows live acceptance.
