@@ -165,6 +165,8 @@ class OperatorConsole(QFrame):
         self.mission_criteria_input.setPlaceholderText(
             "Critères de preuve : resultat_observe, cible_confirmee…"
         )
+        self.mission_auto_plan_button = QPushButton("◈ Générer un plan (même IA · 1 requête)")
+        self.mission_auto_plan_button.setObjectName("missionButton")
         self.mission_plan_button = QPushButton("⊕ Enregistrer les critères de réussite")
         self.mission_plan_button.setObjectName("missionButton")
         self.mission_route_button = QPushButton("⬡ Proposer agents / capacités MCP")
@@ -189,6 +191,7 @@ class OperatorConsole(QFrame):
         mission_layout.addWidget(self.mission_id_input)
         mission_layout.addWidget(self.mission_criteria_input)
         mission_layout.addWidget(self.mission_plan_button)
+        mission_layout.addWidget(self.mission_auto_plan_button)
         mission_layout.addWidget(self.mission_review_button)
         mission_layout.addWidget(self.mission_route_button)
         mission_layout.addLayout(buttons)
@@ -208,6 +211,9 @@ class OperatorConsole(QFrame):
         )
         self.mission_plan_button.clicked.connect(
             lambda: self._request_mission("plan", self.mission_criteria_input.text())
+        )
+        self.mission_auto_plan_button.clicked.connect(
+            lambda: self._request_mission("auto_plan", "")
         )
         self.mission_detach_button.clicked.connect(
             lambda: self._request_mission("detach", "")
@@ -309,6 +315,17 @@ class OperatorConsole(QFrame):
             self.mission_id_input.setText(mid)
         if success and operation == "begin":
             self.mission_goal_input.clear()
+        if success and operation == "auto_plan":
+            steps = max(0, min(6, int(result.get("step_count") or 0)))
+            evidence = max(0, min(24, int(result.get("evidence_count") or 0)))
+            ambiguities = max(0, min(8, int(result.get("unresolved_count") or 0)))
+            self.mission_feedback.setText(
+                f"Plan IA enregistré : {steps} étape(s), "
+                f"{evidence} critère(s), {ambiguities} ambiguïté(s). "
+                "Aucune action effectuée, aucune preuve validée. "
+                "Utilisez « Vérifier la progression » avant de continuer."
+            )
+            return
         if success and operation == "plan":
             self.mission_criteria_input.clear()
             self.mission_feedback.setText(
@@ -496,6 +513,7 @@ class OperatorConsole(QFrame):
         self.mission_review_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_route_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_plan_button.setEnabled(bool(data.get("mission_enabled")))
+        self.mission_auto_plan_button.setEnabled(bool(data.get("mission_enabled")))
         mission_on = bool(data.get("mission_enabled"))
         reliability_on = bool(data.get("reliability_enabled"))
         kernel_mode = "Shadow configuré (passif)" if data.get("kernel_shadow_enabled") else "Shadow désactivé"
