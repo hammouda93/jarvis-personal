@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sqlite3
+from .sqlite_utils import ClosingConnection
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,11 @@ from typing import Any
 
 
 def _knowledge_root() -> Path:
+    custom = os.getenv("JARVIS_DATA_DIR", "").strip()
+    if custom:
+        root = Path(custom)
+        root.mkdir(parents=True, exist_ok=True)
+        return root
     local = os.getenv("LOCALAPPDATA", "").strip()
     if local:
         root = Path(local) / "JarvisPersonal"
@@ -167,7 +173,7 @@ class AgentKnowledgeStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=5)
+        conn = sqlite3.connect(str(self.db_path), timeout=5, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
 

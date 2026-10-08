@@ -102,6 +102,7 @@ class LiveMissionContinuityRuntime:
         self._active_mission_id: str | None = None
         self._explicit = False
         self._lock = threading.RLock()
+        self.active_supervisor = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
@@ -159,6 +160,8 @@ class LiveMissionContinuityRuntime:
             interrupted = (
                 context.status == MissionStatus.RUNNING
                 or any(node.status == TaskStatus.RUNNING for node in graph.nodes())
+                or (context.observed_state.get("active_supervisor") or {}).get("state")
+                in {"ACTING", "OBSERVING", "VERIFYING"}
             )
             if interrupted:
                 for node in graph.nodes():
@@ -170,6 +173,8 @@ class LiveMissionContinuityRuntime:
                     "reason": "interrupted_outcome_unknown",
                     "manual_review_required": True,
                 }
+                if context.observed_state.get("active_supervisor"):
+                    context.observed_state["active_supervisor"]["state"] = "BLOCKED"
                 self.graph_store.save(graph)
                 self.context_store.save(context, expected_version=version)
                 self._audit(
@@ -391,6 +396,16 @@ class LiveMissionContinuityRuntime:
             state.current_step_id = None
             state.current_step = ""
             state.observed_state["last_recovery"] = verified_outcome
+            supervised = state.observed_state.get("active_supervisor")
+            if supervised:
+                used = int(supervised["usage"].get("recoveries", 0))
+                if used >= supervised["limits"]["recoveries"]:
+                    raise RuntimeError("mission_recovery_budget_exhausted")
+                supervised["usage"]["recoveries"] = used + 1
+                supervised["state"] = (
+                    "FAILED" if verified_outcome == "cancel" else
+                    "RECOVERING" if verified_outcome == "completed" else "READY"
+                )
             # Resolving an individual action NEVER verifies the whole goal.
             state.observed_state["goal_verified"] = False
             self.graph_store.save(graph)
@@ -510,6 +525,7 @@ class LiveMissionContinuityRuntime:
             "goal_verified": bool(state.observed_state.get("goal_verified")),
             "semantic_plan": state.expected_state.get("semantic_contract"),
             "plan_evidence": dict(state.observed_state.get("plan_evidence") or {}),
+            "active_supervisor": dict(state.observed_state.get("active_supervisor") or {}),
             "manual_review_required": bool(
                 state.pending_action.get("manual_review_required")
             ),
@@ -560,11 +576,44 @@ class LiveMissionContinuityRuntime:
             self._active_mission_id = None
             self._explicit = False
 
+    def approve_supervised_plan(self, *, digest: str, rules=None, limits=None):
+        if self.active_supervisor is None:
+            raise RuntimeError("active_supervisor_not_enabled")
+        return self.active_supervisor.approve(digest=digest, rules=rules, limits=limits)
+
+    def advance_supervised_mission(self, user_text=None, *, log=None, phase=None):
+        if self.active_supervisor is None:
+            raise RuntimeError("active_supervisor_not_enabled")
+        return self.active_supervisor.advance(user_text, log=log, phase=phase)
+
     def run(self, user_text: str, *, log=None, phase=None):
+        result = self._supervised_conversation(user_text, log=log, phase=phase)
+        if result is not None:
+            return result
         return self._run(user_text, log=log, phase=phase)
 
     def run_with_context(self, user_text: str, context: str, *, log=None, phase=None):
+        result = self._supervised_conversation(user_text, context=context, log=log, phase=phase)
+        if result is not None:
+            return result
         return self._run(user_text, context=context, log=log, phase=phase)
+
+    def _supervised_conversation(self, user_text, *, context="", log=None, phase=None):
+        if self.active_supervisor is None or self._active_mission_id is None:
+            return None
+        from .active_mission_supervisor import execution_scope_active
+        if execution_scope_active():
+            return None
+        with self._lock:
+            state, _ = self.context_store.load(self._active_mission_id)
+            if not state.observed_state.get("active_supervisor"):
+                return None
+            report = self.active_supervisor.advance(user_text, context=context, log=log, phase=phase)
+            from .agent_runtime import AgentTurnResult
+            turn = report.get("_turn_result")
+            text = report.get("text") or ("Objectif verifie." if report["goal_verified"] else "Preuve independante attendue.")
+            return AgentTurnResult(text=text, actions=tuple(getattr(turn, "actions", ()) or ()),
+                end_session=bool(getattr(turn, "end_session", False)), should_exit=bool(getattr(turn, "should_exit", False)))
 
     def _run(self, user_text: str, *, context=None, log=None, phase=None):
         # Lock also prevents two threads executing a single mission step twice.
@@ -635,6 +684,7 @@ class LiveMissionContinuityRuntime:
             except Exception as exc:
                 # The delegate might have executed an external side effect.
                 # Fail closed, including on a quota error or storage timeout.
+                state, _ = self.context_store.load(mission_id)
                 node.status = TaskStatus.WAITING_EXTERNAL
                 node.error = type(exc).__name__[:100]
                 state.status = MissionStatus.BLOCKED
@@ -654,6 +704,8 @@ class LiveMissionContinuityRuntime:
                     self.detach_mission()
                 raise
 
+            # Registry gates may have persisted budgets/proofs during the turn.
+            state, _ = self.context_store.load(mission_id)
             actions = tuple(getattr(result, "actions", ()) or ())
             failed = sum(not bool(getattr(action, "success", False)) for action in actions)
             node.status = TaskStatus.FAILED if failed else TaskStatus.COMPLETED

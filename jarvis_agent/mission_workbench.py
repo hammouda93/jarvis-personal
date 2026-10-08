@@ -5,6 +5,7 @@ No model calls, desktop tools, persistence, or hidden action dispatcher here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import queue
 import re
 import threading
@@ -19,7 +20,8 @@ class MissionCommand:
 class MissionControlInbox:
     """FIFO commands, consumed by the worker rather than Qt's UI thread."""
 
-    _OPS = frozenset({"begin", "begin_only", "resume", "detach", "review", "plan", "route", "auto_plan"})
+    _OPS = frozenset({"begin", "begin_only", "resume", "detach", "review", "plan", "route", "auto_plan",
+                      "approve_supervision", "advance_supervision", "recover_supervision"})
 
     def __init__(self) -> None:
         self._items: queue.Queue[MissionCommand] = queue.Queue(maxsize=32)
@@ -36,6 +38,15 @@ class MissionControlInbox:
             return False
         if op == "auto_plan" and raw:
             return False
+        if op in {"approve_supervision", "advance_supervision", "recover_supervision"} and len(raw) > 24000:
+            return False
+        if op in {"approve_supervision", "recover_supervision"}:
+            try:
+                packet = json.loads(raw)
+                if not isinstance(packet, dict):
+                    return False
+            except (ValueError, TypeError):
+                return False
         if op in {"resume", "review", "route"} and raw and not re.fullmatch(r"live_[a-f0-9]{32}", raw):
             return False
         if op == "resume" and not raw:
@@ -67,6 +78,25 @@ class MissionControlInbox:
 def perform_mission_command(agent, command: MissionCommand) -> dict:
     """Only on worker thread. Does not replay actions or assert goal proof."""
     op = command.operation
+    if op == "approve_supervision":
+        from .active_mission_supervisor import MissionLimits
+        packet = json.loads(command.value)
+        if packet.get("mission_id") != getattr(agent, "active_mission_id", None):
+            raise ValueError("reviewed_mission_changed")
+        limits = MissionLimits(**packet.get("limits", {}))
+        report = agent.approve_supervised_plan(digest=packet["digest"], rules=packet.get("rules", {}), limits=limits)
+        return {"success": True, "operation": op, "mission_id": report["mission_id"],
+                "status": report["state"], "tool_execution": False}
+    if op == "advance_supervision":
+        report = agent.advance_supervised_mission(command.value or None)
+        return {"success": True, "operation": op, "mission_id": report["mission_id"],
+                "status": report["state"], "goal_verified": report["goal_verified"],
+                "delegation": report.get("report", {}), "text": report.get("text", "")}
+    if op == "recover_supervision":
+        packet = json.loads(command.value)
+        state = agent.resolve_recovery(verified_outcome=packet["outcome"], proof_ref=packet["proof_ref"])
+        return {"success": True, "operation": op, "mission_id": state.mission_id,
+                "status": state.status.value, "tool_execution": False, "goal_verified": False}
     if op in {"begin", "begin_only"}:
         method = getattr(agent, "begin_mission", None)
         if not callable(method):

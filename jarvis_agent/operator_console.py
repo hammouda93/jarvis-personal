@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 from .operator_telemetry import snapshot
 from .project_roadmap import snapshot as roadmap_snapshot
 from .mcp_operator_panel import MCPConnectionsPanel
+from .mission_supervisor_panel import MissionSupervisorPanel
 
 
 _STATUS = {
@@ -227,6 +228,8 @@ class OperatorConsole(QFrame):
 
         self.mcp_panel = MCPConnectionsPanel(self)
         self.mcp_panel.requested.connect(self.mcp_requested.emit)
+        self.active_panel = MissionSupervisorPanel(self)
+        self.active_panel.requested.connect(self.mission_requested.emit)
 
         self._views = {}
         scroll = QScrollArea(self)
@@ -264,6 +267,7 @@ class OperatorConsole(QFrame):
             group_layout.addWidget(header)
             group_layout.addWidget(view)
             event_list.addWidget(group)
+        event_list.addWidget(self.active_panel)
         event_list.addWidget(self.mcp_panel)
         event_list.addStretch(1)
         scroll.setWidget(content)
@@ -314,6 +318,7 @@ class OperatorConsole(QFrame):
         self.mcp_panel.show_result(result)
 
     def show_mission_result(self, result: dict) -> None:
+        self.active_panel.apply_result(result)
         success = result.get("success") is True
         operation = str(result.get("operation") or "")
         mid = str(result.get("mission_id") or "")
@@ -414,6 +419,7 @@ class OperatorConsole(QFrame):
 
     def apply_snapshot(self, data: dict) -> None:
         self._last_snapshot = dict(data)
+        self.active_panel.apply_snapshot(data)
         self.mcp_panel.apply_snapshot(data.get("mcp") or {})
         missions, steps, actions = render_snapshot(data)
         candidates = tuple(

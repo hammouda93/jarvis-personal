@@ -1746,6 +1746,8 @@ class OllamaToolAgent:
                 )
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from .active_mission_supervisor import reserve_model_request
+        reserve_model_request()
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + "/api/chat",
@@ -2044,6 +2046,8 @@ class OpenAIResponsesAgent:
                 f"Clé API manquante pour le provider {self.provider_name}."
             )
 
+        from .active_mission_supervisor import reserve_model_request
+        reserve_model_request()
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + "/responses",
@@ -2407,7 +2411,7 @@ class OpenAIResponsesAgent:
                         )
                     return AgentTurnResult(
                         text=(
-                            "Cette action va modifier les données MS Football. "
+                            "Cette action nécessite une autorisation. "
                             "J'ai besoin de votre confirmation explicite. "
                             "Dites oui pour exécuter ou non pour annuler."
                         ),
@@ -3006,6 +3010,8 @@ class GroqResponsesAgent:
                 f"messages_chars={context_chars} tools={len(tool_definitions)} "
                 f"tools_chars={tools_chars}"
             )
+            from .active_mission_supervisor import reserve_model_request
+            reserve_model_request()
             return client.chat.completions.create(
                 model=self.model,
                 messages=request_messages,
@@ -4641,6 +4647,8 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             max_retries=0,
         )
         try:
+            from .active_mission_supervisor import reserve_model_request
+            reserve_model_request()
             return client.chat.completions.create(
                 model=settings.groq_agent_model,
                 messages=self._messages,
@@ -4753,7 +4761,8 @@ def build_agent_runtime() -> AgentRuntime:
     # executor; Browser Bridge / UIA / CUA dispatch remains unchanged.
     import os
     reliability_tools = None
-    if os.getenv("JARVIS_HERMES_RELIABILITY_ENABLED", "0").strip().lower() in (
+    active_supervision = enabled("JARVIS_ACTIVE_SUPERVISOR_ENABLED")
+    if active_supervision or os.getenv("JARVIS_HERMES_RELIABILITY_ENABLED", "0").strip().lower() in (
         "1", "true", "yes", "on",
     ):
         from .hermes_reliability import ActionLedger, ReliabilityToolRegistry
@@ -4763,6 +4772,12 @@ def build_agent_runtime() -> AgentRuntime:
             ActionLedger(os.getenv("JARVIS_HERMES_RELIABILITY_DIR") or None),
         )
         tools = reliability_tools
+
+    supervised_tools = None
+    if active_supervision:
+        from .active_mission_supervisor import SupervisedToolRegistry
+        supervised_tools = SupervisedToolRegistry(tools)
+        tools = supervised_tools
 
     tracing_tools = None
     journal = None
@@ -4849,7 +4864,7 @@ def build_agent_runtime() -> AgentRuntime:
     # authoritative. No tool is dispatched twice, and pending outcomes are
     # never resumed automatically after a restart.
     import os
-    if os.getenv("JARVIS_RUNTIME_CONVERGENCE_ENABLED", "0").strip().lower() in (
+    if active_supervision or os.getenv("JARVIS_RUNTIME_CONVERGENCE_ENABLED", "0").strip().lower() in (
         "1", "true", "yes", "on",
     ):
         from .runtime_convergence import LiveMissionContinuityRuntime
@@ -4859,6 +4874,9 @@ def build_agent_runtime() -> AgentRuntime:
             base_dir=os.getenv("JARVIS_RUNTIME_CONVERGENCE_DIR") or None,
             owner_user_id=settings.kernel_shadow_user_id,
         )
+        if supervised_tools is not None:
+            from .active_mission_supervisor import ActiveMissionSupervisor
+            runtime.active_supervisor = ActiveMissionSupervisor(runtime, supervised_tools)
     if reliability_tools is not None:
         from .hermes_reliability import HermesReliabilityRuntime
 

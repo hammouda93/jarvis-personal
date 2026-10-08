@@ -298,6 +298,10 @@ class AssistantWorker(QObject):
             # One ordinary model turn, same runtime/voice/chat path; no second
             # model, no separate planning executor, no pseudo-tool instructions.
             self._process_user_text(command.value, source="text")
+        if command.operation == "advance_supervision" and result.get("text"):
+            self._reply_source = "text"
+            self._reply_with_voice = True
+            self._deliver_reply(str(result["text"]))
 
     def _apply_input_mode(self) -> tuple[bool, int]:
         text_mode, generation = self._input_mode.snapshot()

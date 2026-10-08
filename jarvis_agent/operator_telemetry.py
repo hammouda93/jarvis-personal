@@ -19,7 +19,7 @@ def _flag(name: str) -> bool:
 
 
 def _state_root() -> Path:
-    env = os.getenv("LOCALAPPDATA") or os.getenv("XDG_STATE_HOME")
+    env = os.getenv("JARVIS_DATA_DIR") or os.getenv("LOCALAPPDATA") or os.getenv("XDG_STATE_HOME")
     return Path(env) if env else Path.home()
 
 
@@ -39,9 +39,9 @@ def _mission_root() -> Path:
 
 def _readonly(db: Path, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     """Tiny read-only queries with bounded SQLite busy timeout; never initialize DB."""
-    if not db.is_file():
-        return []
     try:
+        if not db.is_file():
+            return []
         # The URI is platform aware and never opens SQLite in write mode.
         uri = db.resolve().as_uri() + "?mode=ro"
         with closing(sqlite3.connect(uri, uri=True, timeout=0.12)) as con:
@@ -55,8 +55,8 @@ def _readonly(db: Path, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
 def snapshot(*, max_items: int = 7) -> dict[str, Any]:
     """Local UI projection. Displays *recorded* events, never hypothetical ones."""
     limit = max(1, min(20, int(max_items)))
-    reliability_on = _flag("JARVIS_HERMES_RELIABILITY_ENABLED")
-    mission_on = _flag("JARVIS_RUNTIME_CONVERGENCE_ENABLED")
+    reliability_on = _flag("JARVIS_HERMES_RELIABILITY_ENABLED") or _flag("JARVIS_ACTIVE_SUPERVISOR_ENABLED")
+    mission_on = _flag("JARVIS_RUNTIME_CONVERGENCE_ENABLED") or _flag("JARVIS_ACTIVE_SUPERVISOR_ENABLED")
     rows = _readonly(
         _action_path(),
         "SELECT action_id,turn_id,name,status,success,verified,created_at, "
@@ -154,6 +154,8 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
                         "tools": [str(x)[:50] for x in (node.get("result") or {}).get("action_names", [])[:5]],
                     })
     supervisor = None
+    supervised_plan = None
+    active_supervisor = None
     if missions:
         # Recompute from the same read-only SQLite mission/graph snapshot.
         # No model invocation and no "success" inferred from an action count.
@@ -172,6 +174,17 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
             expected = {}
         if not isinstance(observed, dict):
             observed = {}
+        from .active_mission_supervisor import plan_digest
+        plan = expected.get("semantic_contract")
+        if isinstance(plan, dict) and plan.get("steps"):
+            supervised_plan = {"mission_id": missions[0]["id"], "digest": plan_digest(plan),
+                               "criteria": list(dict.fromkeys(str(x) for s in plan["steps"]
+                                           for x in s.get("required_evidence", [])))}
+        record = observed.get("active_supervisor")
+        if isinstance(record, dict):
+            # Projection excludes arguments, expected values, proof refs and result bodies.
+            active_supervisor = {key: record.get(key) for key in
+                                 ("state", "step_id", "tool", "reason", "usage", "limits")}
         supervisor = evaluate_mission({
             "mission_id": missions[0]["id"],
             "status": missions[0]["status"],
@@ -193,7 +206,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
     unknown = sum(row["status"] in ("unknown", "dispatched") for row in actions)
     # Numeric summaries only: never read or expose personal memory content,
     # skill procedures, knowledge lessons or learned application identities.
-    skills_root = (
+    skills_root = Path(os.getenv("JARVIS_DATA_DIR")) if os.getenv("JARVIS_DATA_DIR") else (
         Path(os.getenv("LOCALAPPDATA")) / "JarvisPersonal"
         if os.getenv("LOCALAPPDATA")
         else Path.home() / ".jarvis_personal"
@@ -233,6 +246,9 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
     except (OSError, ValueError, TypeError, KeyError):
         mcp_servers = []
     return {
+        "active_supervisor_enabled": _flag("JARVIS_ACTIVE_SUPERVISOR_ENABLED"),
+        "active_supervisor": active_supervisor,
+        "supervised_plan": supervised_plan,
         "mcp": {
             "enabled": _flag("JARVIS_MCP_ENABLED"),
             "servers": mcp_servers,
