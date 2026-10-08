@@ -200,6 +200,76 @@ class LiveMissionContinuityRuntime:
             self._active_mission_id = None
             self._explicit = False
 
+    def resolve_recovery(
+        self, *, verified_outcome: str, proof_ref: str
+    ) -> MissionContext:
+        """Manually reconcile an interrupted/uncertain action before continuing.
+
+        Never reruns the prior call. The trusted UI/operator must independently
+        verify whether the external effect happened; LLM text is not evidence.
+        """
+        with self._lock:
+            if self._active_mission_id is None:
+                raise RuntimeError("no_active_mission")
+            if verified_outcome not in ("completed", "not_executed", "cancel"):
+                raise ValueError("unsupported_recovery_outcome")
+            if not str(proof_ref or "").strip():
+                raise ValueError("recovery_requires_independent_proof")
+            mission_id = self._active_mission_id
+            loaded = self.context_store.load(mission_id)
+            graph = self.graph_store.load(mission_id)
+            if loaded is None or graph is None:
+                raise KeyError("mission_checkpoint_not_found")
+            state, version = loaded
+            if state.user_id != self.owner_user_id:
+                raise PermissionError("mission_owner_mismatch")
+            if (
+                state.status != MissionStatus.BLOCKED
+                or not state.pending_action.get("manual_review_required")
+            ):
+                raise RuntimeError("mission_not_awaiting_manual_recovery")
+            pending = [
+                node for node in graph.nodes()
+                if node.status in (
+                    TaskStatus.RUNNING, TaskStatus.WAITING_EXTERNAL, TaskStatus.FAILED
+                )
+            ]
+            if verified_outcome == "cancel":
+                for node in pending:
+                    node.status = TaskStatus.CANCELLED
+                    node.error = "mission_cancelled_after_review"
+                state.status = MissionStatus.FAILED
+            else:
+                for node in pending:
+                    node.status = (
+                        TaskStatus.COMPLETED if verified_outcome == "completed"
+                        else TaskStatus.CANCELLED
+                    )
+                    node.result = {
+                        "recovery_verified": True,
+                        "outcome": verified_outcome,
+                    }
+                    node.error = ""
+                state.status = MissionStatus.WAITING_EXTERNAL
+            state.proof_refs.append(str(proof_ref)[:500])
+            state.pending_action = {}
+            state.current_step_id = None
+            state.current_step = ""
+            state.observed_state["last_recovery"] = verified_outcome
+            # Resolving an individual action NEVER verifies the whole goal.
+            state.observed_state["goal_verified"] = False
+            self.graph_store.save(graph)
+            self.context_store.save(state, expected_version=version)
+            self._audit(
+                mission_id, EventKind.PROOF,
+                {"source": "explicit_trusted_recovery", "outcome": verified_outcome,
+                 "proof_ref": str(proof_ref)[:500]},
+            )
+            self._set_audit_status(mission_id, state.status)
+            if verified_outcome == "cancel":
+                self.detach_mission()
+            return state
+
     def _audit(self, mission_id: str, kind: EventKind | str, payload: dict) -> None:
         """Best-effort, privacy-minimal telemetry. Never triggers a retry."""
         try:
@@ -303,7 +373,13 @@ class LiveMissionContinuityRuntime:
                 if self._explicit
                 else ""
             )
-            previous_step = graph.nodes()[-1].task_id if graph.nodes() else None
+            # A cancelled unknown-effect attempt is never a prerequisite:
+            # only independently settled prior work can be a dependency.
+            settled = [
+                n for n in graph.nodes()
+                if n.status == TaskStatus.COMPLETED
+            ]
+            previous_step = settled[-1].task_id if settled else None
             node = TaskNode(
                 task_id=task_id,
                 mission_id=mission_id,
@@ -384,6 +460,11 @@ class LiveMissionContinuityRuntime:
                 if actions or self._explicit
                 else MissionStatus.COMPLETED
             )
+            if failed:
+                state.pending_action = {
+                    "reason": "tool_reported_failure",
+                    "manual_review_required": True,
+                }
             state.current_step_id = None
             state.current_step = ""
             self.graph_store.save(graph)
