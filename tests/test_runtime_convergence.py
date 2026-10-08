@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from jarvis_agent.kernel_contracts import MissionStatus
+from jarvis_agent.mission_semantics import MissionContract, MissionStep
 from jarvis_agent.runtime_convergence import LiveMissionContinuityRuntime
 from jarvis_agent.task_graph import TaskNode, TaskStatus
 
@@ -297,6 +298,69 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertEqual(len(self.delegate.calls), 1)
         with self.assertRaises(RuntimeError):
             self.runtime.resume_mission(mission_id)
+
+    def test_semantic_plan_is_persisted_without_tool_execution(self):
+        mid = self.runtime.begin_mission("multi app objective")
+        plan = MissionContract(
+            source_text="multi app objective",
+            objective="find data and prepare communication",
+            steps=(
+                MissionStep(
+                    step_id="locate", intent="find data",
+                    required_evidence=("source_matched",),
+                ),
+                MissionStep(
+                    step_id="prepare", intent="prepare draft",
+                    depends_on=("locate",),
+                    required_evidence=("draft_matches", "recipient_matches"),
+                ),
+            ),
+        )
+        self.runtime.register_semantic_plan(plan)
+        self.assertEqual(self.delegate.calls, [])
+        self.assertEqual(
+            self.runtime.mission_snapshot(mid)["semantic_plan"]["steps"][1]["depends_on"],
+            ["locate"],
+        )
+        self.assertRaises(
+            RuntimeError, self.runtime.register_semantic_plan, plan
+        )
+        self.runtime.run("begin work")
+        with self.assertRaisesRegex(RuntimeError, "mission_plan_evidence_missing"):
+            self.runtime.complete_mission(proof_ref="unverified")
+        with self.assertRaises(ValueError):
+            self.runtime.register_goal_evidence("unlisted", proof_ref="fake")
+        for requirement in ("source_matched", "draft_matches", "recipient_matches"):
+            self.runtime.register_goal_evidence(
+                requirement, proof_ref="verified:" + requirement
+            )
+        self.runtime.complete_mission(proof_ref="final-check")
+        self.assertTrue(self.runtime.mission_snapshot(mid)["goal_verified"])
+        self.assertEqual(len(self.delegate.calls), 1)
+
+    def test_semantic_plan_cycle_rejected_and_not_persisted(self):
+        mission_id = self.runtime.begin_mission("cycle test")
+        bad = MissionContract(
+            source_text="cycle test", objective="cycle",
+            steps=(
+                MissionStep(step_id="a", intent="first", depends_on=("b",)),
+                MissionStep(step_id="b", intent="second", depends_on=("a",)),
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "dependency_cycle"):
+            self.runtime.register_semantic_plan(bad)
+        self.assertIsNone(self.runtime.mission_snapshot(mission_id)["semantic_plan"])
+
+    def test_mission_with_unresolved_semantics_cannot_finish(self):
+        mid = self.runtime.begin_mission("ambiguous task")
+        contract = MissionContract(
+            source_text="ambiguous task", objective="find the person",
+            unresolved=("recipient",),
+        )
+        self.runtime.register_semantic_plan(contract)
+        with self.assertRaisesRegex(RuntimeError, "ambiguity_unresolved"):
+            self.runtime.complete_mission(proof_ref="only-a-claim")
+        self.assertFalse(self.runtime.mission_snapshot(mid)["goal_verified"])
 
     def test_passive_capability_routing_never_dispatches_second_action(self):
         self.delegate.result = SimpleNamespace(
