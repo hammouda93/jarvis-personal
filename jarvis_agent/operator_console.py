@@ -144,6 +144,8 @@ class OperatorConsole(QFrame):
         self.mission_goal_input.setMaxLength(2000)
         self.mission_goal_input.setObjectName("missionGoal")
         self.mission_goal_input.setPlaceholderText("Objectif à poursuivre sur plusieurs échanges…")
+        self.mission_begin_only_button = QPushButton("＋ Créer mission sans agir (plan d'abord)")
+        self.mission_begin_only_button.setObjectName("missionButton")
         self.mission_begin_button = QPushButton("▶ Démarrer et exécuter")
         self.mission_begin_button.setObjectName("missionButton")
         self.mission_picker = QComboBox()
@@ -186,6 +188,7 @@ class OperatorConsole(QFrame):
         self.mission_feedback.setWordWrap(True)
         self.mission_feedback.setObjectName("operatorMetric")
         mission_layout.addWidget(self.mission_goal_input)
+        mission_layout.addWidget(self.mission_begin_only_button)
         mission_layout.addWidget(self.mission_begin_button)
         mission_layout.addWidget(self.mission_picker)
         mission_layout.addWidget(self.mission_id_input)
@@ -199,6 +202,9 @@ class OperatorConsole(QFrame):
         layout.addWidget(controls_box)
         self.mission_begin_button.clicked.connect(
             lambda: self._request_mission("begin", self.mission_goal_input.text())
+        )
+        self.mission_begin_only_button.clicked.connect(
+            lambda: self._request_mission("begin_only", self.mission_goal_input.text())
         )
         self.mission_resume_button.clicked.connect(
             lambda: self._request_mission("resume", self.mission_id_input.text())
@@ -299,7 +305,7 @@ class OperatorConsole(QFrame):
     def _request_mission(self, operation: str, value: str) -> None:
         """Signal request only. Worker is authoritative and owns runtime."""
         raw = str(value or "").strip()
-        if operation in {"begin", "resume", "plan"} and not raw:
+        if operation in {"begin", "begin_only", "resume", "plan"} and not raw:
             self.mission_feedback.setText("Objectif ou identifiant de mission requis.")
             return
         self.mission_requested.emit(operation, raw)
@@ -313,8 +319,14 @@ class OperatorConsole(QFrame):
         mid = str(result.get("mission_id") or "")
         if success and mid.startswith("live_"):
             self.mission_id_input.setText(mid)
-        if success and operation == "begin":
+        if success and operation in {"begin", "begin_only"}:
             self.mission_goal_input.clear()
+        if success and operation == "begin_only":
+            self.mission_feedback.setText(
+                "Mission créée SANS action. Utilisez « Générer un plan » ; "
+                "aucun outil, aucun modèle ou preuve lancé pour l'instant."
+            )
+            return
         if success and operation == "auto_plan":
             steps = max(0, min(6, int(result.get("step_count") or 0)))
             evidence = max(0, min(24, int(result.get("evidence_count") or 0)))
@@ -508,6 +520,7 @@ class OperatorConsole(QFrame):
             )
         self._render_html("roadmap", "".join(parts))
         self.mission_begin_button.setEnabled(bool(data.get("mission_enabled")))
+        self.mission_begin_only_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_resume_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_detach_button.setEnabled(bool(data.get("mission_enabled")))
         self.mission_review_button.setEnabled(bool(data.get("mission_enabled")))
