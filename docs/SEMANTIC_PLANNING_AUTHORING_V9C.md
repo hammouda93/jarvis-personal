@@ -66,3 +66,21 @@ délégation supervisée sans double exécuteur.
 - Tester en conditions réelles plus tard : mode texte (micro OFF, TTS ON),
   mission attachée/reprise, Cerebras (quota), Chrome et onglets, UIA/CUA,
   WhatsApp avec accord utilisateur et un MCP spécifique de bout en bout.
+
+## Nouveau parcours « planifier avant d'agir »
+
+Le bouton **« ＋ Créer mission sans agir (plan d'abord) »** ouvre la même
+mission persistante, mais n'appelle **ni modèle, ni outil** et n'émet aucune
+instruction Windows/MCP. Il préserve l'ancien bouton **« Démarrer et exécuter »**
+pour les parcours directs existants. Le propriétaire peut ensuite :
+
+1. Créer une mission sans exécution.
+2. Cliquer explicitement sur **« Générer un plan (même IA · 1 requête) »**.
+3. Examiner le contrat et les ambiguïtés via **« Vérifier la progression »**.
+4. Consulter les agents et MCP potentiels via **« Proposer agents / capacités »**,
+   toujours en lecture seule.
+5. Continuer la conversation dans la même mission ; toute action autorisée
+   repasse par le moteur et les protections d'origine.
+
+Ce parcours ne permet pas encore de déléguer automatiquement une étape à
+un autre agent, et l'approbation d'une action MCP reste requise à chaque appel.
