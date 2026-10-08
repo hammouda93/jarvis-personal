@@ -219,6 +219,29 @@ class MissionOperatorUiTests(unittest.TestCase):
         finally:
             ui.close()
 
+    def test_saved_mission_selection_is_read_only_and_excludes_terminal(self):
+        ui = OperatorConsole()
+        try:
+            active = "live_" + "a" * 32
+            completed = "live_" + "b" * 32
+            ui.apply_snapshot({
+                "mission_enabled": True, "reliability_enabled": False,
+                "actions": [], "events": [],
+                "missions": [
+                    {"id": active, "status": "waiting_external",
+                     "goal": "Rapport joueur", "verified": False},
+                    {"id": completed, "status": "completed",
+                     "goal": "Ancien rapport", "verified": True},
+                ],
+            })
+            self.assertEqual(ui.mission_picker.count(), 2)
+            ui.mission_picker.setCurrentIndex(1)
+            self.assertEqual(ui.mission_id_input.text(), active)
+            # Reading a saved id does not run, resume or complete the mission.
+            self.assertEqual(ui.mission_feedback.text().startswith("Convergence"), True)
+        finally:
+            ui.close()
+
     def test_disabled_convergence_keeps_controls_unavailable(self):
         ui = OperatorConsole()
         try:
