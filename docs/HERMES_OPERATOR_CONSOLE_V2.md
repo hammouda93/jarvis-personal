@@ -57,3 +57,30 @@ wide operator view; `◉ Revenir au graphe` returns to the classic animated
 agent graph. The expanded view shows up to 18 recent persisted checkpoints
 with scrollable mission, step, and tool panels. The normal view shows seven.
 Compact and clean views remain available and are never bypassed by telemetry.
+
+
+## Actual reliability decisions (V2.1)
+
+A blocked action is **not an executed action**. The opt-in reliability
+layer now records a separate `guarded` checkpoint with a fixed reason code.
+The dashboard highlights such records as **BLOQUÉ PAR PROTECTION** instead
+of misrepresenting them as tool execution errors or successful mutations.
+The guard journal contains only tool name, HMAC argument digest, turn ID,
+status and a fixed machine-readable refusal reason.
+
+Additional Hermes-inspired progress guard: after **three successful,
+byte-identical observations** from the same explicitly read-only tool with
+the same arguments **in one turn**, a fourth identical observation is
+denied with `no_observable_progress`. The agent must switch its
+observation method, target or strategy. Any changed result resets this
+counter. The guard NEVER promotes an unrecognized tool to read-only,
+NEVER skips existing verification, and NEVER retries side effects.
+
+There is still no proof that an identical observation means the entire
+user goal is complete. The new guard is a loop-safety heuristic, not
+a semantic goal verifier.
+
+New negative/regression cases cover stalled perception, changed screens,
+cross-turn reset, an unknown potentially mutating tool, persisted guard
+reasons, privacy of journal arguments and the irreversible uncertain
+side-effect barrier.
