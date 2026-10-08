@@ -10,6 +10,7 @@ import traceback
 from PySide6.QtCore import QObject, Signal, Slot
 
 from .agent_runtime import AgentRuntimeUnavailable, build_agent_runtime
+from .mission_workbench import MissionControlInbox, perform_mission_command
 from .audio import record_utterance, wait_for_double_clap
 from .config import settings
 from .language import normalize_language, repeat_prompt, tool_message
@@ -112,6 +113,7 @@ class AssistantWorker(QObject):
     conversation_message = Signal(str, str, str)
     telemetry_changed = Signal(dict)
     operator_event = Signal(dict)
+    mission_control_result = Signal(dict)
     finished = Signal()
 
     def __init__(self) -> None:
@@ -128,6 +130,7 @@ class AssistantWorker(QObject):
         # or Explorer surface has just become the user's active context.
         self._active_surface_kind = ""
         self._text_inbox = TextTurnInbox()
+        self._mission_control = MissionControlInbox()
         self._input_mode = InputModeGate(self._text_inbox)
         self._announced_input_generation = -1
         self._reply_with_voice = True
@@ -229,6 +232,39 @@ class AssistantWorker(QObject):
     def set_text_mode(self, enabled: bool) -> None:
         """Switch text/voice admission without touching the agent context."""
         self._input_mode.set_text_mode(enabled)
+
+    def submit_mission_control(self, operation: str, value: str = "") -> bool:
+        """Safe UI handoff; no mission method runs on the Qt GUI thread."""
+        if self._text_inbox.pending():
+            return False  # Do not attach an older queued message to a new mission.
+        accepted = self._mission_control.submit(operation, value)
+        if accepted:
+            self._input_mode.changed.set()
+        return accepted
+
+    def _run_mission_control(self, command) -> None:
+        """Run only from AssistantWorker.run; do not bypass safety proof gates."""
+        try:
+            result = perform_mission_command(self._agent, command)
+        except (RuntimeError, ValueError, PermissionError, KeyError) as exc:
+            result = {
+                "success": False, "operation": command.operation,
+                "reason": type(exc).__name__ + ":" + str(exc)[:120],
+            }
+        self.mission_control_result.emit(result)
+        if not result.get("success"):
+            self.log_line.emit(
+                "[MISSION_CONTROL] rejected=" + str(result.get("reason"))[:150]
+            )
+            return
+        self.log_line.emit(
+            f"[MISSION_CONTROL] operation={command.operation} status="
+            f"{result.get('status', '')} id={result.get('mission_id', '')}"
+        )
+        if command.operation == "begin":
+            # One ordinary model turn, same runtime/voice/chat path; no second
+            # model, no separate planning executor, no pseudo-tool instructions.
+            self._process_user_text(command.value, source="text")
 
     def _apply_input_mode(self) -> tuple[bool, int]:
         text_mode, generation = self._input_mode.snapshot()
@@ -659,7 +695,10 @@ class AssistantWorker(QObject):
                 return True
 
         resolved_intent = legacy_intent or route(user_text)
-        if self._handle_simple_direct_action(user_text, resolved_intent):
+        if (
+            not getattr(self._agent, "active_mission_id", None)
+            and self._handle_simple_direct_action(user_text, resolved_intent)
+        ):
             return True
 
         self._state(
@@ -891,6 +930,11 @@ class AssistantWorker(QObject):
                 text_mode, generation = self._apply_input_mode()
                 self.transcript_changed.emit("")
                 self.detail_changed.emit("")
+
+                mission_command = self._mission_control.pop_nowait()
+                if mission_command is not None:
+                    self._run_mission_control(mission_command)
+                    continue
 
                 typed = self._text_inbox.pop_nowait()
                 if typed is not None:
