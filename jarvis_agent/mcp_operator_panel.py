@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
+from .mcp_service_catalog import SERVICE_CARDS, find_card
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
 )
@@ -25,6 +26,24 @@ class MCPConnectionsPanel(QFrame):
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
 
+        self.catalog_picker = QComboBox()
+        self.catalog_picker.setObjectName("missionPicker")
+        self.catalog_picker.addItem("Services suggérés (aucune connexion automatique)…", "")
+        for card in SERVICE_CARDS:
+            self.catalog_picker.addItem(
+                card.label + " · " + card.category, card.identifier
+            )
+        layout.addWidget(self.catalog_picker)
+        self.catalog_note = QLabel(
+            "Les modèles ci-dessous ne fournissent ni URL ni identifiants ; "
+            "chaque service doit être configuré séparément."
+        )
+        self.catalog_note.setWordWrap(True)
+        self.catalog_note.setObjectName("operatorMetric")
+        layout.addWidget(self.catalog_note)
+        self.catalog_picker.currentIndexChanged.connect(
+            self._select_catalog_service
+        )
         self.server_name = QLineEdit()
         self.server_name.setObjectName("missionId")
         self.server_name.setPlaceholderText("Identifiant : github, calendar, research…")
@@ -87,6 +106,16 @@ class MCPConnectionsPanel(QFrame):
         self.discover_button.clicked.connect(lambda: self._for_server("discover"))
         self.allow_button.clicked.connect(lambda: self._for_tool("allow_tool"))
         self.deny_button.clicked.connect(lambda: self._for_tool("deny_tool"))
+
+    def _select_catalog_service(self, index: int) -> None:
+        card = find_card(str(self.catalog_picker.currentData() or ""))
+        if card is None:
+            return
+        self.server_name.setText(card.identifier)
+        self.catalog_note.setText(
+            card.label + " : " + card.requirement + " " + card.warning
+            + " Aucune URL ou clé n'est générée."
+        )
 
     def _send(self, operation: str, server: str, value: str) -> None:
         if not server or (operation == "add_http" and not value):
