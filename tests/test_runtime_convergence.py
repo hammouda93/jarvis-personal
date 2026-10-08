@@ -298,6 +298,33 @@ class LiveMissionContinuityTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.runtime.resume_mission(mission_id)
 
+    def test_passive_capability_routing_never_dispatches_second_action(self):
+        self.delegate.result = SimpleNamespace(
+            text="done", actions=(action("browser_click"), action("computer_press"))
+        )
+        mission_id = self.runtime.begin_mission("utilise Chrome puis Windows")
+        self.runtime.run("execute")
+        self.assertEqual(len(self.delegate.calls), 1)
+        tasks = self.runtime.mission_snapshot(mission_id)["tasks"]
+        routes = tasks[0]["agent_routes"]
+        self.assertEqual(routes[0]["proposed_agent"], "browser")
+        self.assertEqual(routes[1]["proposed_agent"], "windows")
+        self.assertTrue(all(not route["authoritative"] for route in routes))
+        self.assertFalse(self.runtime.mission_snapshot(mission_id)["goal_verified"])
+
+    def test_unmapped_actions_require_review_without_false_success(self):
+        self.delegate.result = SimpleNamespace(
+            text="tool succeeded", actions=(action("custom_new_primitive"),)
+        )
+        mission_id = self.runtime.begin_mission("use a new unknown app")
+        self.runtime.run("try operation")
+        state = self.saved(mission_id)
+        self.assertTrue(state.observed_state["last_routing_needs_review"])
+        self.assertFalse(state.observed_state["goal_verified"])
+        self.assertTrue(
+            self.runtime.mission_snapshot(mission_id)["tasks"][0]["agent_routes"][0]["needs_review"]
+        )
+
     def test_factory_opt_in_and_opt_out_without_replacing_model(self):
         from jarvis_agent import agent_runtime
         fake = FakeDelegate()
