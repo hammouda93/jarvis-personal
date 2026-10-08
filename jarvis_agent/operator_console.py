@@ -18,6 +18,7 @@ _STATUS = {
     "succeeded": ("OUTIL OK", "#70dbbe"),
     "failed": ("ÉCHEC", "#f8a4a4"),
     "resolved": ("REVU MANUELLEMENT", "#94c6f9"),
+    "guarded": ("BLOQUÉ PAR PROTECTION", "#f7c679"),
     "running": ("EN COURS", "#71d6ef"),
     "waiting_external": ("PREUVE ATTENDUE", "#f7c679"),
     "blocked": ("BLOQUÉ", "#f8a4a4"),
@@ -75,6 +76,8 @@ def render_snapshot(data: dict) -> tuple[str, str, str]:
             f'<b>{_escape(x.get("tool"), 100)}</b>'
             + (' · <span style="color:#70dbbe">preuve outil ✓</span>' if x.get("verified")
                else ' · <span style="color:#eec28c">non vérifié</span>')
+            + (f'<br><span style="color:#f7c679">raison : {_escape(x.get("guard_reason"), 65)}</span>'
+               if x.get("status") == "guarded" and x.get("guard_reason") else "")
             + f'<br><span style="color:#779bad">{_escape(x.get("id"), 28)}…</span></p>'
             for x in actions
         )
@@ -236,7 +239,8 @@ class OperatorConsole(QFrame):
         )
         self.action_line.setText(
             f"Actions récentes : {len(data.get('actions') or [])}"
-            f"  ·  états incertains affichés : {data.get('unresolved_visible', 0)}"
+            f"  ·  incertains : {data.get('unresolved_visible', 0)}"
+            f"  ·  protections : {data.get('guarded_visible', 0)}"
         )
         self.update_model(self._last_model)
 
