@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from .agent_runtime import AgentRuntimeUnavailable, build_agent_runtime
 from .mission_workbench import MissionControlInbox, perform_mission_command
+from .mcp_control import MCPControlInbox, perform_mcp_control
 from .audio import record_utterance, wait_for_double_clap
 from .config import settings
 from .language import normalize_language, repeat_prompt, tool_message
@@ -114,6 +115,7 @@ class AssistantWorker(QObject):
     telemetry_changed = Signal(dict)
     operator_event = Signal(dict)
     mission_control_result = Signal(dict)
+    mcp_control_result = Signal(dict)
     finished = Signal()
 
     def __init__(self) -> None:
@@ -131,6 +133,7 @@ class AssistantWorker(QObject):
         self._active_surface_kind = ""
         self._text_inbox = TextTurnInbox()
         self._mission_control = MissionControlInbox()
+        self._mcp_control = MCPControlInbox()
         self._input_mode = InputModeGate(self._text_inbox)
         self._announced_input_generation = -1
         self._reply_with_voice = True
@@ -271,6 +274,23 @@ class AssistantWorker(QObject):
             # One ordinary model turn, same runtime/voice/chat path; no second
             # model, no separate planning executor, no pseudo-tool instructions.
             self._process_user_text(command.value, source="text")
+
+    def submit_mcp_control(self, operation: str, parameters: dict) -> bool:
+        """Metadata/connection request only; executed by worker, never UI."""
+        accepted = self._mcp_control.submit(operation, parameters)
+        if accepted:
+            self._input_mode.changed.set()
+        return accepted
+
+    def _run_mcp_control(self, command) -> None:
+        outcome = perform_mcp_control(command)
+        self.mcp_control_result.emit(outcome)
+        # Safe metadata only, never token or server response contents in logs.
+        self.log_line.emit(
+            "[MCP_CONTROL] operation=" + str(command.operation)[:20]
+            + " success=" + str(outcome.get("success") is True).lower()
+            + " status=" + str(outcome.get("reason") or "ok")[:55]
+        )
 
     def _apply_input_mode(self) -> tuple[bool, int]:
         text_mode, generation = self._input_mode.snapshot()
@@ -939,6 +959,11 @@ class AssistantWorker(QObject):
                 text_mode, generation = self._apply_input_mode()
                 self.transcript_changed.emit("")
                 self.detail_changed.emit("")
+
+                mcp_command = self._mcp_control.pop_nowait()
+                if mcp_command is not None:
+                    self._run_mcp_control(mcp_command)
+                    continue
 
                 mission_command = self._mission_control.pop_nowait()
                 if mission_command is not None:
