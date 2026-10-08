@@ -66,8 +66,20 @@ critères utilisateur validés et sans possibilité d'injection de commande.
 
 Les étapes 1–7 sont dans les branches parents, intégrées et passées dans
 des suites automatisées. La validation **réelle Windows reste ouverte**.
-Étape 8 : cible de cette branche; développement et CI requis avant de la
-marquer « intégrée ». Les étapes 9–11 restent à développer.
+Étape 8 : code intégré et CI validée (**426/426 Python Windows**, **45/45 replays\nBrowser Bridge**, **607/607 Python Linux**). Ce résultat correspond à\nGitHub Actions V4 avant le dernier commit documentaire; le HEAD final doit\nconserver le même niveau de validation. **Tests Windows réels non réalisés.**\nLes étapes 9–11 restent à développer.
 
 Branche stable protégée : `fix/browser-live-contracts-v2` @ `aff001fd`.
 Aucune fusion sans validation réelle complète.
+
+
+## Résultat automatique et garde-fous finaux
+
+CI V4 avant clôture du suivi : 426 tests Python sous Windows, 45 tests
+Browser Bridge Node et 607 tests Python sous Linux (quatre anciens tests
+Win32 sont réservés à la CI Windows). Aucune requête externe réelle, aucune
+validation réelle de WhatsApp/Chrome/installateur par cette CI.
+
+Prochaine étape 9/11 : planificateur sémantique et délégation d'agents de
+capacités **sans nouveau moteur de computer use ni replay aveugle**. La
+sélection d'agents devra rester vérifiable et bornée; les Skills existantes
+ne doivent jamais limiter la découverte de nouvelles actions.
