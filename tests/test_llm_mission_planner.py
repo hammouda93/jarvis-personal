@@ -217,6 +217,27 @@ class LivePlanAdmissionTests(unittest.TestCase):
             self.provider, base_dir=self.base, owner_user_id="plan-owner",
         )
 
+    def test_plan_first_flow_creates_mission_without_model_or_tools(self):
+        before = perform_mission_command(
+            self.runtime, MissionCommand("begin_only", "Analyser les sources")
+        )
+        self.assertTrue(before["success"])
+        self.assertEqual(before["status"], "mission_created_no_execution")
+        mid = before["mission_id"]
+        self.assertTrue(mid.startswith("live_"))
+        self.assertEqual(self.provider.requests, [])
+        self.assertEqual(self.provider.normal_turns, [])
+        snap = self.runtime.mission_snapshot(mid)
+        self.assertEqual(snap["tasks"], [])
+        self.assertFalse(snap["goal_verified"])
+        planned = perform_mission_command(
+            self.runtime, MissionCommand("auto_plan"),
+        )
+        self.assertTrue(planned["success"])
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertFalse(planned["tool_execution"])
+        self.assertEqual(self.runtime.mission_snapshot(mid)["tasks"], [])
+
     def test_generate_and_register_without_external_execution_or_goal_proof(self):
         mid = self.runtime.begin_mission("Analyser les sources")
         before = self.runtime.mission_snapshot(mid)
@@ -271,6 +292,28 @@ class PlanUIAcceptanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._app = QApplication.instance() or QApplication([])
+
+    def test_create_without_execution_button_is_only_mission_command(self):
+        widget = OperatorConsole()
+        try:
+            events = []
+            widget.mission_requested.connect(lambda op, v: events.append((op, v)))
+            widget.apply_snapshot({
+                "mission_enabled": True, "reliability_enabled": False,
+                "missions": [], "actions": [], "events": [],
+            })
+            widget.mission_goal_input.setText("Préparer mission de recherche")
+            widget.mission_begin_only_button.click()
+            self.assertEqual(events, [
+                ("begin_only", "Préparer mission de recherche")
+            ])
+            widget.show_mission_result({
+                "success": True, "operation": "begin_only",
+                "mission_id": "live_" + "b"*32,
+            })
+            self.assertIn("SANS action", widget.mission_feedback.text())
+        finally:
+            widget.close()
 
     def test_button_requests_only_one_opt_in_plan_and_displays_truth(self):
         widget = OperatorConsole()
