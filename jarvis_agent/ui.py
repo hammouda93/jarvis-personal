@@ -1385,6 +1385,7 @@ class JarvisWindow(QWidget):
         self._worker.finished.connect(self._thread.quit)
         self._thread.finished.connect(self._on_worker_thread_finished)
         self._worker.state_changed.connect(self._on_state)
+        self._worker.state_changed.connect(self.operator_console.update_phase)
         self._worker.status_changed.connect(self.status_label.setText)
         self._worker.transcript_changed.connect(self._on_transcript)
         self._worker.detail_changed.connect(self._on_detail)
@@ -1615,6 +1616,17 @@ class JarvisWindow(QWidget):
 
         if text.startswith("[AGENT] provider=cerebras"):
             self.chip_cerebras.detail.setText("Actif")
+
+        # Actual numbered model rounds, emitted by the existing runtime.
+        current_round = re.search(
+            r"^\[AGENT\] provider=([^\s]+) model=([^\s]+) round=(\d+)",
+            text,
+        )
+        if current_round:
+            previous = dict(self.operator_console._last_model)
+            previous["provider"] = current_round.group(1)
+            previous["rounds_used"] = int(current_round.group(3))
+            self.operator_console.update_model(previous)
 
         call = re.search(r"\[AGENT_TOOL\] call=([^\s]+)", text)
         if call:
