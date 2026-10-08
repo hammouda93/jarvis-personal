@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import closing
 import sqlite3
 import time
 from pathlib import Path
@@ -43,7 +44,7 @@ def _readonly(db: Path, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     try:
         # The URI is platform aware and never opens SQLite in write mode.
         uri = db.resolve().as_uri() + "?mode=ro"
-        with sqlite3.connect(uri, uri=True, timeout=0.12) as con:
+        with closing(sqlite3.connect(uri, uri=True, timeout=0.12)) as con:
             con.row_factory = sqlite3.Row
             con.execute("PRAGMA query_only=ON")
             return [dict(row) for row in con.execute(sql, params).fetchall()]
@@ -125,9 +126,19 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
                         "tools": [str(x)[:50] for x in (node.get("result") or {}).get("action_names", [])[:5]],
                     })
     unknown = sum(row["status"] in ("unknown", "dispatched") for row in actions)
+    from .config import settings
     return {
         "reliability_enabled": reliability_on,
         "mission_enabled": mission_on,
+        "kernel_shadow_enabled": bool(settings.kernel_shadow_enabled),
+        "memory_enabled": _flag("JARVIS_MEMORY_CORE_ENABLED"),
+        "semantic_memory_enabled": (
+            _flag("JARVIS_MEMORY_CORE_ENABLED")
+            and _flag("JARVIS_SEMANTIC_MEMORY_V5_ENABLED")
+        ),
+        "browser_core_enabled": _flag("JARVIS_BROWSER_CORE_ENABLED"),
+        "computer_core_enabled": _flag("JARVIS_COMPUTER_CORE_ENABLED"),
+        "learning_enabled": bool(settings.operational_learning_enabled),
         "actions": actions,
         "missions": missions,
         "tasks": current_tasks,
