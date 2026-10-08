@@ -251,7 +251,6 @@ class MCPPanelContracts(unittest.TestCase):
             self.assertEqual(emitted, [])
             self.assertEqual(self.hub.list_servers(), [])
             self.assertFalse(panel.probe_button.isEnabled())
-            self.assertIn("non activés", panel.findChildren(type(panel.presets))[0].parentWidget().findChild(type(panel.status), "mcpHint").text()) if False else None
             panel.hermes_probe.click()
             self.assertEqual(emitted, [("hermes", "hermes")])
         finally:
