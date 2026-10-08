@@ -265,6 +265,8 @@ class AssistantWorker(QObject):
             f"{result.get('status', '')} id={result.get('mission_id', '')}"
         )
         if command.operation == "begin":
+            # Old direct-app questions must not hijack the new goal.
+            self._pending_direct_follow_up = ""
             # One ordinary model turn, same runtime/voice/chat path; no second
             # model, no separate planning executor, no pseudo-tool instructions.
             self._process_user_text(command.value, source="text")
@@ -651,7 +653,10 @@ class AssistantWorker(QObject):
         if lifecycle_handled:
             return keep_listening
 
-        if self._pending_direct_follow_up:
+        if (
+            self._pending_direct_follow_up
+            and not getattr(self._agent, "active_mission_id", None)
+        ):
             follow_up = self._pending_direct_follow_up
             self._pending_direct_follow_up = ""
             from .foundation_tools import enabled
