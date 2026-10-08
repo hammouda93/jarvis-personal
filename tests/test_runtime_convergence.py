@@ -299,6 +299,19 @@ class LiveMissionContinuityTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.runtime.resume_mission(mission_id)
 
+    def test_existing_orchestrator_tracks_graph_but_kernel_never_dispatches(self):
+        mid = self.runtime.begin_mission("purely observational work")
+        self.assertIs(
+            self.runtime.orchestrator.graph(mid),
+            self.runtime.orchestrator.graph(mid),
+        )
+        self.assertIs(self.runtime.orchestrator.kernel, self.runtime.kernel)
+        self.assertIsNone(self.runtime.kernel.next_request(timeout_s=0.0))
+        self.runtime.run("only one model invocation")
+        self.assertEqual(len(self.delegate.calls), 1)
+        self.assertEqual(len(self.runtime.orchestrator.graph(mid).nodes()), 1)
+        self.assertIsNone(self.runtime.kernel.next_request(timeout_s=0.0))
+
     def test_semantic_plan_is_persisted_without_tool_execution(self):
         mid = self.runtime.begin_mission("multi app objective")
         plan = MissionContract(
