@@ -6,7 +6,7 @@ from collections import deque
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextBrowser,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextBrowser,
     QVBoxLayout, QWidget,
 )
 
@@ -139,11 +139,20 @@ class OperatorConsole(QFrame):
         control_title.setObjectName("operatorSection")
         mission_layout.addWidget(control_title)
         self.mission_goal_input = QLineEdit()
+        self.mission_goal_input.setMaxLength(2000)
         self.mission_goal_input.setObjectName("missionGoal")
         self.mission_goal_input.setPlaceholderText("Objectif à poursuivre sur plusieurs échanges…")
         self.mission_begin_button = QPushButton("▶ Démarrer et exécuter")
         self.mission_begin_button.setObjectName("missionButton")
+        self.mission_picker = QComboBox()
+        self.mission_picker.setObjectName("missionPicker")
+        self.mission_picker.addItem("Choisir une mission enregistrée…", "")
+        self._mission_choices = ()
+        self.mission_picker.currentIndexChanged.connect(
+            lambda _: self._select_saved_mission()
+        )
         self.mission_id_input = QLineEdit()
+        self.mission_id_input.setMaxLength(64)
         self.mission_id_input.setObjectName("missionId")
         self.mission_id_input.setPlaceholderText("Identifiant live_… d'une mission existante")
         self.mission_resume_button = QPushButton("↻ Reprendre le suivi")
@@ -162,6 +171,7 @@ class OperatorConsole(QFrame):
         self.mission_feedback.setObjectName("operatorMetric")
         mission_layout.addWidget(self.mission_goal_input)
         mission_layout.addWidget(self.mission_begin_button)
+        mission_layout.addWidget(self.mission_picker)
         mission_layout.addWidget(self.mission_id_input)
         mission_layout.addLayout(buttons)
         mission_layout.addWidget(self.mission_feedback)
@@ -224,7 +234,7 @@ class OperatorConsole(QFrame):
             QLabel#operatorSubtitle {color:#6dbac5;font-size:8px;}
             QLabel#operatorSection {color:#7edee5;font-size:9px;font-weight:650;}
             QLabel#operatorMetric {color:#b4dce7;font-size:10px;}
-            QLineEdit#missionGoal,QLineEdit#missionId {
+            QLineEdit#missionGoal,QLineEdit#missionId,QComboBox#missionPicker {
                 background:#061a2b;color:#e4f9ff;border:1px solid #286278;
                 border-radius:6px;padding:5px;font-size:10px;
             }
@@ -241,6 +251,11 @@ class OperatorConsole(QFrame):
                 color:#ccedf2;font-size:9px;selection-background-color:#174d60;}
         """)
         self.apply_snapshot(snapshot())
+
+    def _select_saved_mission(self) -> None:
+        selected = str(self.mission_picker.currentData() or "")
+        if selected:
+            self.mission_id_input.setText(selected)
 
     def _request_mission(self, operation: str, value: str) -> None:
         """Signal request only. Worker is authoritative and owns runtime."""
@@ -288,6 +303,29 @@ class OperatorConsole(QFrame):
     def apply_snapshot(self, data: dict) -> None:
         self._last_snapshot = dict(data)
         missions, steps, actions = render_snapshot(data)
+        candidates = tuple(
+            (str(m.get("id") or ""),
+             str(m.get("status") or ""),
+             str(m.get("goal") or "")[:62])
+            for m in (data.get("missions") or [])
+            if str(m.get("id") or "").startswith("live_")
+            and str(m.get("status") or "") not in {"completed", "failed"}
+        )
+        if candidates != self._mission_choices:
+            chosen = str(self.mission_picker.currentData() or "")
+            self.mission_picker.blockSignals(True)
+            self.mission_picker.clear()
+            self.mission_picker.addItem("Choisir une mission enregistrée…", "")
+            for mission_id, status, label in candidates:
+                self.mission_picker.addItem(
+                    (label or mission_id) + " · " + status,
+                    mission_id,
+                )
+            index = self.mission_picker.findData(chosen)
+            if index >= 0:
+                self.mission_picker.setCurrentIndex(index)
+            self.mission_picker.blockSignals(False)
+            self._mission_choices = candidates
         self._render_html("missions", missions)
         self._render_html("tasks", steps)
         self._render_html("actions", actions)
