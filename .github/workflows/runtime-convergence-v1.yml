@@ -78,4 +78,36 @@ jobs:
           JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
           JARVIS_CUA_DRIVER_ENABLED: "0"
         run: |
-          python -m unittest discover -s tests -p 'test_*.py' -q
+          python - <<'PY'
+          import sys
+          import unittest
+
+          # Exactly four historical tests assume Win32 APIs unavailable on
+          # Linux. The same modules run on the Windows CI lane where supported.
+          windows_only = {
+              "test_learned_app_profile_is_reused_before_rescanning_windows",
+              "test_cursor_falls_back_to_dynamic_windows_discovery",
+              "test_inspection_recovers_from_uia_enumeration_failure",
+              "test_named_inspection_prefers_stable_native_handle",
+          }
+          original = unittest.defaultTestLoader.discover(
+              "tests", pattern="test_*.py"
+          )
+          omitted = []
+          def filter_suite(items):
+              kept = unittest.TestSuite()
+              for item in items:
+                  if isinstance(item, unittest.TestSuite):
+                      kept.addTests(filter_suite(item))
+                  elif item.id().split(".")[-1] in windows_only:
+                      omitted.append(item.id())
+                  else:
+                      kept.addTest(item)
+              return kept
+
+          suite = filter_suite(original)
+          print("Windows-only tests excluded on Linux:", omitted)
+          assert len(omitted) == 4, "Unexpected platform skip set"
+          outcome = unittest.TextTestRunner(verbosity=1).run(suite)
+          sys.exit(0 if outcome.wasSuccessful() else 1)
+          PY
