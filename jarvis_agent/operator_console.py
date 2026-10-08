@@ -356,8 +356,11 @@ class OperatorConsole(QFrame):
         parts = []
         for stage in roadmap["stages"]:
             label, shade = labels.get(stage["implementation"], ("INCONNU", "#b0d0e0"))
-            suffix = " · CI antérieure OK" if stage["automated"] == "green_ancestor" else (
-                " · CI à valider" if stage["automated"] == "pending" else ""
+            suffix = (
+                " · CI V3 validée" if stage["automated"] == "green_current"
+                else " · CI antérieure OK" if stage["automated"] == "green_ancestor"
+                else " · CI à valider" if stage["automated"] == "pending"
+                else ""
             )
             parts.append(
                 f'<p style="margin-bottom:6px"><span style="color:{shade}">'
