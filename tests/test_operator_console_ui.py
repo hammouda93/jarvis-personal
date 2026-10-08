@@ -15,6 +15,34 @@ class OperatorConsoleWidgetTests(unittest.TestCase):
     def setUpClass(cls):
         cls._app = QApplication.instance() or QApplication([])
 
+    def test_live_turns_never_claim_goal_proven_and_escape_details(self):
+        panel = OperatorConsole()
+        try:
+            panel.update_live_event({
+                "source": "direct_fast_path",
+                "tools": ["open_application", "<script>secret</script>"],
+                "count": 1,
+                "success": True,
+                "verified": False,
+            })
+            lines = panel._views["live"].toPlainText()
+            self.assertIn("direct_fast_path", lines)
+            self.assertIn("open_application", lines)
+            self.assertIn("objectif : non vérifié", lines)
+            self.assertIn("<script>secret</script>", lines)
+            html = panel._render_cache["live"]
+            self.assertNotIn("<script>", html)
+            self.assertIn("&lt;script&gt;", html)
+            panel.update_live_event({
+                "source": "agent_runtime",
+                "tools": ["browser_click"],
+                "success": False,
+            })
+            self.assertIn("ÉCHEC / INCOMPLET",
+                          panel._views["live"].toPlainText())
+        finally:
+            panel.close()
+
     def test_widgets_project_real_data_and_do_not_start_agent(self):
         panel = OperatorConsole()
         try:
