@@ -90,6 +90,7 @@ class OperatorConsole(QFrame):
         self.setMinimumWidth(320)
         self._last_model = {}
         self._last_snapshot = {}
+        self._render_cache: dict[str, str] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(13, 13, 13, 13)
@@ -174,12 +175,23 @@ class OperatorConsole(QFrame):
         """)
         self.apply_snapshot(snapshot())
 
+    def _render_html(self, key: str, rendered: str) -> None:
+        # Polling must not reset the operator's scroll/selection 40 times/min.
+        if self._render_cache.get(key) == rendered:
+            return
+        self._render_cache[key] = rendered
+        viewer = self._views[key]
+        scrollbar = viewer.verticalScrollBar()
+        position = scrollbar.value()
+        viewer.setHtml(rendered)
+        scrollbar.setValue(min(position, scrollbar.maximum()))
+
     def apply_snapshot(self, data: dict) -> None:
         self._last_snapshot = dict(data)
         missions, steps, actions = render_snapshot(data)
-        self._views["missions"].setHtml(missions)
-        self._views["tasks"].setHtml(steps)
-        self._views["actions"].setHtml(actions)
+        self._render_html("missions", missions)
+        self._render_html("tasks", steps)
+        self._render_html("actions", actions)
         entries = data.get("events") or []
         if not data.get("mission_enabled"):
             journal_html = "<p>Journal désactivé : Convergence OFF.</p>"
@@ -195,7 +207,7 @@ class OperatorConsole(QFrame):
                 + "</p>"
                 for entry in entries
             )
-        self._views["events"].setHtml(journal_html)
+        self._render_html("events", journal_html)
         mission_on = bool(data.get("mission_enabled"))
         reliability_on = bool(data.get("reliability_enabled"))
         kernel_mode = "observateur" if data.get("kernel_shadow_enabled") else "non connecté"
