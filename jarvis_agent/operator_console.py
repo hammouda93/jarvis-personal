@@ -121,10 +121,20 @@ class OperatorConsole(QFrame):
         layout.addWidget(summary)
 
         self._views = {}
+        scroll = QScrollArea(self)
+        scroll.setObjectName("operatorScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        content = QWidget()
+        content.setObjectName("operatorScrollContent")
+        event_list = QVBoxLayout(content)
+        event_list.setContentsMargins(0, 0, 0, 0)
+        event_list.setSpacing(7)
         for key, label in [
             ("missions", "◉   MISSIONS / OBJECTIFS"),
             ("tasks", "◇   ÉTAPES / SUPERVISION"),
             ("actions", "⚙   OUTILS / VÉRIFICATIONS"),
+            ("events", "⌁   JOURNAL DES ÉVÉNEMENTS"),
         ]:
             group = QFrame()
             group.setObjectName("operatorGroup")
@@ -141,8 +151,10 @@ class OperatorConsole(QFrame):
             self._views[key] = view
             group_layout.addWidget(header)
             group_layout.addWidget(view)
-            layout.addWidget(group)
-        layout.addStretch(1)
+            event_list.addWidget(group)
+        event_list.addStretch(1)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, 1)
         self.setStyleSheet("""
             QFrame#operatorConsole {background: rgba(2,13,27,230);
                 border:1px solid rgba(56,164,192,105);border-radius:15px;}
@@ -154,6 +166,9 @@ class OperatorConsole(QFrame):
             QLabel#operatorSubtitle {color:#6dbac5;font-size:8px;}
             QLabel#operatorSection {color:#7edee5;font-size:9px;font-weight:650;}
             QLabel#operatorMetric {color:#b4dce7;font-size:10px;}
+            QScrollArea#operatorScroll, QWidget#operatorScrollContent {
+                background: transparent; border: none;
+            }
             QTextBrowser#operatorEvents {background:transparent;border:none;
                 color:#ccedf2;font-size:9px;selection-background-color:#174d60;}
         """)
@@ -165,6 +180,22 @@ class OperatorConsole(QFrame):
         self._views["missions"].setHtml(missions)
         self._views["tasks"].setHtml(steps)
         self._views["actions"].setHtml(actions)
+        entries = data.get("events") or []
+        if not data.get("mission_enabled"):
+            journal_html = "<p>Journal désactivé : Convergence OFF.</p>"
+        elif not entries:
+            journal_html = "<p>Aucun événement enregistré.</p>"
+        else:
+            journal_html = "".join(
+                f'<p style="margin-bottom:6px"><b>{_escape(entry.get("kind"), 90)}</b>'
+                f'<br><span style="color:#93bbca">{_escape(entry.get("component"), 80)}</span>'
+                + (" · <span style='color:#70dbbe'>OK</span>" if entry.get("success") is True
+                   else " · <span style='color:#f9a4a4'>ÉCHEC</span>" if entry.get("success") is False
+                   else " · <span style='color:#e9bc83'>non évalué</span>")
+                + "</p>"
+                for entry in entries
+            )
+        self._views["events"].setHtml(journal_html)
         mission_on = bool(data.get("mission_enabled"))
         reliability_on = bool(data.get("reliability_enabled"))
         kernel_mode = "observateur" if data.get("kernel_shadow_enabled") else "non connecté"
