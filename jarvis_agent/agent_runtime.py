@@ -4739,6 +4739,13 @@ def build_agent_runtime() -> AgentRuntime:
     )):
         foundation_tools = build_foundation_tools(tools)
         tools = foundation_tools
+    # Optional MCP tools belong to the SAME Cerebras/Groq/Ollama execution
+    # registry. They are wrapped BEFORE the Hermes checkpoint/approval layer
+    # so unknown remote outcomes are not silently replayed.
+    if provider in ("cerebras", "groq", "ollama"):
+        from .mcp_native_tools import MCPNativeToolBridge
+
+        tools = MCPNativeToolBridge(tools)
     # Independent, opt-in Hermes-inspired per-action checkpointing.
     # This registry is the *only* additional boundary around the existing
     # executor; Browser Bridge / UIA / CUA dispatch remains unchanged.
