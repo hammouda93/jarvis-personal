@@ -1,8 +1,10 @@
 """Safety and non-regression tests for the opt-in live mission adapter."""
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -295,6 +297,33 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertEqual(len(self.delegate.calls), 1)
         with self.assertRaises(RuntimeError):
             self.runtime.resume_mission(mission_id)
+
+    def test_factory_opt_in_and_opt_out_without_replacing_model(self):
+        from jarvis_agent import agent_runtime
+        fake = FakeDelegate()
+        stub_settings = SimpleNamespace(
+            agent_provider="cerebras",
+            structured_tracing_enabled=False,
+            kernel_shadow_user_id="local-user",
+        )
+        with (
+            patch.object(agent_runtime, "settings", stub_settings),
+            patch.object(agent_runtime, "CerebrasResponsesAgent", return_value=fake),
+            patch.dict(os.environ, {
+                "JARVIS_RUNTIME_CONVERGENCE_DIR": str(self.root),
+                "JARVIS_MEMORY_CORE_ENABLED": "0",
+                "JARVIS_BROWSER_CORE_ENABLED": "0",
+                "JARVIS_COMPUTER_CORE_ENABLED": "0",
+                "JARVIS_RUNTIME_CONVERGENCE_ENABLED": "0",
+            }),
+        ):
+            self.assertIs(agent_runtime.build_agent_runtime(), fake)
+            os.environ["JARVIS_RUNTIME_CONVERGENCE_ENABLED"] = "1"
+            wrapped = agent_runtime.build_agent_runtime()
+            self.assertIsInstance(wrapped, LiveMissionContinuityRuntime)
+            self.assertIs(wrapped.delegate, fake)
+            self.assertIs(wrapped.run("hello"), fake.result)
+            self.assertEqual(fake.calls, [("run", "hello")])
 
     def test_exception_never_persists_sensitive_tool_details(self):
         mission_id = self.runtime.begin_mission("send message")
