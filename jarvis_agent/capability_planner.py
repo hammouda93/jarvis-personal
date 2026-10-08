@@ -118,14 +118,16 @@ def propose_capabilities(
 
         chosen = []
         if dispatch_status == "candidate_review_only":
-            target = _terms(intent + " " + str(snapshot.get("user_goal") or "")[:180])
+            intent_terms = _terms(intent)
+            goal_terms = _terms(str(snapshot.get("user_goal") or "")[:180])
+            target = intent_terms | goal_terms
             scored = []
             for item in options:
                 match = target & item["terms"]
                 if not match:
                     continue
                 # Deterministic, dynamic wording overlap, not app hardcoding.
-                score = round(len(match) / max(1, len(target)), 3)
+                score = round((3 * len(intent_terms & match) + len(goal_terms & match)) / max(1, 3 * len(intent_terms) + len(goal_terms)), 3)
                 scored.append((score, item))
             scored.sort(
                 key=lambda pair: (
