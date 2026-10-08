@@ -106,9 +106,9 @@ jobs:
           python - <<'PY'
           from mcp import ClientSession
           from mcp.client.stdio import StdioServerParameters, stdio_client
-          from mcp.client.streamable_http import streamablehttp_client
+          from mcp.client.streamable_http import streamable_http_client
           assert callable(stdio_client)
-          assert callable(streamablehttp_client)
+          assert callable(streamable_http_client)
           assert ClientSession is not None
           assert StdioServerParameters is not None
           print('Official MCP SDK client symbols available')
