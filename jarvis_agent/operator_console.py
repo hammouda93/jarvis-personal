@@ -112,7 +112,9 @@ class OperatorConsole(QFrame):
         self.action_line = QLabel("Actions  —")
         self.model_line = QLabel("Modèle  —")
         self.capabilities_line = QLabel("Capacités  —")
-        for line in (self.mode_line, self.mission_line, self.action_line, self.model_line, self.capabilities_line):
+        self.learning_line = QLabel("Skills et mémoire  —")
+        self.phase_line = QLabel("État : initialisation")
+        for line in (self.phase_line, self.mode_line, self.mission_line, self.action_line, self.model_line, self.capabilities_line, self.learning_line):
             line.setObjectName("operatorMetric")
             line.setWordWrap(True)
             sum_layout.addWidget(line)
@@ -176,6 +178,15 @@ class OperatorConsole(QFrame):
             f"  ·  PC : {'ON' if data.get('computer_core_enabled') else 'OFF'}"
             f"  ·  Apprentissage : {'ON' if data.get('learning_enabled') else 'OFF'}"
         )
+        knowledge = data.get("knowledge_stats") or {}
+        memory = data.get("memory_stats") or {}
+        def count(value):
+            return "—" if value is None else str(value)
+        self.learning_line.setText(
+            f"Skills : {count(knowledge.get('skills'))}  ·  Leçons : {count(knowledge.get('lessons'))}"
+            f"  ·  Profils : {count(knowledge.get('app_profiles'))}"
+            f"  ·  Souvenirs : {count(memory.get('raw_count'))}"
+        )
         self.mission_line.setText(
             f"Missions observées : {len(data.get('missions') or [])}"
             + (" · échantillon récent" if mission_on else " · non instrumentées")
@@ -185,6 +196,20 @@ class OperatorConsole(QFrame):
             f"  ·  états incertains affichés : {data.get('unresolved_visible', 0)}"
         )
         self.update_model(self._last_model)
+
+    def update_phase(self, phase: str) -> None:
+        allowed = {
+            "starting": "INITIALISATION", "calibrating": "CALIBRATION",
+            "idle": "EN VEILLE", "armed": "EN ÉCOUTE DE RÉVEIL",
+            "wake": "RÉVEIL", "listening": "ÉCOUTE",
+            "transcribing": "TRANSCRIPTION", "understanding": "COMPRÉHENSION",
+            "thinking": "RAISONNEMENT", "acting": "ACTION",
+            "speaking": "RÉPONSE", "success": "TERMINÉ",
+            "error": "ERREUR",
+        }
+        self.phase_line.setText(
+            "État réel : " + allowed.get(str(phase), "NON RENSEIGNÉ")
+        )
 
     def update_model(self, data: dict) -> None:
         self._last_model = dict(data or {})
