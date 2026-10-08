@@ -990,6 +990,13 @@ class JarvisWindow(QWidget):
         self.clean_button.setObjectName("topButton")
         self.clean_button.setCheckable(True)
 
+        self.operator_full_button = QPushButton("▤  Supervision")
+        self.operator_full_button.setObjectName("topButton")
+        self.operator_full_button.setCheckable(True)
+        self.operator_full_button.setToolTip(
+            "Agrandir la console réelle de missions, actions, mémoire et modèle."
+        )
+
         self.freeze_button = QPushButton("Ⅱ  Figer les animations")
         self.freeze_button.setObjectName("topButton")
         self.freeze_button.setCheckable(True)
@@ -1011,6 +1018,7 @@ class JarvisWindow(QWidget):
         controls = QHBoxLayout()
         controls.setSpacing(6)
         controls.addWidget(self.clean_button)
+        controls.addWidget(self.operator_full_button)
         controls.addWidget(self.freeze_button)
         controls.addWidget(self.compact_button)
         controls.addSpacing(6)
@@ -1398,6 +1406,7 @@ class JarvisWindow(QWidget):
         self.canvas.route_changed.connect(self._on_route_changed)
 
         self.clean_button.toggled.connect(self._set_clean_view)
+        self.operator_full_button.toggled.connect(self._set_operator_full_mode)
         self.freeze_button.toggled.connect(self._set_animations_frozen)
         self.compact_button.toggled.connect(self._set_compact_mode)
         self.conversation_button.toggled.connect(self._set_text_panel)
@@ -1422,7 +1431,11 @@ class JarvisWindow(QWidget):
         if self._compact_mode or self.clean_button.isChecked():
             return
         try:
-            self.operator_console.apply_snapshot(operator_snapshot())
+            self.operator_console.apply_snapshot(
+                operator_snapshot(
+                    max_items=18 if self.operator_full_button.isChecked() else 7
+                )
+            )
         except (OSError, ValueError, RuntimeError):
             # Read-only monitoring must never stop user interaction.
             self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
@@ -1506,6 +1519,20 @@ class JarvisWindow(QWidget):
             else:
                 self.canvas._append_route("respond")
 
+    def _set_operator_full_mode(self, enabled: bool) -> None:
+        if enabled and self.clean_button.isChecked():
+            self.clean_button.setChecked(False)
+        if enabled and self._compact_mode:
+            self.operator_full_button.setChecked(False)
+            return
+        self.side_tabs.setCurrentWidget(self.operator_console)
+        self.side_tabs.setMaximumWidth(16777215 if enabled else 410)
+        self.canvas.setVisible(not enabled and not self._compact_mode)
+        self.operator_full_button.setText(
+            "◉  Revenir au graphe" if enabled else "▤  Supervision"
+        )
+        self._refresh_operator_console()
+
     def _set_clean_view(self, enabled: bool) -> None:
         self.side_tabs.setVisible(not enabled and not self._compact_mode)
         self.detail_label.setVisible(not enabled)
@@ -1535,6 +1562,8 @@ class JarvisWindow(QWidget):
             self.chip_msf.hide()
             self.chip_research.hide()
             self.clean_button.hide()
+            self.operator_full_button.setChecked(False)
+            self.operator_full_button.hide()
             self.freeze_button.hide()
             self.detail_label.hide()
             self.transcript_label.hide()
@@ -1548,7 +1577,8 @@ class JarvisWindow(QWidget):
             self.chat_input.setFocus()
         else:
             self.setMinimumSize(*NORMAL_MIN_SIZE)
-            self.canvas.show()
+            self.canvas.setVisible(not self.operator_full_button.isChecked())
+            self.operator_full_button.show()
             if not self.clean_button.isChecked():
                 self.side_tabs.show()
                 self.detail_label.show()
