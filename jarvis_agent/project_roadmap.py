@@ -50,7 +50,7 @@ STAGES: tuple[Stage, ...] = (
     Stage(8, "semantic_supervisor", "Preuves et superviseur sémantique", "integrated",
           "green_ancestor", "not_validated", "tests/test_semantic_goal_supervisor.py"),
     Stage(9, "multi_agent", "MCP, intégrations et orchestration des agents", "in_progress",
-          "pending", "not_validated", "tests/test_mcp_hub_v5.py"),
+          "green_current", "not_validated", "tests/test_mcp_hub_v5.py"),
     Stage(10, "skills_learning", "Apprentissage & Skills validés", "planned",
           "not_applicable", "not_validated", "promotion contrôlée des expériences"),
     Stage(11, "integrations", "Intégrations personnelles et tâches durables", "planned",
