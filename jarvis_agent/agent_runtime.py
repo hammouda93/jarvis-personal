@@ -1927,7 +1927,10 @@ class OllamaToolAgent:
                     arguments = {}
 
                 if log:
-                    log(f"[AGENT_TOOL] call={name} args={arguments}")
+                    if name == "mcp_call_tool":
+                        log("[AGENT_TOOL] call=mcp_call_tool args=<redacted>")
+                    else:
+                        log(f"[AGENT_TOOL] call={name} args={arguments}")
                 if phase:
                     phase("acting")
 
@@ -2367,7 +2370,10 @@ class OpenAIResponsesAgent:
                     arguments = {}
 
                 if log:
-                    log(f"[AGENT_TOOL] call={name} args={arguments}")
+                    if name == "mcp_call_tool":
+                        log("[AGENT_TOOL] call=mcp_call_tool args=<redacted>")
+                    else:
+                        log(f"[AGENT_TOOL] call={name} args={arguments}")
                 autonomous_research = (
                     name in {"research_web", "search_web"}
                     and not _is_explicit_web_request(user_text)
@@ -3955,7 +3961,10 @@ class GroqResponsesAgent:
                     arguments = {}
 
                 if log:
-                    log(f"[AGENT_TOOL] call={name} args={arguments}")
+                    if name == "mcp_call_tool":
+                        log("[AGENT_TOOL] call=mcp_call_tool args=<redacted>")
+                    else:
+                        log(f"[AGENT_TOOL] call={name} args={arguments}")
                 autonomous_research = (
                     name in {"research_web", "search_web"}
                     and not _is_explicit_web_request(user_text)
@@ -4741,10 +4750,15 @@ def build_agent_runtime() -> AgentRuntime:
     )):
         foundation_tools = build_foundation_tools(tools)
         tools = foundation_tools
+    import os
     # Optional MCP tools belong to the SAME Cerebras/Groq/Ollama execution
     # registry. They are wrapped BEFORE the Hermes checkpoint/approval layer
     # so unknown remote outcomes are not silently replayed.
-    if provider in ("cerebras", "groq", "ollama"):
+    if (
+        provider in ("cerebras", "groq", "ollama")
+        and os.getenv("JARVIS_MCP_NATIVE_ENABLED", "0").strip().lower()
+        in ("1", "true", "yes", "on")
+    ):
         from .mcp_native_tools import MCPNativeToolBridge
 
         tools = MCPNativeToolBridge(tools)
