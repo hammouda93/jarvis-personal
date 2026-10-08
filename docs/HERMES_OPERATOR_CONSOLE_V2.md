@@ -48,3 +48,12 @@ Automatic multi-turn mission admission, authoritative kernel dispatch,
 delegation, advanced context compression, and external platform connectors
 require separate integration and real-world validation. The current UI does
 not pretend those components have already been activated.
+
+
+## Supervision expanded view
+
+The `▤ Supervision` button in the existing window header switches to a
+wide operator view; `◉ Revenir au graphe` returns to the classic animated
+agent graph. The expanded view shows up to 18 recent persisted checkpoints
+with scrollable mission, step, and tool panels. The normal view shows seven.
+Compact and clean views remain available and are never bypassed by telemetry.
