@@ -26,6 +26,7 @@ class MCPConnectionsPanel(QFrame):
         self.hub = hub if hub is not None else HUB
         self.setObjectName("mcpConnectionsPanel")
         self._entries: list[dict] = []
+        self._last_preset_id = ""
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -154,10 +155,13 @@ class MCPConnectionsPanel(QFrame):
             self.preset_detail.setText(
                 entry["details"] + " · Requis : " + entry["prerequisites"]
             )
-            if not self.server_id.text():
+            # Replacing a suggested preset should update its automatic ID,
+            # but must never overwrite a custom server name the user typed.
+            if not self.server_id.text() or self.server_id.text() == self._last_preset_id:
                 self.server_id.setText(entry["id"])
-            if not self.server_label.text():
+            if not self.server_label.text() or self.server_label.text() == self._last_preset_id:
                 self.server_label.setText(entry["id"])
+            self._last_preset_id = entry["id"]
 
     def refresh(self):
         try:
