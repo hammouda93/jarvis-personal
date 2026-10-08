@@ -256,6 +256,21 @@ class MCPPanelContracts(unittest.TestCase):
         finally:
             panel.close()
 
+    def test_switching_presets_updates_suggestions_not_custom_user_entry(self):
+        panel = MCPConnectionsPanel(hub=self.hub)
+        try:
+            first = panel.presets.currentData()
+            self.assertEqual(panel.server_id.text(), first)
+            panel.presets.setCurrentIndex(1)
+            second = panel.presets.currentData()
+            self.assertEqual(panel.server_id.text(), second)
+            self.assertEqual(panel.server_label.text(), second)
+            panel.server_id.setText("custom_server")
+            panel.presets.setCurrentIndex(2)
+            self.assertEqual(panel.server_id.text(), "custom_server")
+        finally:
+            panel.close()
+
     def test_add_activate_disable_and_probe_are_per_server(self):
         panel = MCPConnectionsPanel(hub=self.hub)
         try:
