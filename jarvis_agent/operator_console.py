@@ -224,4 +224,7 @@ class OperatorConsole(QFrame):
         err = str(self._last_model.get("failure_category") or "").strip()
         if err:
             suffix += f" · erreur : {err[:35]}"
+        usage = self._last_model.get("reported_usage")
+        if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
+            suffix += f" · tokens API {usage['total_tokens']}"
         self.model_line.setText(f"Modèle : {name}{suffix}")
