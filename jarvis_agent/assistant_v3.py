@@ -246,10 +246,13 @@ class AssistantWorker(QObject):
         """Run only from AssistantWorker.run; do not bypass safety proof gates."""
         try:
             result = perform_mission_command(self._agent, command)
-        except (RuntimeError, ValueError, PermissionError, KeyError) as exc:
+        except Exception as exc:
+            # Unexpected storage/backend errors should surface in the operator
+            # instead of terminating the speech/text worker. Avoid storing
+            # exception bodies because they can contain paths or secrets.
             result = {
                 "success": False, "operation": command.operation,
-                "reason": type(exc).__name__ + ":" + str(exc)[:120],
+                "reason": type(exc).__name__,
             }
         self.mission_control_result.emit(result)
         if not result.get("success"):
