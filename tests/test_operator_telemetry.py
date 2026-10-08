@@ -80,7 +80,22 @@ class OperatorTelemetryTests(unittest.TestCase):
                  '"capability":"interaction.live_turn",'
                  '"result":{"action_names":["browser_click"]}}]}'),
             )
+        with sqlite3.connect(self.missions_root / "mission_events.sqlite3") as cx:
+            cx.execute(
+                "CREATE TABLE events (mission_id TEXT, kind TEXT, "
+                "component TEXT, success INTEGER, created_at REAL)"
+            )
+            cx.executemany(
+                "INSERT INTO events VALUES (?,?,?,?,?)",
+                [
+                    ("m1", "tool.requested", "runtime", None, 12.0),
+                    ("m2", "private.event", "other-user", 1, 13.0),
+                ],
+            )
         panel = snapshot()
+        self.assertEqual(len(panel["events"]), 1)
+        self.assertEqual(panel["events"][0]["kind"], "tool.requested")
+        self.assertNotIn("private.event", repr(panel))
         self.assertEqual(len(panel["missions"]), 1)
         self.assertEqual(panel["missions"][0]["id"], "m1")
         self.assertFalse(panel["missions"][0]["verified"])
