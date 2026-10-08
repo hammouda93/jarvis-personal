@@ -44,6 +44,10 @@ class MCPConnectionsPanel(QFrame):
         self.server_picker.setObjectName("missionPicker")
         self.server_picker.addItem("Sélectionner serveur MCP…", "")
         layout.addWidget(self.server_picker)
+        self.connection_status = QLabel("Aucun serveur sélectionné.")
+        self.connection_status.setObjectName("operatorMetric")
+        self.connection_status.setWordWrap(True)
+        layout.addWidget(self.connection_status)
         self.tool_picker = QComboBox()
         self.tool_picker.setObjectName("missionPicker")
         self.tool_picker.addItem("Sélectionner outil découvert…", "")
@@ -105,9 +109,19 @@ class MCPConnectionsPanel(QFrame):
         self.tool_picker.blockSignals(True)
         self.tool_picker.clear()
         self.tool_picker.addItem("Sélectionner outil découvert…", "")
+        self.connection_status.setText("Aucun serveur sélectionné.")
         for entry in self._servers:
             if entry["id"] != server_id:
                 continue
+            last = str(entry.get("last_discovery_success_utc") or "")
+            self.connection_status.setText(
+                ("Configuration activée" if entry.get("enabled") else "Configuration désactivée")
+                + " · actuellement connecté : NON CERTIFIÉ"
+                + (
+                    " · dernière découverte réussie : " + last[:25]
+                    if last else " · aucune découverte réussie enregistrée"
+                )
+            )
             for item in entry.get("tools") or []:
                 flag = "✓" if item.get("allowed") else "○"
                 self.tool_picker.addItem(
