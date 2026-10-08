@@ -1,5 +1,9 @@
 name: Runtime convergence V1 regression
 
+concurrency:
+  group: runtime-convergence-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
@@ -41,7 +45,7 @@ jobs:
           JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
           JARVIS_CUA_DRIVER_ENABLED: "0"
         run: |
-          python -m unittest tests.test_runtime_convergence tests.test_foundations_v4 tests.test_browser_dom_contract tests.test_agent_runtime tests.test_semantic_memory_v5 -q
+          python -m unittest discover -s tests -p "test_*.py" -q
 
       - name: Browser bridge replay tests
         shell: pwsh
