@@ -1,0 +1,2 @@
+# Optional official Model Context Protocol SDK. Install only when connecting Jarvis to MCP servers.
+mcp>=1.12,<3
