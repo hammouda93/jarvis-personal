@@ -1,6 +1,6 @@
 # Jarvis Personal — Live Mission Workbench V3
 
-## Current position: stage 7 of 11 (integration / Windows acceptance pending)
+## Current position: stage 7 of 11 (code and CI validated / Windows acceptance pending)
 
 The roadmap is rendered in the actual PySide6 **▤ Supervision** panel and
 is also source-controlled in `jarvis_agent/project_roadmap.py`.
@@ -15,7 +15,7 @@ and **real Windows user acceptance**. No arbitrary completion percentage.
 | 4 | Durable mission and passive kernel | Integrated | Previous branch green | Pending |
 | 5 | Hermes-inspired reliability | Integrated | Previous branch green | Pending |
 | 6 | Operator UI observability | Integrated | Previous branch green | Pending |
-| 7 | Explicit multi-turn live missions | Development stage | V3 CI required | Pending |
+| 7 | Explicit multi-turn live missions | Integrated | V3 CI green (410 Windows Python, 45 Browser Bridge, 591 Linux Python) | Pending |
 | 8 | Semantic goal-proof supervisor | Planned | — | Pending |
 | 9 | Autonomous planning and agent delegation | Planned | — | Pending |
 | 10 | Validated learning and Skills improvement | Planned | — | Pending |
@@ -92,3 +92,17 @@ Stable checkpoint `aff001fd04bcb8adfc99204b346ce126e0ec8a46`
 must remain intact. Feature PR stays DRAFT pending real desktop evidence.
 After every development stage, include the branch, latest commit, precise
 automated test results, real-world gates and next architecture objective.
+
+
+## Stage 7 automated results / next stage
+
+GitHub Actions V3 initial successful run:
+`https://github.com/hammouda93/jarvis-personal/actions/runs/37777272136`
+(410 Python Windows, 45 Browser Bridge Node, 591 Python Linux). This is
+**automatic acceptance only**, not a claim that the user's Windows workflows
+have succeeded. Stage 7 remains current for desktop validation.
+
+**Next development target (stage 8):** independent, evidence-based semantic
+supervision with explicit recovery and goal-level proof. A tool success or a
+text completion is insufficient. No autonomous kernel/agent dispatch is
+advertised or enabled yet.
