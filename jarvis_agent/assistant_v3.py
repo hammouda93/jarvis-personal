@@ -110,6 +110,7 @@ class AssistantWorker(QObject):
     audio_level_changed = Signal(float)
     log_line = Signal(str)
     conversation_message = Signal(str, str, str)
+    telemetry_changed = Signal(dict)
     finished = Signal()
 
     def __init__(self) -> None:
@@ -146,6 +147,14 @@ class AssistantWorker(QObject):
                 self._kernel_shadow_boot_error = (
                     f"{type(exc).__name__}: {exc}"
                 )
+
+    def _emit_operator_model(self) -> None:
+        """Send measured counters to GUI; GUI never touches the live agent."""
+        try:
+            from .operator_telemetry import runtime_model_snapshot
+            self.telemetry_changed.emit(runtime_model_snapshot(self._agent))
+        except (AttributeError, RuntimeError, TypeError):
+            pass
 
     def _state(self, state: AssistantState, status: str | None = None) -> None:
         self.state_changed.emit(state.value)
@@ -638,6 +647,7 @@ class AssistantWorker(QObject):
                 phase=self._agent_phase,
             )
         except AgentRuntimeUnavailable as exc:
+            self._emit_operator_model()
             self.log_line.emit(f"[AGENT] unavailable: {exc}")
             self._shadow_observe(
                 user_text,
@@ -652,6 +662,7 @@ class AssistantWorker(QObject):
             )
             return True
 
+        self._emit_operator_model()
         self._shadow_observe(
             user_text,
             source="agent_runtime",
@@ -806,6 +817,7 @@ class AssistantWorker(QObject):
     @Slot()
     def run(self) -> None:
         self.log_line.emit("[BOOT] Jarvis native agent runtime started")
+        self._emit_operator_model()
         if self._kernel_shadow is not None:
             self.log_line.emit(
                 "[KERNEL_SHADOW] enabled=1 authoritative=0 "
