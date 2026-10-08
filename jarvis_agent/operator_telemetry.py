@@ -227,6 +227,12 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         }
 
     from .config import settings
+    from .mcp_hub import MCP_HUB
+
+    try:
+        mcp_servers = MCP_HUB.status()
+    except Exception:
+        mcp_servers = []
     return {
         "reliability_enabled": reliability_on,
         "mission_enabled": mission_on,
@@ -242,6 +248,8 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         "knowledge_stats": knowledge_stats,
         "memory_stats": memory_stats,
         "actions": actions,
+        "mcp_servers": mcp_servers,
+        "mcp_native_enabled": _flag("JARVIS_MCP_NATIVE_ENABLED"),
         "missions": missions,
         "tasks": current_tasks,
         "supervisor": supervisor,
