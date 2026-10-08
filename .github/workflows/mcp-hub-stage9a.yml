@@ -89,3 +89,27 @@ jobs:
           result = unittest.TextTestRunner(verbosity=1).run(filtered)
           sys.exit(0 if result.wasSuccessful() else 1)
           PY
+
+  optional-mcp-sdk-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install optional official MCP SDK
+        run: |
+          python -m pip install -r requirements-mcp.txt
+      - name: Check MCP client transport symbols
+        run: |
+          python - <<'PY'
+          from mcp import ClientSession
+          from mcp.client.stdio import StdioServerParameters, stdio_client
+          from mcp.client.streamable_http import streamablehttp_client
+          assert callable(stdio_client)
+          assert callable(streamablehttp_client)
+          assert ClientSession is not None
+          assert StdioServerParameters is not None
+          print('Official MCP SDK client symbols available')
+          PY
