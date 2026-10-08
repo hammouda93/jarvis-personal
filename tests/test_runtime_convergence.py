@@ -231,6 +231,71 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertIn("proof", kinds)
         self.assertIn("mission.completed", kinds)
 
+    def test_manual_review_reconciles_interrupted_action_without_replay(self):
+        mission_id = self.runtime.begin_mission("safe restart")
+        self.delegate.error = TimeoutError("unknown external outcome")
+        with self.assertRaises(TimeoutError):
+            self.runtime.run("perform step")
+        self.assertEqual(len(self.delegate.calls), 1)
+        with self.assertRaises(ValueError):
+            self.runtime.resolve_recovery(
+                verified_outcome="completed", proof_ref=""
+            )
+        with self.assertRaises(ValueError):
+            self.runtime.resolve_recovery(
+                verified_outcome="guess", proof_ref="manual-check"
+            )
+        state = self.runtime.resolve_recovery(
+            verified_outcome="completed", proof_ref="inspected-real-state"
+        )
+        self.assertEqual(state.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(state.observed_state["goal_verified"])
+        graph = self.runtime.graph_store.load(mission_id)
+        self.assertEqual(graph.nodes()[0].status, TaskStatus.COMPLETED)
+        self.assertEqual(len(self.delegate.calls), 1)
+        self.delegate.error = None
+        self.runtime.run("next operation")
+        self.assertEqual(len(self.delegate.calls), 2)
+        self.assertEqual(
+            self.runtime.graph_store.load(mission_id).get("turn_00002").dependencies,
+            {"turn_00001"},
+        )
+
+    def test_no_effect_review_does_not_repeat_prior_action_automatically(self):
+        mission_id = self.runtime.begin_mission("maybe operation")
+        self.delegate.error = TimeoutError("unknown")
+        with self.assertRaises(TimeoutError):
+            self.runtime.run("try")
+        self.runtime.resolve_recovery(
+            verified_outcome="not_executed", proof_ref="independent-check"
+        )
+        self.assertEqual(
+            self.runtime.graph_store.load(mission_id).get("turn_00001").status,
+            TaskStatus.CANCELLED,
+        )
+        self.assertEqual(len(self.delegate.calls), 1)
+        self.delegate.error = None
+        self.runtime.run("new explicit user request")
+        self.assertEqual(len(self.delegate.calls), 2)
+        self.assertEqual(
+            self.runtime.graph_store.load(mission_id).get("turn_00002").dependencies,
+            set(),
+        )
+
+    def test_cancelled_recovery_finishes_without_action_replay(self):
+        mission_id = self.runtime.begin_mission("abort risky work")
+        self.delegate.error = TimeoutError("unknown")
+        with self.assertRaises(TimeoutError):
+            self.runtime.run("do work")
+        state = self.runtime.resolve_recovery(
+            verified_outcome="cancel", proof_ref="user-decision"
+        )
+        self.assertEqual(state.status, MissionStatus.FAILED)
+        self.assertIsNone(self.runtime.active_mission_id)
+        self.assertEqual(len(self.delegate.calls), 1)
+        with self.assertRaises(RuntimeError):
+            self.runtime.resume_mission(mission_id)
+
     def test_exception_never_persists_sensitive_tool_details(self):
         mission_id = self.runtime.begin_mission("send message")
         self.delegate.result = SimpleNamespace(
