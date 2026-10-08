@@ -19,7 +19,7 @@ class MissionCommand:
 class MissionControlInbox:
     """FIFO commands, consumed by the worker rather than Qt's UI thread."""
 
-    _OPS = frozenset({"begin", "resume", "detach", "review", "plan", "route"})
+    _OPS = frozenset({"begin", "begin_only", "resume", "detach", "review", "plan", "route", "auto_plan"})
 
     def __init__(self) -> None:
         self._items: queue.Queue[MissionCommand] = queue.Queue(maxsize=32)
@@ -30,9 +30,11 @@ class MissionControlInbox:
         raw = str(value or "").strip()
         if op not in self._OPS:
             return False
-        if op == "begin" and not (1 <= len(raw) <= 2000):
+        if op in {"begin", "begin_only"} and not (1 <= len(raw) <= 2000):
             return False
         if op == "plan" and not (1 <= len(raw) <= 500):
+            return False
+        if op == "auto_plan" and raw:
             return False
         if op in {"resume", "review", "route"} and raw and not re.fullmatch(r"live_[a-f0-9]{32}", raw):
             return False
@@ -65,14 +67,17 @@ class MissionControlInbox:
 def perform_mission_command(agent, command: MissionCommand) -> dict:
     """Only on worker thread. Does not replay actions or assert goal proof."""
     op = command.operation
-    if op == "begin":
+    if op in {"begin", "begin_only"}:
         method = getattr(agent, "begin_mission", None)
         if not callable(method):
             return {"success": False, "operation": op,
                     "reason": "convergence_not_enabled"}
         mission_id = method(command.value)
         return {"success": True, "operation": op, "mission_id": mission_id,
-                "status": "mission_started_not_verified"}
+                "status": (
+                    "mission_created_no_execution" if op == "begin_only"
+                    else "mission_started_not_verified"
+                ), "tool_execution": False, "goal_verified": False}
     if op == "resume":
         method = getattr(agent, "resume_mission", None)
         if not callable(method):
@@ -127,6 +132,23 @@ def perform_mission_command(agent, command: MissionCommand) -> dict:
             "success": True, "operation": op,
             "mission_id": mission_id, "status": "criteria_registered_unverified",
             "criteria_count": len(requirements),
+        }
+    if op == "auto_plan":
+        generator = getattr(agent, "generate_semantic_plan", None)
+        if not callable(generator):
+            return {"success": False, "operation": op,
+                    "reason": "planning_requires_convergence"}
+        report = generator()
+        return {
+            "success": True, "operation": op,
+            "mission_id": report.get("mission_id", ""),
+            "status": "llm_plan_registered_unverified",
+            "step_count": report.get("step_count", 0),
+            "evidence_count": report.get("evidence_count", 0),
+            "unresolved_count": report.get("unresolved_count", 0),
+            "model_request_count": report.get("model_request_count", 1),
+            "tool_execution": False,
+            "goal_verified": False,
         }
     if op == "route":
         method = getattr(agent, "propose_mission_capabilities", None)
