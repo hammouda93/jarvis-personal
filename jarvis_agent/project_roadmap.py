@@ -45,8 +45,8 @@ STAGES: tuple[Stage, ...] = (
           "green_ancestor", "not_validated", "tests/test_hermes_reliability.py"),
     Stage(6, "observability", "Interface / supervision observables", "integrated",
           "green_ancestor", "not_validated", "tests/test_operator_console_ui.py"),
-    Stage(7, "mission_live", "Missions contrôlables depuis l'interface", "in_progress",
-          "pending", "not_validated", "tests/test_mission_workbench.py"),
+    Stage(7, "mission_live", "Missions contrôlables depuis l'interface", "integrated",
+          "green_current", "not_validated", "tests/test_mission_workbench.py"),
     Stage(8, "semantic_supervisor", "Preuves de mission & superviseur actif", "planned",
           "not_applicable", "not_validated", "supervision sémantique réelle"),
     Stage(9, "multi_agent", "Délégation d'agents & planification autonome", "planned",
@@ -70,8 +70,9 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "notice": (
-            "Étapes 1–6 intégrées et passées en CI sur la branche précédente ; "
-            "tests réels Windows encore nécessaires. Étape 7 en développement. "
-            "Les étapes suivantes ne sont pas livrées."
+            "Étapes 1–6 intégrées et testées sur la branche précédente. "
+            "Étape 7 intégrée et vérifiée en CI (410 Windows Python, "
+            "45 Browser Bridge, 591 Linux Python) ; "
+            "tests réels Windows encore nécessaires. Étapes 8–11 non livrées."
         ),
     }
