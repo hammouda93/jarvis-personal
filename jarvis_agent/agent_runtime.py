@@ -4809,9 +4809,24 @@ def build_agent_runtime() -> AgentRuntime:
     if tracing_tools is not None and journal is not None:
         from .tracing_runtime import StructuredTracingRuntime
 
-        return StructuredTracingRuntime(
+        runtime = StructuredTracingRuntime(
             runtime,
             tracing_tools,
             journal=journal,
+        )
+
+    # V1 convergence is strictly opt-in: the existing executor remains
+    # authoritative. No tool is dispatched twice, and pending outcomes are
+    # never resumed automatically after a restart.
+    import os
+    if os.getenv("JARVIS_RUNTIME_CONVERGENCE_ENABLED", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    ):
+        from .runtime_convergence import LiveMissionContinuityRuntime
+
+        runtime = LiveMissionContinuityRuntime(
+            runtime,
+            base_dir=os.getenv("JARVIS_RUNTIME_CONVERGENCE_DIR") or None,
+            owner_user_id=settings.kernel_shadow_user_id,
         )
     return runtime
