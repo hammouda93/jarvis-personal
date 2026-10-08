@@ -135,6 +135,24 @@ class MCPHubTests(unittest.TestCase):
             )
         self.assertEqual(self.transport.discovery_count, 0)
 
+    def test_discovery_health_never_claims_live_connection(self):
+        self.registry.add_http("research", "https://mcp.example.org/mcp")
+        before = self.registry.list_servers()[0]
+        self.assertFalse(before["connected_now"])
+        self.assertEqual(before["last_discovery_success_utc"], "")
+        with self.assertRaises(RuntimeError):
+            self.registry.note_successful_discovery("research")
+        self.registry.set_enabled("research", True)
+        perform_mcp_command(
+            self.registry, MCPCommand("discover", "research"),
+            transport=self.transport,
+        )
+        after = self.registry.list_servers()[0]
+        self.assertTrue(after["last_discovery_success_utc"])
+        self.assertFalse(after["connected_now"])
+        self.assertEqual(after["discovered"], 2)
+        self.assertEqual(after["allowed"], 0)
+
     def test_tool_discovery_is_not_tool_authorization(self):
         self.configured()
         out = perform_mcp_command(
