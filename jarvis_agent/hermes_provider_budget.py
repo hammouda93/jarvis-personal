@@ -1,0 +1,51 @@
+"""Opt-in logical Cerebras round budgets, without changing retry/fallback logic."""
+from __future__ import annotations
+
+import os
+
+from .agent_runtime import AgentRuntimeUnavailable, CerebrasResponsesAgent, settings
+from .hermes_reliability import classify_api_failure
+
+
+class HermesBudgetedCerebrasAgent(CerebrasResponsesAgent):
+    """Preserve Cerebras/Groq fallback. Bound *logical* _chat rounds per turn.
+
+    Each _chat may invoke primary, secondary and Groq fallback: this class
+    does not claim to measure every actual HTTP request. It does not sleep,
+    retry side effects or change provider credentials.
+    """
+
+    def __init__(self, tools=None):
+        super().__init__(tools)
+        configured = os.getenv("JARVIS_HERMES_MODEL_ROUND_BUDGET", "").strip()
+        maximum = max(1, int(getattr(settings, "agent_max_tool_rounds", 8)))
+        if configured:
+            try:
+                maximum = max(1, min(100, int(configured)))
+            except ValueError:
+                pass
+        self.reliability_round_budget = maximum
+        self.reliability_rounds_used = 0
+        self.reliability_last_failure_category = None
+
+    def run(self, user_text, *, log=None, phase=None):
+        self.reliability_rounds_used = 0
+        self.reliability_last_failure_category = None
+        return super().run(user_text, log=log, phase=phase)
+
+    def _chat(self, *, tool_choice="auto", ms_football_only=False, msf_tool_names=None):
+        if self.reliability_rounds_used >= self.reliability_round_budget:
+            self.reliability_last_failure_category = "logical_round_budget"
+            raise AgentRuntimeUnavailable(
+                "Budget des tours Cerebras atteint : arrêt contrôlé sans nouvelle requête."
+            )
+        self.reliability_rounds_used += 1
+        try:
+            return super()._chat(
+                tool_choice=tool_choice,
+                ms_football_only=ms_football_only,
+                msf_tool_names=msf_tool_names,
+            )
+        except Exception as exc:
+            self.reliability_last_failure_category = classify_api_failure(exc)
+            raise

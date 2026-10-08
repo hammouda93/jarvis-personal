@@ -4739,6 +4739,22 @@ def build_agent_runtime() -> AgentRuntime:
     )):
         foundation_tools = build_foundation_tools(tools)
         tools = foundation_tools
+    # Independent, opt-in Hermes-inspired per-action checkpointing.
+    # This registry is the *only* additional boundary around the existing
+    # executor; Browser Bridge / UIA / CUA dispatch remains unchanged.
+    import os
+    reliability_tools = None
+    if os.getenv("JARVIS_HERMES_RELIABILITY_ENABLED", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    ):
+        from .hermes_reliability import ActionLedger, ReliabilityToolRegistry
+
+        reliability_tools = ReliabilityToolRegistry(
+            tools,
+            ActionLedger(os.getenv("JARVIS_HERMES_RELIABILITY_DIR") or None),
+        )
+        tools = reliability_tools
+
     tracing_tools = None
     journal = None
     if settings.structured_tracing_enabled:
@@ -4762,7 +4778,12 @@ def build_agent_runtime() -> AgentRuntime:
     elif provider == "groq":
         runtime = GroqResponsesAgent(tools)
     elif provider == "cerebras":
-        runtime = CerebrasResponsesAgent(tools)
+        if reliability_tools is not None:
+            from .hermes_provider_budget import HermesBudgetedCerebrasAgent
+
+            runtime = HermesBudgetedCerebrasAgent(tools)
+        else:
+            runtime = CerebrasResponsesAgent(tools)
     else:
         raise AgentRuntimeUnavailable(
             f"Agent provider non pris en charge: {settings.agent_provider}"
@@ -4829,4 +4850,8 @@ def build_agent_runtime() -> AgentRuntime:
             base_dir=os.getenv("JARVIS_RUNTIME_CONVERGENCE_DIR") or None,
             owner_user_id=settings.kernel_shadow_user_id,
         )
+    if reliability_tools is not None:
+        from .hermes_reliability import HermesReliabilityRuntime
+
+        runtime = HermesReliabilityRuntime(runtime, reliability_tools)
     return runtime

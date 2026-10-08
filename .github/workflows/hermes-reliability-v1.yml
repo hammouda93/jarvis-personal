@@ -1,0 +1,97 @@
+name: Hermes inspired reliability V1
+
+on:
+  push:
+    branches:
+      - feature/hermes-inspired-reliability-v1
+  pull_request:
+    branches:
+      - feature/personal-agent-runtime-convergence-v1
+  workflow_dispatch:
+
+concurrency:
+  group: hermes-reliability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-critical:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Syntax
+        shell: pwsh
+        run: |
+          python -m py_compile jarvis_agent/hermes_reliability.py jarvis_agent/hermes_provider_budget.py jarvis_agent/agent_runtime.py tests/test_hermes_reliability.py
+      - name: New tests and Windows critical regressions
+        shell: pwsh
+        env:
+          JARVIS_HERMES_RELIABILITY_ENABLED: "0"
+          JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
+          JARVIS_CUA_DRIVER_ENABLED: "0"
+        run: |
+          python -m unittest tests.test_hermes_reliability tests.test_runtime_convergence tests.test_foundations_v4 tests.test_browser_dom_contract tests.test_agent_runtime tests.test_semantic_memory_v5 tests.test_assistant_v3 tests.test_windows_perception tests.test_tools tests.test_text_input_mode_v3 -q
+      - name: Browser Bridge replays
+        shell: pwsh
+        run: |
+          node --test tests/browser_bridge_replay.mjs
+
+  cross-platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: System libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libportaudio2 libasound2-dev libegl1
+      - name: Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Broad Python suite minus four OS-only tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          JARVIS_HERMES_RELIABILITY_ENABLED: "0"
+          JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
+          JARVIS_CUA_DRIVER_ENABLED: "0"
+        run: |
+          python - <<'PY'
+          import unittest, sys
+          excluded = {
+              "test_learned_app_profile_is_reused_before_rescanning_windows",
+              "test_cursor_falls_back_to_dynamic_windows_discovery",
+              "test_inspection_recovers_from_uia_enumeration_failure",
+              "test_named_inspection_prefers_stable_native_handle",
+          }
+          removed = []
+          def filter_suite(suite):
+              out = unittest.TestSuite()
+              for test in suite:
+                  if isinstance(test, unittest.TestSuite):
+                      out.addTests(filter_suite(test))
+                  elif test.id().split(".")[-1] in excluded:
+                      removed.append(test.id())
+                  else:
+                      out.addTest(test)
+              return out
+          suite = filter_suite(unittest.defaultTestLoader.discover("tests", "test_*.py"))
+          print("Windows-only exclusions:", removed)
+          assert len(removed) == 4
+          result = unittest.TextTestRunner(verbosity=1).run(suite)
+          sys.exit(0 if result.wasSuccessful() else 1)
+          PY
