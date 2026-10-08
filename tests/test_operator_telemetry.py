@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,7 +59,7 @@ class OperatorTelemetryTests(unittest.TestCase):
 
     def test_current_and_other_user_mission_isolation(self):
         db = self.missions_root / "mission_context.sqlite3"
-        with sqlite3.connect(db) as cx:
+        with closing(sqlite3.connect(db)) as cx, cx:
             cx.execute(
                 "CREATE TABLE mission_contexts (mission_id TEXT, goal_summary TEXT, "
                 "status TEXT, updated_at REAL, state_json TEXT, user_id TEXT)"
@@ -72,7 +73,7 @@ class OperatorTelemetryTests(unittest.TestCase):
                      '{"pending_action":{"manual_review_required":true}}', "other"),
                 ],
             )
-        with sqlite3.connect(self.missions_root / "task_graphs.sqlite3") as cx:
+        with closing(sqlite3.connect(self.missions_root / "task_graphs.sqlite3")) as cx, cx:
             cx.execute("CREATE TABLE mission_task_graphs (mission_id TEXT, graph_json TEXT)")
             cx.execute(
                 "INSERT INTO mission_task_graphs VALUES (?,?)",
@@ -80,7 +81,7 @@ class OperatorTelemetryTests(unittest.TestCase):
                  '"capability":"interaction.live_turn",'
                  '"result":{"action_names":["browser_click"]}}]}'),
             )
-        with sqlite3.connect(self.missions_root / "mission_events.sqlite3") as cx:
+        with closing(sqlite3.connect(self.missions_root / "mission_events.sqlite3")) as cx, cx:
             cx.execute(
                 "CREATE TABLE events (mission_id TEXT, kind TEXT, "
                 "component TEXT, success INTEGER, created_at REAL)"
