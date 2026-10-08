@@ -291,7 +291,7 @@ class AssistantWorker(QObject):
             f"[MISSION_CONTROL] operation={command.operation} status="
             f"{result.get('status', '')} id={result.get('mission_id', '')}"
         )
-        if command.operation in ("begin", "resume"):
+        if command.operation in ("begin", "begin_only", "resume"):
             # Old direct-app questions must not hijack an attached mission.
             self._pending_direct_follow_up = ""
         if command.operation == "begin":
