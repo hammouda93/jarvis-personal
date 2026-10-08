@@ -212,6 +212,8 @@ class MissionWorkbenchTests(unittest.TestCase):
         self.assertTrue(all(x["windows_real"] == "not_validated"
                             for x in data["stages"]))
         self.assertFalse(data["release_ready"])
+        self.assertEqual(data["stages"][6]["implementation"], "integrated")
+        self.assertEqual(data["stages"][6]["automated"], "green_current")
         self.assertEqual(data["stages"][7]["implementation"], "planned")
 
 
