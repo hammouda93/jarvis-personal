@@ -23,7 +23,7 @@ class OfficialMCPTransport:
         try:
             from mcp import ClientSession
             from mcp.client.stdio import StdioServerParameters, stdio_client
-            from mcp.client.streamable_http import streamablehttp_client
+            from mcp.client.streamable_http import streamable_http_client
         except ImportError as exc:
             raise MCPUnavailable("optional_mcp_sdk_not_installed") from exc
 
@@ -35,7 +35,7 @@ class OfficialMCPTransport:
                     found = list(listing.tools)
                     seen = set()
                     for _ in range(8):  # bounded paging
-                        cursor = getattr(listing, "nextCursor", None)
+                        cursor = getattr(listing, "next_cursor", None) or getattr(listing, "nextCursor", None)
                         if not cursor or cursor in seen or len(found) >= 150:
                             break
                         seen.add(cursor)
@@ -45,7 +45,10 @@ class OfficialMCPTransport:
                         {
                             "name": str(item.name),
                             "description": str(item.description or "")[:400],
-                            "input_schema": getattr(item, "inputSchema", {}) or {},
+                            "input_schema": (
+                                getattr(item, "input_schema", None)
+                                or getattr(item, "inputSchema", {}) or {}
+                            ),
                         }
                         for item in found[:150]
                     ]
@@ -57,11 +60,18 @@ class OfficialMCPTransport:
                         text = getattr(part, "text", None)
                         if isinstance(text, str):
                             content.append(text[:1500])
-                    structured = getattr(reply, "structuredContent", None)
+                    structured = (
+                        getattr(reply, "structured_content", None)
+                        or getattr(reply, "structuredContent", None)
+                    )
                     if not isinstance(structured, dict):
                         structured = None
                     return {
-                        "success": not bool(getattr(reply, "isError", False)),
+                        "success": not bool(
+                            getattr(reply, "is_error", None)
+                            if getattr(reply, "is_error", None) is not None
+                            else getattr(reply, "isError", False)
+                        ),
                         "message": "\n".join(content)[:2800],
                         "data": structured,
                     }
@@ -87,8 +97,19 @@ class OfficialMCPTransport:
             server_id = str(entry.get("id") or "")
             env_key = "JARVIS_MCP_BEARER_" + server_id.upper()
             bearer = os.getenv(env_key, "").strip()
-            headers = {"Authorization": "Bearer " + bearer} if bearer else None
-            async with streamablehttp_client(url, headers=headers) as streams:
+            if bearer:
+                # MCP SDK 2.3+ takes a preconfigured httpx2 client rather than
+                # a legacy headers= argument. Tokens stay in process memory.
+                import httpx2
+
+                async with httpx2.AsyncClient(
+                    headers={"Authorization": "Bearer " + bearer}
+                ) as http_client:
+                    async with streamable_http_client(
+                        url, http_client=http_client
+                    ) as streams:
+                        return await proceed(streams[0], streams[1])
+            async with streamable_http_client(url) as streams:
                 return await proceed(streams[0], streams[1])
         raise MCPUnavailable("unknown_mcp_transport")
 
