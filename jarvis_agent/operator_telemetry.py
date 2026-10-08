@@ -179,12 +179,20 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         if isinstance(plan, dict) and plan.get("steps"):
             supervised_plan = {"mission_id": missions[0]["id"], "digest": plan_digest(plan),
                                "criteria": list(dict.fromkeys(str(x) for s in plan["steps"]
-                                           for x in s.get("required_evidence", [])))}
+                                           for x in s.get("required_evidence", []))),
+                               "steps": [{"id": s["step_id"], "intent": str(s.get("intent", ""))[:180]}
+                                         for s in plan["steps"]]}
         record = observed.get("active_supervisor")
         if isinstance(record, dict):
             # Projection excludes arguments, expected values, proof refs and result bodies.
             active_supervisor = {key: record.get(key) for key in
                                  ("state", "step_id", "tool", "reason", "usage", "limits")}
+            active_supervisor["reports"] = [{
+                "step_id": str(r.get("step_id", ""))[:80], "agent": str(r.get("agent", ""))[:60],
+                "verified": r.get("verified") is True, "action_count": len(r.get("actions", [])),
+                "approval_pending": (r.get("permissions") or {}).get("approval_pending") is True
+                if isinstance(r.get("permissions"), dict) else False,
+            } for r in record.get("reports", [])[-8:] if isinstance(r, dict)]
         supervisor = evaluate_mission({
             "mission_id": missions[0]["id"],
             "status": missions[0]["status"],

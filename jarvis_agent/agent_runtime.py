@@ -2087,9 +2087,13 @@ class OpenAIResponsesAgent:
             if self.provider_name == "openai"
             else settings.groq_browser_search
         )
-        if web_enabled:
+        from .active_mission_supervisor import execution_scope_active
+        if web_enabled and not execution_scope_active():
             tools.append({"type": self.web_search_tool_type})
-        tools.extend(CONNECTORS.openai_tools())
+        if not execution_scope_active():
+            # Provider-hosted connectors bypass the local ledger and role scope.
+            # Supervised missions use only Jarvis' confirmed local MCP registry.
+            tools.extend(CONNECTORS.openai_tools())
         return tools
 
     def run_with_context(
@@ -2170,6 +2174,9 @@ class OpenAIResponsesAgent:
             self._pending_function_response_id = None
 
         elif self._pending_mcp_approval is not None:
+            from .active_mission_supervisor import execution_scope_active, SupervisorStopped
+            if execution_scope_active():
+                raise SupervisorStopped("provider_hosted_connector_requires_separate_review")
             normalized = user_text.strip().lower().strip(" .!?")
             yes = normalized in {
                 "oui", "yes", "ok", "okay", "d'accord", "daccord",
@@ -2398,6 +2405,8 @@ class OpenAIResponsesAgent:
                         phase("acting")
 
                 if self.tools.requires_confirmation(name):
+                    from .active_mission_supervisor import bind_pending_tool_approval
+                    bind_pending_tool_approval(name, arguments)
                     self._pending_function_approval = {
                         "call_id": call_id,
                         "name": name,
@@ -3024,6 +3033,9 @@ class GroqResponsesAgent:
             )
         except Exception as exc:
             status = getattr(exc, "status_code", None)
+            from .active_mission_supervisor import SupervisorStopped
+            if isinstance(exc, SupervisorStopped):
+                raise
             body = getattr(exc, "body", None)
             detail = body if body is not None else str(exc)
             if status:
@@ -3988,6 +4000,8 @@ class GroqResponsesAgent:
                         phase("acting")
 
                 if self.tools.requires_confirmation(name):
+                    from .active_mission_supervisor import bind_pending_tool_approval
+                    bind_pending_tool_approval(name, arguments)
                     self._pending_function_approval = {
                         "call_id": str(call.id),
                         "name": name,
@@ -3995,7 +4009,7 @@ class GroqResponsesAgent:
                     }
                     return AgentTurnResult(
                         text=(
-                            "Cette action va modifier les données MS Football. "
+                            "Cette action nécessite votre autorisation explicite. "
                             "J'ai besoin de votre confirmation explicite. "
                             "Dites oui pour exécuter ou non pour annuler."
                         ),
@@ -4663,6 +4677,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 max_completion_tokens=256,
             )
         except Exception as exc:
+            from .active_mission_supervisor import SupervisorStopped
+            if isinstance(exc, SupervisorStopped):
+                raise
             raise AgentRuntimeUnavailable(
                 f"Fallback Groq GPT-OSS indisponible: {exc}"
             ) from exc

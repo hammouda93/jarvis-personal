@@ -27,6 +27,14 @@ class Registry:
         self.unknown = False
         self.confirm = False
 
+    def ollama_tools(self):
+        return [{"type": "function", "function": {"name": name, "description": name,
+                 "parameters": {"type": "object", "properties": {}}}}
+                for name in ("open_url", "browser_observe_dom", "browser_click", "open_application")]
+
+    def openai_tools(self):
+        return []
+
     def requires_confirmation(self, name):
         return self.confirm
 

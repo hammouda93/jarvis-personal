@@ -256,6 +256,9 @@ class SemanticMemoryEngine:
                 )
                 self._log_interpreter(log, "legacy_index")
             except Exception as exc:
+                from .active_mission_supervisor import SupervisorStopped
+                if isinstance(exc, SupervisorStopped):
+                    raise
                 for item in items:
                     self.store.mark_projection_error(
                         item.id,
@@ -1144,6 +1147,9 @@ class SemanticMemoryRuntime:
                 log=log,
             )
         except Exception as exc:
+            from .active_mission_supervisor import SupervisorStopped
+            if isinstance(exc, SupervisorStopped):
+                raise
             if log:
                 log(
                     "[MEMORY_V5] interpreter_error="
@@ -1240,6 +1246,9 @@ class SemanticMemoryRuntime:
                     user_text=user_text,
                 )
             except Exception as exc:
+                from .active_mission_supervisor import SupervisorStopped
+                if isinstance(exc, SupervisorStopped):
+                    raise
                 if log:
                     log(
                         "[MEMORY_V5] clarification_error="
@@ -1342,6 +1351,9 @@ class SemanticMemoryRuntime:
                             f"{memory_id} projected_facts={len(facts)}"
                         )
                 except Exception as exc:
+                    from .active_mission_supervisor import SupervisorStopped
+                    if isinstance(exc, SupervisorStopped):
+                        raise
                     self.engine.store.mark_projection_error(
                         memory_id,
                         parser_version=self.engine.parser_version,
@@ -1374,6 +1386,9 @@ class SemanticMemoryRuntime:
                 session_facts=self._session_facts,
             )
         except Exception as exc:
+            from .active_mission_supervisor import SupervisorStopped
+            if isinstance(exc, SupervisorStopped):
+                raise
             if log:
                 log(
                     "[MEMORY_V5] recall_error="

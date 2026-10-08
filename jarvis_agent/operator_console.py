@@ -109,7 +109,7 @@ class OperatorConsole(QFrame):
 
         title = QLabel("◈   CENTRE DE CONTRÔLE")
         title.setObjectName("operatorHeading")
-        subtitle = QLabel("ÉTATS RÉELS  ·  AUCUNE ACTION AUTOMATIQUE")
+        subtitle = QLabel("ÉTATS OBSERVÉS  ·  ACTIONS CONTRÔLÉES")
         subtitle.setObjectName("operatorSubtitle")
         layout.addWidget(title)
         layout.addWidget(subtitle)

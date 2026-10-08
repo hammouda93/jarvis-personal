@@ -138,6 +138,8 @@ class AgentFactory:
                 raise KeyError("unknown_agent_process")
             if process.lifecycle == AgentLifecycle.SUSPENDED:
                 raise RuntimeError("agent_process_suspended")
+            if process.lifecycle == AgentLifecycle.RUNNING:
+                raise RuntimeError("agent_process_already_running")
             if process.lifecycle in {
                 AgentLifecycle.COMPLETED,
                 AgentLifecycle.FAILED,
@@ -151,15 +153,19 @@ class AgentFactory:
             result = dict(instance.run(dict(task or {})) or {})
         except Exception as exc:
             with self._lock:
-                process.lifecycle = AgentLifecycle.FAILED
+                if process.lifecycle != AgentLifecycle.TERMINATED:
+                    process.lifecycle = AgentLifecycle.FAILED
                 process.error = str(exc)[:1200]
                 process.updated_at = time.time()
+                self._instances.pop(str(process_id), None)
             raise
 
         with self._lock:
-            process.lifecycle = AgentLifecycle.COMPLETED
+            if process.lifecycle != AgentLifecycle.TERMINATED:
+                process.lifecycle = AgentLifecycle.COMPLETED
             process.result = result
             process.updated_at = time.time()
+            self._instances.pop(str(process_id), None)
         return result
 
     def suspend(self, process_id: str) -> bool:
@@ -169,7 +175,6 @@ class AgentFactory:
                 return False
             if process.lifecycle not in {
                 AgentLifecycle.CREATED,
-                AgentLifecycle.RUNNING,
             }:
                 return False
             process.lifecycle = AgentLifecycle.SUSPENDED

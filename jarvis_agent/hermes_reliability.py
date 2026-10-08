@@ -245,6 +245,17 @@ class ReliabilityToolRegistry:
         self._local.failures = {}
         self._local.observations = {}
 
+    def observe_for_verification(self, name: str, arguments: dict):
+        from .active_mission_supervisor import OBSERVATION_TOOLS
+        if name not in OBSERVATION_TOOLS:
+            raise ValueError("verification_requires_native_read_only_observer")
+        previous = getattr(self._local, "verification_read", False)
+        self._local.verification_read = True
+        try:
+            return self.execute(name, arguments, approved=False)
+        finally:
+            self._local.verification_read = previous
+
     def _blocked(self, name: str, reason: str, args: dict[str, Any] | None = None) -> AgentActionResult:
         code = reason.split(":", 1)[0]
         try:
@@ -272,7 +283,8 @@ class ReliabilityToolRegistry:
         # without any content change signal a stalled inspection loop.
         # Mutating tools are NEVER automatically reclassified as read-only.
         observations = getattr(self._local, "observations", {})
-        if not is_mutating(name) and observations.get(digest, ("", 0))[1] >= 3:
+        verification_read = getattr(self._local, "verification_read", False)
+        if not verification_read and not is_mutating(name) and observations.get(digest, ("", 0))[1] >= 3:
             return self._blocked(name, "no_observable_progress", args)
         turn_id = getattr(self._local, "turn_id", None) or "external_" + uuid.uuid4().hex
         try:
@@ -316,7 +328,7 @@ class ReliabilityToolRegistry:
         if not success:
             failures[digest] = failures.get(digest, 0) + 1
             self._local.failures = failures
-        elif not is_mutating(name):
+        elif not verification_read and not is_mutating(name):
             # Never store observation bodies in the journal. Per-turn HMAC
             # fingerprints only, so a changed screen resets the stall counter.
             raw = json.dumps(
@@ -366,6 +378,12 @@ class HermesReliabilityRuntime:
         method = "run_with_context" if callable(getattr(self.delegate, "run_with_context", None)) else "run"
         args = (user_text, context) if method == "run_with_context" else (user_text,)
         return self._run(method, *args, log=log, phase=phase)
+
+    def advance_supervised_mission(self, user_text=None, **kwargs):
+        return self._run("advance_supervised_mission", user_text, **kwargs)
+
+    def run_supervised_mission(self, **kwargs):
+        return self._run("run_supervised_mission", **kwargs)
 
     def recent_actions(self) -> list[dict[str, Any]]:
         return self.reliability_tools.ledger.recent(turn_id=self.last_turn_id) if self.last_turn_id else []

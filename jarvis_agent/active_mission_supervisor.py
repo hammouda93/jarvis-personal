@@ -15,6 +15,8 @@ from typing import Any
 import uuid
 
 from .kernel_contracts import MissionStatus
+from .controlled_delegation import (available_tools, build_responsibility_factory,
+                                    role_tools, validate_assignments)
 
 
 class SupervisorState(str, Enum):
@@ -130,6 +132,21 @@ def execution_scope_active() -> bool:
     return _SCOPE.get() is not None
 
 
+def delegation_context() -> dict:
+    scope = _SCOPE.get()
+    if scope is None:
+        return {}
+    return {"agent": scope.agent_id, "step_id": scope.step.get("step_id", ""),
+            "process_id": scope.process_id}
+
+
+def bind_pending_tool_approval(name: str, arguments: dict) -> None:
+    """Bind a provider's pending confirmation to this mission, step and payload."""
+    scope = _SCOPE.get()
+    if scope is not None:
+        scope.bind_approval(name, arguments)
+
+
 class SupervisedToolRegistry:
     """Transparent gate on the single existing registry; inactive outside a mission."""
 
@@ -147,13 +164,33 @@ class SupervisedToolRegistry:
             required = required or (is_mutating(name) and name not in _REVERSIBLE_TOOLS)
         if required and scope is not None:
             scope.waiting_approval = True
+            scope.approval_tool = str(name)
             scope.transition(SupervisorState.WAITING_APPROVAL, tool=str(name))
         return required
+
+    def ollama_tools(self) -> list[dict]:
+        original = self.delegate.ollama_tools()
+        scope = _SCOPE.get()
+        if scope is None or scope.allowed_tools is None:
+            return original
+        return [t for t in original if t["function"]["name"] in scope.allowed_tools]
+
+    def openai_tools(self) -> list[dict]:
+        if _SCOPE.get() is None:
+            return self.delegate.openai_tools()
+        return [{"type": "function", "name": t["function"]["name"],
+                 "description": t["function"]["description"],
+                 "parameters": t["function"]["parameters"], "strict": False}
+                for t in self.ollama_tools()]
 
     def execute(self, name: str, arguments: dict, *, approved: bool = False):
         scope = _SCOPE.get()
         if scope is None:
             return self.delegate.execute(name, arguments, approved=approved)
+        if scope.allowed_tools is not None and name not in scope.allowed_tools:
+            raise SupervisorStopped("tool_outside_delegation_scope")
+        if approved:
+            scope.consume_approval(name, arguments)
         if not approved and self.requires_confirmation(name):
             from .native_tools import AgentActionResult
             return AgentActionResult(name=name, success=False,
@@ -186,6 +223,13 @@ class ActiveMissionSupervisor:
         self.waiting_approval = False
         self.step: dict = {}
         self.mission_id = ""
+        self.agent_id = "interaction"
+        self.allowed_tools = None
+        self.turn_result = None
+        self.process_id = ""
+        self.approval_tool = ""
+        self.stop_event = None
+        self.factory = build_responsibility_factory(self)
 
     def _load(self):
         mid = str(self.runtime.active_mission_id or "")
@@ -200,7 +244,7 @@ class ActiveMissionSupervisor:
         return state, version
 
     def approve(self, *, digest: str, rules: dict | None = None,
-                limits: MissionLimits | None = None) -> dict:
+                limits: MissionLimits | None = None, assignments: dict | None = None) -> dict:
         """Operator-only API, never exposed as a model tool."""
         with self.runtime._lock:
             state, version = self._load()
@@ -225,11 +269,13 @@ class ActiveMissionSupervisor:
                 validate_rule(rule)
             budget = limits or MissionLimits()
             budget.validate()
+            delegation = validate_assignments(plan, {} if assignments is None else assignments, self.tools.delegate)
             state.observed_state["active_supervisor"] = {
                 "state": SupervisorState.READY.value, "plan_digest": digest,
                 "limits": asdict(budget), "usage": {}, "started_at": time.time(),
                 "rules": approved_rules, "step_id": "", "reports": [], "executed_steps": [],
                 "reason": "", "tool": "", "executor": "legacy_runtime",
+                "assignments": delegation,
             }
             self.runtime.context_store.save(state, expected_version=version)
             self.runtime._audit(state.mission_id, "supervisor.approved", {
@@ -253,6 +299,8 @@ class ActiveMissionSupervisor:
         })
 
     def reserve(self, **increments: int) -> None:
+        if self.stop_event is not None and self.stop_event.is_set():
+            raise SupervisorStopped("operator_requested_stop")
         state, version = self._load()
         record = state.observed_state["active_supervisor"]
         limits, usage = record["limits"], dict(record["usage"])
@@ -278,7 +326,9 @@ class ActiveMissionSupervisor:
                 continue
             self.reserve(actions=1, network_calls=1)
             self.transition(SupervisorState.OBSERVING, tool=rule["tool"])
-            result = registry.execute(rule["tool"], rule["arguments"], approved=False)
+            verifier = getattr(registry, "observe_for_verification", None)
+            result = (verifier(rule["tool"], rule["arguments"]) if callable(verifier)
+                      else registry.execute(rule["tool"], rule["arguments"], approved=False))
             ref = "observation:" + uuid.uuid4().hex
             self.transition(SupervisorState.VERIFYING, tool=rule["tool"])
             matched = matches_rule(result, rule)
@@ -291,13 +341,36 @@ class ActiveMissionSupervisor:
                 current.observed_state.get("plan_evidence", {}).pop(requirement, None)
                 self.runtime.context_store.save(current, expected_version=version)
 
-    def advance(self, user_text: str | None = None, *, context: str = "", log=None, phase=None):
+    def _approval_digest(self, name: str, arguments: dict) -> str:
+        return hashlib.sha256(_canonical([self.mission_id, self.step["step_id"], name, arguments]).encode("utf-8")).hexdigest()
+
+    def bind_approval(self, name: str, arguments: dict) -> None:
+        if self.allowed_tools is not None and name not in self.allowed_tools:
+            raise SupervisorStopped("tool_outside_delegation_scope")
+        state, version = self._load()
+        state.observed_state["active_supervisor"]["approval_digest"] = self._approval_digest(name, arguments)
+        self.approval_tool = str(name)
+        self.runtime.context_store.save(state, expected_version=version)
+
+    def consume_approval(self, name: str, arguments: dict) -> None:
+        state, version = self._load()
+        record = state.observed_state["active_supervisor"]
+        if record.get("approval_digest") != self._approval_digest(name, arguments):
+            raise SupervisorStopped("approval_not_bound_to_delegated_action")
+        # Consume before dispatch; a lost response cannot reuse this permission.
+        record.pop("approval_digest", None)
+        self.runtime.context_store.save(state, expected_version=version)
+
+    def advance(self, user_text: str | None = None, *, context: str = "", log=None, phase=None,
+                stop_event=None):
         """One bounded specialist turn. Reverification never redispatches the turn."""
         with self.runtime._lock:
             state, version = self._load()
             record = state.observed_state.get("active_supervisor")
             if not record:
                 raise RuntimeError("supervision_requires_reviewed_plan")
+            if state.status in (MissionStatus.COMPLETED, MissionStatus.FAILED):
+                raise SupervisorStopped("mission_terminal")
             plan = state.expected_state["semantic_contract"]
             if record["plan_digest"] != plan_digest(plan):
                 raise SupervisorStopped("reviewed_plan_changed")
@@ -314,10 +387,16 @@ class ActiveMissionSupervisor:
             if not ready:
                 if not all(s["state"] == "verified" for s in by_id.values()):
                     raise SupervisorStopped("mission_dependencies_not_verified")
-            self.step = ready[0] if ready else plan["steps"][0]
+            pending_step = next((s for s in plan["steps"] if s["step_id"] == record.get("step_id")), None)
+            continuing_approval = record["state"] == SupervisorState.WAITING_APPROVAL.value
+            self.step = pending_step if continuing_approval and pending_step else ready[0] if ready else plan["steps"][0]
             self.actions, self.observations, self.waiting_approval = [], [], False
+            self.turn_result, self.process_id, self.allowed_tools = None, "", None
+            self.agent_id = "unassigned"
+            self.approval_tool = ""
+            self.stop_event = stop_event
             # A prior successful turn is only reobserved, never repeated while waiting for proof.
-            waiting_proof = (not ready or
+            waiting_proof = not continuing_approval and (not ready or
                              self.step["step_id"] in record.get("executed_steps", []))
             record.update(state=(SupervisorState.OBSERVING if waiting_proof else SupervisorState.ACTING).value,
                           step_id=self.step["step_id"], reason="", tool="")
@@ -328,17 +407,45 @@ class ActiveMissionSupervisor:
             try:
                 self.reserve()
                 if not waiting_proof:
+                    selected_step = self.step
+                    try:
+                        for dependency in selected_step.get("depends_on", ()):
+                            self.step = next(s for s in plan["steps"] if s["step_id"] == dependency)
+                            self.observe(self.tools.delegate)
+                    finally:
+                        self.step = selected_step
+                    fresh = self.runtime.review_mission(self.mission_id)
+                    if next(s for s in fresh["steps"] if s["id"] == self.step["step_id"])["unmet_dependencies"]:
+                        raise SupervisorStopped("dependency_evidence_no_longer_matches")
                     proposed = self.runtime.propose_mission_capabilities(self.mission_id)
                     candidates = next((s.get("candidates", []) for s in proposed.get("steps", [])
                                        if s.get("step_id") == self.step["step_id"]), [])
-                    agents = {str(c["agent"]) for c in candidates}
-                    agent_id = next(iter(agents)) if len(agents) == 1 else "interaction"
+                    agents = {str(c["agent"]) for c in candidates if c["provider"] == "native_declared"}
+                    inferred = next(iter(agents)) if len(agents) == 1 else "interaction"
+                    assignment = record.get("assignments", {}).get(self.step["step_id"], {})
+                    self.agent_id = assignment.get("agent", inferred)
+                    self.allowed_tools = role_tools(self.agent_id, available_tools(self.tools.delegate),
+                                                   assignment.get("tools"))
+                    if not self.allowed_tools:
+                        raise SupervisorStopped("responsibility_has_no_available_tools")
                     step_context = "[SUPERVISED STEP DATA]\n" + _canonical({
                         "step": self.step, "objective": plan["objective"],
-                        "capability_proposal": proposed, "executor": "legacy_runtime", "responsible_agent": agent_id,
+                        "capability_proposal": proposed, "executor": "legacy_runtime", "responsible_agent": self.agent_id,
+                        "allowed_tools": sorted(self.allowed_tools),
                         "rule": "Observe actual targets before choosing arguments. Preserve existing approvals. Tool success is not goal success.",
                     }) + "\n[END SUPERVISED STEP DATA]"
-                    result = self.runtime._run(user_text or self.step["intent"], context="\n\n".join([context, step_context]), log=log, phase=phase)
+                    process = self.factory.spawn(agent_id=self.agent_id, mission_id=self.mission_id)
+                    self.process_id = process.process_id
+                    self.runtime._audit(self.mission_id, "delegation.started", {
+                        "process_id": self.process_id, "agent": self.agent_id,
+                        "step_id": self.step["step_id"], "tool_count": len(self.allowed_tools),
+                    })
+                    self.factory.execute(self.process_id, {
+                        "mission_id": self.mission_id, "step_id": self.step["step_id"],
+                        "request": user_text or self.step["intent"],
+                        "context": "\n\n".join([context, step_context]), "log": log, "phase": phase,
+                    })
+                    result = self.turn_result
                 self.observe(self.tools.delegate)
                 state, version = self._load()
                 if state.status == MissionStatus.BLOCKED:
@@ -359,14 +466,7 @@ class ActiveMissionSupervisor:
                     complete = all(s["state"] == "verified" for s in current_review["steps"])
                     state, version = self._load()
                 verified = next(s for s in current_review["steps"] if s["id"] == self.step["step_id"])["state"] == "verified"
-                report = {
-                    "step_id": self.step["step_id"], "objective": self.step["intent"],
-                    "agent": agent_id if not waiting_proof else "independent_verifier",
-                    "action_requested": user_text or self.step["intent"], "executor": "legacy_runtime",
-                    "actions": self.actions, "observations": self.observations,
-                    "permissions": "existing_runtime_confirmation", "verified": verified,
-                    "risks": [] if verified else ["independent_evidence_missing"],
-                }
+                report = self._report(verified=verified, verifier_only=waiting_proof)
                 record = state.observed_state["active_supervisor"]
                 record["reports"] = [*record["reports"], report][-24:]
                 if not waiting_proof and not self.waiting_approval:
@@ -374,10 +474,14 @@ class ActiveMissionSupervisor:
                         *record.get("executed_steps", []), self.step["step_id"],
                     ]))
                 self.runtime.context_store.save(state, expected_version=version)
+                self.runtime._audit(self.mission_id, "delegation.finished", {
+                    "process_id": self.process_id, "agent": report["agent"],
+                    "step_id": self.step["step_id"], "verified": verified,
+                })
                 target = (SupervisorState.WAITING_APPROVAL if self.waiting_approval else
                           SupervisorState.COMPLETED if complete else SupervisorState.READY if verified else
                           SupervisorState.RECOVERING)
-                self.transition(target)
+                self.transition(target, tool=self.approval_tool if self.waiting_approval else "")
                 if complete and not self.waiting_approval:
                     self.runtime.complete_mission(proof_ref="supervisor:" + uuid.uuid4().hex)
                 return {"mission_id": self.mission_id, "state": target.value,
@@ -386,9 +490,52 @@ class ActiveMissionSupervisor:
             except Exception as exc:
                 self.transition(SupervisorState.BLOCKED, reason=(str(exc) if isinstance(exc, SupervisorStopped) else type(exc).__name__))
                 state, version = self._load()
+                report = self._report(verified=False, verifier_only=waiting_proof,
+                                      error=str(exc) if isinstance(exc, SupervisorStopped) else type(exc).__name__)
+                record = state.observed_state["active_supervisor"]
+                record["reports"] = [*record["reports"], report][-24:]
                 state.status = MissionStatus.BLOCKED
                 state.pending_action = {"reason": "supervisor_requires_review", "manual_review_required": True}
                 self.runtime.context_store.save(state, expected_version=version)
                 raise
             finally:
                 _SCOPE.reset(token)
+                self.allowed_tools, self.stop_event = None, None
+
+    def _report(self, *, verified: bool, verifier_only: bool, error: str = "") -> dict:
+        """Produced from trusted local observations, never parsed from model prose."""
+        return {
+            "schema_version": 1, "mission_id": self.mission_id,
+            "step_id": self.step["step_id"], "objective": self.step["intent"],
+            "agent": "independent_verifier" if verifier_only else self.agent_id,
+            "process_id": self.process_id, "action_requested": self.step["intent"],
+            "executor": "legacy_runtime", "actions": list(self.actions),
+            "observations": list(self.observations),
+            "permissions": {"policy": "existing_runtime_confirmation",
+                            "scoped_tools": sorted(self.allowed_tools or ()),
+                            "approval_pending": self.waiting_approval},
+            "result": {"turn_returned": self.turn_result is not None,
+                       "text_length": len(str(getattr(self.turn_result, "text", "") or "")),
+                       "error": error[:120]},
+            "evidence": [o["ref"] for o in self.observations if o["matched"]],
+            "verified": verified, "verification_source": "independent_observation_or_operator_proof",
+            "risks": [error[:120]] if error else [] if verified else ["independent_evidence_missing"],
+        }
+
+    def run_until_pause(self, *, max_steps: int = 24, stop_event=None, progress=None,
+                        log=None, phase=None) -> dict:
+        """Sequential bounded coordination on the existing worker, never a retry loop."""
+        if type(max_steps) is not int or not 1 <= max_steps <= 24:
+            raise ValueError("invalid_delegation_step_limit")
+        reports = []
+        last = {}
+        for _ in range(max_steps):
+            last = self.advance(stop_event=stop_event, log=log, phase=phase)
+            reports.append(last["report"])
+            if progress:
+                progress({"mission_id": last["mission_id"], "status": last["state"],
+                          "delegation": last["report"], "goal_verified": last["goal_verified"]})
+            if last["state"] != SupervisorState.READY.value:
+                break
+        return {**last, "reports": reports, "steps_advanced": len(reports),
+                "coordination_paused": not last.get("goal_verified", False)}

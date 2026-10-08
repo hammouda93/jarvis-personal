@@ -406,6 +406,8 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             timeout=self.timeout_s,
             max_retries=0,
         )
+        from .active_mission_supervisor import reserve_model_request
+        reserve_model_request()
         response = client.chat.completions.create(
             model=self._model_for(provider),
             messages=[
@@ -448,6 +450,8 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        from .active_mission_supervisor import reserve_model_request
+        reserve_model_request()
         try:
             with urllib.request.urlopen(
                 request,
@@ -492,6 +496,10 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
                 self.last_attempts = tuple(attempts)
                 return parsed
             except Exception as exc:
+                from .active_mission_supervisor import SupervisorStopped
+                if isinstance(exc, SupervisorStopped):
+                    self.last_attempts = tuple(attempts)
+                    raise
                 errors.append(
                     f"{provider}:{type(exc).__name__}:{exc}"
                 )

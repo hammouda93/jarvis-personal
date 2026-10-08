@@ -334,6 +334,24 @@ def build_default_registry() -> CapabilityRegistry:
         ),
     )
 
+    # Logical responsibilities share the existing runtime, not new executors.
+    for agent_id, display_name, capability, description in (
+        ("interaction", "General Agent", "interaction.coordinate", "Coordinate ambiguous general tasks."),
+        ("research", "Research Agent", "research.collect", "Research web sources and collect referenced evidence."),
+        ("documents", "Documents Agent", "documents.author", "Read and author documents and user-selected files."),
+        ("data", "Data Agent", "data.analyze", "Analyze data, tables and spreadsheets."),
+        ("automations", "Automation Agent", "automations.review", "Review scheduled tasks, reminders and notifications."),
+        ("mcp", "MCP Agent", "mcp.coordinate", "Use explicitly scoped and authorized MCP tools."),
+        ("reports", "Reports Agent", "reports.summarize", "Compile reports from observed evidence and results."),
+    ):
+        registry.register_agent(
+            AgentManifest(agent_id=agent_id, display_name=display_name, version="0.2",
+                capabilities=(capability,), memory_scopes=(KnowledgeScope.AGENT, KnowledgeScope.SKILL),
+                description=description),
+            (CapabilitySpec(name=capability, description=description,
+                            tags=(agent_id, "controlled_delegation")),),
+        )
+
     return registry
 
 

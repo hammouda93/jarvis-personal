@@ -161,7 +161,7 @@ class LiveMissionContinuityRuntime:
                 context.status == MissionStatus.RUNNING
                 or any(node.status == TaskStatus.RUNNING for node in graph.nodes())
                 or (context.observed_state.get("active_supervisor") or {}).get("state")
-                in {"ACTING", "OBSERVING", "VERIFYING"}
+                in {"ACTING", "OBSERVING", "VERIFYING", "WAITING_APPROVAL"}
             )
             if interrupted:
                 for node in graph.nodes():
@@ -175,6 +175,7 @@ class LiveMissionContinuityRuntime:
                 }
                 if context.observed_state.get("active_supervisor"):
                     context.observed_state["active_supervisor"]["state"] = "BLOCKED"
+                    context.observed_state["active_supervisor"].pop("approval_digest", None)
                 self.graph_store.save(graph)
                 self.context_store.save(context, expected_version=version)
                 self._audit(
@@ -399,9 +400,21 @@ class LiveMissionContinuityRuntime:
             supervised = state.observed_state.get("active_supervisor")
             if supervised:
                 used = int(supervised["usage"].get("recoveries", 0))
-                if used >= supervised["limits"]["recoveries"]:
+                total = int(supervised["usage"].get("total_units", 0))
+                if verified_outcome != "cancel" and (used >= supervised["limits"]["recoveries"]
+                        or total >= supervised["limits"]["total_units"]):
                     raise RuntimeError("mission_recovery_budget_exhausted")
-                supervised["usage"]["recoveries"] = used + 1
+                if verified_outcome != "cancel":
+                    supervised["usage"]["recoveries"] = used + 1
+                    supervised["usage"]["total_units"] = total + 1
+                step_id = supervised.get("step_id")
+                if step_id and verified_outcome == "completed":
+                    supervised["executed_steps"] = list(dict.fromkeys([
+                        *supervised.get("executed_steps", []), step_id,
+                    ]))
+                elif step_id and verified_outcome == "not_executed":
+                    supervised["executed_steps"] = [s for s in supervised.get("executed_steps", []) if s != step_id]
+                supervised.pop("approval_digest", None)
                 supervised["state"] = (
                     "FAILED" if verified_outcome == "cancel" else
                     "RECOVERING" if verified_outcome == "completed" else "READY"
@@ -531,7 +544,7 @@ class LiveMissionContinuityRuntime:
             ),
             "task_summary": graph.summary(),
             "tasks": [
-                {"id": node.task_id, "status": node.status.value,
+                {"id": node.task_id, "status": node.status.value, "agent_id": node.agent_id,
                  "action_names": list(node.result.get("action_names", [])),
                  "agent_routes": list(node.result.get("agent_routes", [])),
                  "error": node.error}
@@ -576,15 +589,21 @@ class LiveMissionContinuityRuntime:
             self._active_mission_id = None
             self._explicit = False
 
-    def approve_supervised_plan(self, *, digest: str, rules=None, limits=None):
+    def approve_supervised_plan(self, *, digest: str, rules=None, limits=None, assignments=None):
         if self.active_supervisor is None:
             raise RuntimeError("active_supervisor_not_enabled")
-        return self.active_supervisor.approve(digest=digest, rules=rules, limits=limits)
+        return self.active_supervisor.approve(digest=digest, rules=rules, limits=limits, assignments=assignments)
 
-    def advance_supervised_mission(self, user_text=None, *, log=None, phase=None):
+    def advance_supervised_mission(self, user_text=None, *, log=None, phase=None, stop_event=None):
         if self.active_supervisor is None:
             raise RuntimeError("active_supervisor_not_enabled")
-        return self.active_supervisor.advance(user_text, log=log, phase=phase)
+        return self.active_supervisor.advance(user_text, log=log, phase=phase, stop_event=stop_event)
+
+    def run_supervised_mission(self, *, max_steps=24, stop_event=None, progress=None, log=None, phase=None):
+        if self.active_supervisor is None:
+            raise RuntimeError("active_supervisor_not_enabled")
+        return self.active_supervisor.run_until_pause(max_steps=max_steps, stop_event=stop_event,
+                                                    progress=progress, log=log, phase=phase)
 
     def run(self, user_text: str, *, log=None, phase=None):
         result = self._supervised_conversation(user_text, log=log, phase=phase)
@@ -646,14 +665,17 @@ class LiveMissionContinuityRuntime:
                 if n.status == TaskStatus.COMPLETED
             ]
             previous_step = settled[-1].task_id if settled else None
+            from .active_mission_supervisor import delegation_context
+            delegated = delegation_context()
             node = TaskNode(
                 task_id=task_id,
                 mission_id=mission_id,
-                capability="interaction.live_turn",
-                agent_id="interaction",
+                capability="delegation.live_turn" if delegated else "interaction.live_turn",
+                agent_id=delegated.get("agent", "interaction"),
                 status=TaskStatus.RUNNING,
                 dependencies=({previous_step} if previous_step else set()),
-                payload={"source": "live_runtime", "input_length": len(str(user_text))},
+                payload={"source": "live_runtime", "input_length": len(str(user_text)),
+                         **({"delegation": delegated} if delegated else {})},
             )
             graph.add(node)
             self.graph_store.save(graph)

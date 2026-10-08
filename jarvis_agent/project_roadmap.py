@@ -49,8 +49,8 @@ STAGES: tuple[Stage, ...] = (
           "green_ancestor", "not_validated", "tests/test_mission_workbench.py"),
     Stage(8, "semantic_supervisor", "Preuves et superviseur sémantique", "integrated",
           "green_ancestor", "not_validated", "tests/test_semantic_goal_supervisor.py"),
-    Stage(9, "multi_agent", "Agents, MCP et planification structurée (9C)", "in_progress",
-          "pending", "not_validated", "tests/test_llm_mission_planner.py"),
+    Stage(9, "multi_agent", "Supervision, délégation et MCP (9D/9E)", "in_progress",
+          "pending", "not_validated", "tests/test_controlled_delegation.py"),
     Stage(10, "skills_learning", "Apprentissage & Skills validés", "planned",
           "not_applicable", "not_validated", "promotion contrôlée des expériences"),
     Stage(11, "integrations", "Intégrations personnelles et tâches durables", "planned",
@@ -71,9 +71,9 @@ def snapshot() -> dict:
         "release_ready": False,
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
-            "Étape 9C en développement : 9A Hub MCP, 9B routage de candidats, "
-            "9C génération explicite de plans par la même IA sans outils. "
-            "Délégation autonome, OAuth fournisseurs et essais Windows réels "
-            "restent à valider. Étapes 10–11 non livrées."
+            "9A–9C préservées ; 9D supervision bornée et 9E délégation contrôlée "
+            "intégrées avec tests locaux. CI 9D Windows/Linux verte ; CI 9E à vérifier. "
+            "MCP complet, OAuth, Skills avancés et tâches durables restent en développement. "
+            "Aucun essai Windows réel n'est certifié."
         ),
     }

@@ -40,9 +40,9 @@ MCP et roadmap. Ces composants seront etendus.
 
 | Jalon | Code integre | Validation automatique nouvelle branche | Test reel |
 | --- | --- | --- | --- |
-| 1-8 et 9A-9C | Base historique preservee | A mesurer sur cette branche | EN ATTENTE DE TEST REEL |
-| 9D superviseur actif | Integre, opt-in ; limites documentees | 20 tests dedies locaux passes ; CI a observer | EN ATTENTE DE TEST REEL |
-| 9E delegation controlee | A developper | A developper | EN ATTENTE DE TEST REEL |
+| 1-8 et 9A-9C | Base historique preservee | Regression cumulative locale et CI 9D verte | EN ATTENTE DE TEST REEL |
+| 9D superviseur actif | Integre, opt-in ; limites documentees | 20 tests dedies locaux ; CI Windows/Linux verte | EN ATTENTE DE TEST REEL |
+| 9E delegation controlee | Integree dans le runtime existant ; roles sans outils bloques | 38 tests dedies locaux ; CI du prochain commit a observer | EN ATTENTE DE TEST REEL |
 | Centre MCP complet | Partiel (9A/9B) | A etendre | EN ATTENTE DE TEST REEL |
 | 10 apprentissage et Skills | Partiel (operationnel) | A etendre | EN ATTENTE DE TEST REEL |
 | 11 automatisations durables | A developper | A developper | EN ATTENTE DE TEST REEL |
@@ -69,13 +69,29 @@ La lecture de telemetrie inaccessible est traitee comme indisponible.
 
 Resultats locaux du checkpoint 9D : 685 tests Python Windows passes, dont 20
 tests dedies de supervision/Qt ; 45 replays Browser Bridge passes ; contrat
-du SDK officiel MCP 2.3.0 verifie. La CI Windows/Linux reste a observer sur
-le commit publie. Aucun de ces tests ne certifie une action Windows reelle.
+du SDK officiel MCP 2.3.0 verifie. CI du commit `539e1fdc23efd08f87fe2a96117cb4ca08d62f72` :
+[run 37837187767](https://github.com/hammouda93/jarvis-personal/actions/runs/37837187767),
+Windows et Linux SUCCESS. Windows : 685 tests passes ; Linux : 681 passes et
+4 skips Windows explicites ; 45 replays Browser Bridge passes sur chaque OS.
+Aucun de ces tests ne certifie une action Windows reelle.
 Aucun essai reel Chrome/Windows/audio/MCP personnel effectue.
+
+Checkpoint 9E en preparation : 723 tests Python Windows passes, dont 38 dedies
+a la delegation ; 45 replays Browser Bridge passes. Les tests incluent l'assemblage
+reel des wrappers avec fournisseur simule, permissions exactes, reprise sans
+rejeu, arrets et budgets de memoire V5. Deux echecs de fixtures (plan immuable,
+projection incompletement attendue) ont ete analyses/corriges avant cette passe.
+La CI du prochain commit est encore non validee.
+
+PR brouillon ouverte et rattachee :
+[PR 16](https://github.com/hammouda93/jarvis-personal/pull/16), base reference 9C,
+head branche de developpement. Aucune fusion effectuee.
 
 ## Hermes
 
-Reference actuelle inspectee : `d94b70f675205c2c046138997819428772cd2678`.
+Reference initiale inspectee : `d94b70f675205c2c046138997819428772cd2678`.
+Main revalide et sources delegation relues : `9d05e7ff92d3edd9abdf20fe3d04551905cb995e`.
+Comparaison, incompatibilites et licence : `docs/HERMES_ADAPTATION.md`.
 Sources : `tools/mcp_tool_discovery.py`, `tools/mcp_tool_transport.py`,
 `hermes_cli/mcp_security.py`, `hermes_cli/subcommands/mcp.py`, `mcp_serve.py`,
 `agent/transports/hermes_tools_mcp_server.py`.
@@ -90,10 +106,9 @@ personnel est connecte a Jarvis. Aucun code Hermes copie a ce stade.
 
 ## Prochain travail
 
-1. Publier le checkpoint 9D et observer la nouvelle CI cumulative Windows/Linux.
-2. Completer 9E et ses responsabilites generiques, la coordination multi-etapes
-   et la reprise controlee, dans le seul runtime.
-3. Etendre MCP, apprentissage/Skills, scheduler et interface avec tests associes.
-4. Publier les commits autorises, observer la CI et ouvrir une PR brouillon.
-5. Finaliser l'architecture, la comparaison Hermes, les couts, la securite,
+1. Publier le checkpoint 9E et observer sa CI cumulative Windows/Linux.
+2. Etendre MCP (stdio generique, credentials securises, OAuth, etats/couts),
+   puis apprentissage/Skills, scheduler et interface avec tests associes.
+3. Publier les commits autorises, observer la CI et maintenir la PR brouillon.
+4. Finaliser l'architecture, la comparaison Hermes, les couts, la securite,
    l'installation/rollback et la procedure d'acceptation Windows.

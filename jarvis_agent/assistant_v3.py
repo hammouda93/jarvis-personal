@@ -272,7 +272,10 @@ class AssistantWorker(QObject):
     def _run_mission_control(self, command) -> None:
         """Run only from AssistantWorker.run; do not bypass safety proof gates."""
         try:
-            result = perform_mission_command(self._agent, command)
+            result = perform_mission_command(self._agent, command,
+                stop_event=self._mission_control.stop_requested,
+                progress=lambda report: self.mission_control_result.emit({
+                    "success": True, "operation": "delegation_progress", **report}))
         except Exception as exc:
             # Unexpected storage/backend errors should surface in the operator
             # instead of terminating the speech/text worker. Avoid storing
@@ -281,6 +284,9 @@ class AssistantWorker(QObject):
                 "success": False, "operation": command.operation,
                 "reason": type(exc).__name__,
             }
+        finally:
+            if command.operation in {"run_supervision", "advance_supervision"}:
+                self._mission_control.finish_coordination()
         self.mission_control_result.emit(result)
         if not result.get("success"):
             self.log_line.emit(
@@ -298,7 +304,7 @@ class AssistantWorker(QObject):
             # One ordinary model turn, same runtime/voice/chat path; no second
             # model, no separate planning executor, no pseudo-tool instructions.
             self._process_user_text(command.value, source="text")
-        if command.operation == "advance_supervision" and result.get("text"):
+        if command.operation in {"advance_supervision", "run_supervision"} and result.get("text"):
             self._reply_source = "text"
             self._reply_with_voice = True
             self._deliver_reply(str(result["text"]))
