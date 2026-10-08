@@ -111,7 +111,8 @@ class OperatorConsole(QFrame):
         self.mission_line = QLabel("Missions  —")
         self.action_line = QLabel("Actions  —")
         self.model_line = QLabel("Modèle  —")
-        for line in (self.mode_line, self.mission_line, self.action_line, self.model_line):
+        self.capabilities_line = QLabel("Capacités  —")
+        for line in (self.mode_line, self.mission_line, self.action_line, self.model_line, self.capabilities_line):
             line.setObjectName("operatorMetric")
             line.setWordWrap(True)
             sum_layout.addWidget(line)
@@ -164,9 +165,16 @@ class OperatorConsole(QFrame):
         self._views["actions"].setHtml(actions)
         mission_on = bool(data.get("mission_enabled"))
         reliability_on = bool(data.get("reliability_enabled"))
+        kernel_mode = "observateur" if data.get("kernel_shadow_enabled") else "non connecté"
         self.mode_line.setText(
-            f"Kernel : passif  ·  Convergence : {'ON' if mission_on else 'OFF'}"
+            f"Kernel : {kernel_mode}  ·  Missions : {'ON' if mission_on else 'OFF'}"
             f"  ·  Fiabilité : {'ON' if reliability_on else 'OFF'}"
+        )
+        self.capabilities_line.setText(
+            f"Mémoire V5 : {'ON' if data.get('semantic_memory_enabled') else 'OFF'}"
+            f"  ·  Navigateur : {'ON' if data.get('browser_core_enabled') else 'OFF'}"
+            f"  ·  PC : {'ON' if data.get('computer_core_enabled') else 'OFF'}"
+            f"  ·  Apprentissage : {'ON' if data.get('learning_enabled') else 'OFF'}"
         )
         self.mission_line.setText(
             f"Missions observées : {len(data.get('missions') or [])}"
