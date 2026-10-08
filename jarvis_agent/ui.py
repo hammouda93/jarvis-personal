@@ -5,6 +5,8 @@ import math
 import random
 import re
 import sys
+import asyncio
+import threading
 from collections import deque
 from dataclasses import dataclass
 
@@ -30,11 +32,14 @@ from PySide6.QtWidgets import (
     QTextBrowser,
     QVBoxLayout,
     QTabWidget,
+    QScrollArea,
     QWidget,
 )
 
 from .assistant_v3 import AssistantWorker
 from .operator_console import OperatorConsole
+from .mcp_connections_ui import MCPConnectionsPanel
+from .mcp_client_bridge import MCPClientBridge
 from .operator_telemetry import snapshot as operator_snapshot
 from .config import settings
 from .states import AssistantState, STATE_LABELS
@@ -935,6 +940,8 @@ class FlowPanel(QFrame):
 
 
 class JarvisWindow(QWidget):
+    mcp_probe_finished = Signal(dict)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Personal Jarvis")
@@ -951,12 +958,19 @@ class JarvisWindow(QWidget):
         self.canvas = PersonalJarvisCanvas(self)
         self.flow_panel = FlowPanel(self)
         self.operator_console = OperatorConsole(self)
+        self.mcp_connections = MCPConnectionsPanel(self)
+        self.mcp_scroll = QScrollArea(self)
+        self.mcp_scroll.setFrameShape(QFrame.NoFrame)
+        self.mcp_scroll.setWidgetResizable(True)
+        self.mcp_scroll.setWidget(self.mcp_connections)
+        self._mcp_probe_busy = False
         self.side_tabs = QTabWidget(self)
         self.side_tabs.setObjectName("sideTabs")
         self.side_tabs.setMinimumWidth(340)
         self.side_tabs.setMaximumWidth(410)
         self.side_tabs.addTab(self.operator_console, "◉  CONTRÔLE")
         self.side_tabs.addTab(self.flow_panel, "◇  TRAJET")
+        self.side_tabs.addTab(self.mcp_scroll, "⌘  MCP")
         self.canvas.setMinimumSize(520, 360)
 
         title = QLabel("PERSONAL JARVIS")
@@ -1403,6 +1417,8 @@ class JarvisWindow(QWidget):
         self._worker.conversation_message.connect(self._on_conversation_message)
         self._worker.telemetry_changed.connect(self.operator_console.update_model)
         self._worker.operator_event.connect(self.operator_console.update_live_event)
+        self.mcp_connections.request_probe.connect(self._on_mcp_probe)
+        self.mcp_probe_finished.connect(self._mcp_probe_result)
         self._worker.mission_control_result.connect(self.operator_console.show_mission_result)
         self.operator_console.mission_requested.connect(self._on_mission_request)
 
@@ -1429,6 +1445,41 @@ class JarvisWindow(QWidget):
 
         if settings.ui_fullscreen:
             self.showFullScreen()
+
+    def _on_mcp_probe(self, kind: str, target: str) -> None:
+        """Only a deliberate user click starts a bounded MCP network probe."""
+        if self._mcp_probe_busy:
+            self.mcp_connections.status.setText(
+                "Un test MCP est déjà en cours."
+            )
+            return
+        self._mcp_probe_busy = True
+        self.mcp_connections.status.setText(
+            "Vérification MCP démarrée sur un thread séparé…"
+        )
+
+        def probe():
+            try:
+                bridge = MCPClientBridge()
+                async def check():
+                    if kind == "hermes":
+                        return await bridge.discover_hermes(executable=target)
+                    if kind == "remote":
+                        return await bridge.discover_remote(target)
+                    raise ValueError("unsupported_mcp_probe")
+                result = asyncio.run(asyncio.wait_for(check(), timeout=22.0))
+            except Exception as exc:
+                # Never render raw network/OAuth errors with bearer fragments.
+                result = {"status": "error", "reason": type(exc).__name__}
+            self.mcp_probe_finished.emit(result)
+
+        threading.Thread(
+            target=probe, name="jarvis-mcp-probe", daemon=True
+        ).start()
+
+    def _mcp_probe_result(self, result: dict) -> None:
+        self._mcp_probe_busy = False
+        self.mcp_connections.show_probe_result(result)
 
     def _refresh_operator_console(self) -> None:
         if self._compact_mode or self.clean_button.isChecked():

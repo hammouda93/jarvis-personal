@@ -1,0 +1,4 @@
+# Optional MCP transport dependencies (separate from Jarvis baseline)
+# Only install when testing real remote/Hermes MCP connections.
+mcp>=1.12,<3
+httpx>=0.27,<1

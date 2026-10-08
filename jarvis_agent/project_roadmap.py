@@ -48,15 +48,15 @@ STAGES: tuple[Stage, ...] = (
     Stage(7, "mission_live", "Missions contrôlables depuis l'interface", "integrated",
           "green_ancestor", "not_validated", "tests/test_mission_workbench.py"),
     Stage(8, "semantic_supervisor", "Preuves et superviseur sémantique", "integrated",
-          "green_current", "not_validated", "tests/test_semantic_goal_supervisor.py"),
-    Stage(9, "multi_agent", "Délégation d'agents & planification autonome", "planned",
-          "not_applicable", "not_validated", "orchestrateur de missions autonome"),
+          "green_ancestor", "not_validated", "tests/test_semantic_goal_supervisor.py"),
+    Stage(9, "multi_agent", "MCP, intégrations et orchestration des agents", "in_progress",
+          "green_current", "not_validated", "tests/test_mcp_hub_v5.py"),
     Stage(10, "skills_learning", "Apprentissage & Skills validés", "planned",
           "not_applicable", "not_validated", "promotion contrôlée des expériences"),
     Stage(11, "integrations", "Intégrations personnelles et tâches durables", "planned",
           "not_applicable", "not_validated", "connecteurs + planificateur durable"),
 )
-CURRENT_STAGE_KEY = "semantic_supervisor"
+CURRENT_STAGE_KEY = "multi_agent"
 
 
 def snapshot() -> dict:
@@ -70,10 +70,10 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "notice": (
-            "Étapes 1–8 intégrées et validées en CI (426 Windows Python, "
-            "45 Browser Bridge, 607 Linux Python dans V4). "
-            "Les tests réels Windows restent nécessaires. "
-            "Supervision déterministe sans nouvelle collecte autonome de preuve. "
-            "Étapes 9–11 non livrées."
+            "Étapes 1–8 intégrées et validées en CI. Étape 9 en "
+            "développement : MCP par service et pont Hermes optionnel. "
+            "Ni planification autonome ni exécution multi-agent complètes "
+            "à ce stade. Tests réels Windows encore nécessaires. "
+            "Étapes 10 et 11 à développer."
         ),
     }
