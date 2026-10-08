@@ -90,6 +90,7 @@ class OperatorConsole(QFrame):
     """Live projection plus explicit UI-only command signal (no direct agent access)."""
 
     mission_requested = Signal(str, str)
+    mcp_requested = Signal(str, dict)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -205,6 +206,82 @@ class OperatorConsole(QFrame):
             lambda: self._request_mission("detach", "")
         )
 
+        self.mcp_box = QFrame()
+        self.mcp_box.setObjectName("operatorGroup")
+        mcp_layout = QVBoxLayout(self.mcp_box)
+        mcp_layout.setContentsMargins(10, 8, 10, 8)
+        mcp_layout.setSpacing(5)
+        heading = QLabel("◈   MCP · SERVEURS INDÉPENDANTS")
+        heading.setObjectName("operatorSection")
+        mcp_layout.addWidget(heading)
+        self.mcp_picker = QComboBox()
+        self.mcp_picker.setObjectName("missionPicker")
+        self.mcp_picker.addItem("Choisir un serveur MCP…", "")
+        self.mcp_picker.currentIndexChanged.connect(self._mcp_choose)
+        self.mcp_id_input = QLineEdit()
+        self.mcp_id_input.setObjectName("missionId")
+        self.mcp_id_input.setMaxLength(64)
+        self.mcp_id_input.setPlaceholderText("Identifiant : docs, github…")
+        self.mcp_url_input = QLineEdit()
+        self.mcp_url_input.setObjectName("missionGoal")
+        self.mcp_url_input.setMaxLength(400)
+        self.mcp_url_input.setPlaceholderText("Endpoint public HTTPS : https://…/mcp")
+        self.mcp_tools_input = QLineEdit()
+        self.mcp_tools_input.setObjectName("missionGoal")
+        self.mcp_tools_input.setMaxLength(700)
+        self.mcp_tools_input.setPlaceholderText("Outils autorisés : search, get_item…")
+        self.mcp_auth_input = QLineEdit()
+        self.mcp_auth_input.setObjectName("missionId")
+        self.mcp_auth_input.setMaxLength(128)
+        self.mcp_auth_input.setPlaceholderText("Nom variable token (facultatif, pas le token)")
+        self.mcp_save_button = QPushButton("⊕ Enregistrer (désactivé)")
+        self.mcp_enable_button = QPushButton("● Activer")
+        self.mcp_disable_button = QPushButton("○ Désactiver")
+        self.mcp_inspect_button = QPushButton("⌁ Lister les outils autorisés")
+        for button in (
+            self.mcp_save_button, self.mcp_enable_button,
+            self.mcp_disable_button, self.mcp_inspect_button,
+        ):
+            button.setObjectName("missionButton")
+        buttons_mcp = QHBoxLayout()
+        buttons_mcp.addWidget(self.mcp_enable_button)
+        buttons_mcp.addWidget(self.mcp_disable_button)
+        self.mcp_feedback = QLabel(
+            "Chaque MCP est indépendant. Connexions ChatGPT non transférées. "
+            "Confirmation explicite avant appel externe."
+        )
+        self.mcp_feedback.setObjectName("operatorMetric")
+        self.mcp_feedback.setWordWrap(True)
+        for w in (self.mcp_picker, self.mcp_id_input, self.mcp_url_input,
+                  self.mcp_tools_input, self.mcp_auth_input, self.mcp_save_button):
+            mcp_layout.addWidget(w)
+        mcp_layout.addLayout(buttons_mcp)
+        mcp_layout.addWidget(self.mcp_inspect_button)
+        mcp_layout.addWidget(self.mcp_feedback)
+        layout.addWidget(self.mcp_box)
+        self._mcp_choices = ()
+        self.mcp_save_button.clicked.connect(
+            lambda: self.mcp_requested.emit("save", {
+                "id": self.mcp_id_input.text().strip(),
+                "url": self.mcp_url_input.text().strip(),
+                "tools": [
+                    word.strip() for word in self.mcp_tools_input.text().split(",")
+                    if word.strip()
+                ],
+                "auth_env": self.mcp_auth_input.text().strip(),
+            })
+        )
+        for op, button in (
+            ("enable", self.mcp_enable_button),
+            ("disable", self.mcp_disable_button),
+            ("discover", self.mcp_inspect_button),
+        ):
+            button.clicked.connect(
+                lambda checked=False, action=op: self.mcp_requested.emit(
+                    action, {"id": self.mcp_id_input.text().strip()}
+                )
+            )
+
         self._views = {}
         scroll = QScrollArea(self)
         scroll.setObjectName("operatorScroll")
@@ -223,6 +300,7 @@ class OperatorConsole(QFrame):
             ("events", "⌁   JOURNAL DES ÉVÉNEMENTS"),
             ("live", "◈   ACTIVITÉ DE CETTE SESSION"),
             ("roadmap", "◫   FEUILLE DE ROUTE · GATES"),
+            ("mcp", "◈   SERVEURS MCP · CONTRÔLE"),
         ]:
             group = QFrame()
             group.setObjectName("operatorGroup")
