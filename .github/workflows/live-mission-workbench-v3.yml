@@ -1,0 +1,91 @@
+name: Jarvis Live Mission Workbench V3
+
+on:
+  push:
+    branches:
+      - feature/live-mission-workbench-v3
+  pull_request:
+    branches:
+      - feature/hermes-operator-console-v2
+  workflow_dispatch:
+
+concurrency:
+  group: mission-workbench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-critical:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install Python
+        run: |
+          python -m pip install -r requirements.txt
+      - name: Compile changed modules
+        run: |
+          python -m py_compile jarvis_agent/ui.py jarvis_agent/assistant_v3.py jarvis_agent/operator_console.py jarvis_agent/operator_telemetry.py jarvis_agent/mission_workbench.py jarvis_agent/project_roadmap.py
+      - name: Windows PySide6 and Jarvis critical regressions
+        env:
+          QT_QPA_PLATFORM: offscreen
+          JARVIS_HERMES_RELIABILITY_ENABLED: "0"
+          JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
+        run: |
+          python -m unittest tests.test_mission_workbench tests.test_operator_telemetry tests.test_operator_console_ui tests.test_hermes_reliability tests.test_runtime_convergence tests.test_ui_logging tests.test_foundations_v4 tests.test_browser_dom_contract tests.test_agent_runtime tests.test_semantic_memory_v5 tests.test_assistant_v3 tests.test_windows_perception tests.test_tools tests.test_text_input_mode_v3 -q
+      - name: Browser Bridge replay
+        run: |
+          node --test tests/browser_bridge_replay.mjs
+
+  linux-cross-platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: System Qt/audio dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libportaudio2 libasound2-dev libegl1
+      - name: Install Python
+        run: |
+          python -m pip install -r requirements.txt
+      - name: Comprehensive Python suite excluding four actual Windows-only tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          JARVIS_HERMES_RELIABILITY_ENABLED: "0"
+          JARVIS_RUNTIME_CONVERGENCE_ENABLED: "0"
+          JARVIS_CUA_DRIVER_ENABLED: "0"
+        run: |
+          python - <<'PY'
+          import sys, unittest
+          excluded = {
+              "test_learned_app_profile_is_reused_before_rescanning_windows",
+              "test_cursor_falls_back_to_dynamic_windows_discovery",
+              "test_inspection_recovers_from_uia_enumeration_failure",
+              "test_named_inspection_prefers_stable_native_handle",
+          }
+          removed = []
+          def filter_suite(suite):
+              out = unittest.TestSuite()
+              for test in suite:
+                  if isinstance(test, unittest.TestSuite):
+                      out.addTests(filter_suite(test))
+                  elif test.id().split(".")[-1] in excluded:
+                      removed.append(test.id())
+                  else:
+                      out.addTest(test)
+              return out
+          filtered = filter_suite(unittest.defaultTestLoader.discover("tests", pattern="test_*.py"))
+          print("Platform-only exclusions:", removed)
+          assert len(removed) == 4
+          result = unittest.TextTestRunner(verbosity=1).run(filtered)
+          sys.exit(0 if result.wasSuccessful() else 1)
+          PY

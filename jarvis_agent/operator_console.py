@@ -4,13 +4,14 @@ from __future__ import annotations
 import html
 from collections import deque
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QScrollArea, QTextBrowser,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextBrowser,
     QVBoxLayout, QWidget,
 )
 
 from .operator_telemetry import snapshot
+from .project_roadmap import snapshot as roadmap_snapshot
 
 
 _STATUS = {
@@ -86,7 +87,9 @@ def render_snapshot(data: dict) -> tuple[str, str, str]:
 
 
 class OperatorConsole(QFrame):
-    """Observable UI-only projection, with no control/write API."""
+    """Live projection plus explicit UI-only command signal (no direct agent access)."""
+
+    mission_requested = Signal(str, str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -120,11 +123,68 @@ class OperatorConsole(QFrame):
         self.capabilities_line = QLabel("Capacités  —")
         self.learning_line = QLabel("Skills et mémoire  —")
         self.phase_line = QLabel("État : initialisation")
-        for line in (self.phase_line, self.mode_line, self.mission_line, self.action_line, self.model_line, self.capabilities_line, self.learning_line):
+        self.progress_line = QLabel("Feuille de route : chargement")
+        for line in (self.phase_line, self.progress_line, self.mode_line, self.mission_line, self.action_line, self.model_line, self.capabilities_line, self.learning_line):
             line.setObjectName("operatorMetric")
             line.setWordWrap(True)
             sum_layout.addWidget(line)
         layout.addWidget(summary)
+
+        controls_box = QFrame()
+        controls_box.setObjectName("operatorGroup")
+        mission_layout = QVBoxLayout(controls_box)
+        mission_layout.setContentsMargins(10, 8, 10, 8)
+        mission_layout.setSpacing(6)
+        control_title = QLabel("◉   MISSION EXPLICITE · MÊME CERVEAU")
+        control_title.setObjectName("operatorSection")
+        mission_layout.addWidget(control_title)
+        self.mission_goal_input = QLineEdit()
+        self.mission_goal_input.setMaxLength(2000)
+        self.mission_goal_input.setObjectName("missionGoal")
+        self.mission_goal_input.setPlaceholderText("Objectif à poursuivre sur plusieurs échanges…")
+        self.mission_begin_button = QPushButton("▶ Démarrer et exécuter")
+        self.mission_begin_button.setObjectName("missionButton")
+        self.mission_picker = QComboBox()
+        self.mission_picker.setObjectName("missionPicker")
+        self.mission_picker.addItem("Choisir une mission enregistrée…", "")
+        self._mission_choices = ()
+        self.mission_picker.currentIndexChanged.connect(
+            lambda _: self._select_saved_mission()
+        )
+        self.mission_id_input = QLineEdit()
+        self.mission_id_input.setMaxLength(64)
+        self.mission_id_input.setObjectName("missionId")
+        self.mission_id_input.setPlaceholderText("Identifiant live_… d'une mission existante")
+        self.mission_resume_button = QPushButton("↻ Reprendre le suivi")
+        self.mission_resume_button.setObjectName("missionButton")
+        self.mission_detach_button = QPushButton("Ⅱ Détacher sans conclure")
+        self.mission_detach_button.setObjectName("missionButton")
+        buttons = QHBoxLayout()
+        buttons.setSpacing(5)
+        buttons.addWidget(self.mission_resume_button)
+        buttons.addWidget(self.mission_detach_button)
+        self.mission_feedback = QLabel(
+            "Convergence requise · le bouton Démarrer transmet l'objectif "
+            "au moteur actuel, pas à un nouvel agent."
+        )
+        self.mission_feedback.setWordWrap(True)
+        self.mission_feedback.setObjectName("operatorMetric")
+        mission_layout.addWidget(self.mission_goal_input)
+        mission_layout.addWidget(self.mission_begin_button)
+        mission_layout.addWidget(self.mission_picker)
+        mission_layout.addWidget(self.mission_id_input)
+        mission_layout.addLayout(buttons)
+        mission_layout.addWidget(self.mission_feedback)
+        layout.addWidget(controls_box)
+        self.mission_begin_button.clicked.connect(
+            lambda: self._request_mission("begin", self.mission_goal_input.text())
+        )
+        self.mission_resume_button.clicked.connect(
+            lambda: self._request_mission("resume", self.mission_id_input.text())
+        )
+        self.mission_detach_button.clicked.connect(
+            lambda: self._request_mission("detach", "")
+        )
 
         self._views = {}
         scroll = QScrollArea(self)
@@ -142,6 +202,7 @@ class OperatorConsole(QFrame):
             ("actions", "⚙   OUTILS / VÉRIFICATIONS"),
             ("events", "⌁   JOURNAL DES ÉVÉNEMENTS"),
             ("live", "◈   ACTIVITÉ DE CETTE SESSION"),
+            ("roadmap", "◫   FEUILLE DE ROUTE · GATES"),
         ]:
             group = QFrame()
             group.setObjectName("operatorGroup")
@@ -173,6 +234,16 @@ class OperatorConsole(QFrame):
             QLabel#operatorSubtitle {color:#6dbac5;font-size:8px;}
             QLabel#operatorSection {color:#7edee5;font-size:9px;font-weight:650;}
             QLabel#operatorMetric {color:#b4dce7;font-size:10px;}
+            QLineEdit#missionGoal,QLineEdit#missionId,QComboBox#missionPicker {
+                background:#061a2b;color:#e4f9ff;border:1px solid #286278;
+                border-radius:6px;padding:5px;font-size:10px;
+            }
+            QPushButton#missionButton {
+                background:#0b3445;color:#9ef3ed;border:1px solid #286278;
+                border-radius:6px;padding:6px;font-size:10px;
+            }
+            QPushButton#missionButton:hover {background:#155366;}
+            QPushButton#missionButton:disabled {color:#718c9b;}
             QScrollArea#operatorScroll, QWidget#operatorScrollContent {
                 background: transparent; border: none;
             }
@@ -180,6 +251,43 @@ class OperatorConsole(QFrame):
                 color:#ccedf2;font-size:9px;selection-background-color:#174d60;}
         """)
         self.apply_snapshot(snapshot())
+
+    def _select_saved_mission(self) -> None:
+        selected = str(self.mission_picker.currentData() or "")
+        if selected:
+            self.mission_id_input.setText(selected)
+
+    def _request_mission(self, operation: str, value: str) -> None:
+        """Signal request only. Worker is authoritative and owns runtime."""
+        raw = str(value or "").strip()
+        if operation in {"begin", "resume"} and not raw:
+            self.mission_feedback.setText("Objectif ou identifiant de mission requis.")
+            return
+        self.mission_requested.emit(operation, raw)
+
+    def show_mission_result(self, result: dict) -> None:
+        success = result.get("success") is True
+        operation = str(result.get("operation") or "")
+        mid = str(result.get("mission_id") or "")
+        if success and mid.startswith("live_"):
+            self.mission_id_input.setText(mid)
+        if success and operation == "begin":
+            self.mission_goal_input.clear()
+        if not success:
+            description = str(result.get("reason") or "commande refusée")[:160]
+            self.mission_feedback.setText("Refus : " + description)
+        elif result.get("manual_review_required"):
+            self.mission_feedback.setText(
+                "Mission BLOQUÉE : vérification indépendante exigée, aucune reprise automatique."
+            )
+        else:
+            message = {
+                "begin": "Mission ouverte. L'objectif est envoyé au moteur actuel.",
+                "resume": "Mission rattachée. Envoyez votre prochaine instruction.",
+                "detach": "Suivi détaché. Mission conservée sans déclarer la réussite.",
+            }.get(operation, "État de la mission actualisé.")
+            self.mission_feedback.setText(message)
+        # Refresh is handled by the existing read-only timer.
 
     def _render_html(self, key: str, rendered: str) -> None:
         # Polling must not reset the operator's scroll/selection 40 times/min.
@@ -195,6 +303,29 @@ class OperatorConsole(QFrame):
     def apply_snapshot(self, data: dict) -> None:
         self._last_snapshot = dict(data)
         missions, steps, actions = render_snapshot(data)
+        candidates = tuple(
+            (str(m.get("id") or ""),
+             str(m.get("status") or ""),
+             str(m.get("goal") or "")[:62])
+            for m in (data.get("missions") or [])
+            if str(m.get("id") or "").startswith("live_")
+            and str(m.get("status") or "") not in {"completed", "failed"}
+        )
+        if candidates != self._mission_choices:
+            chosen = str(self.mission_picker.currentData() or "")
+            self.mission_picker.blockSignals(True)
+            self.mission_picker.clear()
+            self.mission_picker.addItem("Choisir une mission enregistrée…", "")
+            for mission_id, status, label in candidates:
+                self.mission_picker.addItem(
+                    (label or mission_id) + " · " + status,
+                    mission_id,
+                )
+            index = self.mission_picker.findData(chosen)
+            if index >= 0:
+                self.mission_picker.setCurrentIndex(index)
+            self.mission_picker.blockSignals(False)
+            self._mission_choices = candidates
         self._render_html("missions", missions)
         self._render_html("tasks", steps)
         self._render_html("actions", actions)
@@ -214,6 +345,34 @@ class OperatorConsole(QFrame):
                 for entry in entries
             )
         self._render_html("events", journal_html)
+        roadmap = roadmap_snapshot()
+        self.progress_line.setText(
+            f"Développement : étape {roadmap['current']}/{roadmap['total']}"
+            f" · {roadmap['current_title']}"
+        )
+        labels = {"integrated": ("CODE INTÉGRÉ", "#6fe0c2"),
+                  "in_progress": ("EN DÉVELOPPEMENT", "#f0c481"),
+                  "planned": ("À CONSTRUIRE", "#879cac")}
+        parts = []
+        for stage in roadmap["stages"]:
+            label, shade = labels.get(stage["implementation"], ("INCONNU", "#b0d0e0"))
+            suffix = (
+                " · CI V3 validée" if stage["automated"] == "green_current"
+                else " · CI antérieure OK" if stage["automated"] == "green_ancestor"
+                else " · CI à valider" if stage["automated"] == "pending"
+                else ""
+            )
+            parts.append(
+                f'<p style="margin-bottom:6px"><span style="color:{shade}">'
+                f'{stage["number"]:02d} · {_escape(label)}</span> '
+                f'<b>{_escape(stage["title"], 95)}</b>'
+                f'<br><span style="color:#8faeba">{_escape(suffix)}</span>'
+                '<br><span style="color:#edbe8c">Windows réel : non validé</span></p>'
+            )
+        self._render_html("roadmap", "".join(parts))
+        self.mission_begin_button.setEnabled(bool(data.get("mission_enabled")))
+        self.mission_resume_button.setEnabled(bool(data.get("mission_enabled")))
+        self.mission_detach_button.setEnabled(bool(data.get("mission_enabled")))
         mission_on = bool(data.get("mission_enabled"))
         reliability_on = bool(data.get("reliability_enabled"))
         kernel_mode = "Shadow configuré (passif)" if data.get("kernel_shadow_enabled") else "Shadow désactivé"

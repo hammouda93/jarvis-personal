@@ -1403,6 +1403,8 @@ class JarvisWindow(QWidget):
         self._worker.conversation_message.connect(self._on_conversation_message)
         self._worker.telemetry_changed.connect(self.operator_console.update_model)
         self._worker.operator_event.connect(self.operator_console.update_live_event)
+        self._worker.mission_control_result.connect(self.operator_console.show_mission_result)
+        self.operator_console.mission_requested.connect(self._on_mission_request)
 
         self.canvas.route_changed.connect(self._on_route_changed)
 
@@ -1440,6 +1442,24 @@ class JarvisWindow(QWidget):
         except (OSError, ValueError, RuntimeError):
             # Read-only monitoring must never stop user interaction.
             self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
+
+    def _on_mission_request(self, operation: str, value: str) -> None:
+        """UI only submits a command; all mission methods run on worker."""
+        if not self._thread.isRunning():
+            self.operator_console.mission_feedback.setText("Jarvis n'est pas actif.")
+            return
+        if not self.conversation_button.isChecked():
+            # Stops mic admission before queuing the explicit text mission.
+            self.conversation_button.setChecked(True)
+        accepted = self._worker.submit_mission_control(operation, value)
+        if not accepted:
+            self.operator_console.mission_feedback.setText(
+                "Commande refusée : saisie invalide ou demande déjà en attente."
+            )
+        else:
+            self.operator_console.mission_feedback.setText(
+                "Demande reçue · traitement sur le moteur Jarvis existant."
+            )
 
     def _set_text_panel(self, enabled: bool) -> None:
         self._worker.set_text_mode(bool(enabled))
