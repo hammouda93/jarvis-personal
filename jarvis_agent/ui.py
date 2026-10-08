@@ -1405,6 +1405,8 @@ class JarvisWindow(QWidget):
         self._worker.operator_event.connect(self.operator_console.update_live_event)
         self._worker.mission_control_result.connect(self.operator_console.show_mission_result)
         self.operator_console.mission_requested.connect(self._on_mission_request)
+        self._worker.mcp_control_result.connect(self.operator_console.show_mcp_result)
+        self.operator_console.mcp_requested.connect(self._on_mcp_request)
 
         self.canvas.route_changed.connect(self._on_route_changed)
 
@@ -1442,6 +1444,22 @@ class JarvisWindow(QWidget):
         except (OSError, ValueError, RuntimeError):
             # Read-only monitoring must never stop user interaction.
             self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
+
+    def _on_mcp_request(self, operation: str, parameters: dict) -> None:
+        """Only submits an MCP management command; no GUI network access."""
+        if not self._thread.isRunning():
+            self.operator_console.mcp_feedback.setText("Jarvis n'est pas actif.")
+            return
+        if not self.conversation_button.isChecked():
+            self.conversation_button.setChecked(True)
+        if not self._worker.submit_mcp_control(operation, parameters):
+            self.operator_console.mcp_feedback.setText(
+                "Commande MCP invalide ou opération déjà en attente."
+            )
+        else:
+            self.operator_console.mcp_feedback.setText(
+                "Demande MCP reçue. Contrôle dans le thread de Jarvis."
+            )
 
     def _on_mission_request(self, operation: str, value: str) -> None:
         """UI only submits a command; all mission methods run on worker."""
