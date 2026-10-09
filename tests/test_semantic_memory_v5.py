@@ -3133,6 +3133,70 @@ class SemanticMemoryFactoryIntegrationTests(unittest.TestCase):
                     )
 
 
+class MemoryYearlessDateGuardV10CTests(unittest.TestCase):
+    def test_yearless_date_uses_persisted_candidate_instead_of_false_missing(self):
+        from datetime import date
+        from jarvis_agent.memory_temporal import yearless_date_guard
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryCoreStore(Path(tmp) / "memory.sqlite3")
+            note = store.remember("Mon anniversaire est le 16 octobre 2026")
+            store.save_projection(
+                note.id, (
+                    projection(
+                        "has_birthday", "anniversary",
+                        qualifiers={"date": "2026-10-16"},
+                    ),
+                ),
+                parser_version="test-v10c",
+                provenance="explicit",
+            )
+            result = yearless_date_guard(
+                store, "J'ai quoi le 16 octobre ?", "2023-10-16",
+                reference_date=date(2026, 10, 9),
+            )
+            self.assertEqual(result["status"], "year_not_grounded")
+            self.assertEqual(result["candidate_dates"], ["2026-10-16"])
+            explicit = yearless_date_guard(
+                store, "J'ai quoi le 16 octobre 2023 ?", "2023-10-16",
+                reference_date=date(2026, 10, 9),
+            )
+            self.assertEqual(explicit, {})
+            current = yearless_date_guard(
+                store, "J'ai quoi le 16 octobre ?", "2026-10-16",
+                reference_date=date(2026, 10, 9),
+            )
+            self.assertEqual(current, {})
+            mismatch = yearless_date_guard(
+                store, "J'ai quoi le 16 octobre ?", "2026-11-16",
+                reference_date=date(2026, 10, 9),
+            )
+            self.assertEqual(mismatch["status"], "date_argument_mismatch")
+
+    def test_yearless_date_tool_guard_is_opt_in_and_does_not_modify_raw(self):
+        from datetime import date
+        from jarvis_agent.memory_temporal import yearless_date_guard
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryCoreStore(Path(tmp) / "memory.sqlite3")
+            raw = "Retiens que le 16 octobre 2026 est un anniversaire"
+            item = store.remember(raw)
+            store.save_projection(
+                item.id, (
+                    projection("has_personal_event", "anniversary",
+                               qualifiers={"date": "2026-10-16"}),
+                ),
+                parser_version="test-v10c",
+                provenance="explicit",
+            )
+            self.assertEqual(store.get_memory(item.id).content, raw)
+            self.assertEqual(
+                yearless_date_guard(
+                    store, "Quel est l'événement du 16 octobre ?",
+                    "2023-10-16", reference_date=date(2026, 10, 9),
+                )["candidate_dates"],
+                ["2026-10-16"],
+            )
+
+
 class SemanticMemoryAgentToolsV10BTests(unittest.TestCase):
     """Memory participates under the same agent, never an eager classifier."""
 
