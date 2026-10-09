@@ -219,7 +219,9 @@ class OperatorConsole(QFrame):
         # controls. The detailed diagnostic panes remain below.
         self.plan_summary_title = QLabel("◈   PLAN ACTUEL · ÉTAPES ET QUESTIONS")
         self.plan_summary_title.setObjectName("operatorSection")
+        self.plan_summary_title.setWordWrap(True)
         self.plan_summary_view = QTextBrowser()
+        self.plan_summary_view.setMinimumWidth(0)
         self.plan_summary_view.setMinimumHeight(110)
         self.plan_summary_view.setMaximumHeight(240)
         self.plan_summary_view.setHtml("<p>Créez une mission puis générez son plan.</p>")
@@ -227,9 +229,9 @@ class OperatorConsole(QFrame):
         self.clarification_input.setPlaceholderText("Réponse aux questions ci-dessus…")
         self.clarification_input.setMaximumHeight(78)
         self.clarification_input.setAccessibleName("Réponse de clarification de mission")
-        self.clarification_button = QPushButton("Répondre et réviser le plan (1 requête IA)")
+        self.clarification_button = QPushButton("Réviser le plan")
         self.clarification_button.setToolTip(
-            "Réviser le plan avant approbation, sans exécuter d'action")
+            "Réviser le plan (1 requête IA), avant approbation et sans exécuter d'action")
         self.clarification_input.setVisible(False)
         self.clarification_button.setVisible(False)
         mission_layout.addWidget(self.plan_summary_title)
