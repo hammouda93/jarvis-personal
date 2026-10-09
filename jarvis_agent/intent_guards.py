@@ -12,6 +12,10 @@ def is_explicit_memory_write_request(text: str) -> bool:
     normalized = (text or "").lower().replace("’", "'").strip()
     patterns = (
         r"\b(retiens|retenez|mémorise|memorise|mémorisez|memorisez)\b",
+        # Common dictated typo/inflection "retient que ..." is an
+        # explicit imperative only at the start of the user's utterance.
+        # Do not admit third-person descriptions such as "il retient que".
+        r"^\\s*retient\\s+que\\b",
         r"\b(garde|gardez|conserve|conservez)\b.{0,32}\ben mémoire\b",
         r"\b(souviens-toi|souvenez-vous)\b",
         r"\b(remember|memorize|memorise)\b",
