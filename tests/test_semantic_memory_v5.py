@@ -3162,6 +3162,7 @@ class SemanticMemoryAgentToolsV10BTests(unittest.TestCase):
         self.assertIn("semantic_memory_search", names)
         self.assertIn("semantic_memory_inspect", names)
         self.assertIn("semantic_memory_events_on_date", names)
+        self.assertIn("semantic_memory_events_in_range", names)
         self.assertNotIn("recall_information", names)
         self.assertEqual(interpreter.turn_calls, 0)
 
@@ -3263,6 +3264,74 @@ class SemanticMemoryAgentToolsV10BTests(unittest.TestCase):
             )
             self.assertFalse(invalid.success)
             self.assertEqual(interpreter.turn_calls, 0)
+
+    def test_v10b_date_range_reads_multiple_events_without_extra_llm(self):
+        raw = (
+            "Retiens que ma réunion est le 10/10/2026 "
+            "et mon anniversaire le 16/10/2026"
+        )
+        store, interpreter, adapter = self.build_adapter({
+            raw: (
+                projection("has_meeting", "2026-10-10",
+                           qualifiers={"date": "2026-10-10"}),
+                projection("has_birthday", "2026-10-16",
+                           qualifiers={"date": "2026-01-16"}),
+            ),
+        })
+        with self.tool_mode():
+            adapter.begin_turn(raw)
+            write = adapter.execute("remember_information", {"content": "model guess"})
+            self.assertTrue(write.success, write.detail)
+            result = adapter.execute(
+                "semantic_memory_events_in_range",
+                {"start_date": "2026-10-09", "end_date": "2026-10-16"},
+            )
+            self.assertTrue(result.success, result.detail)
+            payload = json.loads(result.detail)
+            self.assertEqual(payload["status"], "resolved")
+            self.assertEqual(
+                [hit["event_date"] for hit in payload["hits"]],
+                ["2026-10-10", "2026-10-16"],
+            )
+            self.assertEqual(interpreter.turn_calls, 0)
+            facts = store.semantic_facts()
+            birthday = next(f for f in facts if f.projection.relation == "has_birthday")
+            self.assertEqual(birthday.projection.qualifiers["date"], "2026-10-16")
+            self.assertEqual(store.recent_memories(limit=5)[0].content, raw)
+
+            invalid = adapter.execute(
+                "semantic_memory_events_in_range",
+                {"start_date": "2026-10-01", "end_date": "2027-10-01"},
+            )
+            self.assertFalse(invalid.success)
+            self.assertIn("memory_date_range_requires_0_to_31_days", invalid.detail)
+
+    def test_v10b_corrupt_prior_sidecar_does_not_create_false_event_date(self):
+        raw = "Mon anniversaire est le 16/10/2026."
+        from jarvis_agent.memory_temporal import (
+            events_in_range, event_day_and_warning,
+        )
+        store, _, _ = self.build_adapter()
+        item = store.remember(raw)
+        store.save_projection(
+            item.id,
+            (
+                projection(
+                    "has_birthday", "2026-10-16",
+                    qualifiers={"date": "2026-01-16"},
+                ),
+            ),
+            parser_version="fixture-semantic-v1",
+            provenance="explicit",
+        )
+        wrong_day = events_in_range(store, "2026-01-16", "2026-01-16")
+        self.assertEqual(wrong_day["hits"], [])
+        right_day = events_in_range(store, "2026-10-16", "2026-10-16")
+        self.assertEqual(len(right_day["hits"]), 1)
+        self.assertEqual(
+            right_day["hits"][0]["warning"],
+            "conflicting_projection_dates",
+        )
 
     def test_v10b_factory_does_not_wrap_agent_in_eager_memory_interpreter(self):
         from dataclasses import replace
