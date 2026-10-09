@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from .operational_preferences import load_preferences
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env")
+_operational_preferences = load_preferences()
 
 
 def _float(name: str, default: float) -> float:
@@ -133,11 +135,9 @@ class Settings:
         "JARVIS_COMPATIBILITY_BASELINE",
         True,
     )
-    operational_learning_enabled: bool = (
-        False
-        if compatibility_baseline
-        else _bool("JARVIS_OPERATIONAL_LEARNING_ENABLED", False)
-    )
+    # Persisted operator consent supersedes the old combined environment switch.
+    skills_enabled: bool = _operational_preferences["skills_enabled"]
+    operational_learning_enabled: bool = _operational_preferences["learning_enabled"]
     strict_proof_enabled: bool = (
         False
         if compatibility_baseline

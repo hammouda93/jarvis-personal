@@ -15,6 +15,7 @@ from .mission_workbench import MissionControlInbox, perform_mission_command
 from .mcp_control import MCPControlInbox, perform_mcp_command
 from .skill_control import SkillControlInbox, perform_skill_command
 from .agent_knowledge import AGENT_KNOWLEDGE
+from .operational_preferences import learning_enabled, skills_enabled
 from .mcp_server_registry import MCPRegistry
 from .audio import record_utterance, wait_for_double_clap
 from .config import settings
@@ -287,6 +288,9 @@ class AssistantWorker(QObject):
         except Exception as exc:
             result = {"success": False, "operation": command.operation, "reason": type(exc).__name__}
         self.skill_control_result.emit(result)
+        if command.operation == "policy_set" and result.get("success"):
+            flags = result["preferences"]
+            self.log_line.emit(f"[OPERATIONAL_POLICY] skills={int(flags['skills_enabled'])} learning={int(flags['learning_enabled'])}")
 
     def _run_mcp_control(self, command) -> None:
         try:
@@ -1033,7 +1037,7 @@ class AssistantWorker(QObject):
         mode = (
             "BASELINE"
             if not (
-                settings.operational_learning_enabled
+                learning_enabled(settings)
                 or settings.vision_enabled
                 or settings.strict_proof_enabled
             )
@@ -1041,7 +1045,8 @@ class AssistantWorker(QObject):
         )
         self.log_line.emit(
             f"[MODE] {mode} "
-            f"learning={int(settings.operational_learning_enabled)} "
+            f"learning={int(learning_enabled(settings))} "
+            f"skills={int(skills_enabled(settings))} "
             f"vision={int(settings.vision_enabled)} "
             f"visual_actions={int(settings.vision_actions_enabled)} "
             f"focused_typing={int(settings.focused_typing_fallback_enabled)} "

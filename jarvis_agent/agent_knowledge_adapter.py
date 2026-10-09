@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from .agent_knowledge import AgentKnowledgeStore
 from .kernel_contracts import (
@@ -25,6 +25,8 @@ class LegacyAgentKnowledgeBackend:
         *,
         owner_user_id: str,
         default_agent_id: str = "personal_assistant",
+        read_allowed: Callable[[], bool] | None = None,
+        write_allowed: Callable[[], bool] | None = None,
     ):
         user_id = str(owner_user_id or "").strip()
         if not user_id:
@@ -32,6 +34,8 @@ class LegacyAgentKnowledgeBackend:
         self.store = store
         self.owner_user_id = user_id
         self.default_agent_id = str(default_agent_id or "personal_assistant")
+        self.read_allowed = read_allowed
+        self.write_allowed = write_allowed
 
     def _identity(
         self,
@@ -56,6 +60,8 @@ class LegacyAgentKnowledgeBackend:
         *,
         limit: int,
     ) -> list[ScopedKnowledgeRecord]:
+        if self.read_allowed is not None and not self.read_allowed():
+            return []
         context = self.store.relevant_context(
             str(query or ""),
             limit=max(1, min(int(limit), 12)),
@@ -180,6 +186,8 @@ class LegacyAgentKnowledgeBackend:
         identity = record.identity
         if identity.owner_user_id != self.owner_user_id:
             raise PermissionError("legacy_knowledge_user_mismatch")
+        if self.write_allowed is not None and not self.write_allowed():
+            raise PermissionError("operational_learning_disabled")
         if identity.scope == KnowledgeScope.CORE:
             raise PermissionError("core_knowledge_requires_dev_supervisor")
 

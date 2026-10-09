@@ -15,6 +15,7 @@ from .project_roadmap import snapshot as roadmap_snapshot
 from .mcp_operator_panel import MCPConnectionsPanel
 from .mission_supervisor_panel import MissionSupervisorPanel
 from .skills_operator_panel import SkillsPanel
+from .operational_preferences_panel import OperationalPreferencesPanel
 
 
 _STATUS = {
@@ -285,6 +286,9 @@ class OperatorConsole(QFrame):
         event_list.setContentsMargins(0, 0, 0, 0)
         event_list.setSpacing(7)
         event_list.addWidget(summary)
+        self.operational_preferences = OperationalPreferencesPanel(self)
+        self.operational_preferences.requested.connect(self.skill_requested.emit)
+        event_list.addWidget(self.operational_preferences)
         event_list.addWidget(controls_box)
         for key, label in [
             ("missions", "◉   MISSIONS / OBJECTIFS"),
@@ -641,6 +645,7 @@ class OperatorConsole(QFrame):
             f"  ·  Navigateur : {'ON' if data.get('browser_core_enabled') else 'OFF'}"
             f"  ·  PC : {'ON' if data.get('computer_core_enabled') else 'OFF'}"
             f"  ·  Apprentissage : {'ON' if data.get('learning_enabled') else 'OFF'}"
+            f"  ·  Utilisation Skills : {'ON' if data.get('skills_enabled') else 'OFF'}"
         )
         knowledge = data.get("knowledge_stats") or {}
         memory = data.get("memory_stats") or {}

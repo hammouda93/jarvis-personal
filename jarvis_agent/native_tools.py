@@ -10,6 +10,7 @@ from typing import Any
 from .agent_knowledge import AGENT_KNOWLEDGE
 from .background_web_research import BACKGROUND_WEB_RESEARCH
 from .config import settings
+from .operational_preferences import learning_enabled, skills_enabled
 from .cua_driver_bridge import CUA_DRIVER
 from .memory import LOCAL_MEMORY
 from .ms_football_bridge import MS_FOOTBALL_BRIDGE
@@ -894,6 +895,10 @@ class NativeToolRegistry:
         approved: bool = False,
     ) -> AgentActionResult:
         args = dict(arguments or {})
+        if name in {"save_verified_skill", "save_feedback_lesson"} and not learning_enabled(settings):
+            return self._error(name, "operational_learning_disabled")
+        if name == "search_agent_knowledge" and not skills_enabled(settings):
+            return self._error(name, "operational_skills_disabled")
 
         if name == "open_application":
             target = str(args.get("name", "")).strip()
@@ -1658,7 +1663,7 @@ class NativeToolRegistry:
         return self._error(name, "Cette capacité n'existe pas dans Jarvis.")
 
     def _open_from_learned_profile(self, target: str) -> ToolResult | None:
-        if not settings.operational_learning_enabled:
+        if not skills_enabled(settings):
             return None
         if not self._safe_target(target):
             return None
@@ -1697,7 +1702,7 @@ class NativeToolRegistry:
         if result.success:
             self._last_app_hint = target
 
-        if not settings.operational_learning_enabled:
+        if not learning_enabled(settings):
             return
         try:
             self.knowledge.upsert_app_profile(
@@ -1720,7 +1725,7 @@ class NativeToolRegistry:
             if not title:
                 return
             self._last_observed_window_title = title
-            if not settings.operational_learning_enabled:
+            if not learning_enabled(settings):
                 return
             parts = [
                 part.strip()

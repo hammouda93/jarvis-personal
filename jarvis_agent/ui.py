@@ -1458,7 +1458,7 @@ class JarvisWindow(QWidget):
         self.operator_console.mission_requested.connect(self._on_mission_request)
         self._worker.mcp_control_result.connect(self.operator_console.show_mcp_result)
         self.operator_console.mcp_requested.connect(self._on_mcp_request)
-        self._worker.skill_control_result.connect(self.operator_console.skills_panel.show_result)
+        self._worker.skill_control_result.connect(self._on_skill_result)
         self.operator_console.skill_requested.connect(self._on_skill_request)
 
         self.canvas.route_changed.connect(self._on_route_changed)
@@ -1499,11 +1499,17 @@ class JarvisWindow(QWidget):
             self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
 
     def _on_skill_request(self, operation: str, value: str) -> None:
-        panel = self.operator_console.skills_panel
+        panel = (self.operator_console.operational_preferences if operation == "policy_set"
+                 else self.operator_console.skills_panel)
         if not self._thread.isRunning():
             panel.show_result({"success": False, "reason": "Moteur Jarvis non demarre."})
         elif not self._worker.submit_skill_control(operation, value):
             panel.show_result({"success": False, "reason": "Commande invalide ou file pleine."})
+
+    def _on_skill_result(self, result):
+        panel = (self.operator_console.operational_preferences if result.get("operation") == "policy_set"
+                 else self.operator_console.skills_panel)
+        panel.show_result(result)
 
     def _on_mcp_request(self, operation: str, server_id: str, value: str) -> None:
         """UI merely queues explicit MCP setup/discovery/policy commands."""

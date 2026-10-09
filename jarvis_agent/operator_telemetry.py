@@ -5,6 +5,8 @@ A missing/disabled subsystem is never represented as active.
 """
 from __future__ import annotations
 
+from .operational_preferences import learning_enabled, skills_enabled
+
 import json
 import os
 from contextlib import closing
@@ -271,7 +273,8 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         ),
         "browser_core_enabled": _flag("JARVIS_BROWSER_CORE_ENABLED"),
         "computer_core_enabled": _flag("JARVIS_COMPUTER_CORE_ENABLED"),
-        "learning_enabled": bool(settings.operational_learning_enabled),
+        "learning_enabled": bool(learning_enabled(settings)),
+        "skills_enabled": skills_enabled(settings),
         "knowledge_stats": knowledge_stats,
         "memory_stats": memory_stats,
         "actions": actions,

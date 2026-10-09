@@ -4,6 +4,43 @@ Date de demarrage : 2026-10-08 (Africa/Lagos).
 
 ## Reprise du 2026-10-09 : checkpoint 9F
 
+### Reconciliation 9G Et Consentement Operationnel
+
+Dernier brief utilisateur et commentaires des PR #16/#17 relus le 2026-10-09.
+Les observations reelles signalees dans ces commentaires sont des donnees de
+recette humaine, pas de nouvelles executions effectuees par Codex.
+Les travaux Skills ont ete preserves dans `8b9864b`, puis la branche 9G
+`b78266f` a ete reconciliee sans ecrasement dans `aa4740c` sur la seule branche
+de developpement. La CI 9G a ete inspectee Windows/Linux SUCCESS :
+[run 37928313324](https://github.com/hammouda93/jarvis-personal/actions/runs/37928313324).
+La regression combinee avant changement de politique etait verte : 847 tests.
+
+Travail ajoute apres reconciliation :
+
+- Deux interrupteurs independants et persistants dans le centre de controle.
+  Utiliser les Skills : OFF par defaut. Apprentissage operationnel : OFF par defaut.
+- Le nouveau consentement operateur remplace le drapeau combine historique
+  d'environnement; un fichier manquant/invalide laisse les deux modes OFF.
+- ON/OFF reutilise les connaissances sans apprendre; OFF/ON peut apprendre
+  mais n'injecte/reutilise aucune connaissance operationnelle. OFF/OFF n'emet
+  aucun checkpoint LLM d'apprentissage ni ecriture automatique de profils/lecons.
+- Filtrage des schemas Ollama/OpenAI/Cerebras, gardes de dispatch natives,
+  controle des lectures/ecritures du backend kernel, application par le worker.
+  Les connaissances existantes ne sont pas effacees. V5/missions/preuves restent
+  independantes de cette politique.
+- Les 402, clarifications versionnees, questions en entier, prevention 413 et
+  garde de fausse affirmation d'envoi 9G sont conserves. Correction supplementaire
+  du cooldown : un refus local sans requete ne prolonge plus le delai initial.
+
+Verification locale actuelle : 856 tests Python Windows passes, 0 echec/erreur/skip;
+45/45 replays Browser Bridge. Les deux interrupteurs, quatre modes et redemarrage
+de configuration sont testes automatiquement. CI du code combine a observer.
+Le centre MCP complet, l'autonomie naturelle bout-en-bout, le compactage de
+contexte, la lecture fiable de lignes/cartes, V5/Ollama reel et le scheduler
+durable restent ouverts. Aucun agent de production ni compte personnel utilise.
+Les erreurs de nombres MS Football, refs Instagram et routage VLC sont des
+problemes rapportes encore a traiter, pas des corrections declarees ici.
+
 Etat de depart inspecte : `210e9d38653de23b44106eadb6ff31795efd8e54`, synchronise
 avec la branche distante. Ses deux jobs Windows/Linux sont SUCCESS :
 [CI 210e9d3](https://github.com/hammouda93/jarvis-personal/actions/runs/37858807575).
@@ -127,7 +164,7 @@ MCP et roadmap. Ces composants seront etendus.
 | 9E delegation controlee | Integree dans le runtime existant ; roles sans outils bloques | 38 tests dedies ; CI Windows/Linux verte | EN ATTENTE DE TEST REEL COMPLET |
 | 9F continuite / V5 / Qt | Integre pour les plans supervises ; autonomie conversationnelle complete encore ouverte | 29 nouveaux tests; CI 38aa8dd Windows/Linux verte | EN ATTENTE DE TEST REEL |
 | Centre MCP complet | HTTP/stdio, OAuth SDK, coffre OS, quotas/journal integres dans 420179b | CI 210e9d3 Windows/Linux verte | Aucun compte personnel connecte |
-| 10 apprentissage et Skills | Partiel (operationnel) | A etendre | EN ATTENTE DE TEST REEL |
+| 10 apprentissage et Skills | Historique, edition, restauration, desactivation et deux opt-in independants | 24 nouveaux tests locaux; regression 856 verte; CI combinee a observer | EN ATTENTE DE TEST REEL |
 | 11 automatisations durables | A developper | A developper | EN ATTENTE DE TEST REEL |
 | Interface finale et acceptation | Partiel | A etendre | EN ATTENTE DE TEST REEL |
 

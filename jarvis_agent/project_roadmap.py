@@ -51,8 +51,8 @@ STAGES: tuple[Stage, ...] = (
           "green_ancestor", "not_validated", "tests/test_semantic_goal_supervisor.py"),
     Stage(9, "multi_agent", "Missions continues, delegation et MCP (9D-9F)", "in_progress",
           "green_ancestor", "not_validated", "tests/test_mission_continuation.py"),
-    Stage(10, "skills_learning", "Apprentissage & Skills validés", "planned",
-          "not_applicable", "not_validated", "promotion contrôlée des expériences"),
+    Stage(10, "skills_learning", "Skills revisionnes et apprentissage opt-in", "in_progress",
+          "pending", "not_validated", "tests/test_operational_preferences.py"),
     Stage(11, "integrations", "Intégrations personnelles et tâches durables", "planned",
           "not_applicable", "not_validated", "connecteurs + planificateur durable"),
 )
@@ -80,8 +80,8 @@ def snapshot() -> dict:
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
-            "CI Windows/Linux verte au checkpoint 210e9d3. Continuation 9F, "
-            "contexte V5 et geometrie Qt testes localement. OAuth personnel non connecte; "
+            "CI Windows/Linux verte au checkpoint 38aa8dd. Correctifs 9G reconcilies, "
+            "Skills et apprentissage OFF par defaut, controles testes localement. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."
         ),

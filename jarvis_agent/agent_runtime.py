@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from .agent_knowledge import AGENT_KNOWLEDGE
+from .operational_preferences import learning_enabled, skills_enabled
 from .config import settings
 from .connectors import CONNECTORS
 from .intent_guards import (
@@ -236,8 +237,7 @@ ou de notes techniques destinées au modèle. Seule la réponse finale utile doi
 """
 
 
-_EXPERIMENTAL_SYSTEM_INSTRUCTIONS = """
-Extensions expérimentales optionnelles:
+_OPERATIONAL_LEARNING_INSTRUCTIONS = """
 - la mémoire opérationnelle locale (skills, lessons, app profiles) est distincte
   de la mémoire personnelle;
 - lorsqu'une procédure multi-étapes réutilisable vient de réussir avec une vraie
@@ -245,6 +245,10 @@ Extensions expérimentales optionnelles:
   save_verified_skill si cet outil est disponible;
 - lorsqu'un utilisateur corrige clairement ton comportement, tu peux enregistrer
   une règle générale avec save_feedback_lesson si cet outil est disponible;
+"""
+
+_EXPERIMENTAL_SYSTEM_INSTRUCTIONS = """
+Extensions expérimentales optionnelles:
 - une simple confirmation utilisateur ("oui c'est bon", "maintenant ça marche")
   confirme l'état précédent et ne demande jamais de répéter la mutation;
 - inspect_active_window reste la perception prioritaire. Son champ snapshot
@@ -368,8 +372,10 @@ FOUNDATION COMPUTER GROUNDING ACTIF:
 
 def _effective_system_instructions() -> str:
     instructions = _SYSTEM_INSTRUCTIONS
+    if learning_enabled(settings):
+        instructions += _OPERATIONAL_LEARNING_INSTRUCTIONS
     if (
-        settings.operational_learning_enabled
+        learning_enabled(settings)
         or settings.vision_enabled
         or settings.strict_proof_enabled
     ):
@@ -1258,6 +1264,8 @@ def _actions_have_verified_proof(
 
 
 def _operational_knowledge_message(user_text: str, knowledge=None) -> str:
+    if not skills_enabled(settings):
+        return ""
     store = knowledge or AGENT_KNOWLEDGE
     try:
         context = store.relevant_context(user_text, limit=3)
@@ -1325,7 +1333,7 @@ def _record_operational_run(
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
     knowledge=None,
 ) -> None:
-    if not actions:
+    if not learning_enabled(settings) or not actions:
         return
     try:
         all_success = all(action.success for action in actions)
@@ -1633,13 +1641,13 @@ def _filter_optional_ollama_tools(
     tools: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     blocked: set[str] = set()
-    if not settings.operational_learning_enabled:
+    if not skills_enabled(settings):
+        blocked.update({"search_agent_knowledge", "agent_knowledge_stats"})
+    if not learning_enabled(settings):
         blocked.update(
             {
-                "search_agent_knowledge",
                 "save_verified_skill",
                 "save_feedback_lesson",
-                "agent_knowledge_stats",
             }
         )
     if not settings.vision_enabled:
@@ -1666,13 +1674,13 @@ def _filter_optional_openai_tools(
     tools: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     blocked: set[str] = set()
-    if not settings.operational_learning_enabled:
+    if not skills_enabled(settings):
+        blocked.update({"search_agent_knowledge", "agent_knowledge_stats"})
+    if not learning_enabled(settings):
         blocked.update(
             {
-                "search_agent_knowledge",
                 "save_verified_skill",
                 "save_feedback_lesson",
-                "agent_knowledge_stats",
             }
         )
     if not settings.vision_enabled:
@@ -2847,17 +2855,15 @@ class GroqResponsesAgent:
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        tools = self.tools.ollama_tools()
-        if not settings.operational_learning_enabled:
+        tools = _filter_optional_ollama_tools(self.tools.ollama_tools())
+        if not learning_enabled(settings):
             tools = [
                 item
                 for item in tools
                 if str((item.get("function") or {}).get("name") or "")
                 not in {
-                    "search_agent_knowledge",
                     "save_verified_skill",
                     "save_feedback_lesson",
-                    "agent_knowledge_stats",
                 }
             ]
         if not settings.vision_enabled:
@@ -2893,7 +2899,7 @@ class GroqResponsesAgent:
                     "return_to_standby",
                 }
             )
-            if settings.operational_learning_enabled:
+            if skills_enabled(settings):
                 allowed.add("search_agent_knowledge")
             if self._skill_write_allowed:
                 allowed.add("save_verified_skill")
@@ -3456,7 +3462,7 @@ class GroqResponsesAgent:
         self._memory_write_allowed = _is_explicit_memory_write_request(user_text)
         self._skill_write_allowed = False
         self._lesson_write_allowed = (
-            settings.operational_learning_enabled
+            learning_enabled(settings)
             and _looks_like_clear_operational_feedback(user_text)
         )
         self._feedback_only_turn = _feedback_only_operational_turn(user_text)
@@ -3519,7 +3525,7 @@ class GroqResponsesAgent:
                     user_text,
                     self.knowledge,
                 )
-                if settings.operational_learning_enabled
+                if skills_enabled(settings)
                 else ""
             )
             if knowledge_message:
@@ -3868,7 +3874,7 @@ class GroqResponsesAgent:
                 )
 
                 if (
-                    settings.operational_learning_enabled
+                    learning_enabled(settings)
                     and not execution_scope_active()
                     and _actions_have_verified_proof(actions)
                     and len(reusable_actions) >= 3
@@ -3899,7 +3905,7 @@ class GroqResponsesAgent:
                     continue
 
                 if (
-                    settings.operational_learning_enabled
+                    learning_enabled(settings)
                     and self._lesson_write_allowed
                     and not learned_lesson_this_turn
                     and not lesson_learning_checkpoint_attempted
@@ -3998,7 +4004,7 @@ class GroqResponsesAgent:
 
                 if self._messages and self._messages[-1].get("role") == "assistant":
                     self._messages[-1]["content"] = text
-                if settings.operational_learning_enabled:
+                if learning_enabled(settings):
                     _record_operational_run(
                         user_text,
                         actions,
@@ -4401,7 +4407,7 @@ class GroqResponsesAgent:
                 ):
                     close_recovery_required = True
                 if (
-                    settings.operational_learning_enabled
+                    learning_enabled(settings)
                     and _actions_have_verified_proof(actions)
                 ):
                     self._skill_write_allowed = True
@@ -4520,7 +4526,7 @@ class GroqResponsesAgent:
                             "[AGENT] fast_complete=verified_browser "
                             + fast_reason
                         )
-                    if settings.operational_learning_enabled:
+                    if learning_enabled(settings):
                         _record_operational_run(
                             user_text,
                             actions,
@@ -4771,19 +4777,22 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         msf_tool_names: set[str] | None = None,
     ):
         gate = self._provider_rate_gate
+        primary_attempted = False
         try:
             if gate.billing_blocked("primary"):
                 raise AgentRuntimeUnavailable(
                     "Cerebras primary disabled after HTTP 402 payment_required")
             if not gate.available("primary"):
                 raise AgentRuntimeUnavailable("Cerebras primary cooldown after HTTP 429")
+            primary_attempted = True
             return super()._chat(
                 tool_choice=tool_choice,
                 ms_football_only=ms_football_only,
                 msf_tool_names=msf_tool_names,
             )
         except AgentRuntimeUnavailable as primary_error:
-            gate.note_failure("primary", primary_error)
+            if primary_attempted:
+                gate.note_failure("primary", primary_error)
             print("[AGENT] Cerebras primary unavailable: " + str(primary_error)[:250])
             if not self._should_try_secondary(primary_error):
                 raise

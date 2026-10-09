@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import json
 import queue
 import re
+from .operational_preferences import save_preferences, validate_flags
 
 
 @dataclass(frozen=True)
@@ -17,7 +18,7 @@ class SkillCommand:
 
 
 class SkillControlInbox:
-    OPS = frozenset({"list", "view", "enable", "disable", "edit", "restore"})
+    OPS = frozenset({"list", "view", "enable", "disable", "edit", "restore", "policy_set"})
 
     def __init__(self):
         self._queue: queue.Queue[SkillCommand] = queue.Queue(maxsize=16)
@@ -26,6 +27,9 @@ class SkillControlInbox:
     def validate(cls, operation: str, payload: dict) -> None:
         if operation not in cls.OPS or not isinstance(payload, dict):
             raise ValueError("invalid_skill_command")
+        if operation == "policy_set":
+            validate_flags(payload)
+            return
         if operation == "list":
             if payload:
                 raise ValueError("invalid_skill_command")
@@ -73,6 +77,9 @@ class SkillControlInbox:
 def perform_skill_command(store, command: SkillCommand) -> dict:
     op, args = command.operation, command.payload
     SkillControlInbox.validate(op, args)
+    if op == "policy_set":
+        return {"success": True, "operation": op, "preferences": save_preferences(args),
+                "external_action_dispatched": False}
     name = args.get("name", "")
     if op in {"enable", "disable"}:
         store.set_skill_active(name, op == "enable", expected_version=args["expected_version"])

@@ -162,7 +162,7 @@ class NativeToolRegistryTests(unittest.TestCase):
 
     @patch(
         "jarvis_agent.native_tools.settings",
-        replace(real_settings, operational_learning_enabled=True),
+        replace(real_settings, operational_learning_enabled=False, skills_enabled=True),
     )
     @patch("jarvis_agent.native_tools.os.startfile")
     @patch("jarvis_agent.native_tools.execute")
@@ -776,6 +776,7 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertEqual(payload["perception"]["vision_error"], "timed out")
         vision_mock.assert_called_once()
 
+    @patch("jarvis_agent.native_tools.settings", replace(real_settings, operational_learning_enabled=True))
     def test_verified_skill_tool_writes_to_injected_local_store(self):
         result = self.registry.execute(
             "save_verified_skill",
@@ -800,6 +801,7 @@ class NativeToolRegistryTests(unittest.TestCase):
             1,
         )
 
+    @patch("jarvis_agent.native_tools.settings", replace(real_settings, operational_learning_enabled=True))
     def test_feedback_lesson_tool_writes_to_injected_local_store(self):
         result = self.registry.execute(
             "save_feedback_lesson",
@@ -813,6 +815,7 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(self.knowledge.stats()["lessons"], 1)
 
+    @patch("jarvis_agent.native_tools.settings", replace(real_settings, skills_enabled=True))
     def test_search_agent_knowledge_returns_matching_context(self):
         self.knowledge.record_lesson(
             scope="messaging",

@@ -12,6 +12,21 @@ from jarvis_agent.agent_runtime import (
 
 
 class ProviderRateBudgetTests(unittest.TestCase):
+    def test_rejected_requests_do_not_extend_the_original_cooldown(self):
+        now = [0.0]
+        agent = CerebrasResponsesAgent.__new__(CerebrasResponsesAgent)
+        agent._provider_rate_gate = ProviderRateGate(cooldown_seconds=60, clock=lambda: now[0])
+        agent._provider_rate_gate.note_failure("primary", RuntimeError("429"))
+        config = SimpleNamespace(cerebras_secondary_api_key="", cerebras_fallback_to_groq=False, groq_api_key="")
+        with patch("jarvis_agent.agent_runtime.settings", config), patch.object(GroqResponsesAgent, "_chat", return_value="ok") as chat:
+            now[0] = 59.0
+            with self.assertRaises(AgentRuntimeUnavailable):
+                agent._chat()
+            self.assertEqual(agent._provider_rate_gate.remaining("primary"), 1.0)
+            now[0] = 61.0
+            self.assertEqual(agent._chat(), "ok")
+        self.assertEqual(chat.call_count, 1)
+
     def test_cooldown_after_429_but_not_after_unrelated_error(self):
         now = [100.0]
         gate = ProviderRateGate(cooldown_seconds=60.0, clock=lambda: now[0])
