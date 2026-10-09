@@ -882,12 +882,12 @@ def _unverified_browser_send_claim(
     request = normalize(user_text)
     response = normalize(response_text)
     if not re.search(
-        r"\\b(?:envoie|envoies|envoyez|envoyer|send|transmets|transmettre)\\b",
+        r"\b(?:envoie|envoies|envoyez|envoyer|send|transmets|transmettre)\b",
         request,
     ):
         return False
     if not re.search(
-        r"\\b(?:envoye|envoyee|envoyes|envoyees|transmis|transmise|sent)\\b",
+        r"\b(?:envoye|envoyee|envoyes|envoyees|transmis|transmise|sent)\b",
         response,
     ):
         return False
