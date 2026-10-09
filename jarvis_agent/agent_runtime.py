@@ -3558,8 +3558,11 @@ class GroqResponsesAgent:
         ), "")
         prior_memory_evidence = self._recent_memory_evidence
         self._recent_memory_evidence = False
+        from .active_mission_supervisor import execution_scope_active
         self._memory_scope_active = (
             memory_tool_scope_enabled()
+            and not execution_scope_active()
+            and not self._ephemeral_context
             and self._pending_function_approval is None
             and memory_only_request(
                 user_text,
@@ -4879,9 +4882,13 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         # Bounded fallback only for read-only personal memory queries.
         # This preserves the active tool call/result chain; mutations and
         # multi-service missions retain their original full context.
+        from .active_mission_supervisor import execution_scope_active
         if (getattr(self, "_memory_scope_active", False)
                 and not getattr(self, "_memory_write_allowed", False)
-                and getattr(self, "_pending_function_approval", None) is None):
+                and getattr(self, "_pending_function_approval", None) is None
+                and not getattr(self, "_ephemeral_context", "")
+                and not getattr(self, "_session_grounding", {})
+                and not execution_scope_active()):
             from .memory_tool_scope import compact_memory_fallback
             request_messages = compact_memory_fallback(
                 request_messages, turn_start=self._request_turn_start_index,

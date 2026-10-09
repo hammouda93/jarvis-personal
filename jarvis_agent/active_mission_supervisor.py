@@ -58,6 +58,8 @@ OBSERVATION_TOOLS = frozenset({
     "browser_verify", "computer_observe", "computer_verify",
     "computer_list_windows", "computer_get_active_window", "list_windows",
     "inspect_active_window", "inspect_interface", "observe_screen",
+    "semantic_memory_inspect", "semantic_memory_events_on_date",
+    "semantic_memory_events_in_range",
 })
 _REVERSIBLE_TOOLS = frozenset({"open_url", "open_application", "browser_navigate",
                               "browser_activate_tab", "browser_back", "browser_forward"})

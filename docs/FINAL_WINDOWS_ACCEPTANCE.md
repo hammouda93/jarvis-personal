@@ -71,6 +71,37 @@ Pour un echec, conserver la trace expurgee et la preuve visuelle avant de retent
 | 22 | Ouvrir VLC ou une application inconnue, Skills OFF | Decouverte Windows puis lancement demande, fenetre actuelle observee ; pas d'URL de protocole inventee, pas de lancement d'un reset/uninstaller |
 | 23 | Mission Cerebras/Groq au plan approuve | Compteurs fournis par API conserves apres reprise ; reponses sans usage signalees ; 429/Retry-After sans requete durant le cooldown ; aucun body prive dans rapport |
 
+## Recette Memory V10 Integree
+
+Tester `codex/integrate-memory-v10c`, pas une PR dependante seule. Sauvegarder
+les stores, puis utiliser une SQLite de recette isolee, Skills OFF et
+apprentissage OFF. Noter les quatre opt-ins listes dans
+[MEMORY_V10_INTEGRATION.md](MEMORY_V10_INTEGRATION.md). Le lanceur existant
+`scripts/run_jarvis_foundations_v4.ps1 -SemanticMemoryV5` active les deux flags
+core/V5 mais PAS les opt-ins agent-tools/scope ; les definir explicitement
+dans la session de recette et verifier le diagnostic `memory_v5_routing`.
+Choisir le Python live valide par le preflight, pas un ancien venv casse.
+Ne pas lancer `-All` ni activer les connecteurs sans preparer leurs acces.
+
+| Ordre | Demande live | Critere observe |
+| --- | --- | --- |
+| M1 | "Bonjour", puis une question normale | Cerebras pilote directement ; pas de classification Ollama memoire sur chaque tour ; noter fournisseur et latence |
+| M2 | "Retient que mon projet fictif Orion-Test a le code ALPHA-728, et une reunion le 10/10/2026." | Une seule note brute avec le texte utilisateur ; faits/etat de projection reel ; jamais confirmation d'ecriture apres echec |
+| M3 | Fermer entierement Jarvis, relancer : "Quel est le code du projet Orion-Test ?" | Meme id SQLite et code, vraie lecture locale ; aucune nouvelle ecriture, aucun inventaire d'autres souvenirs pour masquer une recherche vide |
+| M4 | "Liste ce qui est enregistre dans ta memoire" puis "Quand ai-je enregistre cette information ?" | Inventaire reel et created_at, distinct de la date de reunion ; signaler une liste bornee plutot que pretendre exhaustive |
+| M5 | "Consulte seulement ta memoire pour le 10 octobre 2026", puis une plage de trois jours et "le 16 octobre" sans annee | Dates/plage inclusives exactes, annee justifiee ou clarification, aucune absence d'agenda affirme si index incomplet ; comparaison avec brut/facts SQLite |
+| M6 | Apres lecture d'un evenement de test : "Oui, c'est mon anniversaire." | Contexte conversationnel enrichi, pas de press_key/list_applications/research_web hors sujet ; SQLite inchangee sans ordre explicite de modification |
+| M7 | "Quels films ai-je memorises ?" sans note de film, puis une autre question independante | Pas de fuite de notes recentes sans rapport ni pollution de pending/clarification ; inconnu honnete |
+| M8 | "Qu'est-ce que j'ai demain ?" puis "Consulte ma memoire et mon calendrier pour demain" | Pas de scope SQLite obligatoire ; sources autorisees distinctes et acces manquant annonce. Un connecteur configure n'est pas un compte valide |
+| M9 | Mission mixte memoire + navigateur/application de test, plan revise approuve | But/permissions/preuves conserves, outils utiles encore disponibles, pas de mutation dupliquee ; cloture uniquement sur criteres independants |
+| M10 | Environnement fournisseur de test : primary/secondary indisponibles et lecture memoire autonome via Groq | Chemin effectif trace ; contexte/protocoles conserves, aucune hausse du budget 7000 ni action OS ; si trop gros, refus avant envoi explicite |
+
+Le temps d'indexation a l'ecriture reste a mesurer : 13-18 secondes etaient
+signalees dans les recettes humaines V10B. Les lectures rapides ne prouvent pas
+une indexation optimisee. "Modifie ce souvenir" n'a pas encore un outil durable
+versionne dans cette integration : ne pas accepter une simple phrase du modele
+comme preuve de correction. Toute nouvelle ecriture doit etre approuvee et relue.
+
 ## Modes A Comparer
 
 Tester le parcours conversationnel historique et le mode mission au plan

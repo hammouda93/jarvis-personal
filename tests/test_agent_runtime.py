@@ -472,6 +472,22 @@ class FakeGroqAgent(GroqResponsesAgent):
 
 
 class MemoryScopeV10CTests(unittest.TestCase):
+    def test_injected_mission_or_supervision_never_narrows_to_memory_only(self):
+        env = {name: "1" for name in (
+            "JARVIS_MEMORY_CORE_ENABLED", "JARVIS_SEMANTIC_MEMORY_V5_ENABLED",
+            "JARVIS_MEMORY_AGENT_TOOLS_ENABLED", "JARVIS_MEMORY_SCOPE_GUARD_ENABLED")}
+        for supervised, context in ((True, ""), (False, "approved multi-source mission")):
+            with self.subTest(supervised=supervised, context=context):
+                agent = FakeGroqAgent(FakeTools(), [{"output": [{"type": "message", "content": [
+                    {"type": "output_text", "text": "La mission reste ouverte."}]}]}])
+                agent._ephemeral_context = context
+                with patch.dict("os.environ", env, clear=False), patch(
+                        "jarvis_agent.active_mission_supervisor.execution_scope_active", return_value=supervised), patch(
+                        "jarvis_agent.active_mission_supervisor.progress_status", return_value="blocked"):
+                    agent.run("Lis ma memoire pour preparer ma journee")
+                self.assertFalse(agent._memory_scope_active)
+                self.assertIn("open_application", {t["function"]["name"] for t in agent.payloads[0]["tools"]})
+
     def test_scope_is_conservative_and_does_not_capture_external_missions(self):
         from jarvis_agent.memory_tool_scope import memory_only_request
         self.assertFalse(memory_only_request("Quel est l'événement personnel du 16 octobre ?"))

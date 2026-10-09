@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/codex-jarvis-final-development
+      - codex/integrate-memory-v10c
   pull_request:
   workflow_dispatch:
 

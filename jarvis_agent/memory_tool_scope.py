@@ -110,14 +110,14 @@ def narrow_memory_tools(
 def compact_memory_fallback(
     messages: list[dict[str, Any]], *, turn_start: int,
 ) -> list[dict[str, Any]]:
-    """Preserve this turn's tool-call chain and bounded prior chat context.
+    """Keep user constraints, tool evidence and the active call/result chain.
 
     Only safe for read-only memory turns. Never invoke for active UI/browser
     missions, consent flows or durable writes. The caller still runs the
     unchanged conservative provider preflight and fails closed if oversized.
     """
-    if not messages:
-        return []
+    if not messages or messages[0].get("role") != "system":
+        return list(messages)
     policy = (
         "Tu es Jarvis. Réponds en français. N'invente aucune preuve ni résultat "
         "d'outil. Les souvenirs sont dans SQLite, pas dans ton modèle. "
@@ -129,13 +129,17 @@ def compact_memory_fallback(
         "N'affirme jamais qu'une action ou recherche a réussi sans preuve."
     )
     boundary = max(1, min(int(turn_start), len(messages)))
-    prior = [
-        {"role": str(m.get("role")), "content": str(m.get("content") or "")}
-        for m in messages[1:boundary]
-        if m.get("role") in {"user", "assistant"}
-        and not m.get("tool_calls")
-        and str(m.get("content") or "").strip()
-    ][-4:]
+    history = messages[1:boundary]
+    recent_replies = {
+        index for index, message in enumerate(history)
+        if message.get("role") == "assistant" and not message.get("tool_calls")
+    }
+    recent_replies = set(sorted(recent_replies)[-4:])
+    # Only old, ungrounded assistant prose may be omitted. Constraints and
+    # evidence are never sacrificed to fit the unchanged provider budget.
+    prior = [message for index, message in enumerate(history)
+             if message.get("role") != "assistant" or message.get("tool_calls")
+             or index in recent_replies]
     # The active turn may have tool_calls / tool responses. Never truncate or
     # rewrite those, otherwise the response IDs would be invalid.
     active = list(messages[boundary:])
