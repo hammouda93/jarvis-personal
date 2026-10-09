@@ -3026,6 +3026,13 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
 
 
 class SemanticMemoryFactoryIntegrationTests(unittest.TestCase):
+    @patch.dict("os.environ", {
+        # Reproduce inherited toggles from a previous live Jarvis session.
+        # The test must keep its provider fixtures deterministic regardless.
+        "JARVIS_HERMES_RELIABILITY_ENABLED": "1",
+        "JARVIS_ACTIVE_SUPERVISOR_ENABLED": "1",
+        "JARVIS_RUNTIME_CONVERGENCE_ENABLED": "1",
+    }, clear=False)
     def test_factory_builds_semantic_memory_v5_before_provider_runtime(self):
         from dataclasses import replace
 
