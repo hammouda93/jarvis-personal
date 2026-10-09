@@ -2627,6 +2627,8 @@ class GroqResponsesAgent:
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
         self._feedback_only_turn = False
+        self._memory_scope_active = False
+        self._recent_memory_evidence = False
         self._session_grounding: dict[str, str] = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
@@ -2645,6 +2647,8 @@ class GroqResponsesAgent:
         self._skill_write_allowed = False
         self._lesson_write_allowed = False
         self._feedback_only_turn = False
+        self._memory_scope_active = False
+        self._recent_memory_evidence = False
         self._session_grounding = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
@@ -3055,6 +3059,11 @@ class GroqResponsesAgent:
                     if str((item.get("function") or {}).get("name") or "")
                     in browser_allowed
                 ]
+        if self._memory_scope_active:
+            from .memory_tool_scope import narrow_memory_tools
+            tools = narrow_memory_tools(
+                tools, allow_explicit_write=self._memory_write_allowed,
+            )
         from .active_mission_supervisor import progress_tool_definition
         checkpoint_tool = progress_tool_definition()
         tools = [t for t in tools if (t.get("function") or {}).get("name") != "mission_checkpoint"]
@@ -3537,6 +3546,29 @@ class GroqResponsesAgent:
             and _looks_like_clear_operational_feedback(user_text)
         )
         self._feedback_only_turn = _feedback_only_operational_turn(user_text)
+        from .memory_tool_scope import (
+            memory_only_request,
+            memory_tool_scope_enabled,
+        )
+        prior_reply = next((
+            str(message.get("content") or "")
+            for message in reversed(self._messages)
+            if message.get("role") == "assistant"
+            and not message.get("tool_calls")
+        ), "")
+        prior_memory_evidence = self._recent_memory_evidence
+        self._recent_memory_evidence = False
+        self._memory_scope_active = (
+            memory_tool_scope_enabled()
+            and self._pending_function_approval is None
+            and memory_only_request(
+                user_text,
+                prior_assistant=prior_reply,
+                prior_memory_evidence=prior_memory_evidence,
+            )
+        )
+        if log and self._memory_scope_active:
+            log("[AGENT_ROUTING] memory_only_tools=1")
         self._refresh_session_grounding_prompt()
 
         if self._pending_function_approval is not None:
@@ -4108,8 +4140,17 @@ class GroqResponsesAgent:
 
                 if log:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
+                from .memory_tool_scope import narrow_memory_tools
+                memory_denied = (
+                    self._memory_scope_active
+                    and not narrow_memory_tools(
+                        [{"function": {"name": name}}],
+                        allow_explicit_write=self._memory_write_allowed,
+                    )
+                )
                 autonomous_research = (
-                    name in {"research_web", "search_web"}
+                    not memory_denied
+                    and name in {"research_web", "search_web"}
                     and not _is_explicit_web_request(user_text)
                 )
                 if phase:
@@ -4133,7 +4174,7 @@ class GroqResponsesAgent:
                     else:
                         phase("acting")
 
-                if self.tools.requires_confirmation(name):
+                if not memory_denied and self.tools.requires_confirmation(name):
                     from .active_mission_supervisor import bind_pending_tool_approval
                     bind_pending_tool_approval(name, arguments)
                     self._pending_function_approval = {
@@ -4181,7 +4222,20 @@ class GroqResponsesAgent:
                     "browser_close_tab",
                     "browser_download",
                 }
-                if (
+                if memory_denied:
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message=(
+                            "Cet outil est sans rapport avec la consultation "
+                            "de mémoire de ce tour. Utilise les preuves mémoire "
+                            "ou réponds à partir du contexte."
+                        ),
+                        detail="memory_only_tool_scope_blocked",
+                    )
+                    if log:
+                        log(f"[AGENT_ROUTING] blocked_irrelevant_tool={name}")
+                elif (
                     self._feedback_only_turn
                     and name in browser_mutation_names
                 ):
@@ -4418,6 +4472,18 @@ class GroqResponsesAgent:
                     if name in {"research_web", "search_web"}:
                         research_web_calls += 1
                 actions.append(result)
+                # Only verified previous memory usage can justify keeping a
+                # short follow-up in the memory-only scope. A new external
+                # action or turn clears that weak conversational affinity.
+                if result.success and (
+                    name.startswith("semantic_memory_")
+                    or name == "remember_information"
+                ):
+                    self._recent_memory_evidence = True
+                elif result.success and name not in {
+                    "get_current_time", "mission_checkpoint",
+                }:
+                    self._recent_memory_evidence = False
                 self._remember_session_grounding(
                     name,
                     arguments,
@@ -4810,6 +4876,17 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         request_messages, saved_chars = compact_duplicate_observations(request_messages)
         if saved_chars:
             print(f"[AGENT_CONTEXT] provider=groq_fallback deduplicated_chars={saved_chars}")
+        # Bounded fallback only for read-only personal memory queries.
+        # This preserves the active tool call/result chain; mutations and
+        # multi-service missions retain their original full context.
+        if (getattr(self, "_memory_scope_active", False)
+                and not getattr(self, "_memory_write_allowed", False)
+                and getattr(self, "_pending_function_approval", None) is None):
+            from .memory_tool_scope import compact_memory_fallback
+            request_messages = compact_memory_fallback(
+                request_messages, turn_start=self._request_turn_start_index,
+            )
+            print("[AGENT_CONTEXT] provider=groq_fallback mode=read_only_memory_compact")
         request_tools = self._tool_definitions(
             ms_football_only=ms_football_only,
             msf_tool_names=msf_tool_names,
