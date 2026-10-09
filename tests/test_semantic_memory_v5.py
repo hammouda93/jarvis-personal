@@ -3333,6 +3333,26 @@ class SemanticMemoryAgentToolsV10BTests(unittest.TestCase):
             "conflicting_projection_dates",
         )
 
+    def test_v10b_incomplete_projection_never_claims_empty_schedule(self):
+        raw = "Retiens une réunion demain le 10/10/2026"
+        store, interpreter, adapter = self.build_adapter(projections={})
+        with self.tool_mode():
+            adapter.begin_turn(raw)
+            result = adapter.execute(
+                "remember_information", {"content": "made up"}
+            )
+            self.assertTrue(result.success)
+            self.assertIn("projected_facts=0", result.detail)
+            reply = adapter.execute(
+                "semantic_memory_events_on_date", {"date": "2026-10-10"}
+            )
+            payload = json.loads(reply.detail)
+            self.assertEqual(payload["status"], "index_incomplete")
+            self.assertEqual(payload["hits"], [])
+            self.assertGreaterEqual(payload["projection_issue_count"], 1)
+            self.assertEqual(store.recent_memories(limit=5)[0].content, raw)
+            self.assertEqual(interpreter.turn_calls, 0)
+
     def test_v10b_factory_does_not_wrap_agent_in_eager_memory_interpreter(self):
         from dataclasses import replace
         from jarvis_agent.agent_runtime import build_agent_runtime
