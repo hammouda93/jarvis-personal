@@ -41,7 +41,17 @@ Verification locale : 815 tests Python Windows passes, 0 erreur/echec/skip;
 660x500, 1024x640 et 1500x900; aucun debordement horizontal de la console avec
 Segoe UI. Tests de geometrie egalement passes avec la police de secours.
 Ce sont des tests automatiques, pas une nouvelle installation Windows reelle.
-CI du nouveau checkpoint : a observer apres publication.
+CI de `38aa8dd` verifiee SUCCESS sur Windows/Linux :
+[run 37903921448](https://github.com/hammouda93/jarvis-personal/actions/runs/37903921448).
+Windows : 815 passes; Linux : 810 passes et 5 skips Windows/DPAPI explicites.
+45 replays Browser Bridge et contrat du SDK MCP officiel passes sur chaque OS.
+
+Travaux Skills preserves avant reconciliation 9G : snapshots transactionnels,
+edition/restauration operateur, desactivation non revoquee par l'apprentissage,
+historique legacy sans versions inventees. 15 nouveaux tests, regression Windows
+locale 830 verte. L'utilisation et l'apprentissage doivent devenir OFF par defaut
+avec deux reglages persistants conformement au nouveau brief du 2026-10-09;
+ce changement de politique n'est pas encore integre dans ce checkpoint intermediaire.
 
 Limites importantes : la continuation automatique 9F exige un plan supervise
 approuve. Le parcours conversationnel sans plan conserve son fonctionnement
@@ -115,7 +125,7 @@ MCP et roadmap. Ces composants seront etendus.
 | 1-8 et 9A-9C | Base historique preservee | Regression cumulative locale et CI 9D verte | EN ATTENTE DE TEST REEL |
 | 9D superviseur actif | Integre, opt-in ; limites documentees | 20 tests dedies locaux ; CI Windows/Linux verte | EN ATTENTE DE TEST REEL |
 | 9E delegation controlee | Integree dans le runtime existant ; roles sans outils bloques | 38 tests dedies ; CI Windows/Linux verte | EN ATTENTE DE TEST REEL COMPLET |
-| 9F continuite / V5 / Qt | Integre pour les plans supervises ; autonomie conversationnelle complete encore ouverte | 29 nouveaux tests locaux, regression 815 verte; CI a observer | EN ATTENTE DE TEST REEL |
+| 9F continuite / V5 / Qt | Integre pour les plans supervises ; autonomie conversationnelle complete encore ouverte | 29 nouveaux tests; CI 38aa8dd Windows/Linux verte | EN ATTENTE DE TEST REEL |
 | Centre MCP complet | HTTP/stdio, OAuth SDK, coffre OS, quotas/journal integres dans 420179b | CI 210e9d3 Windows/Linux verte | Aucun compte personnel connecte |
 | 10 apprentissage et Skills | Partiel (operationnel) | A etendre | EN ATTENTE DE TEST REEL |
 | 11 automatisations durables | A developper | A developper | EN ATTENTE DE TEST REEL |

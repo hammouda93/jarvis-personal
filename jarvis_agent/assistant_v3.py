@@ -13,6 +13,8 @@ from .agent_runtime import AgentRuntimeUnavailable, build_agent_runtime
 from .active_mission_supervisor import conversation_control
 from .mission_workbench import MissionControlInbox, perform_mission_command
 from .mcp_control import MCPControlInbox, perform_mcp_command
+from .skill_control import SkillControlInbox, perform_skill_command
+from .agent_knowledge import AGENT_KNOWLEDGE
 from .mcp_server_registry import MCPRegistry
 from .audio import record_utterance, wait_for_double_clap
 from .config import settings
@@ -118,6 +120,7 @@ class AssistantWorker(QObject):
     operator_event = Signal(dict)
     mission_control_result = Signal(dict)
     mcp_control_result = Signal(dict)
+    skill_control_result = Signal(dict)
     finished = Signal()
 
     def __init__(self) -> None:
@@ -136,6 +139,8 @@ class AssistantWorker(QObject):
         self._text_inbox = TextTurnInbox()
         self._mission_control = MissionControlInbox()
         self._mcp_control = MCPControlInbox()
+        self._skill_control = SkillControlInbox()
+        self._skill_store = AGENT_KNOWLEDGE
         self._mcp_registry = MCPRegistry()
         self._input_mode = InputModeGate(self._text_inbox)
         self._announced_input_generation = -1
@@ -267,6 +272,21 @@ class AssistantWorker(QObject):
         if accepted:
             self._input_mode.changed.set()
         return accepted
+
+    def submit_skill_control(self, operation: str, value: str = "{}") -> bool:
+        accepted = self._skill_control.submit(operation, value)
+        if accepted:
+            self._input_mode.changed.set()
+        return accepted
+
+    def _run_skill_control(self, command) -> None:
+        try:
+            result = perform_skill_command(self._skill_store, command)
+        except (ValueError, KeyError) as exc:
+            result = {"success": False, "operation": command.operation, "reason": str(exc)[:100]}
+        except Exception as exc:
+            result = {"success": False, "operation": command.operation, "reason": type(exc).__name__}
+        self.skill_control_result.emit(result)
 
     def _run_mcp_control(self, command) -> None:
         try:
@@ -1037,6 +1057,11 @@ class AssistantWorker(QObject):
                 text_mode, generation = self._apply_input_mode()
                 self.transcript_changed.emit("")
                 self.detail_changed.emit("")
+
+                skill_command = self._skill_control.pop_nowait()
+                if skill_command is not None:
+                    self._run_skill_control(skill_command)
+                    continue
 
                 mcp_command = self._mcp_control.pop_nowait()
                 if mcp_command is not None:

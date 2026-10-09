@@ -14,6 +14,7 @@ from .operator_telemetry import snapshot
 from .project_roadmap import snapshot as roadmap_snapshot
 from .mcp_operator_panel import MCPConnectionsPanel
 from .mission_supervisor_panel import MissionSupervisorPanel
+from .skills_operator_panel import SkillsPanel
 
 
 _STATUS = {
@@ -93,6 +94,7 @@ class OperatorConsole(QFrame):
 
     mission_requested = Signal(str, str)
     mcp_requested = Signal(str, str, str)
+    skill_requested = Signal(str, str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -287,12 +289,15 @@ class OperatorConsole(QFrame):
             event_list.addWidget(group)
         event_list.addWidget(self.active_panel)
         event_list.addWidget(self.mcp_panel)
+        self.skills_panel = SkillsPanel(self)
+        self.skills_panel.requested.connect(self.skill_requested.emit)
+        event_list.addWidget(self.skills_panel)
         event_list.addStretch(1)
         scroll.setWidget(content)
         layout.addWidget(scroll, 1)
         self.setStyleSheet("""
             QLabel, QCheckBox {color:#b4dce7;font-size:10px;}
-            QLineEdit, QComboBox, QSpinBox, QTreeWidget {
+            QLineEdit, QComboBox, QSpinBox, QTreeWidget, QPlainTextEdit {
                 background:#061a2b;color:#e4f9ff;border:1px solid #286278;
                 border-radius:6px;padding:5px;font-size:10px;
                 selection-background-color:#174d60;

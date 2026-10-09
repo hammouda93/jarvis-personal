@@ -114,6 +114,7 @@ class Skill:
     created_at: str
     updated_at: str
     last_used_at: str
+    active: bool = True
 
 
 @dataclass(frozen=True)
@@ -242,6 +243,16 @@ class AgentKnowledgeStore:
                     finished_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS skill_revisions (
+                    skill_id INTEGER NOT NULL,
+                    version INTEGER NOT NULL,
+                    snapshot_json TEXT NOT NULL,
+                    change_kind TEXT NOT NULL,
+                    restored_from INTEGER,
+                    recorded_at TEXT NOT NULL,
+                    PRIMARY KEY(skill_id, version)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_skills_active
                     ON skills(active, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_lessons_active
@@ -252,6 +263,34 @@ class AgentKnowledgeStore:
                     ON skill_runs(finished_at);
                 """
             )
+            # Only the current legacy version is recoverable; do not fabricate
+            # procedures that existed before revision history was introduced.
+            for row in conn.execute("SELECT * FROM skills").fetchall():
+                self._snapshot_skill(conn, row, "legacy_baseline")
+
+    def _snapshot_skill(self, conn, row, change_kind: str, restored_from=None) -> None:
+        conn.execute(
+            ("INSERT OR IGNORE" if change_kind == "legacy_baseline" else "INSERT")
+            + " INTO skill_revisions VALUES (?, ?, ?, ?, ?, ?)",
+            (int(row["id"]), int(row["version"]),
+             _json(self.skill_to_dict(self._skill_from_row(row))),
+             change_kind, restored_from, _now()),
+        )
+
+    @staticmethod
+    def _skill_key(name: str) -> str:
+        return _normalize(name).replace(" ", "_")[:100]
+
+    def _locked_skill(self, conn, name: str, expected_version: int):
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("invalid_skill_version")
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM skills WHERE name = ?", (self._skill_key(name),)).fetchone()
+        if row is None:
+            raise KeyError("unknown_skill")
+        if int(row["version"]) != expected_version:
+            raise ValueError("skill_version_changed")
+        return row
 
     @staticmethod
     def _clamp_confidence(value: float) -> float:
@@ -283,6 +322,7 @@ class AgentKnowledgeStore:
         now = _now()
 
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT * FROM skills WHERE name = ?",
                 (clean_name,),
@@ -335,7 +375,7 @@ class AgentKnowledgeStore:
                     SET goal = ?, app_scope = ?, procedure_json = ?,
                         success_checks_json = ?, failure_patterns_json = ?,
                         confidence = ?, version = ?, source = ?,
-                        updated_at = ?, active = 1
+                        updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -351,18 +391,84 @@ class AgentKnowledgeStore:
                         skill_id,
                     ),
                 )
+            row = conn.execute("SELECT * FROM skills WHERE id = ?", (skill_id,)).fetchone()
+            self._snapshot_skill(conn, row, "learned_update" if row["version"] > 1 else "created")
 
-        return self.get_skill(clean_name)
+        return self.get_skill(clean_name, include_inactive=True)
 
-    def get_skill(self, name: str) -> Skill:
-        key = _normalize(name).replace(" ", "_")
+    def get_skill(self, name: str, *, include_inactive: bool = False) -> Skill:
+        key = self._skill_key(name)
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM skills WHERE name = ? AND active = 1",
+                "SELECT * FROM skills WHERE name = ?" + ("" if include_inactive else " AND active = 1"),
                 (key,),
             ).fetchone()
         if row is None:
             raise KeyError(name)
+        return self._skill_from_row(row)
+
+    def list_skills(self, *, include_inactive: bool = False) -> list[Skill]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM skills" +
+                ("" if include_inactive else " WHERE active = 1") + " ORDER BY name LIMIT 1000").fetchall()
+        return [self._skill_from_row(row) for row in rows]
+
+    def skill_history(self, name: str) -> list[dict[str, Any]]:
+        item = self.get_skill(name, include_inactive=True)
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM skill_revisions WHERE skill_id = ? ORDER BY version DESC LIMIT 100",
+                                (item.id,)).fetchall()
+        return [{"version": int(row["version"]), "change_kind": row["change_kind"],
+                 "restored_from": row["restored_from"], "recorded_at": row["recorded_at"],
+                 "snapshot": _load_json(row["snapshot_json"], {})} for row in rows]
+
+    def set_skill_active(self, name: str, active: bool, *, expected_version: int) -> Skill:
+        if type(active) is not bool:
+            raise ValueError("invalid_skill_active")
+        with self._connect() as conn:
+            row = self._locked_skill(conn, name, expected_version)
+            if bool(row["active"]) != active:
+                conn.execute("UPDATE skills SET active = ?, version = version + 1, updated_at = ? WHERE id = ?",
+                             (int(active), _now(), row["id"]))
+                row = conn.execute("SELECT * FROM skills WHERE id = ?", (row["id"],)).fetchone()
+                self._snapshot_skill(conn, row, "enabled" if active else "disabled")
+        return self._skill_from_row(row)
+
+    def revise_skill(self, name: str, *, expected_version: int, goal: str, procedure: list[str],
+                     success_checks: list[str], failure_patterns: list[str], app_scope: str = "") -> Skill:
+        clean_goal, steps = _redact(goal)[:500], _clean_list(procedure)
+        if len(clean_goal) < 4 or not steps:
+            raise ValueError("skill_goal_and_procedure_required")
+        with self._connect() as conn:
+            row = self._locked_skill(conn, name, expected_version)
+            conn.execute("""UPDATE skills SET goal = ?, app_scope = ?, procedure_json = ?,
+                success_checks_json = ?, failure_patterns_json = ?, source = 'operator_edit',
+                version = version + 1, updated_at = ? WHERE id = ?""",
+                (clean_goal, _redact(app_scope)[:120], _json(steps), _json(_clean_list(success_checks)),
+                 _json(_clean_list(failure_patterns)), _now(), row["id"]))
+            row = conn.execute("SELECT * FROM skills WHERE id = ?", (row["id"],)).fetchone()
+            self._snapshot_skill(conn, row, "operator_edit")
+        return self._skill_from_row(row)
+
+    def restore_skill(self, name: str, version: int, *, expected_version: int) -> Skill:
+        if type(version) is not int or version < 1:
+            raise ValueError("invalid_restore_version")
+        with self._connect() as conn:
+            row = self._locked_skill(conn, name, expected_version)
+            revision = conn.execute("SELECT snapshot_json FROM skill_revisions WHERE skill_id = ? AND version = ?",
+                                    (row["id"], version)).fetchone()
+            if revision is None:
+                raise KeyError("unknown_skill_revision")
+            saved = json.loads(revision["snapshot_json"])
+            # Preserve today's enablement and usage counters. Restoring a
+            # procedure is not a new validation or an authorization to run it.
+            conn.execute("""UPDATE skills SET goal = ?, app_scope = ?, procedure_json = ?,
+                success_checks_json = ?, failure_patterns_json = ?, confidence = ?, source = 'operator_restore',
+                version = version + 1, updated_at = ? WHERE id = ?""",
+                (saved["goal"], saved["app_scope"], _json(saved["procedure"]), _json(saved["success_checks"]),
+                 _json(saved["failure_patterns"]), saved["confidence"], _now(), row["id"]))
+            row = conn.execute("SELECT * FROM skills WHERE id = ?", (row["id"],)).fetchone()
+            self._snapshot_skill(conn, row, "operator_restore", version)
         return self._skill_from_row(row)
 
     def record_lesson(
@@ -704,6 +810,7 @@ class AgentKnowledgeStore:
         before = self.stats()
         with self._connect() as conn:
             conn.execute("DELETE FROM skill_runs")
+            conn.execute("DELETE FROM skill_revisions")
             conn.execute("DELETE FROM skills")
             conn.execute("DELETE FROM lessons")
             conn.execute("DELETE FROM app_profiles")
@@ -815,6 +922,7 @@ class AgentKnowledgeStore:
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
             last_used_at=str(row["last_used_at"]),
+            active=bool(row["active"]),
         )
 
     @staticmethod
