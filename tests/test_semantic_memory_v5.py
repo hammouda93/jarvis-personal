@@ -3084,6 +3084,13 @@ class SemanticMemoryFactoryIntegrationTests(unittest.TestCase):
                         "JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1",
                         "JARVIS_BROWSER_CORE_ENABLED": "0",
                         "JARVIS_COMPUTER_CORE_ENABLED": "0",
+                        # Testing the base providers requires isolation from
+                        # inherited opt-in runtime wrappers (e.g. an interactive
+                        # shell with Hermes enabled). The wrappers are tested
+                        # independently with their own explicit flags.
+                        "JARVIS_HERMES_RELIABILITY_ENABLED": "0",
+                        "JARVIS_ACTIVE_SUPERVISOR_ENABLED": "0",
+                        "JARVIS_RUNTIME_CONVERGENCE_ENABLED": "0",
                     },
                     clear=False,
                 ), patch(
