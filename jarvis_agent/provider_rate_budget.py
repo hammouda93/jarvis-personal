@@ -12,27 +12,42 @@ from typing import Any, Callable
 
 
 class ProviderRateGate:
-    """In-process circuit breaker for provider accounts returning HTTP 429."""
+    """In-process circuit breaker for temporary 429 and terminal billing 402.
+
+    A 402 requires a configuration or billing change rather than waiting 60s.
+    Disable that credential for the lifetime of this agent process. Other
+    providers/credentials remain available. No user data or keys are stored.
+    """
 
     def __init__(self, *, cooldown_seconds: float = 60.0,
                  clock: Callable[[], float] | None = None):
         self.cooldown_seconds = max(1.0, min(float(cooldown_seconds), 3600.0))
         self.clock = clock if clock is not None else time.monotonic
         self._until: dict[str, float] = {}
+        self._billing_blocked: set[str] = set()
 
     def note_failure(self, provider: str, error: Exception) -> bool:
         detail = str(error).lower()
         limited = ("429" in detail or "request_quota_exceeded" in detail
                    or "token_quota_exceeded" in detail)
-        if limited:
+        # Do not retry an account that cannot currently be billed. A local
+        # restart with updated credentials/settings creates a fresh gate.
+        billing = ("402" in detail or "payment_required" in detail
+                   or "billing_required" in detail)
+        if billing:
+            self._billing_blocked.add(str(provider))
+        elif limited:
             self._until[str(provider)] = self.clock() + self.cooldown_seconds
-        return limited
+        return limited or billing
 
     def remaining(self, provider: str) -> float:
         return max(0.0, self._until.get(str(provider), 0.0) - self.clock())
 
+    def billing_blocked(self, provider: str) -> bool:
+        return str(provider) in self._billing_blocked
+
     def available(self, provider: str) -> bool:
-        return self.remaining(provider) <= 0.0
+        return not self.billing_blocked(provider) and self.remaining(provider) <= 0.0
 
 
 def groq_fallback_preflight(messages: list[dict[str, Any]],
