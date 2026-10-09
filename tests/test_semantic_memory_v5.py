@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from jarvis_agent.agent_runtime import AgentTurnResult
 from jarvis_agent.foundation_tools import FoundationToolAdapter
+from jarvis_agent.intent_guards import is_explicit_memory_write_request
 from jarvis_agent.memory_core_store import MemoryCoreStore
 from jarvis_agent.memory_semantic_interpreter import (
     ModelSemanticMemoryInterpreter,
