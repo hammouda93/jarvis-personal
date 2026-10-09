@@ -15,7 +15,7 @@ from .semantic_memory import MemoryProjection
 def iso_day(value: str) -> str:
     """Accept canonical ISO dates and ISO datetimes, never arbitrary prefixes."""
     text = str(value or "").strip()
-    if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}(?:T[^\\s]+)?", text):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:T[^\s]+)?", text):
         return ""
     try:
         return date.fromisoformat(text[:10]).isoformat()
@@ -33,7 +33,7 @@ def day_mentioned_in_raw(raw: str, day: str) -> bool:
     iso = re.escape(parsed)
     day_first = rf"0?{int(dd)}[/.-]0?{int(mm)}[/.-]{yyyy}"
     return bool(
-        re.search(rf"(?<!\\d)(?:{iso}|{day_first})(?!\\d)", source)
+        re.search(rf"(?<!\d)(?:{iso}|{day_first})(?!\d)", source)
     )
 
 
