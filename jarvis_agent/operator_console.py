@@ -7,7 +7,7 @@ from collections import deque
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextBrowser,
-    QStyle, QVBoxLayout, QWidget,
+    QStyle, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .operator_telemetry import snapshot
@@ -215,6 +215,30 @@ class OperatorConsole(QFrame):
         mission_layout.addWidget(self.mission_route_button)
         mission_layout.addLayout(buttons)
         mission_layout.addWidget(self.mission_feedback)
+        # Plain-language plan and questions are visible next to the mission
+        # controls. The detailed diagnostic panes remain below.
+        self.plan_summary_title = QLabel("◈   PLAN ACTUEL · ÉTAPES ET QUESTIONS")
+        self.plan_summary_title.setObjectName("operatorSection")
+        self.plan_summary_view = QTextBrowser()
+        self.plan_summary_view.setMinimumHeight(110)
+        self.plan_summary_view.setMaximumHeight(240)
+        self.plan_summary_view.setHtml("<p>Créez une mission puis générez son plan.</p>")
+        self.clarification_input = QTextEdit()
+        self.clarification_input.setPlaceholderText("Réponse aux questions ci-dessus…")
+        self.clarification_input.setMaximumHeight(78)
+        self.clarification_input.setAccessibleName("Réponse de clarification de mission")
+        self.clarification_button = QPushButton("Répondre et réviser le plan (1 requête IA)")
+        self.clarification_button.setToolTip(
+            "Réviser le plan avant approbation, sans exécuter d'action")
+        self.clarification_input.setVisible(False)
+        self.clarification_button.setVisible(False)
+        mission_layout.addWidget(self.plan_summary_title)
+        mission_layout.addWidget(self.plan_summary_view)
+        mission_layout.addWidget(self.clarification_input)
+        mission_layout.addWidget(self.clarification_button)
+        self.clarification_button.clicked.connect(
+            lambda: self._request_mission("clarify_plan", self.clarification_input.toPlainText())
+        )
         self.mission_begin_button.clicked.connect(
             lambda: self._request_mission("begin", self.mission_goal_input.text())
         )
@@ -339,7 +363,7 @@ class OperatorConsole(QFrame):
     def _request_mission(self, operation: str, value: str) -> None:
         """Signal request only. Worker is authoritative and owns runtime."""
         raw = str(value or "").strip()
-        if operation in {"begin", "begin_only", "resume", "plan"} and not raw:
+        if operation in {"begin", "begin_only", "resume", "plan", "clarify_plan"} and not raw:
             self.mission_feedback.setText("Objectif ou identifiant de mission requis.")
             return
         self.mission_requested.emit(operation, raw)
@@ -372,6 +396,13 @@ class OperatorConsole(QFrame):
                 "Aucune action effectuée, aucune preuve validée. "
                 "Utilisez « Vérifier la progression » avant de continuer."
             )
+            return
+        if success and operation == "clarify_plan":
+            self.clarification_input.clear()
+            self.mission_feedback.setText(
+                f"Plan révisé (version {int(result.get('revision') or 0)}) · "
+                f"{int(result.get('unresolved_count') or 0)} question(s) restante(s). "
+                "Aucune action lancée. Relisez les étapes et les questions.")
             return
         if success and operation == "plan":
             self.mission_criteria_input.clear()
@@ -478,6 +509,34 @@ class OperatorConsole(QFrame):
         self._render_html("missions", missions)
         self._render_html("tasks", steps)
         review = data.get("supervisor")
+        questions = []
+        if isinstance(review, dict) and review.get("plan_registered"):
+            summary = ["<p><b>Étapes proposées (aucune action déclenchée par la planification) :</b></p>"]
+            for index, item in enumerate(list(review.get("steps") or []), 1):
+                summary.append(
+                    f'<p><b>{index}. {_escape(item.get("intent"), 1200)}</b><br>'
+                    f'<span style="color:#a6c5d2">État : {_escape(item.get("state"), 80)}</span></p>'
+                )
+            questions = list(review.get("unresolved") or [])
+            if questions:
+                summary.append('<p style="color:#f3c481"><b>❓ Questions à clarifier :</b></p>')
+                summary.extend(
+                    f'<p style="color:#f3c481">{index}. {_escape(question, 2000)}</p>'
+                    for index, question in enumerate(questions, 1)
+                )
+            else:
+                summary.append('<p style="color:#70dbbe">Aucune clarification en attente.</p>')
+            plan_html = "".join(summary)
+        else:
+            plan_html = "<p>Aucun plan enregistré. Créez une mission et générez son plan.</p>"
+        if self._render_cache.get("compact_plan") != plan_html:
+            self._render_cache["compact_plan"] = plan_html
+            self.plan_summary_view.setHtml(plan_html)
+        can_clarify = (bool(data.get("mission_enabled")) and bool(questions)
+                       and not bool(data.get("active_supervisor")))
+        self.clarification_input.setVisible(can_clarify)
+        self.clarification_button.setVisible(can_clarify)
+        self.clarification_button.setEnabled(can_clarify)
         if not data.get("mission_enabled"):
             review_html = "<p>Superviseur indisponible : missions désactivées.</p>"
         elif not isinstance(review, dict):
