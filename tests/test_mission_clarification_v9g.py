@@ -102,6 +102,22 @@ class ClarificationRuntimeTests(unittest.TestCase):
         self.assertEqual(len(self.provider.requests), 1)
 
 
+    def test_blocked_mission_can_answer_status_question_without_any_provider_call(self):
+        with self.assertRaises(AssertionError):
+            self.runtime.run("Lance une action difficile")
+        requests_before = len(self.provider.requests)
+        answer = self.runtime.run("C'est quoi notre mission ?")
+        self.assertIn("Analyser les sources", answer.text)
+        self.assertIn("Objectif vérifié : non", answer.text)
+        self.assertIn("À clarifier", answer.text)
+        self.assertIn("vérification manuelle requise", answer.text)
+        self.assertEqual(len(self.provider.requests), requests_before)
+        self.assertEqual(answer.actions, ())
+        with self.assertRaisesRegex(RuntimeError, "recovery_requires_review"):
+            self.runtime.run("Continue et relance les outils")
+
+
+
 class ClarificationUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
