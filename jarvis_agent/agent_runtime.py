@@ -375,6 +375,15 @@ MEMORY V5 OUTILS ACTIFS (même cerveau, même conversation):
 - Pour un horodatage d'enregistrement, utilise created_at des souvenirs,
   pas la date de l'événement. Vérifie incohérences avant d'affirmer une date.
 - N'appelle pas Ollama pour classer les salutations ou les tours ordinaires.
+- Si l'utilisateur précise un événement déjà discuté ("c'est mon anniversaire",
+  etc.), actualise le CONTEXTE DE CONVERSATION pour répondre naturellement.
+  Ne prétends pas avoir modifié le souvenir SQLite sans demande explicite
+  de mémorisation. Tu peux proposer une correction uniquement si nécessaire.
+- N'utilise pas les outils de découverte des applications ni de perception
+  Windows pour répondre à une question sur les souvenirs. Le choix des outils
+  doit correspondre à l'objectif actuel, et non aux applications ouvertes.
+- Si un souvenir se limite à "événement personnel", précise que sa nature
+  est inconnue plutôt que d'inventer un anniversaire.
 """
         )
 
