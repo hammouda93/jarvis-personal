@@ -76,6 +76,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
 - pour agir dans une application déjà ouverte, ou dans une application que tu
   viens d'ouvrir pendant cette conversation, inspecte/active d'abord la fenêtre
   existante au lieu de relancer une nouvelle instance inutilement;
+- pour ouvrir une application de bureau inconnue, utilise list_applications
+  puis open_application avec le nom observe. N'invente jamais une URL de
+  protocole pour un logiciel local; open_url est reserve aux sites HTTP/HTTPS.
+  Un inventaire vide n'est pas une preuve d'absence exhaustive du logiciel;
 - pour agir dans une application déjà ouverte, utilise d'abord list_windows ou
   inspect_active_window afin d'observer l'interface réelle;
 - ne conclus jamais qu'une application ne supporte pas une fonction visible
@@ -2575,6 +2579,9 @@ class GroqResponsesAgent:
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
 
+        from .provider_rate_budget import ProviderRateGate
+        self._provider_rate_gate = ProviderRateGate()
+
     def reset(self) -> None:
         self._messages = [
             {"role": "system", "content": _effective_system_instructions()}
@@ -2785,6 +2792,7 @@ class GroqResponsesAgent:
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=settings.ai_request_timeout_s,
+                max_retries=0,
             )
         return self._client
 
@@ -3041,6 +3049,9 @@ class GroqResponsesAgent:
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
     ):
+        gate = getattr(self, "_provider_rate_gate", None) if self.provider_name == "groq" else None
+        if gate is not None and not gate.available("groq"):
+            raise AgentRuntimeUnavailable("Groq cooldown or billing block; no request sent")
         client = self._get_client()
         tool_definitions = self._tool_definitions(
             ms_football_only=ms_football_only,
@@ -3048,6 +3059,8 @@ class GroqResponsesAgent:
         )
         try:
             request_messages = self._messages_for_request()
+            from .request_compaction import compact_duplicate_observations
+            request_messages, saved_chars = compact_duplicate_observations(request_messages)
             context_chars = len(
                 json.dumps(request_messages, ensure_ascii=False, separators=(",", ":"))
             )
@@ -3058,10 +3071,11 @@ class GroqResponsesAgent:
                 f"[AGENT_CONTEXT] provider={self.provider_name} "
                 f"messages_chars={context_chars} tools={len(tool_definitions)} "
                 f"tools_chars={tools_chars}"
+                f" deduplicated_chars={saved_chars}"
             )
             from .active_mission_supervisor import reserve_model_request
             reserve_model_request()
-            return client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=self.model,
                 messages=request_messages,
                 tools=tool_definitions,
@@ -3071,7 +3085,12 @@ class GroqResponsesAgent:
                 temperature=0.1,
                 max_completion_tokens=256,
             )
+            from .active_mission_supervisor import record_model_usage
+            record_model_usage(getattr(response, "usage", None), self.provider_name)
+            return response
         except Exception as exc:
+            if gate is not None:
+                gate.note_failure("groq", exc)
             status = getattr(exc, "status_code", None)
             from .active_mission_supervisor import SupervisorStopped
             if isinstance(exc, SupervisorStopped):
@@ -4718,6 +4737,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             raise AgentRuntimeUnavailable(
                 "Fallback Groq GPT-OSS non configuré."
             )
+        gate = getattr(self, "_provider_rate_gate", None)
+        if gate is not None and not gate.available("groq_fallback"):
+            raise AgentRuntimeUnavailable("Fallback Groq cooldown or billing block; no request sent")
         try:
             from openai import OpenAI
         except ImportError as exc:
@@ -4732,6 +4754,10 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             max_retries=0,
         )
         request_messages = self._messages_for_request()
+        from .request_compaction import compact_duplicate_observations
+        request_messages, saved_chars = compact_duplicate_observations(request_messages)
+        if saved_chars:
+            print(f"[AGENT_CONTEXT] provider=groq_fallback deduplicated_chars={saved_chars}")
         request_tools = self._tool_definitions(
             ms_football_only=ms_football_only,
             msf_tool_names=msf_tool_names,
@@ -4751,7 +4777,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         try:
             from .active_mission_supervisor import reserve_model_request
             reserve_model_request()
-            return client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=settings.groq_agent_model,
                 messages=request_messages,
                 tools=request_tools,
@@ -4761,10 +4787,15 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 temperature=0.1,
                 max_completion_tokens=256,
             )
+            from .active_mission_supervisor import record_model_usage
+            record_model_usage(getattr(response, "usage", None), "groq")
+            return response
         except Exception as exc:
             from .active_mission_supervisor import SupervisorStopped
             if isinstance(exc, SupervisorStopped):
                 raise
+            if gate is not None:
+                gate.note_failure("groq_fallback", exc)
             raise AgentRuntimeUnavailable(
                 f"Fallback Groq GPT-OSS indisponible: {exc}"
             ) from exc

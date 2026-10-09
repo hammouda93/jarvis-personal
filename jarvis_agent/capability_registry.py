@@ -91,6 +91,7 @@ def build_default_registry() -> CapabilityRegistry:
             ),
             allowed_tools=(
                 "list_windows",
+                "list_applications",
                 "inspect_active_window",
                 "open_application",
                 "open_file",

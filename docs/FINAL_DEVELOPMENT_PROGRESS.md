@@ -37,9 +37,48 @@ La premiere regression a detecte un debordement avec police de remplacement ;
 les boutons ont ete corriges puis les tests de geometrie relances avec succes.
 Les captures Qt hors ecran ne sont PAS une recette Windows interactive.
 Regression locale : 874 tests Python Windows, 0 echec/erreur/skip apres
-correction ; Browser Bridge 45/45. La CI de ce checkpoint est a observer.
+correction ; Browser Bridge 45/45. Checkpoint `1467669` publie, CI observee
+SUCCESS sur les deux OS :
+[run 37942632322](https://github.com/hammouda93/jarvis-personal/actions/runs/37942632322).
+Windows 874 passes ; Linux 869 passes + 5 exclusions Windows/DPAPI ;
+45/45 replays Node sur chaque OS.
 Connexions personnelles, expiration/revocation fournisseur, Linux SecretService
 reel, missions MCP de bout en bout et sessions longues restent non valides.
+
+### Ressources Fournisseurs Et Decouverte Windows
+
+- Les 429 utilisent le header Retry-After (secondes ou HTTP-date), meme apres
+  encapsulation d'une erreur SDK. Sinon cooldown de 60 secondes. Pas de sommeil
+  bloquant ni requete repetee durant ce delai. Un statut HTTP structure prime
+  sur une sous-chaine d'un body ; blocage 402 conserve separement par credential.
+- Meme gate pour Groq autonome et le fallback Groq ; retries internes du SDK
+  desactives pour que chaque tentative reserve soit observable.
+- Compactage deterministe des observations de lecture strictement identiques,
+  seulement dans la requete. Derniere copie, messages utilisateur/systeme,
+  schemas, refs, resultats de mutation/echec et transcript original preserves.
+  Aucun LLM de resume ni appel d'apprentissage. Ce n'est PAS encore un compactage
+  semantique des longues histoires ; contexte unique trop gros reste refuse.
+- Compteurs input/output retournes par Cerebras/Groq dans un scope de mission
+  persistes par fournisseur et affiches dans la supervision. Reponses sans
+  compteurs signalees, pas de tokens ni de facture inventes. Budget de requetes
+  conserve, jamais remis a zero par une continuation. Panne d'ecriture : pause
+  avant prochaine action/requete, sans refaire la requete recue.
+- `list_applications` expose l'inventaire Windows existant en lecture seule
+  (Start Apps / App Paths), sans lancer de programme. Refus d'une URL de protocole
+  non HTTP guide vers cette capacite, sans transformer automatiquement une URL
+  en autorisation de lancer une application. Aucune logique propre a VLC ajoutee.
+- Controle **reel, lecture seule** sur cet ordinateur : recherche VLC a retourne
+  un candidat `vlc` App Paths et les noms Start Apps associes, sans lancement.
+  Ceci prouve cette decouverte locale seulement, PAS le choix du modele, lancement,
+  fenetre UIA/CUA ou controle VLC. Ces recettes restent a faire ensemble.
+
+Regression finale locale : 889 tests Python Windows passes, sans echec, erreur
+ni exclusion ; Browser Bridge 45/45. Les tests du SDK sans retry et du dispatch
+du compactage sont inclus. CI du nouveau checkpoint a controler apres publication.
+Scheduler horaire/durable, autonomie naturelle complete,
+V5/Ollama reel, cartes/lignes et preuves de resultats metier restent ouverts.
+La demande utilisateur de cloture limite cette reprise au checkpoint courant,
+sa publication et la preparation de recette, sans nouvelle phase de developpement.
 
 ### Reconciliation 9G Et Consentement Operationnel
 
@@ -74,12 +113,13 @@ Verification locale actuelle : 856 tests Python Windows passes, 0 echec/erreur/s
 de configuration sont testes automatiquement. CI `2a47abe` observee SUCCESS :
 [run 37939644901](https://github.com/hammouda93/jarvis-personal/actions/runs/37939644901),
 Windows 856 passes, Linux 851 passes + 5 exclusions Windows/DPAPI, Node 45/45
-sur chaque OS. Le nouveau centre MCP attend sa propre CI.
+sur chaque OS. La CI du centre MCP est egalement verte, voir ci-dessus.
 L'acceptation MCP complete, l'autonomie naturelle bout-en-bout, le compactage de
 contexte, la lecture fiable de lignes/cartes, V5/Ollama reel et le scheduler
 durable restent ouverts. Aucun agent de production ni compte personnel utilise.
-Les erreurs de nombres MS Football, refs Instagram et routage VLC sont des
-problemes rapportes encore a traiter, pas des corrections declarees ici.
+Les erreurs de nombres MS Football et refs Instagram restent a traiter.
+Le routage/lancement VLC par le modele n'est pas declare valide par la seule
+decouverte Windows ajoutee.
 
 Etat de depart inspecte : `210e9d38653de23b44106eadb6ff31795efd8e54`, synchronise
 avec la branche distante. Ses deux jobs Windows/Linux sont SUCCESS :

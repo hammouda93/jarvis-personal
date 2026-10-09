@@ -143,6 +143,18 @@ def reserve_model_request() -> None:
         scope.reserve(model_calls=1, network_calls=1)
 
 
+def record_model_usage(usage: Any, provider: str) -> None:
+    """Returned provider counters are telemetry, not estimates or goal evidence."""
+    scope = _SCOPE.get()
+    if scope is not None:
+        try:
+            scope.note_model_usage(usage, provider)
+        except Exception:
+            # Do not send the same model request again because persistence failed.
+            # Pause before the next action/request instead.
+            scope.model_usage_recording_failed = True
+
+
 def execution_scope_active() -> bool:
     return _SCOPE.get() is not None
 
@@ -275,6 +287,7 @@ class ActiveMissionSupervisor:
         self.stop_event = None
         self.progress_decision = None
         self.phase_callback = None
+        self.model_usage_recording_failed = False
         self.factory = build_responsibility_factory(self)
 
     def _load(self):
@@ -350,6 +363,8 @@ class ActiveMissionSupervisor:
                 pass  # Presentation failure must not interrupt an external effect.
 
     def reserve(self, **increments: int) -> None:
+        if self.model_usage_recording_failed:
+            raise SupervisorStopped("model_usage_recording_failed")
         if self.stop_event is not None and self.stop_event.is_set():
             raise SupervisorStopped("operator_requested_stop")
         state, version = self._load()
@@ -367,6 +382,29 @@ class ActiveMissionSupervisor:
         record["usage"] = usage
         # Persist consumption before the provider/tool can start an effect.
         self.runtime.context_store.save(state, expected_version=version)
+
+    def note_model_usage(self, usage: Any, provider: str) -> None:
+        if provider not in {"cerebras", "groq"}:
+            raise ValueError("unknown_model_usage_provider")
+        def counter(*names):
+            for name in names:
+                value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+                if type(value) is int and 0 <= value <= 1000000000:
+                    return value
+            return None
+        incoming, outgoing = counter("prompt_tokens", "input_tokens"), counter("completion_tokens", "output_tokens")
+        with self.runtime._lock:
+            state, version = self._load()
+            record = state.observed_state["active_supervisor"]
+            totals = record.setdefault("model_usage", {}).setdefault(provider, {
+                "input_tokens": 0, "output_tokens": 0, "responses_with_usage": 0, "responses_without_usage": 0})
+            if incoming is None or outgoing is None:
+                totals["responses_without_usage"] += 1
+            else:
+                totals["input_tokens"] += incoming
+                totals["output_tokens"] += outgoing
+                totals["responses_with_usage"] += 1
+            self.runtime.context_store.save(state, expected_version=version)
 
     def observe(self, registry: Any) -> None:
         state, _ = self._load()

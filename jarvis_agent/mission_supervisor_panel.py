@@ -226,6 +226,7 @@ class MissionSupervisorPanel(QWidget):
         self.state_label.setText(
             f'{status} | {active.get("step_id", "")} | {active.get("tool", "")}\n'
             f'Actions : {usage.get("actions", 0)} | Modele : {usage.get("model_calls", 0)}'
+            + self._model_usage_line(active.get("model_usage") or {})
             + ("\n" + str(active["reason"]) if active.get("reason") else "")
         )
         self.approve_button.setEnabled(enabled and bool(plan) and not active)
@@ -240,6 +241,17 @@ class MissionSupervisorPanel(QWidget):
             label = "Verifie" if report.get("verified") else "Confirmation" if report.get("approval_pending") else "Preuve attendue"
             QTreeWidgetItem(self.reports, [str(report.get("step_id", "")), str(report.get("agent", "")),
                                          label, str(report.get("action_count", 0))])
+
+    @staticmethod
+    def _model_usage_line(totals: dict) -> str:
+        lines = []
+        for provider in ("cerebras", "groq"):
+            record = totals.get(provider)
+            if not isinstance(record, dict):
+                continue
+            lines.append(f"{provider} : tokens entres {record.get('input_tokens', 0)} / sortis {record.get('output_tokens', 0)}"
+                + (f" ; {record['responses_without_usage']} reponse(s) sans compteurs" if record.get("responses_without_usage") else ""))
+        return "\n" + "\n".join(lines) if lines else ""
 
     def apply_result(self, result: dict):
         if result.get("operation") not in {"approve_supervision", "advance_supervision", "recover_supervision",

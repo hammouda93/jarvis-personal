@@ -17,6 +17,32 @@ Relever : version Windows/Python, mise a l'echelle, resolution logique, flags
 de mission/memoire, fournisseur principal/effectif et modele. Ne pas copier
 de cle, cookie, token OAuth ou contenu prive dans un rapport partage.
 
+## Ordre De Recette Du Checkpoint
+
+Commencer avec Skills OFF et apprentissage OFF. Garder ces modes pour les tests
+de base : ils ne doivent pas etre necessaires a la conversation, V5, Chrome ou
+Windows. Le tableau detaille plus bas couvre ensuite les cas limites.
+
+| Ordre | Demande / manipulation live | Resultat attendu |
+| --- | --- | --- |
+| 1 | Redemarrer Jarvis, parler en francais, passer en texte, puis revenir en voix | Les deux modes operationnels restent OFF ; contexte intact ; microphone coupe en texte et reactivation/TTS reels |
+| 2 | "Memorise pour ce test : mon code de recette est JARVIS-TEST-4827." Fermer tous les processus Jarvis, relancer et demander le code | Rappel du fait synthetique depuis V5 dans le nouveau runtime ; sinon echec ou indisponibilite explicite, pas de reponse inventee |
+| 3 | "Ouvre YouTube, cherche une video de piano, ouvre le premier resultat, reviens aux resultats, puis ferme seulement cet onglet." | Recherche/navigations observees, bon onglet ferme, deux onglets temoins intacts |
+| 4 | "Ouvre VLC et inspecte sa fenetre." Puis saisir une phrase Unicode dans une fenetre Bloc-notes jetable | Application normale decouverte et lancee, jamais reset/uninstaller ni protocole invente ; vraie fenetre inspectee et texte exact |
+| 5 | Demander une mission a plusieurs etapes, repondre aux clarifications, approuver le plan revise ; pause et reprise | Questions entieres, aucune action avant approbation, objectif et budgets conserves, aucune mutation dupliquee et aucune cloture sans preuve |
+| 6 | "Lis les nombres de dossiers de Travis, Mohamed Salah Mhadhebi et Iyed, sans modifier de donnees." Comparer visuellement chaque carte/ligne | Noms et nombres correctement associes a l'ecran actuel ; les erreurs humaines deja signalees restent des regressions ouvertes jusqu'a preuve contraire |
+| 7 | Sur WhatsApp/contact de test consenti, preparer un brouillon Unicode sans l'envoyer ; refuser l'envoi. Approuver ensuite un nouvel envoi precis | Rien envoye apres refus ; distinguer brouillon, soumission et reception constatee chez le destinataire. Aucune affirmation "envoye" apres seule saisie |
+| 8 | Dans MCP, preparer un service de test, connecter explicitement, autoriser un seul outil de lecture et l'utiliser en mission ; bloquer l'outil puis MCP OFF | Catalogue passif, inventaire reel, seul outil consenti disponible ; outil retire ensuite au schema ET au dispatch ; outils natifs toujours utilisables |
+| 9 | Sur le compte MCP de test, enregistrer une cle/OAuth puis redemarrer ; deconnecter, reconnecter et revoquer le credential | Secrets absents des champs/configuration/logs ; pas de connexion automatique ni de renouvellement de consentement invente ; erreur/auth requise explicites |
+| 10 | Comparer OFF/OFF, ON/OFF, OFF/ON, ON/ON avec une Skill et une mission jetables, puis restaurer OFF/OFF | Reutilisation et apprentissage independants ; aucune ecriture operationnelle quand apprentissage OFF ; bibliotheque, V5 et preuves non effacees |
+| 11 | Mission de test Cerebras/Groq au plan approuve ; observer compteurs et reprise. Tester 429/402 dans un environnement controle, jamais en saturant le compte | Usage API conserve ou absence declaree ; budget cumulatif ; pas de requete pendant Retry-After, pas de boucle 402 ni de duplication d'effet |
+| 12 | Redimensionner Jarvis et tester la mise a l'echelle Windows ; installation uniquement d'un logiciel jetable explicitement autorise | Controles accessibles et lisibles ; pour l'installation, fin observee, vrai raccourci et vrai lancement, pas seulement un clic Next/Install |
+
+Les tests de quotas en fixture restent des tests de robustesse, pas une preuve
+du comportement d'un compte fournisseur reel. Une connexion MCP reussie ne
+valide pas automatiquement tous ses outils ni tous les services du catalogue.
+Pour un echec, conserver la trace expurgee et la preuve visuelle avant de retenter.
+
 ## Scenarios
 
 | # | Test | Preuve attendue / critere d'arret |
@@ -42,6 +68,8 @@ de cle, cookie, token OAuth ou contenu prive dans un rapport partage.
 | 19 | Onglet MCP, services/catalogue, HTTP et stdio jetable | Catalogue ne connecte rien ; programme local explicitement approuve ; inventaire outils/resources/prompts declarees et session fermee affiches correctement |
 | 20 | MCP API key / OAuth sur compte de test, fermer et redemarrer | Secrets chiffres, pas recharges dans les champs ; reconnecter explicitement ; expiration/revocation necessitent une nouvelle autorisation, pas de consentement du modele |
 | 21 | MCP OFF ou outil bloque pendant mission au repos | Schema et dispatch retires au prochain appel ; outils Chrome/Windows et memoire restent actifs ; effet inconnu jamais retente |
+| 22 | Ouvrir VLC ou une application inconnue, Skills OFF | Decouverte Windows puis lancement demande, fenetre actuelle observee ; pas d'URL de protocole inventee, pas de lancement d'un reset/uninstaller |
+| 23 | Mission Cerebras/Groq au plan approuve | Compteurs fournis par API conserves apres reprise ; reponses sans usage signalees ; 429/Retry-After sans requete durant le cooldown ; aucun body prive dans rapport |
 
 ## Modes A Comparer
 

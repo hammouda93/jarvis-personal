@@ -70,6 +70,22 @@ la decouverte. Jarvis reprend ces contrats avec le SDK officiel et son registre
 existant. Les sessions restent courtes, sans adopter le gateway/pool Hermes,
 ni remplacer Cerebras, Chrome Bridge ou UIA. Aucune portion amont copiee.
 
+## Relecture Ressources Et Windows
+
+Relecture ressources au meme main `0670ba45240b734c1e6f6d1d5ead87233f37df49` :
+[retry_utils](https://github.com/NousResearch/hermes-agent/blob/0670ba45240b734c1e6f6d1d5ead87233f37df49/agent/retry_utils.py),
+[context_compressor](https://github.com/NousResearch/hermes-agent/blob/0670ba45240b734c1e6f6d1d5ead87233f37df49/agent/context_compressor.py),
+[micro_compaction](https://github.com/NousResearch/hermes-agent/blob/0670ba45240b734c1e6f6d1d5ead87233f37df49/agent/micro_compaction.py).
+Les en-tetes de cooldown et la protection du texte utilisateur/du tail sont
+retenus. Pas de nouveau modele de resume, cache/provider ni gateway adopte :
+Jarvis deduplique uniquement les lectures identiques et conserve son transcript.
+Le compactage Hermes avec LLM auxiliaire n'est pas une dependance de Jarvis.
+Contrats croises avec [Groq rate limits](https://console.groq.com/docs/rate-limits)
+et [HTTP Retry-After](https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after).
+La decouverte Windows utilise les pilotes locaux deja presents et les contrats
+[Start Apps](https://learn.microsoft.com/en-us/powershell/module/startlayout/get-startapps)
+et [App Paths](https://learn.microsoft.com/en-us/windows/win32/shell/app-registration).
+
 ## Licence
 
 La [licence amont inspectee](https://github.com/NousResearch/hermes-agent/blob/9d05e7ff92d3edd9abdf20fe3d04551905cb995e/LICENSE)

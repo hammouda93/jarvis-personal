@@ -20,7 +20,7 @@ _BROWSER = frozenset({
     "click_browser_element", "press_browser_element", "scroll_browser_element",
 })
 _COMPUTER = frozenset({
-    "list_windows", "inspect_active_window", "inspect_interface", "open_application", "open_file",
+    "list_windows", "list_applications", "inspect_active_window", "inspect_interface", "open_application", "open_file",
     "click_ui_element", "write_ui_element", "press_key", "close_tab", "close_window",
     "observe_screen", "click_visual_target", "write_visual_target", "computer_list_windows",
     "computer_get_active_window", "computer_observe", "computer_find", "computer_focus_probe",

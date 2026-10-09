@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from jarvis_agent.active_mission_supervisor import (
     ActiveMissionSupervisor, MissionLimits, SupervisedToolRegistry,
-    SupervisorState, SupervisorStopped, matches_rule, plan_digest, reserve_model_request, validate_rule,
+    SupervisorState, SupervisorStopped, matches_rule, plan_digest, reserve_model_request, validate_rule, record_model_usage,
 )
 from jarvis_agent.kernel_contracts import MissionStatus
 from jarvis_agent.mission_semantics import MissionContract, MissionStep
@@ -88,6 +88,40 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "reviewed_plan"):
             self.supervisor.advance()
         self.assertEqual(self.delegate.calls, 0)
+
+    def test_provider_usage_persists_per_mission_without_goal_proof_or_budget_reset(self):
+        self.approve()
+        self.supervisor.reserve(model_calls=1, network_calls=1)
+        self.supervisor.note_model_usage(SimpleNamespace(prompt_tokens=120, completion_tokens=8), "cerebras")
+        self.supervisor.note_model_usage({"input_tokens": 10, "output_tokens": 3}, "groq")
+        self.supervisor.note_model_usage(None, "groq")
+        restarted = ActiveMissionSupervisor(self.runtime, self.tools)
+        record = restarted.snapshot()
+        self.assertEqual(record["usage"]["model_calls"], 1)
+        self.assertEqual(record["model_usage"]["cerebras"]["input_tokens"], 120)
+        self.assertEqual(record["model_usage"]["groq"]["responses_without_usage"], 1)
+        self.assertFalse(self.state().observed_state.get("goal_verified"))
+        self.assertEqual(self.registry.calls, [])
+
+    def test_usage_persistence_failure_pauses_before_action_without_retrying_response(self):
+        self.approve()
+        with patch("jarvis_agent.active_mission_supervisor._SCOPE") as scope, \
+                patch.object(self.supervisor, "note_model_usage", side_effect=OSError("fixture")):
+            scope.get.return_value = self.supervisor
+            record_model_usage({"prompt_tokens": 12, "completion_tokens": 4}, "cerebras")
+        with self.assertRaisesRegex(SupervisorStopped, "usage_recording_failed"):
+            self.supervisor.reserve(actions=1)
+        self.assertEqual(self.registry.calls, [])
+
+    def test_negative_boolean_or_incomplete_usage_is_not_fabricated(self):
+        self.approve()
+        for usage in ({"prompt_tokens": -1, "completion_tokens": 4},
+                      {"prompt_tokens": True, "completion_tokens": 4}, {"completion_tokens": 4}):
+            self.supervisor.note_model_usage(usage, "cerebras")
+        usage = self.supervisor.snapshot()["model_usage"]["cerebras"]
+        self.assertEqual(usage["input_tokens"], 0)
+        self.assertEqual(usage["responses_with_usage"], 0)
+        self.assertEqual(usage["responses_without_usage"], 3)
 
     def test_changed_plan_digest_is_not_approved(self):
         with self.assertRaisesRegex(ValueError, "changed"):
