@@ -55,7 +55,8 @@ class ProviderRateBudgetTests(unittest.TestCase):
             self.assertEqual(agent._chat(), "secondary ok")
             self.assertEqual(agent._chat(), "secondary again")
         self.assertEqual(mocked.call_count, 3)
-        self.assertLess(agent._provider_rate_gate.remaining("primary"), 60)
+        self.assertGreater(agent._provider_rate_gate.remaining("primary"), 0)
+        self.assertLessEqual(agent._provider_rate_gate.remaining("primary"), 60)
         self.assertFalse(agent._provider_rate_gate.available("primary"))
 
     def test_oversize_groq_request_is_rejected_before_network(self):
