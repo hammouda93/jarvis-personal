@@ -34,11 +34,21 @@ et integrer leurs capacites sous le meme cerveau, sans reconstruire Jarvis.
   des lectures classees mutations et perte de contexte/preuves reproduits.
   Apres correction : 116 tests runtime + 9 tests d'integration cibles passent ;
   regression complete finale : 920 tests Python Windows passes, 0 erreur/echec/
-  exclusion ; Node 45/45. Nouvelle CI d'integration a observer apres publication.
+  exclusion ; Node 45/45.
 - La premiere CI d'integration `51e6a0f` a detecte une assertion de fixture
   supposant tous les schemas au format function. Ubuntu exposait aussi le builtin
   Groq browser_search. Test corrige pour couvrir explicitement les deux formats,
   sans retrait de capacite ni modification du runtime ; regression relancee.
+- Checkpoint code corrige `25d3e12626d097f987ddf806b285e1becc69d30b` publie.
+  CI observee dans les logs : [37990022359](https://github.com/hammouda93/jarvis-personal/actions/runs/37990022359),
+  Windows 920 passes, 0 exclusion ; Ubuntu 915 passes + 5 exclusions ; Node
+  45/45 sur chaque OS, contrat SDK MCP officiel egalement passe.
+- [PR #21](https://github.com/hammouda93/jarvis-personal/pull/21) brouillon vers
+  la branche de developpement, sans fusion. PR #16 mise a jour pour refleter le
+  checkpoint source 699b7eb et distinguer cette integration separee.
+- Prochaine priorite technique : correction durable/versionnee des souvenirs,
+  puis projection reprisee/non bloquante et fallback des missions generales.
+  Le detail des dependances et des gates reelles figure dans l'audit V10.
 
 La decision architecturale est preservee : V5 reste SQLite, accessible au meme
 registre et a la meme conversation. Les opt-ins V10B/C restent explicites.

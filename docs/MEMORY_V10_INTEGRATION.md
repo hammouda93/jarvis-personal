@@ -104,7 +104,7 @@ fail-open. Aucun code amont copie ; SQLite V5 et les gardes Jarvis restent la ba
 La regression de la chaine integree avant correction : 910/910 locale.
 Tests cibles corriges : 116 runtime et 9 integration ; Node 45/45.
 Regression cumulative finale : 920 tests Windows locaux passes, sans erreur,
-echec ni exclusion. Nouvelle CI a confirmer apres publication. Aucun modele
+echec ni exclusion. Aucun modele
 reel ni compte personnel appele pour ces tests. Les vrais tests Windows sont prepares dans
 [FINAL_WINDOWS_ACCEPTANCE.md](FINAL_WINDOWS_ACCEPTANCE.md), non executes ici.
 
@@ -112,4 +112,10 @@ Premiere CI de l'integration 51e6a0f : Ubuntu a trouve un KeyError dans la
 nouvelle assertion du test de scope, car le builtin Groq browser_search n'a pas
 de champ function. Assertion corrigee et fixture forcee avec ce builtin actif
 sur tous les OS ; runtime et capacites de production inchanges. Les nouvelles
-regressions et CI doivent etre observees avant de declarer l'integration verte.
+regressions ont passe, puis la CI du checkpoint corrige `25d3e12` a ete
+inspectee dans les logs : [37990022359](https://github.com/hammouda93/jarvis-personal/actions/runs/37990022359),
+Windows 920 passes, sans exclusion ; Ubuntu 915 passes + 5 exclusions
+Windows/DPAPI ; Node 45/45 sur chaque OS ; imports du SDK MCP officiel passes.
+Ces resultats valident les contrats automatises, pas le choix reel d'outils
+du modele sur le bureau. [PR #21](https://github.com/hammouda93/jarvis-personal/pull/21)
+reste brouillon, non fusionnee, a destination de la branche de developpement.
