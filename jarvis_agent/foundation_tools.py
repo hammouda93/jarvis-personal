@@ -507,22 +507,67 @@ class FoundationToolAdapter:
             elif self.browser and name in {"open_web_search", "close_tab"}:
                 raise RuntimeError("use_generic_browser_primitives_with_observed_tab_id")
             elif name == "remember_information" and self.memory:
+                tool_mode = memory_agent_tools_enabled()
                 if enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED"):
-                    if not self._semantic_memory_write_authorized:
-                        raise RuntimeError(
-                            "persistent_write_requires_semantic_user_authorization"
-                        )
-                    self._semantic_memory_write_authorized = False
+                    if tool_mode:
+                        # The LLM may select the tool, but ONLY the original
+                        # explicit user turn authorizes durable storage. Store
+                        # their literal words, never model-invented details.
+                        if not is_explicit_memory_write_request(
+                            str(self.current_user_text or "")
+                        ):
+                            raise RuntimeError(
+                                "persistent_write_requires_explicit_user_request"
+                            )
+                        if self._durable_memory_written_this_turn:
+                            raise RuntimeError(
+                                "persistent_write_already_completed_this_turn"
+                            )
+                    else:
+                        if not self._semantic_memory_write_authorized:
+                            raise RuntimeError(
+                                "persistent_write_requires_semantic_user_authorization"
+                            )
+                        self._semantic_memory_write_authorized = False
                 else:
                     from .memory_router import MemoryRouter
                     if MemoryRouter().decide(self.current_user_text).kind != "write":
                         raise RuntimeError(
                             "persistent_write_requires_explicit_user_request"
                         )
-                item = self.memory.remember(
-                    str(args.get("content", "")),
-                    tags=str(args.get("tags", "")),
+                raw = (
+                    str(self.current_user_text or "").strip()
+                    if tool_mode else str(args.get("content", ""))
                 )
+                if not raw:
+                    raise RuntimeError("persistent_write_empty_user_source")
+                # Prevent an agent retry from writing the same turn twice.
+                # No duplicate write even if semantic projection later fails.
+                item = self.memory.remember(
+                    raw, tags=str(args.get("tags", "")),
+                )
+                if tool_mode:
+                    self._durable_memory_written_this_turn = True
+                    status = "raw_saved"
+                    if self.semantic_memory_engine is not None:
+                        try:
+                            facts = self.semantic_memory_engine.project_memory(
+                                item.id, provenance="explicit",
+                            )
+                            status = f"projected_facts={len(facts)}"
+                        except Exception as exc:
+                            self.memory.mark_projection_error(
+                                item.id,
+                                parser_version=self.semantic_memory_engine.parser_version,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
+                            status = "projection_failed_raw_preserved"
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="Information mémorisée localement.",
+                        detail=f"memory_id={item.id} {status}",
+                    )
                 return AgentActionResult(
                     name=name,
                     success=True,
@@ -532,6 +577,72 @@ class FoundationToolAdapter:
             elif name == "recall_information" and self.memory:
                 from .memory_retrieval import search
                 payload = [asdict(item) for item in search(self.memory, str(args.get("query", "")))]
+            elif name == "semantic_memory_inspect" and memory_agent_tools_enabled():
+                payload = {
+                    "status": "inspect",
+                    "items": [
+                        {
+                            "memory_id": item.id,
+                            "raw": str(item.content or "")[:900],
+                            "created_at": item.created_at,
+                        }
+                        for item in self.memory.recent_memories(limit=30)
+                    ],
+                    "read_only": True,
+                }
+            elif name == "semantic_memory_events_on_date" and memory_agent_tools_enabled():
+                from datetime import date
+                value = str(args.get("date", "")).strip()
+                try:
+                    target = date.fromisoformat(value)
+                except ValueError:
+                    raise RuntimeError("memory_date_requires_iso_yyyy_mm_dd")
+                if value != target.isoformat():
+                    raise RuntimeError("memory_date_requires_iso_yyyy_mm_dd")
+                hits = []
+                for fact in self.memory.semantic_facts(status="active"):
+                    projection = fact.projection
+                    date_text = str(projection.qualifiers.get("date") or "")
+                    value_text = str(projection.value or "")
+                    date_value = date_text[:10] if date_text else ""
+                    direct_value = value_text[:10] if len(value_text) >= 10 else ""
+                    qualifier_matches = date_value == value
+                    value_matches = direct_value == value
+                    if not (qualifier_matches or value_matches):
+                        continue
+                    inconsistent = bool(
+                        date_value and direct_value
+                        and len(direct_value) == 10
+                        and direct_value[4:5] == "-"
+                        and date_value != direct_value
+                    )
+                    hits.append({
+                        "memory_id": fact.memory_id,
+                        "subject": projection.subject,
+                        "relation": projection.relation,
+                        "value": projection.value,
+                        "qualifiers": dict(projection.qualifiers),
+                        "created_at": fact.created_at,
+                        "raw": str(fact.raw_content or "")[:900],
+                        "warning": (
+                            "conflicting_projection_dates"
+                            if inconsistent else ""
+                        ),
+                    })
+                pending = self.memory.pending_projection_items(
+                    self.semantic_memory_engine.parser_version,
+                    limit=256,
+                ) if self.semantic_memory_engine is not None else []
+                payload = {
+                    "status": (
+                        "resolved" if hits else
+                        "index_incomplete" if pending else "missing"
+                    ),
+                    "date": value,
+                    "hits": hits[:30],
+                    "unindexed_count": len(pending),
+                    "read_only": True,
+                }
             elif (
                 name == "semantic_memory_search"
                 and self.semantic_memory_engine is not None
@@ -539,6 +650,50 @@ class FoundationToolAdapter:
                 query_text = str(args.get("query", "")).strip()
                 if not query_text:
                     raise RuntimeError("semantic_memory_search_query_required")
+                if memory_agent_tools_enabled():
+                    # No second LLM intent parser (or lazy LLM indexing)
+                    # during read-only search. Raw rows remain authoritative,
+                    # with previously indexed facts included only for matches.
+                    from .memory_retrieval import search as raw_search
+                    matched = raw_search(self.memory, query_text, limit=12)
+                    matched_ids = {item.id for item in matched}
+                    facts = [
+                        fact
+                        for fact in self.memory.semantic_facts(status="active")
+                        if fact.memory_id in matched_ids
+                    ]
+                    payload = {
+                        "status": "resolved" if matched else "missing",
+                        "parser_operation": "agent_tool_direct",
+                        "query": query_text,
+                        "hits": [
+                            {
+                                "memory_id": fact.memory_id,
+                                "subject": fact.projection.subject,
+                                "relation": fact.projection.relation,
+                                "value": fact.projection.value,
+                                "qualifiers": dict(fact.projection.qualifiers),
+                                "entities": list(fact.projection.entities),
+                                "created_at": fact.created_at,
+                            }
+                            for fact in facts[:16]
+                        ],
+                        "raw_fallback": [
+                            {
+                                "memory_id": item.id,
+                                "raw": str(item.content or "")[:900],
+                                "created_at": item.created_at,
+                            }
+                            for item in matched
+                        ],
+                        "read_only": True,
+                    }
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="Recherche mémoire locale terminée.",
+                        detail=json.dumps(payload, ensure_ascii=False),
+                    )
                 intent = self.semantic_memory_engine.interpret_turn(
                     query_text
                 )
