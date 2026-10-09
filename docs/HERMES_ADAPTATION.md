@@ -86,6 +86,16 @@ La decouverte Windows utilise les pilotes locaux deja presents et les contrats
 [Start Apps](https://learn.microsoft.com/en-us/powershell/module/startlayout/get-startapps)
 et [App Paths](https://learn.microsoft.com/en-us/windows/win32/shell/app-registration).
 
+## Audit Memory V10
+
+Audit Memory V10 du 2026-10-09 : main
+`b624a38f21f2f674d5a8ccf387687c1b481e23f6`,
+[memory_tool.py](https://github.com/NousResearch/hermes-agent/blob/b624a38f21f2f674d5a8ccf387687c1b481e23f6/tools/memory_tool.py).
+L'epingle d'une entree precise lors d'une correction approuvee est une piste
+pour la prochaine etape versionnee, pas une fonctionnalite deja copiee/livree.
+Les fichiers MEMORY.md et l'injection systematique Hermes ne remplacent pas
+SQLite V5 ; les gates fail-open ne sont pas reprises. Voir l'audit V10.
+
 ## Licence
 
 La [licence amont inspectee](https://github.com/NousResearch/hermes-agent/blob/9d05e7ff92d3edd9abdf20fe3d04551905cb995e/LICENSE)

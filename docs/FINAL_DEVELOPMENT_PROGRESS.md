@@ -2,6 +2,62 @@
 
 Date de demarrage : 2026-10-08 (Africa/Lagos).
 
+## Reprise Memory V10 Du 2026-10-09
+
+Nouveau brief utilisateur : recuperer le checkpoint, auditer les PR #18/#19/#20
+et integrer leurs capacites sous le meme cerveau, sans reconstruire Jarvis.
+
+- Checkpoint retrouve : `699b7eb58f6d98fc10305e93987fd216c41e7edb`, confirme
+  sur GitHub et localement. La premiere tentative de push Codex avait ete refusee
+  par une limite du reviewer ; la presence distante a ensuite ete verifiee,
+  sans attribuer cette publication a cette tentative refusee.
+- CI observee dans les logs : [37946221187](https://github.com/hammouda93/jarvis-personal/actions/runs/37946221187),
+  Windows 889 passes ; Ubuntu 884 passes + 5 exclusions explicites ; Node 45/45
+  sur chaque OS. Branche 9C toujours `5bdd542d3cab8b7d52ab7db9bc20167ca911e050`.
+- PR #18 (`4e5e4ad`), #19 (`330743d`), #20 (`5d4e04f`) auditees, leurs
+  commentaires humains relus et leurs CI Windows/Ubuntu inspectees : 893,
+  903 et 910 tests respectivement, 5 exclusions Ubuntu et Node 45/45.
+- Leur ancetre commun est exactement `699b7eb` : MCP, quotas, Skills OFF,
+  apprentissage OFF, traces et supervision ne sont pas remplaces par ces PR.
+- Branche d'integration isolee `codex/integrate-memory-v10c`, merge local
+  non destructif `87f8876`, aucun conflit. Aucun merge de PR ni changement
+  de la branche stable ou du checkpoint source. Les autres worktrees et les
+  journaux utilisateur non suivis sont preserves.
+- Corrections d'integration : lectures V5 connues classees non mutantes ;
+  inventaire/date/range SQLite utilisables comme observations locales sur un
+  critere approuve, jamais via un simple champ success/verified ou un outil MCP.
+- Aucun scope memoire seul ni compactage de politique dans une mission
+  supervisee ou un contexte injecte. Le compactage autonome conserve tous
+  les messages utilisateur, systemes additionnels et appels/resultats d'outils.
+  Seules les anciennes reponses libres sont omises ; budget Groq 7000 conserve.
+- Tests nouveaux reproduisant les incompatibilites avant correction : echec
+  des lectures classees mutations et perte de contexte/preuves reproduits.
+  Apres correction : 116 tests runtime + 9 tests d'integration cibles passent ;
+  regression complete finale : 920 tests Python Windows passes, 0 erreur/echec/
+  exclusion ; Node 45/45.
+- La premiere CI d'integration `51e6a0f` a detecte une assertion de fixture
+  supposant tous les schemas au format function. Ubuntu exposait aussi le builtin
+  Groq browser_search. Test corrige pour couvrir explicitement les deux formats,
+  sans retrait de capacite ni modification du runtime ; regression relancee.
+- Checkpoint code corrige `25d3e12626d097f987ddf806b285e1becc69d30b` publie.
+  CI observee dans les logs : [37990022359](https://github.com/hammouda93/jarvis-personal/actions/runs/37990022359),
+  Windows 920 passes, 0 exclusion ; Ubuntu 915 passes + 5 exclusions ; Node
+  45/45 sur chaque OS, contrat SDK MCP officiel egalement passe.
+- [PR #21](https://github.com/hammouda93/jarvis-personal/pull/21) brouillon vers
+  la branche de developpement, sans fusion. PR #16 mise a jour pour refleter le
+  checkpoint source 699b7eb et distinguer cette integration separee.
+- Prochaine priorite technique : correction durable/versionnee des souvenirs,
+  puis projection reprisee/non bloquante et fallback des missions generales.
+  Le detail des dependances et des gates reelles figure dans l'audit V10.
+
+La decision architecturale est preservee : V5 reste SQLite, accessible au meme
+registre et a la meme conversation. Les opt-ins V10B/C restent explicites.
+La projection a l'ecriture peut encore utiliser Ollama ; aucune cascade locale
+complete, connexion de compte ou correction durable de souvenir n'est inventee.
+Les validations humaines V10A/B ne certifient pas cette integration ni V10C sur
+le desktop. Voir [audit et dependances](MEMORY_V10_INTEGRATION.md) et
+[recette Windows](FINAL_WINDOWS_ACCEPTANCE.md).
+
 ## Reprise du 2026-10-09 : 9G, Opt-ins Et Centre MCP
 
 ### Centre MCP
@@ -77,8 +133,8 @@ ni exclusion ; Browser Bridge 45/45. Les tests du SDK sans retry et du dispatch
 du compactage sont inclus. CI du nouveau checkpoint a controler apres publication.
 Scheduler horaire/durable, autonomie naturelle complete,
 V5/Ollama reel, cartes/lignes et preuves de resultats metier restent ouverts.
-La demande utilisateur de cloture limite cette reprise au checkpoint courant,
-sa publication et la preparation de recette, sans nouvelle phase de developpement.
+La demande precedente de cloture limitait alors la reprise au checkpoint courant.
+Le brief V10 recu ensuite autorise l'audit et l'integration isolee ci-dessus.
 
 ### Reconciliation 9G Et Consentement Operationnel
 

@@ -471,6 +471,163 @@ class FakeGroqAgent(GroqResponsesAgent):
         return self._response_from_dict(self.responses.pop(0))
 
 
+class MemoryScopeV10CTests(unittest.TestCase):
+    def test_injected_mission_or_supervision_never_narrows_to_memory_only(self):
+        env = {name: "1" for name in (
+            "JARVIS_MEMORY_CORE_ENABLED", "JARVIS_SEMANTIC_MEMORY_V5_ENABLED",
+            "JARVIS_MEMORY_AGENT_TOOLS_ENABLED", "JARVIS_MEMORY_SCOPE_GUARD_ENABLED")}
+        for supervised, context in ((True, ""), (False, "approved multi-source mission")):
+            with self.subTest(supervised=supervised, context=context):
+                agent = FakeGroqAgent(FakeTools(), [{"output": [{"type": "message", "content": [
+                    {"type": "output_text", "text": "La mission reste ouverte."}]}]}])
+                agent._ephemeral_context = context
+                with patch.dict("os.environ", env, clear=False), patch(
+                        "jarvis_agent.active_mission_supervisor.execution_scope_active", return_value=supervised), patch(
+                        "jarvis_agent.active_mission_supervisor.progress_status", return_value="blocked"), patch(
+                        "jarvis_agent.agent_runtime.settings", replace(real_settings, groq_browser_search=True)):
+                    agent.run("Lis ma memoire pour preparer ma journee")
+                self.assertFalse(agent._memory_scope_active)
+                tools = agent.payloads[0]["tools"]
+                self.assertIn("open_application", {(t.get("function") or {}).get("name") for t in tools})
+                self.assertIn("browser_search", {t.get("type") for t in tools})
+
+    def test_scope_is_conservative_and_does_not_capture_external_missions(self):
+        from jarvis_agent.memory_tool_scope import memory_only_request
+        self.assertFalse(memory_only_request("Quel est l'événement personnel du 16 octobre ?"))
+        self.assertFalse(memory_only_request("J'ai quoi demain ?"))
+        self.assertFalse(memory_only_request("un anniversaire"))
+        self.assertTrue(memory_only_request(
+            "Quel est l'événement personnel du 16 octobre ?",
+            prior_memory_evidence=True,
+        ))
+        self.assertTrue(memory_only_request(
+            "un anniversaire", prior_memory_evidence=True,
+        ))
+        self.assertTrue(memory_only_request(
+            "oui", prior_assistant="Souhaitez-vous mémoriser cet événement ?"
+        ))
+        self.assertFalse(memory_only_request(
+            "J'ai quoi demain ?", prior_memory_evidence=True,
+        ))
+        for command in (
+            "Ouvre Chrome et recherche mon anniversaire",
+            "Consulte mon calendrier et ma mémoire pour demain",
+            "Envoie un email pour la réunion",
+            "Ouvre le navigateur et note mon rendez-vous",
+            "oui",
+            "Vérifie GitHub puis modifie mon projet",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(memory_only_request(command))
+
+    def test_memory_read_tools_are_narrowed_only_under_opt_in(self):
+        from jarvis_agent.memory_tool_scope import narrow_memory_tools
+        tool = lambda name: {
+            "type": "function",
+            "function": {"name": name, "parameters": {"type": "object",
+                                                     "properties": {}}},
+        }
+        all_tools = [tool(name) for name in (
+            "semantic_memory_search",
+            "semantic_memory_inspect",
+            "get_current_time",
+            "remember_information",
+            "press_key",
+            "research_web",
+            "list_applications",
+        )]
+        names = lambda items: [x["function"]["name"] for x in items]
+        self.assertEqual(names(narrow_memory_tools(all_tools)),
+                         ["semantic_memory_search", "semantic_memory_inspect",
+                          "get_current_time"])
+        self.assertIn("remember_information",
+                      names(narrow_memory_tools(all_tools,
+                                                allow_explicit_write=True)))
+        self.assertNotIn("press_key",
+                         names(narrow_memory_tools(all_tools,
+                                                   allow_explicit_write=True)))
+
+    def test_memory_fallback_compaction_preserves_tool_result_chain(self):
+        from jarvis_agent.memory_tool_scope import compact_memory_fallback
+        from jarvis_agent.provider_rate_budget import groq_fallback_preflight
+        messages = [
+            {"role": "system", "content": "LONG SYSTEM " * 1900},
+            {"role": "user", "content": "Quelle est la météo ?"},
+            {"role": "assistant", "content": "Voici la réponse précédente."},
+            {"role": "user", "content": "J'ai quoi demain ?"},
+            {"role": "assistant", "tool_calls": [{
+                "id": "call_memory", "type": "function",
+                "function": {"name": "semantic_memory_events_on_date",
+                             "arguments": '{"date":"2026-10-10"}'}
+            }], "content": ""},
+            {"role": "tool", "tool_call_id": "call_memory",
+             "name": "semantic_memory_events_on_date",
+             "content": '{"hits":[{"event_date":"2026-10-10"}]}'},
+        ]
+        compact = compact_memory_fallback(messages, turn_start=3)
+        self.assertEqual(compact[-3:], messages[-3:])
+        self.assertNotIn("LONG SYSTEM", compact[0]["content"])
+        allowed, estimated, _ = groq_fallback_preflight(
+            compact,
+            [{"type": "function", "function": {
+                "name": "semantic_memory_events_on_date",
+                "description": "Lecture mémoire",
+                "parameters": {"type": "object", "properties": {
+                    "date": {"type": "string"}}}
+            }}],
+            limit_tokens=7000,
+        )
+        self.assertTrue(allowed, estimated)
+
+    def test_memory_only_turn_rejects_unrelated_keypress_at_execution_boundary(self):
+        from unittest.mock import patch
+        env = {
+            "JARVIS_MEMORY_CORE_ENABLED": "1",
+            "JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1",
+            "JARVIS_MEMORY_AGENT_TOOLS_ENABLED": "1",
+            "JARVIS_MEMORY_SCOPE_GUARD_ENABLED": "1",
+        }
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {"output": [{"type": "function_call",
+                             "call_id": "call_wrong",
+                             "name": "press_key",
+                             "arguments": '{"key":"Enter"}'}]},
+                {"output": [{"type": "message", "content": [
+                    {"type": "output_text", "text": "La nature de cet événement est inconnue."}
+                ]}]},
+            ],
+        )
+        with patch.dict("os.environ", env, clear=False):
+            result = agent.run("Quelle est la nature de cet événement mémorisé ?")
+        self.assertTrue(any(
+            x.name == "press_key"
+            and x.detail == "memory_only_tool_scope_blocked"
+            for x in result.actions
+        ))
+        self.assertFalse(any(name == "press_key" for name, _ in tools.calls))
+        self.assertIn("inconnue", result.text)
+
+    def test_memory_scope_flag_off_does_not_change_existing_tools(self):
+        from unittest.mock import patch
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools, [{"output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "Bonjour"}
+            ]}]}],
+        )
+        with patch.dict("os.environ", {
+            "JARVIS_MEMORY_CORE_ENABLED": "1",
+            "JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1",
+            "JARVIS_MEMORY_AGENT_TOOLS_ENABLED": "1",
+            "JARVIS_MEMORY_SCOPE_GUARD_ENABLED": "0",
+        }, clear=False):
+            agent.run("Quelle est la nature de cet événement personnel ?")
+        self.assertFalse(agent._memory_scope_active)
+
+
 class AgentRuntimeTests(unittest.TestCase):
 
     def test_pseudo_tool_syntax_is_detected(self):
@@ -3833,6 +3990,45 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(
             unsupported,
             ["Javier Zanetti – The Legend"],
+        )
+
+    def test_memory_quoted_fact_does_not_trigger_browser_page_proof(self):
+        memory = AgentActionResult(
+            name="semantic_memory_search",
+            success=True,
+            message="Mémoire consultée.",
+            detail=json.dumps({
+                "status": "resolved",
+                "raw_fallback": [
+                    {"raw": "Un événement personnel le 16 octobre 2026"}
+                ],
+            }),
+        )
+        self.assertEqual(
+            _unsupported_browser_quoted_claims(
+                "Quel est l'événement personnel ?",
+                "Vous avez noté « événement personnel » le 16 octobre.",
+                [memory],
+            ),
+            [],
+        )
+        self.assertEqual(
+            _unsupported_browser_quoted_claims(
+                "Quelle est la nature de cet événement ?",
+                "Le souvenir ne donne que « événement personnel ».",
+                [],
+            ),
+            [],
+        )
+
+    def test_browser_quote_guard_still_blocks_unsupported_page_claim(self):
+        self.assertEqual(
+            _unsupported_browser_quoted_claims(
+                "Quel est le titre sur le site ?",
+                "Le titre est « Résultat totalement inventé ».",
+                [],
+            ),
+            ["Résultat totalement inventé"],
         )
 
     def test_browser_submit_repair_does_not_hijack_nonbrowser_send_turns(self):

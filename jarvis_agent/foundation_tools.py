@@ -16,6 +16,15 @@ def enabled(name):
     return os.getenv(name, "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def memory_agent_tools_enabled():
+    """Opt-in V5 tool routing; default keeps proven V10A behavior."""
+    return (
+        enabled("JARVIS_MEMORY_CORE_ENABLED")
+        and enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED")
+        and enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")
+    )
+
+
 _BROWSER_PROPS = {
     "tab_id": {
         "type": "integer",
@@ -121,6 +130,7 @@ class FoundationToolAdapter:
         self.uncertain_scopes = set()
         self.pending_mutations = {}
         self._semantic_memory_write_authorized = False
+        self._durable_memory_written_this_turn = False
         self.semantic_memory_engine = None
 
     def __getattr__(self, name):
@@ -130,6 +140,7 @@ class FoundationToolAdapter:
         import re
         self.current_user_text = user_text
         self._semantic_memory_write_authorized = False
+        self._durable_memory_written_this_turn = False
         if not self.browser:
             return
         from .tools import route
@@ -302,14 +313,16 @@ class FoundationToolAdapter:
     def ollama_tools(self):
         tools = self.delegate.ollama_tools()
         if self.memory and enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED"):
-            # Memory V5 is a pre-LLM runtime. Hide legacy memory tools from the
-            # conversational model so it cannot bypass semantic admission,
-            # projection, scoping or retrieval.
+            # Legacy V10A V5 is a pre-LLM router. In V10B tool mode,
+            # expose only the explicit-write legacy primitive; never expose
+            # the old unscoped raw recall in either mode.
+            tool_mode = memory_agent_tools_enabled()
+            hidden = {"recall_information"}
+            if not tool_mode:
+                hidden.add("remember_information")
             tools = [
-                item
-                for item in tools
-                if item["function"]["name"]
-                not in {"remember_information", "recall_information"}
+                item for item in tools
+                if item["function"]["name"] not in hidden
             ]
             if self.semantic_memory_engine is not None:
                 tools.append(
@@ -334,6 +347,50 @@ class FoundationToolAdapter:
                         ["query"],
                     )
                 )
+                if tool_mode:
+                    tools.extend((
+                        self.delegate._ollama(
+                            "semantic_memory_inspect",
+                            "Inventaire READ-ONLY de la mémoire durable V5. "
+                            "Utilise cet outil lorsque l'utilisateur demande "
+                            "ce qui est enregistré, même si la recherche ciblée "
+                            "précédente ne renvoie aucun résultat.",
+                            {},
+                            [],
+                        ),
+                        self.delegate._ollama(
+                            "semantic_memory_events_on_date",
+                            "Liste READ-ONLY des faits datés et événements "
+                            "enregistrés dans la mémoire locale, pour une date "
+                            "calendaire exacte (YYYY-MM-DD), distincte de "
+                            "Google Calendar. N'utilise que la date résolue "
+                            "pour le fuseau local de l'utilisateur.",
+                            {"date": {
+                                "type": "string",
+                                "description": "Date au format YYYY-MM-DD.",
+                            }},
+                            ["date"],
+                        ),
+                        self.delegate._ollama(
+                            "semantic_memory_events_in_range",
+                            "Recherche READ-ONLY des événements mémorisés entre "
+                            "deux dates inclusives (maximum 31 jours), distincte "
+                            "d'un agenda externe. Utilise get_current_time "
+                            "pour résoudre aujourd'hui/demain dans le fuseau "
+                            "local et préserver les sources des événements.",
+                            {
+                                "start_date": {
+                                    "type": "string",
+                                    "description": "Début ISO YYYY-MM-DD.",
+                                },
+                                "end_date": {
+                                    "type": "string",
+                                    "description": "Fin ISO YYYY-MM-DD incluse.",
+                                },
+                            },
+                            ["start_date", "end_date"],
+                        ),
+                    ))
         if self.browser:
             legacy = {"list_browser_pages", "inspect_browser_page", "activate_browser_page",
                       "write_browser_element", "click_browser_element", "press_browser_element",
@@ -469,22 +526,67 @@ class FoundationToolAdapter:
             elif self.browser and name in {"open_web_search", "close_tab"}:
                 raise RuntimeError("use_generic_browser_primitives_with_observed_tab_id")
             elif name == "remember_information" and self.memory:
+                tool_mode = memory_agent_tools_enabled()
                 if enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED"):
-                    if not self._semantic_memory_write_authorized:
-                        raise RuntimeError(
-                            "persistent_write_requires_semantic_user_authorization"
-                        )
-                    self._semantic_memory_write_authorized = False
+                    if tool_mode:
+                        # The LLM may select the tool, but ONLY the original
+                        # explicit user turn authorizes durable storage. Store
+                        # their literal words, never model-invented details.
+                        if not is_explicit_memory_write_request(
+                            str(self.current_user_text or "")
+                        ):
+                            raise RuntimeError(
+                                "persistent_write_requires_explicit_user_request"
+                            )
+                        if self._durable_memory_written_this_turn:
+                            raise RuntimeError(
+                                "persistent_write_already_completed_this_turn"
+                            )
+                    else:
+                        if not self._semantic_memory_write_authorized:
+                            raise RuntimeError(
+                                "persistent_write_requires_semantic_user_authorization"
+                            )
+                        self._semantic_memory_write_authorized = False
                 else:
                     from .memory_router import MemoryRouter
                     if MemoryRouter().decide(self.current_user_text).kind != "write":
                         raise RuntimeError(
                             "persistent_write_requires_explicit_user_request"
                         )
-                item = self.memory.remember(
-                    str(args.get("content", "")),
-                    tags=str(args.get("tags", "")),
+                raw = (
+                    str(self.current_user_text or "").strip()
+                    if tool_mode else str(args.get("content", ""))
                 )
+                if not raw:
+                    raise RuntimeError("persistent_write_empty_user_source")
+                # Prevent an agent retry from writing the same turn twice.
+                # No duplicate write even if semantic projection later fails.
+                item = self.memory.remember(
+                    raw, tags=str(args.get("tags", "")),
+                )
+                if tool_mode:
+                    self._durable_memory_written_this_turn = True
+                    status = "raw_saved"
+                    if self.semantic_memory_engine is not None:
+                        try:
+                            facts = self.semantic_memory_engine.project_memory(
+                                item.id, provenance="explicit",
+                            )
+                            status = f"projected_facts={len(facts)}"
+                        except Exception as exc:
+                            self.memory.mark_projection_error(
+                                item.id,
+                                parser_version=self.semantic_memory_engine.parser_version,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
+                            status = "projection_failed_raw_preserved"
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="Information mémorisée localement.",
+                        detail=f"memory_id={item.id} {status}",
+                    )
                 return AgentActionResult(
                     name=name,
                     success=True,
@@ -494,6 +596,74 @@ class FoundationToolAdapter:
             elif name == "recall_information" and self.memory:
                 from .memory_retrieval import search
                 payload = [asdict(item) for item in search(self.memory, str(args.get("query", "")))]
+            elif name == "semantic_memory_inspect" and memory_agent_tools_enabled():
+                payload = {
+                    "status": "inspect",
+                    "items": [
+                        {
+                            "memory_id": item.id,
+                            "raw": str(item.content or "")[:900],
+                            "created_at": item.created_at,
+                        }
+                        for item in self.memory.recent_memories(limit=30)
+                    ],
+                    "read_only": True,
+                }
+            elif (
+                name in {
+                    "semantic_memory_events_on_date",
+                    "semantic_memory_events_in_range",
+                } and memory_agent_tools_enabled()
+            ):
+                from .memory_temporal import events_in_range
+                start = (
+                    str(args.get("date", "")).strip()
+                    if name == "semantic_memory_events_on_date"
+                    else str(args.get("start_date", "")).strip()
+                )
+                end = (
+                    start if name == "semantic_memory_events_on_date"
+                    else str(args.get("end_date", "")).strip()
+                )
+                try:
+                    payload = events_in_range(
+                        self.memory, start, end, limit=30,
+                    )
+                except ValueError as exc:
+                    raise RuntimeError(str(exc)) from exc
+                pending = self.memory.pending_projection_items(
+                    self.semantic_memory_engine.parser_version,
+                    limit=256,
+                ) if self.semantic_memory_engine is not None else []
+                states = self.memory.semantic_summary().get(
+                    "projection_states", {}
+                )
+                unresolved = (
+                    len(pending)
+                    + int(states.get("error", 0))
+                    + int(states.get("unprojected", 0))
+                )
+                payload["unindexed_count"] = len(pending)
+                payload["projection_issue_count"] = unresolved
+                if not payload["hits"] and unresolved:
+                    payload["status"] = "index_incomplete"
+                # Guard against a model-invented year when the user only
+                # named day/month. Do not silently invent another event or
+                # reinterpret an explicitly specified year.
+                if (
+                    not payload["hits"]
+                    and name == "semantic_memory_events_on_date"
+                    and enabled("JARVIS_MEMORY_SCOPE_GUARD_ENABLED")
+                    and memory_agent_tools_enabled()
+                ):
+                    from .memory_temporal import yearless_date_guard
+                    ambiguity = yearless_date_guard(
+                        self.memory,
+                        str(self.current_user_text or ""),
+                        start,
+                    )
+                    if ambiguity:
+                        payload.update(ambiguity)
             elif (
                 name == "semantic_memory_search"
                 and self.semantic_memory_engine is not None
@@ -501,6 +671,50 @@ class FoundationToolAdapter:
                 query_text = str(args.get("query", "")).strip()
                 if not query_text:
                     raise RuntimeError("semantic_memory_search_query_required")
+                if memory_agent_tools_enabled():
+                    # No second LLM intent parser (or lazy LLM indexing)
+                    # during read-only search. Raw rows remain authoritative,
+                    # with previously indexed facts included only for matches.
+                    from .memory_retrieval import search as raw_search
+                    matched = raw_search(self.memory, query_text, limit=12)
+                    matched_ids = {item.id for item in matched}
+                    facts = [
+                        fact
+                        for fact in self.memory.semantic_facts(status="active")
+                        if fact.memory_id in matched_ids
+                    ]
+                    payload = {
+                        "status": "resolved" if matched else "missing",
+                        "parser_operation": "agent_tool_direct",
+                        "query": query_text,
+                        "hits": [
+                            {
+                                "memory_id": fact.memory_id,
+                                "subject": fact.projection.subject,
+                                "relation": fact.projection.relation,
+                                "value": fact.projection.value,
+                                "qualifiers": dict(fact.projection.qualifiers),
+                                "entities": list(fact.projection.entities),
+                                "created_at": fact.created_at,
+                            }
+                            for fact in facts[:16]
+                        ],
+                        "raw_fallback": [
+                            {
+                                "memory_id": item.id,
+                                "raw": str(item.content or "")[:900],
+                                "created_at": item.created_at,
+                            }
+                            for item in matched
+                        ],
+                        "read_only": True,
+                    }
+                    return AgentActionResult(
+                        name=name,
+                        success=True,
+                        message="Recherche mémoire locale terminée.",
+                        detail=json.dumps(payload, ensure_ascii=False),
+                    )
                 intent = self.semantic_memory_engine.interpret_turn(
                     query_text
                 )
@@ -552,11 +766,12 @@ class FoundationToolAdapter:
                     for item in raw_items
                 ]
 
-                # For broad inventory-style search phrases that match nothing
-                # lexically, return a bounded recent inventory rather than
-                # failing the tool. It is labelled as fallback evidence and the
-                # reasoning model must still decide relevance.
-                if not hits and not raw_fallback and self.memory is not None:
+                # Returning recent memories for an unrelated question
+                # exposes unrequested personal facts to the model. Only an
+                # explicitly interpreted inventory request may return recent
+                # rows. Specific queries with no evidence stay genuinely empty.
+                if (not hits and not raw_fallback and self.memory is not None
+                        and intent.operation == "inspect"):
                     raw_fallback = [
                         {
                             "memory_id": item.id,
