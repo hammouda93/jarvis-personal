@@ -870,6 +870,34 @@ def _verified_browser_submit_seen(
     return False
 
 
+def _unverified_browser_send_claim(
+    user_text: str, response_text: str,
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> bool:
+    """A draft/composer write is not message delivery.
+
+    This is a conservative wording guard, not a click or a second planner.
+    It does not modify tools, permissions or the recipient.
+    """
+    request = normalize(user_text)
+    response = normalize(response_text)
+    if not re.search(
+        r"\\b(?:envoie|envoies|envoyez|envoyer|send|transmets|transmettre)\\b",
+        request,
+    ):
+        return False
+    if not re.search(
+        r"\\b(?:envoye|envoyee|envoyes|envoyees|transmis|transmise|sent)\\b",
+        response,
+    ):
+        return False
+    # The command can be 'envoie "bonjour"' without the word 'message'.
+    # Never let the model claim delivery merely because browser_write succeeded.
+    if not actions or any(a.name.startswith("browser_") for a in actions):
+        return not _verified_browser_submit_seen(actions)
+    return False
+
+
 def _browser_readback_request(text: str) -> bool:
     normalized = normalize(text)
     return bool(
@@ -3942,6 +3970,15 @@ class GroqResponsesAgent:
                         "le contexte de cette conversation."
                     )
 
+                if _unverified_browser_send_claim(user_text, text, actions):
+                    if log:
+                        log("[AGENT] blocked=unverified_browser_send_claim")
+                    text = (
+                        "Le texte a pu être préparé, mais je n'ai pas de preuve "
+                        "que le message a été envoyé. Vérifiez la conversation "
+                        "avant tout nouvel envoi pour éviter un doublon."
+                    )
+
                 unsupported_claims = _unsupported_browser_quoted_claims(
                     user_text,
                     text,
@@ -4641,6 +4678,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             marker in detail
             for marker in (
                 "429",
+                "402",
+                "payment_required",
+                "billing",
                 "cooldown",
                 "quota",
                 "too_many_requests",
@@ -4732,6 +4772,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
     ):
         gate = self._provider_rate_gate
         try:
+            if gate.billing_blocked("primary"):
+                raise AgentRuntimeUnavailable(
+                    "Cerebras primary disabled after HTTP 402 payment_required")
             if not gate.available("primary"):
                 raise AgentRuntimeUnavailable("Cerebras primary cooldown after HTTP 429")
             return super()._chat(
