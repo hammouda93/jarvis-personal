@@ -955,6 +955,24 @@ def _unsupported_browser_quoted_claims(
     """Reject quoted page facts that are absent from all observed evidence."""
     if not _browser_readback_request(user_text):
         return []
+    # The quote-proof policy belongs to browser/page observations, not
+    # general personal-memory questions. A successfully grounded memory
+    # quotation must never be rejected for lack of a browser DOM.
+    browser_actions = any(
+        action.name.startswith("browser_") for action in actions
+    )
+    page_request = bool(re.search(
+        r"\\b(?:navigateur|onglet|chrome|browser|site|website|webpage|"
+        r"page web|sur la page|dans la page)\\b",
+        normalize(user_text),
+    ))
+    browser_snapshot = "BROWSER_GROUNDING_READ_ONLY:" in str(context or "")
+    memory_only = (
+        any(action.name.startswith("semantic_memory_") for action in actions)
+        and not browser_actions and not page_request
+    )
+    if memory_only or not (browser_actions or page_request or browser_snapshot):
+        return []
     claims = re.findall(
         r'(?:«([^»\n]+)»|“([^”\n]+)”|"([^"\n]+)")',
         response_text or "",
