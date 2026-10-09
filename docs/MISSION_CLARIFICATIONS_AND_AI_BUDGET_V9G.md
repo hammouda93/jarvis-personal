@@ -102,3 +102,46 @@ Avec un **worktree séparé** et une mémoire de test isolée :
 Comparer la PR #17 à 9F ; la réconcilier avec les modifications locales des
 Skills **sans écraser les fichiers locaux**. Poursuivre la roadmap après ces
 correctifs. Les commits ici ne constituent pas une clôture de Jarvis.
+
+## Correctifs post-acceptation du 9 octobre 2026
+
+Un journal réel (YouTube, WhatsApp Web, Instagram, MS Football, Windows Cursor)
+a été inspecté après la première validation des tests 9G.
+
+Observations confirmées :
+- YouTube : recherche, sélection, retour et fermeture ciblée généralement
+  fonctionnels ; une navigation `back` a échoué après navigation par un lien.
+- WhatsApp : un `browser_write` vérifié a été présenté comme « Message envoyé »
+  avant la vraie soumission ; suivi d'un envoi réel dans une autre conversation.
+- Cerebras principal : **HTTP 402 payment_required à chaque tour**, jusqu'à
+  la sélection du secondaire. Cette erreur est différente du HTTP 429.
+- Cerebras secondaire : parfois HTTP 429. Préflight Groq a correctement
+  bloqué un contexte estimé > 7 000 tokens plutôt que d'envoyer une requête
+  manifestement trop grosse.
+- Mémoire V5 : `semantic_memory_ollama_unavailable:timed out` intermittent.
+- MS Football : des réponses sur le nombre de matchs ont été contredites par
+  l'interface ; une modification de statut a été amorcée et un **agent
+  Performance réel** a été lancé. Cet état de production ne doit pas être
+  confondu avec une fixture de test.
+- Installer Cursor : étapes UIA franchies, fin d'installation non prouvée.
+
+Modifications complémentaires :
+- Les comptes Cerebras renvoyant HTTP 402 sont désormais mis hors circuit
+  dans le processus en cours : **ne pas retenter la même clé** à chaque
+  tour ; les autres comptes restent autorisés. Recréer le processus après
+  toute correction du compte. Les HTTP 429 conservent le cooldown temporaire.
+- Un garde-fou de réponse rejette une affirmation « message envoyé » si les
+  actions navigateur ne montrent qu'une écriture ou aucune soumission vérifiée.
+  Il ne relance jamais automatiquement une action d'envoi.
+
+Limites explicites :
+- Le mécanisme n'accorde ni crédit fournisseur ni quota API supplémentaire.
+- La preuve de livraison distante d'un message reste plus stricte que la
+  simple disparition du texte du champ ; vérifier dans l'interface réelle.
+- L'exécution continue d'installer des logiciels n'est pas encore validée.
+- Les questions de cardinalité/grands tableaux HTML exigent encore un
+  raisonnement ancré dans une liste structurée de fiches, et non une réponse
+  extrapolée du texte aplati.
+- Ne pas exécuter à nouveau des changements en production pour « tester »
+  les validations sans un environnement et des permissions dédiées.
+- CI et tests locaux ne remplacent pas les tests Windows sur cette version.
