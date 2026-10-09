@@ -58,6 +58,8 @@ class MCPRegistry:
             raise ValueError("invalid_mcp_registry")
         if raw.get("version") != 1:
             raise ValueError("unsupported_mcp_registry_version")
+        if "runtime_enabled" in raw and type(raw["runtime_enabled"]) is not bool:
+            raise ValueError("invalid_mcp_runtime_flag")
         for server, entry in raw["servers"].items():
             if (not _ID.fullmatch(str(server)) or not isinstance(entry, dict)
                     or entry.get("kind") not in {"http", "stdio"}
@@ -99,6 +101,12 @@ class MCPRegistry:
                     entry.get("last_discovery_success_utc") or ""
                 )[:40],
                 "connected_now": False,
+                "connection_state": entry.get("connection_state", "disconnected"),
+                "capabilities": copy.deepcopy(entry.get("capabilities") or {}),
+                "resources": copy.deepcopy(entry.get("resources") or [])[:150],
+                "prompts": copy.deepcopy(entry.get("prompts") or [])[:150],
+                "resource_templates": copy.deepcopy(entry.get("resource_templates") or [])[:150],
+                "inventory_truncated": list(entry.get("inventory_truncated") or []),
                 "credential_source": entry.get("credential_source", "environment") if entry.get("kind") == "http" else "scoped_environment",
                 "discovered": len(entry.get("tools") or {}),
                 "allowed": sum(
@@ -109,7 +117,7 @@ class MCPRegistry:
                     {"name": tool_name, "allowed": record.get("allowed") is True,
                      "description": str(record.get("description") or "")[:150]}
                     for tool_name, record in (entry.get("tools") or {}).items()
-                ][:80],
+                ][:150],
             }
             for name, entry in sorted(servers.items())
             if isinstance(entry, dict)
@@ -122,6 +130,67 @@ class MCPRegistry:
             except Exception:
                 row["activity"] = {"unavailable": True}
         return result
+
+    def runtime_enabled(self) -> bool:
+        with self._lock:
+            data = self._load()
+        return data.get("runtime_enabled", os.getenv("JARVIS_MCP_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}) is True
+
+    def set_runtime_enabled(self, enabled: bool) -> None:
+        if type(enabled) is not bool:
+            raise ValueError("invalid_mcp_runtime_flag")
+        with self._lock:
+            data = self._load()
+            data["runtime_enabled"] = enabled
+            self._write(data)
+
+    def note_inventory(self, server_id: str, inventory: dict) -> None:
+        """Persist bounded advertised metadata, never content or authority."""
+        safe = {}
+        for field in ("resources", "resource_templates", "prompts"):
+            records = []
+            for item in list(inventory.get(field) or [])[:150]:
+                if not isinstance(item, dict):
+                    continue
+                record = {"name": str(item.get("name", ""))[:100],
+                          "description": str(item.get("description", ""))[:400]}
+                uri_key = "uri" if field == "resources" else "uri_template"
+                if uri_key in item:
+                    uri = str(item[uri_key])[:1000]
+                    try:
+                        parsed = urlsplit(uri)
+                        if parsed.query or parsed.fragment or parsed.username or parsed.password:
+                            continue
+                    except ValueError:
+                        continue
+                    record[uri_key] = uri
+                if field == "prompts":
+                    record["arguments"] = [{"name": str(a.get("name", ""))[:100],
+                                            "required": a.get("required") is True}
+                                           for a in list(item.get("arguments") or [])[:30] if isinstance(a, dict)]
+                records.append(record)
+            safe[field] = records
+        safe["capabilities"] = {k: (inventory.get("capabilities") or {}).get(k) is True for k in ("tools", "resources", "prompts")}
+        safe["inventory_truncated"] = [k for k in inventory.get("truncated", [])
+                                       if k in {"tools", "resources", "prompts", "resource_templates"}]
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not isinstance(entry, dict):
+                raise KeyError("mcp_server_not_found")
+            entry.update(safe)
+            self._write(data)
+
+    def note_connection_state(self, server_id: str, state: str) -> None:
+        if state not in {"disconnected", "tested_session_closed", "authorization_required", "transport_error"}:
+            raise ValueError("invalid_mcp_connection_state")
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not isinstance(entry, dict):
+                raise KeyError("mcp_server_not_found")
+            entry["connection_state"] = state
+            self._write(data)
 
     def activity(self):
         from .mcp_activity import MCPActivityStore
@@ -210,7 +279,7 @@ class MCPRegistry:
             self._write(data)
 
     def set_credential_source(self, server_id: str, source: str) -> None:
-        if source not in {"environment", "vault", "none", "oauth"}:
+        if source not in {"environment", "vault", "none", "oauth", "api_key"}:
             raise ValueError("invalid_mcp_credential_source")
         with self._lock:
             data = self._load()
@@ -218,6 +287,18 @@ class MCPRegistry:
             if not isinstance(entry, dict) or entry.get("kind") != "http":
                 raise ValueError("http_server_required_for_bearer")
             entry["credential_source"] = source
+            self._write(data)
+
+    def set_api_key_header(self, server_id: str, header: str) -> None:
+        if header not in {"X-API-Key", "X-Goog-Api-Key"}:
+            raise ValueError("invalid_mcp_api_key_header")
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not isinstance(entry, dict) or entry.get("kind") != "http":
+                raise ValueError("http_server_required_for_api_key")
+            entry["api_key_header"] = header
+            entry["credential_source"] = "api_key"
             self._write(data)
 
     def remove_server(self, server_id: str) -> None:

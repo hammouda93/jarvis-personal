@@ -298,9 +298,12 @@ class AssistantWorker(QObject):
                 stop_event=self._mcp_control.stop_requested)
         except Exception as exc:
             # Never leak API tokens, bearer headers or arbitrary MCP output.
+            from .mcp_control import connection_failure_state
             result = {"success": False, "operation": command.operation,
                       "server_id": command.server_id,
-                      "reason": type(exc).__name__}
+                      "reason": connection_failure_state(exc)
+                      if command.operation in {"discover", "connect", "reconnect", "oauth_authorize"}
+                      else type(exc).__name__}
         finally:
             if command.operation == "oauth_authorize":
                 self._mcp_control.finish_authorization()

@@ -22,6 +22,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QScrollArea,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -971,6 +972,12 @@ class JarvisWindow(QWidget):
         self.side_tabs.setMinimumWidth(300)
         self.side_tabs.addTab(self.operator_console, "◉  CONTRÔLE")
         self.side_tabs.addTab(self.flow_panel, "◇  TRAJET")
+        self.mcp_scroll = QScrollArea(self)
+        self.mcp_scroll.setWidgetResizable(True)
+        self.mcp_scroll.setFrameShape(QFrame.NoFrame)
+        self.mcp_scroll.setStyleSheet("QScrollArea {background:#081c2c;border:0;}")
+        self.mcp_scroll.setWidget(self.operator_console.mcp_panel)
+        self.side_tabs.addTab(self.mcp_scroll, "MCP")
         self.canvas.setMinimumSize(240, 100)
 
         title = QLabel("PERSONAL JARVIS")

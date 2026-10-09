@@ -127,6 +127,8 @@ class WindowsDPAPITests(unittest.TestCase):
             root = Path(temporary)
             vault = CredentialVault(root, backend=_DPAPIStore(root))
             vault.write("fixture", "https://fixture.example/mcp", "TEST_FIXTURE_NOT_A_REAL_TOKEN")
+            vault.write("fixture", "https://fixture.example/mcp", "TEST_FIXTURE_API_KEY", "api_key")
+            self.assertEqual(vault.read("fixture", "https://fixture.example/mcp", "api_key"), "TEST_FIXTURE_API_KEY")
             self.assertEqual(vault.read("fixture", "https://fixture.example/mcp"), "TEST_FIXTURE_NOT_A_REAL_TOKEN")
             encrypted = next(root.glob("*.dpapi")).read_bytes()
             self.assertNotIn(b"TEST_FIXTURE_NOT_A_REAL_TOKEN", encrypted)

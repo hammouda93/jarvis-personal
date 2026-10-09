@@ -6,11 +6,28 @@ a un compte personnel. Aucun compte personnel n'a ete connecte par ces tests.
 
 ## Transports
 
+L'onglet MCP de Jarvis est un centre dedie. Services enregistres, catalogue
+documente et formulaire d'ajout sont separes. L'interrupteur global persiste
+dans le registre et s'applique aux schemas/dispatch du runtime existant, sans
+reinitialiser les conversations ni demarrer de serveur. L'ancien opt-in
+`JARVIS_MCP_ENABLED` est respecte seulement en l'absence de drapeau persiste.
+
 Le SDK officiel MCP gere les sessions HTTP et stdio. Les sessions sont courtes;
 `connected_now=false` apres fermeture est normal, pas un echec silencieux.
 La decouverte reconcilie les schemas et revoque les permissions modifiees.
 Chaque outil doit etre autorise explicitement; l'approbation du serveur ne
 donne pas acces a tous ses outils.
+
+Connecter/reconnecter effectue une tentative de session et inventorie les
+capacites annoncees. Les methodes tools/list, resources/list,
+resources/templates/list et prompts/list sont paginees avec les parametres
+du SDK officiel, uniquement si la capacite est declaree. Limite : 9 pages et
+150 items par categorie, avec indicateur de troncature. Aucun resource/read
+ni prompts/get n'est execute ; ces metadonnees ne sont pas injectees comme
+instructions. Leur exploitation dans une mission reste a developper.
+Un echec de connexion desactive le serveur ; diagnostics classes uniquement,
+sans bodies distants. Le resultat "connexion testee ; session fermee" ne
+signifie pas connexion maintenue ni comptes valides apres redemarrage.
 
 Le stdio generique exige un executable local et une confiance explicite.
 Le processus a les droits du compte utilisateur : ce n'est PAS un sandbox OS.
@@ -22,6 +39,13 @@ disponible; enregistrer ce profil n'installe ni ne lance Hermes.
 HTTP refuse les redirections implicites de l'endpoint d'outil. OAuth utilise
 les controles d'URL/callback et PKCE/state du SDK; le consentement navigateur
 est une commande explicite de l'operateur, jamais un effet cache du modele.
+
+Les cles API utilisent exclusivement `X-API-Key` ou `X-Goog-Api-Key`, dans un
+enregistrement chiffre distinct lie a l'endpoint. Pas de cle en query ni de
+headers arbitraires Cookie/Host. Un mecanisme d'authentification a la fois ;
+combinaison cle API + OAuth non prise en charge. Changer de credential desactive
+le serveur et revoque ses outils. Deconnecter conserve le coffre mais revoque
+les outils ; oublier les credentials purge toutes leurs variantes.
 
 ## Credentials Et OAuth
 
@@ -64,5 +88,13 @@ client OAuth/scopes et couts documentes, puis testes sur comptes de test.
 Le catalogue seul ne vaut pas authentification. Gmail, Calendar, Drive et
 GitHub restent a connecter reellement. Aucune API personnelle WhatsApp MCP
 n'est inventee; le parcours web reste generique dans Chrome habituel.
-Le support d'une cle API HTTP supplementaire, le catalogue officiel detaille,
-et les scenarios d'expiration/revocation de comptes reels restent ouverts.
+Les scenarios d'expiration/revocation de comptes reels restent ouverts.
+
+Catalogue consulte le 2026-10-09 :
+[Google Workspace](https://developers.google.com/workspace/guides/configure-mcp-servers)
+(Developer Preview, projet/APIs et client OAuth requis),
+[GitHub officiel](https://github.com/github/github-mcp-server)
+(PAT limite ou votre application OAuth),
+[Google Maps](https://developers.google.com/maps/ai/grounding-lite)
+(API active et cle restreinte). Les URLs sont documentees, PAS testees sur un
+compte Jarvis. Ces prerequisites ne sont pas resolus par choisir une carte.

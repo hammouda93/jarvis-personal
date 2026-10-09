@@ -52,9 +52,9 @@ STAGES: tuple[Stage, ...] = (
     Stage(9, "multi_agent", "Missions continues, delegation et MCP (9D-9F)", "in_progress",
           "green_ancestor", "not_validated", "tests/test_mission_continuation.py"),
     Stage(10, "skills_learning", "Skills revisionnes et apprentissage opt-in", "in_progress",
-          "pending", "not_validated", "tests/test_operational_preferences.py"),
-    Stage(11, "integrations", "Intégrations personnelles et tâches durables", "planned",
-          "not_applicable", "not_validated", "connecteurs + planificateur durable"),
+          "green_ancestor", "not_validated", "tests/test_operational_preferences.py"),
+    Stage(11, "integrations", "Centre MCP et integrations / taches durables", "in_progress",
+          "pending", "not_validated", "tests/test_mcp_control_center.py"),
 )
 CURRENT_STAGE_KEY = "multi_agent"
 
@@ -80,8 +80,8 @@ def snapshot() -> dict:
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
-            "CI Windows/Linux verte au checkpoint 38aa8dd. Correctifs 9G reconcilies, "
-            "Skills et apprentissage OFF par defaut, controles testes localement. OAuth personnel non connecte; "
+            "CI Windows/Linux verte au checkpoint 2a47abe. Correctifs 9G reconcilies, "
+            "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."
         ),

@@ -2,7 +2,44 @@
 
 Date de demarrage : 2026-10-08 (Africa/Lagos).
 
-## Reprise du 2026-10-09 : checkpoint 9F
+## Reprise du 2026-10-09 : 9G, Opt-ins Et Centre MCP
+
+### Centre MCP
+
+- Acces direct par l'onglet MCP de la fenetre Jarvis. Vues Services / Catalogue /
+  Ajouter, puis Capacites / Acces / Journal par serveur. Aucune connexion sur le
+  thread Qt ni au demarrage.
+- Interrupteur MCP persistant et applique au runtime deja construit ; outils
+  natifs transmis sans modification, sans deuxieme cerveau. OFF initial en
+  l'absence de consentement precedent `JARVIS_MCP_ENABLED` ou de fichier.
+- Connexion/reconnexion explicites, une seule tentative, inventaire automatique
+  borne des outils, ressources, templates et prompts declares. Pagination adaptee
+  au SDK officiel 2.3. Pas de lecture de contenu ni execution de prompt.
+- Etat honnete : deconnecte, autorisation necessaire, erreur, connexion testee
+  et session fermee. Les sessions restent courtes, aucun badge de connexion
+  permanente invente. Un test echoue desactive les outils du serveur.
+- Bearer/PAT, OAuth et cles API `X-API-Key` / `X-Goog-Api-Key` dans le coffre
+  OS, lies a l'endpoint. Changer de credential revoque le consentement des outils.
+  Deconnecter conserve les secrets mais revoque les outils ; oublier les secrets
+  ou supprimer le serveur purge le coffre.
+- Catalogue officiel documente : Gmail, Calendar, Drive, Docs, Sheets (Google
+  Workspace Developer Preview), GitHub, Maps, Hermes local. Selection/preparation
+  n'ajoute aucun serveur et ne consent aucun compte. Aucun MCP WhatsApp personnel
+  officiel n'est presente comme disponible.
+- Les missions peuvent utiliser les outils explicitement selectionnes, via le
+  registre generique et les confirmations existantes. Les sorties de serveur
+  restent non verifiees, pas des preuves de completion de mission.
+
+Tests ajoutes : inventaires SDK pagines/resource-only, bornes/cursors repetes,
+connexions sans appel, etats/401/quotas, persistance/runtime gate, coffre API key,
+metadata URI sans secrets en query, controles Qt et acces direct a 660 pixels.
+La premiere regression a detecte un debordement avec police de remplacement ;
+les boutons ont ete corriges puis les tests de geometrie relances avec succes.
+Les captures Qt hors ecran ne sont PAS une recette Windows interactive.
+Regression locale : 874 tests Python Windows, 0 echec/erreur/skip apres
+correction ; Browser Bridge 45/45. La CI de ce checkpoint est a observer.
+Connexions personnelles, expiration/revocation fournisseur, Linux SecretService
+reel, missions MCP de bout en bout et sessions longues restent non valides.
 
 ### Reconciliation 9G Et Consentement Operationnel
 
@@ -34,8 +71,11 @@ Travail ajoute apres reconciliation :
 
 Verification locale actuelle : 856 tests Python Windows passes, 0 echec/erreur/skip;
 45/45 replays Browser Bridge. Les deux interrupteurs, quatre modes et redemarrage
-de configuration sont testes automatiquement. CI du code combine a observer.
-Le centre MCP complet, l'autonomie naturelle bout-en-bout, le compactage de
+de configuration sont testes automatiquement. CI `2a47abe` observee SUCCESS :
+[run 37939644901](https://github.com/hammouda93/jarvis-personal/actions/runs/37939644901),
+Windows 856 passes, Linux 851 passes + 5 exclusions Windows/DPAPI, Node 45/45
+sur chaque OS. Le nouveau centre MCP attend sa propre CI.
+L'acceptation MCP complete, l'autonomie naturelle bout-en-bout, le compactage de
 contexte, la lecture fiable de lignes/cartes, V5/Ollama reel et le scheduler
 durable restent ouverts. Aucun agent de production ni compte personnel utilise.
 Les erreurs de nombres MS Football, refs Instagram et routage VLC sont des

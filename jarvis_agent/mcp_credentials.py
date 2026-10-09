@@ -70,7 +70,7 @@ class _SecretServiceStore:
 
 
 class CredentialVault:
-    PURPOSES = ("bearer", "oauth_tokens", "oauth_client", "oauth_metadata")
+    PURPOSES = ("bearer", "api_key", "oauth_tokens", "oauth_client", "oauth_metadata")
 
     def __init__(self, root: str | Path | None = None, *, backend=None):
         if root is None:

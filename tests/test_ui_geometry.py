@@ -39,10 +39,23 @@ class WindowGeometryTests(unittest.TestCase):
         scroll = panel.scroll_area
         self.assertTrue(scroll.isAncestorOf(panel.mission_begin_button))
         self.assertTrue(scroll.isAncestorOf(panel.mode_line))
-        scroll.ensureWidgetVisible(panel.mcp_panel)
+        scroll.ensureWidgetVisible(panel.skills_panel)
         self.app.processEvents()
         self.assertGreater(scroll.verticalScrollBar().maximum(), 0)
         self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+
+    def test_mcp_has_direct_navigation_separate_from_control_scroll(self):
+        self.resize(660, 500)
+        self.window.side_tabs.setCurrentWidget(self.window.mcp_scroll)
+        self.app.processEvents()
+        panel = self.window.operator_console.mcp_panel
+        self.assertTrue(panel.isVisible())
+        self.assertFalse(self.window.operator_console.scroll_area.isAncestorOf(panel))
+        for page in (panel.services_page, panel.catalog_page, panel.add_page):
+            panel.tabs.setCurrentWidget(page)
+            self.app.processEvents()
+            self.assertEqual(self.window.mcp_scroll.horizontalScrollBar().maximum(), 0)
+        self.assertEqual(panel.tabs.count(), 3)
 
     def test_small_logical_screen_with_text_entry_keeps_window_controls_accessible(self):
         self.window.conversation_button.setChecked(True)

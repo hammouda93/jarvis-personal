@@ -37,6 +37,11 @@ de cle, cookie, token OAuth ou contenu prive dans un rapport partage.
 | 14 | Qt a 100/125/150/200 pour cent, petite fenetre, supervision agrandie et compact | Tous controles accessibles au defilement, panneaux reglables, texte lisible, aucun avertissement de geometrie; noter les resolutions logiques |
 | 15 | Resultat d'action volontairement inconnu en fixture locale controlee | Aucune repetition automatique, reprise verifier-only; mutation reussie identique non redispatchee pendant continuation |
 | 16 | MCP sur un serveur/compte de test | Permissions par outil, consentement explicite, quota/revocation/panne, secrets absents de configuration/logs et captures |
+| 17 | Skills OFF / apprentissage OFF, redemarrage | Les deux reglages restent OFF, ni injection ni ecriture operationnelle ; V5/conversation/mission fonctionnent sans ces modules |
+| 18 | Clarification 9G avant execution | Questions entieres, reponse et revision conservees ; aucun outil execute avant approbation du plan revise |
+| 19 | Onglet MCP, services/catalogue, HTTP et stdio jetable | Catalogue ne connecte rien ; programme local explicitement approuve ; inventaire outils/resources/prompts declarees et session fermee affiches correctement |
+| 20 | MCP API key / OAuth sur compte de test, fermer et redemarrer | Secrets chiffres, pas recharges dans les champs ; reconnecter explicitement ; expiration/revocation necessitent une nouvelle autorisation, pas de consentement du modele |
+| 21 | MCP OFF ou outil bloque pendant mission au repos | Schema et dispatch retires au prochain appel ; outils Chrome/Windows et memoire restent actifs ; effet inconnu jamais retente |
 
 ## Modes A Comparer
 

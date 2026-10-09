@@ -640,10 +640,9 @@ class LiveMissionContinuityRuntime:
         tools = []
         try:
             from .mcp_server_registry import MCPRegistry
-            if os.getenv("JARVIS_MCP_ENABLED", "0").lower() in (
-                "1", "true", "yes", "on"
-            ):
-                tools = MCPRegistry().exposed_tools()
+            registry = MCPRegistry()
+            if registry.runtime_enabled():
+                tools = registry.exposed_tools()
         except (OSError, ValueError, KeyError, TypeError):
             # Broken/absent MCP config never prevents native mission review.
             tools = []

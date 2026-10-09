@@ -4858,11 +4858,10 @@ def build_agent_runtime() -> AgentRuntime:
     # MCP is a generic optional tool surface: it never changes the brain,
     # Windows driver or Browser Bridge. All tools are denied by default;
     # model-facing calls still pass the existing reliability/trace wrappers.
-    if enabled("JARVIS_MCP_ENABLED"):
-        from .mcp_tool_registry import MCPToolRegistry
-        from .mcp_server_registry import MCPRegistry
-
-        tools = MCPToolRegistry(tools, registry=MCPRegistry())
+    from .mcp_tool_registry import MCPToolRegistry
+    from .mcp_server_registry import MCPRegistry
+    mcp_registry = MCPRegistry()
+    tools = MCPToolRegistry(tools, registry=mcp_registry, runtime_gate=mcp_registry.runtime_enabled)
 
     # Independent, opt-in Hermes-inspired per-action checkpointing.
     # This registry is the *only* additional boundary around the existing

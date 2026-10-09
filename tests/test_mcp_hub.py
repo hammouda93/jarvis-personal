@@ -329,13 +329,14 @@ class MCPOperatorWidgetTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_provider_catalog_does_not_invent_urls_or_connect(self):
+    def test_documented_catalog_does_not_connect_or_authorize(self):
         from jarvis_agent.mcp_service_catalog import SERVICE_CARDS
         ids = {x.identifier for x in SERVICE_CARDS}
         self.assertTrue({
             "gmail", "google_sheets", "google_maps", "google_drive",
-            "whatsapp", "github", "hermes",
+            "google_calendar", "google_docs", "github", "hermes",
         } <= ids)
+        self.assertNotIn("whatsapp", ids)
         panel = MCPConnectionsPanel()
         try:
             outbound = []
@@ -343,14 +344,15 @@ class MCPOperatorWidgetTests(unittest.TestCase):
             idx = panel.catalog_picker.findData("google_sheets")
             self.assertGreater(idx, 0)
             panel.catalog_picker.setCurrentIndex(idx)
-            self.assertEqual(panel.server_name.text(), "google_sheets")
+            self.assertEqual(panel.server_name.text(), "")
             self.assertEqual(panel.server_url.text(), "")
-            self.assertIn("Aucune URL", panel.catalog_note.text())
+            self.assertIn("Developer Preview", panel.catalog_note.text())
+            self.assertIn("https://sheetsmcp.googleapis.com/mcp/v1", panel.catalog_endpoint.text())
             self.assertEqual(outbound, [])
-            panel.catalog_picker.setCurrentIndex(
-                panel.catalog_picker.findData("whatsapp")
-            )
-            self.assertIn("Business", panel.catalog_note.text())
+            panel.catalog_prepare_button.click()
+            self.assertEqual(panel.server_name.text(), "google_sheets")
+            self.assertEqual(panel.server_url.text(), "https://sheetsmcp.googleapis.com/mcp/v1")
+            self.assertIs(panel.tabs.currentWidget(), panel.add_page)
             self.assertEqual(outbound, [])
         finally:
             panel.close()

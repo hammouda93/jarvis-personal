@@ -23,10 +23,11 @@ def _alias(server: str, tool: str) -> str:
 class MCPToolRegistry:
     def __init__(self, delegate: Any, *,
                  registry: MCPRegistry | None = None,
-                 transport: Any | None = None):
+                 transport: Any | None = None, runtime_gate=None):
         self.delegate = delegate
         self.registry = registry or MCPRegistry()
         self.transport = transport or OfficialMCPTransport()
+        self.runtime_gate = runtime_gate
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
@@ -35,6 +36,8 @@ class MCPToolRegistry:
         found: dict[str, dict] = {}
         collided = set()
         try:
+            if self.runtime_gate is not None and not self.runtime_gate():
+                return {}
             allowed = self.registry.exposed_tools()
         except (OSError, ValueError, TypeError, KeyError):
             # A damaged/unavailable optional MCP file must never take down

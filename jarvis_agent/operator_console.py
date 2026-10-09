@@ -318,7 +318,6 @@ class OperatorConsole(QFrame):
             group_layout.addWidget(view)
             event_list.addWidget(group)
         event_list.addWidget(self.active_panel)
-        event_list.addWidget(self.mcp_panel)
         self.skills_panel = SkillsPanel(self)
         self.skills_panel.requested.connect(self.skill_requested.emit)
         event_list.addWidget(self.skills_panel)

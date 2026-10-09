@@ -252,15 +252,18 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
     from .config import settings
     from .mcp_server_registry import MCPRegistry
     try:
-        mcp_servers = MCPRegistry().list_servers()
+        registry = MCPRegistry()
+        mcp_servers = registry.list_servers()
+        mcp_enabled = registry.runtime_enabled()
     except (OSError, ValueError, TypeError, KeyError):
         mcp_servers = []
+        mcp_enabled = False
     return {
         "active_supervisor_enabled": _flag("JARVIS_ACTIVE_SUPERVISOR_ENABLED"),
         "active_supervisor": active_supervisor,
         "supervised_plan": supervised_plan,
         "mcp": {
-            "enabled": _flag("JARVIS_MCP_ENABLED"),
+            "enabled": mcp_enabled,
             "servers": mcp_servers,
         },
         "reliability_enabled": reliability_on,

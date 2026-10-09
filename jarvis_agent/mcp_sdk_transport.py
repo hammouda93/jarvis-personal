@@ -11,6 +11,59 @@ import tempfile
 from typing import Any
 
 
+async def session_inventory(session, initialized, *, tools_only=False) -> dict:
+    """Read bounded metadata only; never fetch a resource or execute a prompt."""
+    from mcp.types import PaginatedRequestParams
+    capabilities = getattr(initialized, "capabilities", None)
+    declared = {name: getattr(capabilities, name, None) is not None
+                for name in ("tools", "resources", "prompts")}
+    if capabilities is None:
+        declared["tools"] = True  # compatibility with older injected sessions
+    result = {"tools": [], "resources": [], "prompts": [], "resource_templates": [],
+              "capabilities": declared, "truncated": []}
+    methods = [("tools", "list_tools", "tools")]
+    if not tools_only:
+        methods += [("resources", "list_resources", "resources"),
+                    ("resources", "list_resource_templates", "resource_templates"),
+                    ("prompts", "list_prompts", "prompts")]
+    for capability, method_name, field in methods:
+        if not declared[capability]:
+            continue
+        method = getattr(session, method_name)
+        cursor, seen, found = None, set(), []
+        for _ in range(9):
+            listing = await method() if cursor is None else await method(params=PaginatedRequestParams(cursor=cursor))
+            found.extend(getattr(listing, field, None) or
+                         getattr(listing, "resourceTemplates", None) or [])
+            next_cursor = getattr(listing, "next_cursor", None) or getattr(listing, "nextCursor", None)
+            if not next_cursor:
+                break
+            if next_cursor in seen or len(found) >= 150:
+                result["truncated"].append(field)
+                break
+            seen.add(next_cursor)
+            cursor = next_cursor
+        else:
+            result["truncated"].append(field)
+        if len(found) > 150 and field not in result["truncated"]:
+            result["truncated"].append(field)
+        for item in found[:150]:
+            record = {"name": str(getattr(item, "name", ""))[:100],
+                      "description": str(getattr(item, "description", "") or "")[:400]}
+            if field == "tools":
+                record["input_schema"] = getattr(item, "input_schema", None) or getattr(item, "inputSchema", {}) or {}
+            elif field == "resources":
+                record["uri"] = str(getattr(item, "uri", ""))[:1000]
+            elif field == "resource_templates":
+                record["uri_template"] = str(getattr(item, "uri_template", None) or getattr(item, "uriTemplate", ""))[:1000]
+            elif field == "prompts":
+                record["arguments"] = [{"name": str(getattr(a, "name", ""))[:100],
+                                        "required": getattr(a, "required", False) is True}
+                                       for a in (getattr(item, "arguments", []) or [])[:30]]
+            result[field].append(record)
+    return result
+
+
 class MCPUnavailable(RuntimeError):
     def __init__(self, message: str, *, outcome_unknown: bool = False):
         super().__init__(message)
@@ -33,29 +86,10 @@ class OfficialMCPTransport:
 
         async def proceed(read, write):
             async with ClientSession(read, write) as session:
-                await session.initialize()
-                if operation == "discover":
-                    listing = await session.list_tools()
-                    found = list(listing.tools)
-                    seen = set()
-                    for _ in range(8):  # bounded paging
-                        cursor = getattr(listing, "next_cursor", None) or getattr(listing, "nextCursor", None)
-                        if not cursor or cursor in seen or len(found) >= 150:
-                            break
-                        seen.add(cursor)
-                        listing = await session.list_tools(cursor=cursor)
-                        found.extend(listing.tools)
-                    return [
-                        {
-                            "name": str(item.name),
-                            "description": str(item.description or "")[:400],
-                            "input_schema": (
-                                getattr(item, "input_schema", None)
-                                or getattr(item, "inputSchema", {}) or {}
-                            ),
-                        }
-                        for item in found[:150]
-                    ]
+                initialized = await session.initialize()
+                if operation in {"discover", "inventory"}:
+                    inventory = await session_inventory(session, initialized, tools_only=operation == "discover")
+                    return inventory["tools"] if operation == "discover" else inventory
                 if operation == "call":
                     reply = await session.call_tool(tool, arguments=arguments or {})
                     # Tool success is NOT whole-mission verification.
@@ -107,6 +141,7 @@ class OfficialMCPTransport:
             env_key = "JARVIS_MCP_BEARER_" + server_id.upper()
             source = entry.get("credential_source", "environment")
             auth = None
+            headers = {}
             if source == "vault":
                 from .mcp_credentials import CredentialUnavailable, CredentialVault
                 try:
@@ -118,6 +153,16 @@ class OfficialMCPTransport:
             elif source == "environment":
                 bearer = os.getenv(env_key, "").strip()
             elif source == "none":
+                bearer = ""
+            elif source == "api_key":
+                from .mcp_credentials import CredentialVault
+                header = entry.get("api_key_header")
+                if header not in {"X-API-Key", "X-Goog-Api-Key"}:
+                    raise MCPUnavailable("invalid_mcp_api_key_header")
+                value = CredentialVault(entry.get("_credential_root")).read(server_id, url, "api_key")
+                if not value or any(c in value for c in "\r\n\x00"):
+                    raise MCPUnavailable("mcp_secure_credential_missing")
+                headers[header] = value
                 bearer = ""
             elif source == "oauth":
                 from .mcp_oauth import build_oauth_provider
@@ -135,7 +180,8 @@ class OfficialMCPTransport:
             from .mcp_oauth import guarded_http_request
             async def guard(request):
                 await guarded_http_request(request, url, oauth=auth is not None)
-            headers = {"Authorization": "Bearer " + bearer} if bearer else {}
+            if bearer:
+                headers["Authorization"] = "Bearer " + bearer
             async with httpx2.AsyncClient(headers=headers, auth=auth, trust_env=False,
                     follow_redirects=False, event_hooks={"request": [guard]}) as http_client:
                 async with streamable_http_client(url, http_client=http_client) as streams:
@@ -159,6 +205,9 @@ class OfficialMCPTransport:
 
     def discover(self, entry: dict) -> list[dict]:
         return self.invoke(entry, "discover")
+
+    def inventory(self, entry: dict) -> dict:
+        return self.invoke(entry, "inventory")
 
     def call_tool(self, entry: dict, tool: str, arguments: dict) -> dict:
         return self.invoke(entry, "call", tool=tool, arguments=arguments)

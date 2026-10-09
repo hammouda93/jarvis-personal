@@ -53,6 +53,23 @@ Pour MCP, les principes utiles sont separation configure/connecte/lazy/erreur,
 limites et cooldown, environnement stdio reduit, controles de redirection et
 reconciliation des schemas. L'adaptation du centre MCP reste en cours.
 
+## Relecture Skills Et MCP Du 2026-10-09
+
+Skills : sources `tools/skill_manager_tool.py`, `agent/skill_utils.py`,
+`tools/skills_tool.py` au commit `14ec243c1797412d93e6b52c41f29f41e75b0cef`.
+Les principes de mutation serialisee, historique restaurable et filtrage des
+Skills desactives sont adaptes a notre stockage SQLite/revisions CAS. OFF
+runtime empeche toute injection/reutilisation, sans masquer la bibliotheque
+operateur ni effacer V5. Pas de copie du moteur de Skills Hermes.
+
+MCP : main `0670ba45240b734c1e6f6d1d5ead87233f37df49`,
+[discovery](https://github.com/NousResearch/hermes-agent/blob/0670ba45240b734c1e6f6d1d5ead87233f37df49/tools/mcp_tool_discovery.py),
+[transport](https://github.com/NousResearch/hermes-agent/blob/0670ba45240b734c1e6f6d1d5ead87233f37df49/tools/mcp_tool_transport.py).
+Hermes supporte les serveurs resource/prompt-only, distingue les etats et borne
+la decouverte. Jarvis reprend ces contrats avec le SDK officiel et son registre
+existant. Les sessions restent courtes, sans adopter le gateway/pool Hermes,
+ni remplacer Cerebras, Chrome Bridge ou UIA. Aucune portion amont copiee.
+
 ## Licence
 
 La [licence amont inspectee](https://github.com/NousResearch/hermes-agent/blob/9d05e7ff92d3edd9abdf20fe3d04551905cb995e/LICENSE)
