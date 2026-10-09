@@ -107,3 +107,9 @@ Regression cumulative finale : 920 tests Windows locaux passes, sans erreur,
 echec ni exclusion. Nouvelle CI a confirmer apres publication. Aucun modele
 reel ni compte personnel appele pour ces tests. Les vrais tests Windows sont prepares dans
 [FINAL_WINDOWS_ACCEPTANCE.md](FINAL_WINDOWS_ACCEPTANCE.md), non executes ici.
+
+Premiere CI de l'integration 51e6a0f : Ubuntu a trouve un KeyError dans la
+nouvelle assertion du test de scope, car le builtin Groq browser_search n'a pas
+de champ function. Assertion corrigee et fixture forcee avec ce builtin actif
+sur tous les OS ; runtime et capacites de production inchanges. Les nouvelles
+regressions et CI doivent etre observees avant de declarer l'integration verte.

@@ -35,6 +35,10 @@ et integrer leurs capacites sous le meme cerveau, sans reconstruire Jarvis.
   Apres correction : 116 tests runtime + 9 tests d'integration cibles passent ;
   regression complete finale : 920 tests Python Windows passes, 0 erreur/echec/
   exclusion ; Node 45/45. Nouvelle CI d'integration a observer apres publication.
+- La premiere CI d'integration `51e6a0f` a detecte une assertion de fixture
+  supposant tous les schemas au format function. Ubuntu exposait aussi le builtin
+  Groq browser_search. Test corrige pour couvrir explicitement les deux formats,
+  sans retrait de capacite ni modification du runtime ; regression relancee.
 
 La decision architecturale est preservee : V5 reste SQLite, accessible au meme
 registre et a la meme conversation. Les opt-ins V10B/C restent explicites.

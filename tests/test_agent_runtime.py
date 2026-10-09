@@ -483,10 +483,13 @@ class MemoryScopeV10CTests(unittest.TestCase):
                 agent._ephemeral_context = context
                 with patch.dict("os.environ", env, clear=False), patch(
                         "jarvis_agent.active_mission_supervisor.execution_scope_active", return_value=supervised), patch(
-                        "jarvis_agent.active_mission_supervisor.progress_status", return_value="blocked"):
+                        "jarvis_agent.active_mission_supervisor.progress_status", return_value="blocked"), patch(
+                        "jarvis_agent.agent_runtime.settings", replace(real_settings, groq_browser_search=True)):
                     agent.run("Lis ma memoire pour preparer ma journee")
                 self.assertFalse(agent._memory_scope_active)
-                self.assertIn("open_application", {t["function"]["name"] for t in agent.payloads[0]["tools"]})
+                tools = agent.payloads[0]["tools"]
+                self.assertIn("open_application", {(t.get("function") or {}).get("name") for t in tools})
+                self.assertIn("browser_search", {t.get("type") for t in tools})
 
     def test_scope_is_conservative_and_does_not_capture_external_missions(self):
         from jarvis_agent.memory_tool_scope import memory_only_request
