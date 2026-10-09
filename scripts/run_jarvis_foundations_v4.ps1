@@ -121,6 +121,9 @@ try {
     Write-Host ("  memory_core=" + $(if ($MemoryCore) { "on" } else { "off" }))
     Write-Host ("  semantic_memory_v5=" + $(if ($SemanticMemoryV5) { "on" } else { "off" }))
     if ($SemanticMemoryV5) {
+        Write-Host ("  memory_v5_routing=" + $(if ($env:JARVIS_MEMORY_AGENT_TOOLS_ENABLED -in @("1", "true", "yes", "on")) { "agent_tools (V10B)" } else { "legacy_pre_model (V10A)" }))
+    }
+    if ($SemanticMemoryV5) {
         Write-Host ("  semantic_memory_provider=" + $(if ($SemanticMemoryProvider) { $SemanticMemoryProvider } else { "auto" }))
         Write-Host ("  semantic_memory_model=" + $(if ($SemanticMemoryModel) { $SemanticMemoryModel } else { "provider default" }))
         Write-Host ("  semantic_memory_cloud=" + $(if ($AllowCloudSemanticMemory) { "explicitly allowed" } else { "blocked/local-first" }))
