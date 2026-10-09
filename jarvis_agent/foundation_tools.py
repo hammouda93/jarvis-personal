@@ -16,6 +16,15 @@ def enabled(name):
     return os.getenv(name, "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def memory_agent_tools_enabled():
+    """Opt-in V5 tool routing; default keeps proven V10A behavior."""
+    return (
+        enabled("JARVIS_MEMORY_CORE_ENABLED")
+        and enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED")
+        and enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")
+    )
+
+
 _BROWSER_PROPS = {
     "tab_id": {
         "type": "integer",
@@ -121,6 +130,7 @@ class FoundationToolAdapter:
         self.uncertain_scopes = set()
         self.pending_mutations = {}
         self._semantic_memory_write_authorized = False
+        self._durable_memory_written_this_turn = False
         self.semantic_memory_engine = None
 
     def __getattr__(self, name):
@@ -130,6 +140,7 @@ class FoundationToolAdapter:
         import re
         self.current_user_text = user_text
         self._semantic_memory_write_authorized = False
+        self._durable_memory_written_this_turn = False
         if not self.browser:
             return
         from .tools import route
@@ -302,14 +313,16 @@ class FoundationToolAdapter:
     def ollama_tools(self):
         tools = self.delegate.ollama_tools()
         if self.memory and enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED"):
-            # Memory V5 is a pre-LLM runtime. Hide legacy memory tools from the
-            # conversational model so it cannot bypass semantic admission,
-            # projection, scoping or retrieval.
+            # Legacy V10A V5 is a pre-LLM router. In V10B tool mode,
+            # expose only the explicit-write legacy primitive; never expose
+            # the old unscoped raw recall in either mode.
+            tool_mode = memory_agent_tools_enabled()
+            hidden = {"recall_information"}
+            if not tool_mode:
+                hidden.add("remember_information")
             tools = [
-                item
-                for item in tools
-                if item["function"]["name"]
-                not in {"remember_information", "recall_information"}
+                item for item in tools
+                if item["function"]["name"] not in hidden
             ]
             if self.semantic_memory_engine is not None:
                 tools.append(
@@ -334,6 +347,31 @@ class FoundationToolAdapter:
                         ["query"],
                     )
                 )
+                if tool_mode:
+                    tools.extend((
+                        self.delegate._ollama(
+                            "semantic_memory_inspect",
+                            "Inventaire READ-ONLY de la mémoire durable V5. "
+                            "Utilise cet outil lorsque l'utilisateur demande "
+                            "ce qui est enregistré, même si la recherche ciblée "
+                            "précédente ne renvoie aucun résultat.",
+                            {},
+                            [],
+                        ),
+                        self.delegate._ollama(
+                            "semantic_memory_events_on_date",
+                            "Liste READ-ONLY des faits datés et événements "
+                            "enregistrés dans la mémoire locale, pour une date "
+                            "calendaire exacte (YYYY-MM-DD), distincte de "
+                            "Google Calendar. N'utilise que la date résolue "
+                            "pour le fuseau local de l'utilisateur.",
+                            {"date": {
+                                "type": "string",
+                                "description": "Date au format YYYY-MM-DD.",
+                            }},
+                            ["date"],
+                        ),
+                    ))
         if self.browser:
             legacy = {"list_browser_pages", "inspect_browser_page", "activate_browser_page",
                       "write_browser_element", "click_browser_element", "press_browser_element",
