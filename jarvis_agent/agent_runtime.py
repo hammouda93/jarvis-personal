@@ -2628,6 +2628,7 @@ class GroqResponsesAgent:
         self._lesson_write_allowed = False
         self._feedback_only_turn = False
         self._memory_scope_active = False
+        self._recent_memory_evidence = False
         self._session_grounding: dict[str, str] = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
@@ -2647,6 +2648,7 @@ class GroqResponsesAgent:
         self._lesson_write_allowed = False
         self._feedback_only_turn = False
         self._memory_scope_active = False
+        self._recent_memory_evidence = False
         self._session_grounding = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
@@ -3554,10 +3556,16 @@ class GroqResponsesAgent:
             if message.get("role") == "assistant"
             and not message.get("tool_calls")
         ), "")
+        prior_memory_evidence = self._recent_memory_evidence
+        self._recent_memory_evidence = False
         self._memory_scope_active = (
             memory_tool_scope_enabled()
             and self._pending_function_approval is None
-            and memory_only_request(user_text, prior_assistant=prior_reply)
+            and memory_only_request(
+                user_text,
+                prior_assistant=prior_reply,
+                prior_memory_evidence=prior_memory_evidence,
+            )
         )
         if log and self._memory_scope_active:
             log("[AGENT_ROUTING] memory_only_tools=1")
@@ -4464,6 +4472,18 @@ class GroqResponsesAgent:
                     if name in {"research_web", "search_web"}:
                         research_web_calls += 1
                 actions.append(result)
+                # Only verified previous memory usage can justify keeping a
+                # short follow-up in the memory-only scope. A new external
+                # action or turn clears that weak conversational affinity.
+                if result.success and (
+                    name.startswith("semantic_memory_")
+                    or name == "remember_information"
+                ):
+                    self._recent_memory_evidence = True
+                elif result.success and name not in {
+                    "get_current_time", "mission_checkpoint",
+                }:
+                    self._recent_memory_evidence = False
                 self._remember_session_grounding(
                     name,
                     arguments,
