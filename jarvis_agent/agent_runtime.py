@@ -962,8 +962,8 @@ def _unsupported_browser_quoted_claims(
         action.name.startswith("browser_") for action in actions
     )
     page_request = bool(re.search(
-        r"\\b(?:navigateur|onglet|chrome|browser|site|website|webpage|"
-        r"page web|sur la page|dans la page)\\b",
+        r"\b(?:navigateur|onglet|chrome|browser|site|website|webpage|"
+        r"page web|sur la page|dans la page)\b",
         normalize(user_text),
     ))
     browser_snapshot = "BROWSER_GROUNDING_READ_ONLY:" in str(context or "")
