@@ -4612,6 +4612,8 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         self.api_key = settings.cerebras_api_key
         self.provider_name = "cerebras"
         self.reasoning_effort = settings.cerebras_reasoning_effort
+        from .provider_rate_budget import ProviderRateGate
+        self._provider_rate_gate = ProviderRateGate()
 
     def _get_client(self):
         if not self.api_key:
@@ -4639,6 +4641,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             marker in detail
             for marker in (
                 "429",
+                "cooldown",
                 "quota",
                 "too_many_requests",
                 "rate limit",
@@ -4682,16 +4685,30 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             timeout=min(settings.ai_request_timeout_s, 15.0),
             max_retries=0,
         )
+        request_messages = self._messages_for_request()
+        request_tools = self._tool_definitions(
+            ms_football_only=ms_football_only,
+            msf_tool_names=msf_tool_names,
+        )
+        from .provider_rate_budget import groq_fallback_preflight
+        allowed, estimate, budget = groq_fallback_preflight(
+            request_messages, request_tools,
+        )
+        if not allowed:
+            print(f"[AGENT_BUDGET] groq_fallback_skipped estimated_tokens={estimate} "
+                  f"configured_limit={budget}; no_request_sent")
+            raise AgentRuntimeUnavailable(
+                "Fallback Groq écarté avant API : contexte estimé trop volumineux. "
+                "Mission préservée; une nouvelle décision ou une réduction du "
+                "contexte est nécessaire."
+            )
         try:
             from .active_mission_supervisor import reserve_model_request
             reserve_model_request()
             return client.chat.completions.create(
                 model=settings.groq_agent_model,
-                messages=self._messages,
-                tools=self._tool_definitions(
-                    ms_football_only=ms_football_only,
-                    msf_tool_names=msf_tool_names,
-                ),
+                messages=request_messages,
+                tools=request_tools,
                 tool_choice=tool_choice,
                 parallel_tool_calls=False,
                 reasoning_effort=settings.groq_reasoning_effort,
@@ -4713,22 +4730,24 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
     ):
+        gate = self._provider_rate_gate
         try:
+            if not gate.available("primary"):
+                raise AgentRuntimeUnavailable("Cerebras primary cooldown after HTTP 429")
             return super()._chat(
                 tool_choice=tool_choice,
                 ms_football_only=ms_football_only,
                 msf_tool_names=msf_tool_names,
             )
         except AgentRuntimeUnavailable as primary_error:
-            print(
-                "[AGENT] Cerebras primary error: "
-                + str(primary_error)[:900]
-            )
+            gate.note_failure("primary", primary_error)
+            print("[AGENT] Cerebras primary unavailable: " + str(primary_error)[:250])
             if not self._should_try_secondary(primary_error):
                 raise
 
             secondary_error = None
-            if settings.cerebras_secondary_api_key:
+            if (settings.cerebras_secondary_api_key
+                    and gate.available("secondary")):
                 print(
                     "[AGENT] Cerebras primary unavailable; "
                     "trying secondary Cerebras API."
@@ -4748,10 +4767,8 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     )
                 except AgentRuntimeUnavailable as exc:
                     secondary_error = exc
-                    print(
-                        "[AGENT] Cerebras secondary error: "
-                        + str(exc)[:900]
-                    )
+                    gate.note_failure("secondary", exc)
+                    print("[AGENT] Cerebras secondary unavailable: " + str(exc)[:250])
                 finally:
                     self.api_key = primary_api_key
                     self.base_url = primary_base_url
