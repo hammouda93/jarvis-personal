@@ -3835,6 +3835,45 @@ class AgentRuntimeTests(unittest.TestCase):
             ["Javier Zanetti – The Legend"],
         )
 
+    def test_memory_quoted_fact_does_not_trigger_browser_page_proof(self):
+        memory = AgentActionResult(
+            name="semantic_memory_search",
+            success=True,
+            message="Mémoire consultée.",
+            detail=json.dumps({
+                "status": "resolved",
+                "raw_fallback": [
+                    {"raw": "Un événement personnel le 16 octobre 2026"}
+                ],
+            }),
+        )
+        self.assertEqual(
+            _unsupported_browser_quoted_claims(
+                "Quel est l'événement personnel ?",
+                "Vous avez noté « événement personnel » le 16 octobre.",
+                [memory],
+            ),
+            [],
+        )
+        self.assertEqual(
+            _unsupported_browser_quoted_claims(
+                "Quelle est la nature de cet événement ?",
+                "Le souvenir ne donne que « événement personnel ».",
+                [],
+            ),
+            [],
+        )
+
+    def test_browser_quote_guard_still_blocks_unsupported_page_claim(self):
+        self.assertEqual(
+            _unsupported_browser_quoted_claims(
+                "Quel est le titre sur le site ?",
+                "Le titre est « Résultat totalement inventé ».",
+                [],
+            ),
+            ["Résultat totalement inventé"],
+        )
+
     def test_browser_submit_repair_does_not_hijack_nonbrowser_send_turns(self):
         for user_text in (
             "Envoie un message.",
