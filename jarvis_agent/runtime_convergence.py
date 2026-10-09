@@ -671,13 +671,64 @@ class LiveMissionContinuityRuntime:
         return self.active_supervisor.run_until_pause(max_steps=max_steps, stop_event=stop_event,
                                                     progress=progress, log=log, phase=phase)
 
+    @staticmethod
+    def _mission_information_requested(user_text: str) -> bool:
+        """Narrow, local read-only intent for mission status, not an action router."""
+        text = str(user_text or "").strip().casefold()
+        if not text or len(text) > 260:
+            return False
+        if not any(word in text for word in ("mission", "plan", "étape", "etape")):
+            return False
+        return text.startswith((
+            "c quoi", "c'est quoi", "quelle est", "quel est",
+            "où en", "ou en", "montre", "affiche", "résume",
+            "resume", "rappelle", "statut", "état", "etat",
+            "what is", "what's", "show", "status",
+        ))
+
+    def _mission_information_reply(self, user_text: str):
+        """Consult an attached checkpoint even when execution is blocked.
+
+        Neither the model nor any browser/desktop tool is invoked.
+        """
+        if self._active_mission_id is None or not self._mission_information_requested(user_text):
+            return None
+        with self._lock:
+            snap = self.mission_snapshot(self._active_mission_id)
+        review = snap.get("supervisor") or {}
+        steps = review.get("steps") or []
+        questions = review.get("unresolved") or []
+        lines = [
+            "Mission : " + str(snap.get("user_goal") or "")[:400],
+            "État réel : " + str(snap.get("status") or "inconnu"),
+            "Objectif vérifié : " + ("oui" if snap.get("goal_verified") else "non"),
+            "Plan : " + str(len(steps)) + " étape(s).",
+        ]
+        for index, step in enumerate(steps[:6], 1):
+            lines.append(
+                str(index) + ". " + str(step.get("intent") or "")[:150]
+                + " — " + str(step.get("state") or "non vérifié")
+            )
+        if questions:
+            lines.append("À clarifier : " + " | ".join(str(q) for q in questions[:4])[:800])
+        if snap.get("manual_review_required"):
+            lines.append("Reprise des actions bloquée : vérification manuelle requise.")
+        from .agent_runtime import AgentTurnResult
+        return AgentTurnResult(text="\n".join(lines), actions=())
+
     def run(self, user_text: str, *, log=None, phase=None):
+        info = self._mission_information_reply(user_text)
+        if info is not None:
+            return info
         result = self._supervised_conversation(user_text, log=log, phase=phase)
         if result is not None:
             return result
         return self._run(user_text, log=log, phase=phase)
 
     def run_with_context(self, user_text: str, context: str, *, log=None, phase=None):
+        info = self._mission_information_reply(user_text)
+        if info is not None:
+            return info
         result = self._supervised_conversation(user_text, context=context, log=log, phase=phase)
         if result is not None:
             return result
