@@ -14,6 +14,11 @@ class AssistantState(str, Enum):
     UNDERSTANDING = "understanding"
     THINKING = "thinking"
     ACTING = "acting"
+    OBSERVING = "observing"
+    VERIFYING = "verifying"
+    WAITING_APPROVAL = "waiting_approval"
+    RECOVERING = "recovering"
+    PAUSED = "paused"
     SPEAKING = "speaking"
     SUCCESS = "success"
     ERROR = "error"
@@ -30,6 +35,11 @@ STATE_LABELS: dict[AssistantState, str] = {
     AssistantState.UNDERSTANDING: "COMPRÉHENSION",
     AssistantState.THINKING: "RÉFLEXION",
     AssistantState.ACTING: "ACTION EN COURS",
+    AssistantState.OBSERVING: "OBSERVATION",
+    AssistantState.VERIFYING: "VÉRIFICATION",
+    AssistantState.WAITING_APPROVAL: "APPROBATION ATTENDUE",
+    AssistantState.RECOVERING: "RÉVISION NÉCESSAIRE",
+    AssistantState.PAUSED: "MISSION SUSPENDUE",
     AssistantState.SPEAKING: "RÉPONSE",
     AssistantState.SUCCESS: "TERMINÉ",
     AssistantState.ERROR: "ATTENTION",

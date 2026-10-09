@@ -16,6 +16,27 @@ runtime, ni substitue a Cerebras, Chrome Bridge, UIA/CUA ou memoire V5.
 
 ## Choix Compatibles
 
+Relecture de continuite le 2026-10-09 : main
+`14ec243c1797412d93e6b52c41f29f41e75b0cef`.
+Sources inspectees :
+[run_agent](https://github.com/NousResearch/hermes-agent/blob/14ec243c1797412d93e6b52c41f29f41e75b0cef/run_agent.py),
+[conversation_loop](https://github.com/NousResearch/hermes-agent/blob/14ec243c1797412d93e6b52c41f29f41e75b0cef/agent/conversation_loop.py),
+[turn_final_response](https://github.com/NousResearch/hermes-agent/blob/14ec243c1797412d93e6b52c41f29f41e75b0cef/agent/turn_final_response.py).
+Hermes distingue continuations/interruptions et reponse finale, avec des
+gardes bornes sur les annonces d'action sans appel et une gate de verification.
+Jarvis reutilise le principe de disposition explicite avant cloture, en
+conservant ses predicates locaux independants et budgets de mission durables.
+La limite Hermes par defaut non bornee n'est pas reprise; les reparations
+textuelles Hermes ne constituent pas une preuve d'installation Windows.
+
+Sources officielles confrontees pour 9F :
+[Qt QScrollArea](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QScrollArea.html),
+[Qt QSplitter](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QSplitter.html),
+[Ollama contrat API](https://github.com/ollama/ollama/blob/main/docs/openapi.yaml).
+La geometrie utilise les contraintes et splitters Qt; le classificateur
+local demande une sortie JSON sans thinking. Aucun moteur tiers ne remplace
+les chemins de conversation et d'action existants.
+
 Hermes porte l'identite/autorite d'origine, borne les enfants, suit leur arret,
 persiste les resultats et agrege les rapports. Jarvis reprend ces principes via
 son contexte proprietaire, sa fabrique deja presente, son journal SQLite et ses

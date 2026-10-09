@@ -15,7 +15,7 @@ class Stage:
     title: str
     implementation: str  # integrated | in_progress | planned
     automated: str       # green_ancestor | pending | not_applicable
-    windows_real: str    # not_validated
+    windows_real: str    # full milestone acceptance; partial human reports are separate
     evidence: str        # known path/suite or future deliverable
 
     def as_dict(self) -> dict:
@@ -49,8 +49,8 @@ STAGES: tuple[Stage, ...] = (
           "green_ancestor", "not_validated", "tests/test_mission_workbench.py"),
     Stage(8, "semantic_supervisor", "Preuves et superviseur sémantique", "integrated",
           "green_ancestor", "not_validated", "tests/test_semantic_goal_supervisor.py"),
-    Stage(9, "multi_agent", "Supervision, délégation et MCP (9D/9E)", "in_progress",
-          "pending", "not_validated", "tests/test_controlled_delegation.py"),
+    Stage(9, "multi_agent", "Missions continues, delegation et MCP (9D-9F)", "in_progress",
+          "green_ancestor", "not_validated", "tests/test_mission_continuation.py"),
     Stage(10, "skills_learning", "Apprentissage & Skills validés", "planned",
           "not_applicable", "not_validated", "promotion contrôlée des expériences"),
     Stage(11, "integrations", "Intégrations personnelles et tâches durables", "planned",
@@ -69,11 +69,20 @@ def snapshot() -> dict:
         "current_title": active.title,
         "stages": stages,
         "release_ready": False,
+        "human_windows_evidence": {
+            "source": "user_continuation_brief_2026-10-09",
+            "observed": ["conversation_text_voice", "microphone_off_in_text_mode", "windows_tts_fallback",
+                         "chrome_normal_profile_youtube_navigation", "targeted_tab_close", "unicode_composer_input",
+                         "installer_uia_intermediate_steps", "installer_close_dialog_recovery"],
+            "not_independently_verified": ["message_recipient_delivery", "business_final_mutation",
+                                           "installer_completion_and_desktop_shortcut", "memory_after_restart"],
+        },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
-            "9A–9C préservées ; 9D supervision bornée et 9E délégation contrôlée "
-            "intégrées avec tests locaux. CI 9D Windows/Linux verte ; CI 9E à vérifier. "
-            "MCP complet, OAuth, Skills avancés et tâches durables restent en développement. "
-            "Aucun essai Windows réel n'est certifié."
+            "9A-9C preservees; supervision, delegation et transports MCP integres. "
+            "CI Windows/Linux verte au checkpoint 210e9d3. Continuation 9F, "
+            "contexte V5 et geometrie Qt testes localement. OAuth personnel non connecte; "
+            "Skills avances et taches durables en developpement. Parcours Windows reels "
+            "signales par l'utilisateur; campagne finale complete encore attendue."
         ),
     }

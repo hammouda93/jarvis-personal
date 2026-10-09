@@ -384,6 +384,7 @@ class AgentTurnResult:
     actions: tuple[AgentActionResult, ...] = ()
     end_session: bool = False
     should_exit: bool = False
+    pause_reason: str = ""
 
 
 class AgentRuntime(Protocol):
@@ -1990,6 +1991,7 @@ class OllamaToolAgent:
             actions=tuple(actions),
             end_session=end_session,
             should_exit=should_exit,
+            pause_reason="turn_budget_exhausted",
         )
 
     def _trim_history(self) -> None:
@@ -2483,6 +2485,7 @@ class OpenAIResponsesAgent:
             actions=tuple(actions),
             end_session=end_session,
             should_exit=should_exit,
+            pause_reason="turn_budget_exhausted",
         )
 
     @staticmethod
@@ -2958,7 +2961,10 @@ class GroqResponsesAgent:
                     if str((item.get("function") or {}).get("name") or "")
                     in browser_allowed
                 ]
-        return tools
+        from .active_mission_supervisor import progress_tool_definition
+        checkpoint_tool = progress_tool_definition()
+        tools = [t for t in tools if (t.get("function") or {}).get("name") != "mission_checkpoint"]
+        return [*tools, checkpoint_tool] if checkpoint_tool else tools
 
     @staticmethod
     def _is_ms_football_request(user_text: str) -> bool:
@@ -3811,6 +3817,19 @@ class GroqResponsesAgent:
                         "agent_knowledge_stats",
                     }
                 ]
+                from .active_mission_supervisor import execution_scope_active, progress_status
+                if (execution_scope_active() and progress_status() is None
+                        and round_index < settings.agent_max_tool_rounds):
+                    self._messages.append({"role": "user", "content": (
+                        "MISSION_DISPOSITION_REQUIRED: The model response does not complete the goal. "
+                        "Call mission_checkpoint before yielding: continue if authorized ordinary work "
+                        "remains, awaiting_verification if ready for independent final proof, or blocked "
+                        "for a real obstacle. Do not invent completion or ask the user to perform an "
+                        "already authorized ordinary step. No permission or evidence is granted by this checkpoint."
+                    )})
+                    if log:
+                        log("[MISSION] disposition_required")
+                    continue
                 learned_skill_this_turn = any(
                     action.name == "save_verified_skill" and action.success
                     for action in actions
@@ -3822,6 +3841,7 @@ class GroqResponsesAgent:
 
                 if (
                     settings.operational_learning_enabled
+                    and not execution_scope_active()
                     and _actions_have_verified_proof(actions)
                     and len(reusable_actions) >= 3
                     and not learned_skill_this_turn
@@ -4440,7 +4460,8 @@ class GroqResponsesAgent:
                 requested_capabilities = _requested_action_capabilities(
                     user_text
                 )
-                if _browser_verified_fast_completion(
+                from .active_mission_supervisor import execution_scope_active
+                if not execution_scope_active() and _browser_verified_fast_completion(
                     user_text,
                     actions,
                 ):
@@ -4574,6 +4595,7 @@ class GroqResponsesAgent:
             actions=tuple(actions),
             end_session=end_session,
             should_exit=should_exit,
+            pause_reason="turn_budget_exhausted",
         )
 
 

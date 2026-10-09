@@ -6,6 +6,7 @@ No LLM, executor, retry thread or service-specific workflow is created here.
 from __future__ import annotations
 
 from contextvars import ContextVar
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from enum import Enum
 import hashlib
@@ -119,6 +120,20 @@ def matches_rule(result: Any, rule: dict) -> bool:
 
 
 _SCOPE: ContextVar[Any] = ContextVar("jarvis_supervised_execution", default=None)
+_COORDINATION_STOP: ContextVar[Any] = ContextVar("jarvis_coordination_stop", default=None)
+
+
+@contextmanager
+def conversation_control(stop_event):
+    token = _COORDINATION_STOP.set(stop_event)
+    try:
+        yield
+    finally:
+        _COORDINATION_STOP.reset(token)
+
+
+def conversation_stop_event():
+    return _COORDINATION_STOP.get()
 
 
 def reserve_model_request() -> None:
@@ -130,6 +145,28 @@ def reserve_model_request() -> None:
 
 def execution_scope_active() -> bool:
     return _SCOPE.get() is not None
+
+
+def progress_status() -> str | None:
+    scope = _SCOPE.get()
+    return scope.progress_decision if scope is not None else None
+
+
+def progress_tool_definition() -> dict | None:
+    if not execution_scope_active():
+        return None
+    return {"type": "function", "function": {
+        "name": "mission_checkpoint",
+        "description": (
+            "Report the next mission disposition before yielding. continue means ordinary "
+            "authorized work remains; awaiting_verification means no further action is needed "
+            "before independent goal verification; blocked means a real decision or obstacle. "
+            "This is orchestration only, never proof, permission, or mission completion."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "status": {"type": "string", "enum": ["continue", "awaiting_verification", "blocked"]},
+        }, "required": ["status"], "additionalProperties": False},
+    }}
 
 
 def delegation_context() -> dict:
@@ -157,6 +194,8 @@ class SupervisedToolRegistry:
         return getattr(self.delegate, name)
 
     def requires_confirmation(self, name: str) -> bool:
+        if name == "mission_checkpoint" and execution_scope_active():
+            return False
         required = self.delegate.requires_confirmation(name)
         scope = _SCOPE.get()
         if scope is not None:
@@ -173,7 +212,7 @@ class SupervisedToolRegistry:
         scope = _SCOPE.get()
         if scope is None or scope.allowed_tools is None:
             return original
-        return [t for t in original if t["function"]["name"] in scope.allowed_tools]
+        return [*[t for t in original if t["function"]["name"] in scope.allowed_tools], progress_tool_definition()]
 
     def openai_tools(self) -> list[dict]:
         if _SCOPE.get() is None:
@@ -187,6 +226,8 @@ class SupervisedToolRegistry:
         scope = _SCOPE.get()
         if scope is None:
             return self.delegate.execute(name, arguments, approved=approved)
+        if name == "mission_checkpoint":
+            return scope.checkpoint(arguments)
         if scope.allowed_tools is not None and name not in scope.allowed_tools:
             raise SupervisorStopped("tool_outside_delegation_scope")
         if approved:
@@ -196,6 +237,8 @@ class SupervisedToolRegistry:
             return AgentActionResult(name=name, success=False,
                 message="Confirmation explicite requise pour cette action de mission.",
                 detail='{"approval_required":true,"verified":false}')
+        scope.progress_decision = None
+        scope.guard_continuation_action(name, arguments)
         scope.reserve(actions=1, network_calls=1)
         scope.transition(SupervisorState.ACTING, tool=str(name))
         result = self.delegate.execute(name, arguments, approved=approved)
@@ -210,6 +253,7 @@ class SupervisedToolRegistry:
             return result
         if detail.get("outcome_unknown") is True or detail.get("reliability_guard"):
             raise SupervisorStopped("action_outcome_requires_review")
+        scope.remember_action(name, arguments, result)
         scope.observe(self.delegate)
         return result
 
@@ -229,6 +273,8 @@ class ActiveMissionSupervisor:
         self.process_id = ""
         self.approval_tool = ""
         self.stop_event = None
+        self.progress_decision = None
+        self.phase_callback = None
         self.factory = build_responsibility_factory(self)
 
     def _load(self):
@@ -297,6 +343,11 @@ class ActiveMissionSupervisor:
         self.runtime._audit(state.mission_id, "supervisor.state", {
             "state": target.value, "step_id": record["step_id"], "tool": tool[:120], "reason": reason[:120],
         })
+        if self.phase_callback:
+            try:
+                self.phase_callback(target.value.lower())
+            except Exception:
+                pass  # Presentation failure must not interrupt an external effect.
 
     def reserve(self, **increments: int) -> None:
         if self.stop_event is not None and self.stop_event.is_set():
@@ -352,6 +403,42 @@ class ActiveMissionSupervisor:
         self.approval_tool = str(name)
         self.runtime.context_store.save(state, expected_version=version)
 
+    def checkpoint(self, arguments: dict):
+        from .native_tools import AgentActionResult
+        if (not isinstance(arguments, dict) or set(arguments) != {"status"}
+                or not isinstance(arguments["status"], str)
+                or arguments["status"] not in {"continue", "awaiting_verification", "blocked"}):
+            return AgentActionResult(name="mission_checkpoint", success=False,
+                message="Invalid mission disposition; completion cannot be declared by the model.",
+                detail='{"verified":false,"error_code":"invalid_mission_disposition"}')
+        self.reserve()
+        self.progress_decision = arguments["status"]
+        return AgentActionResult(name="mission_checkpoint", success=True,
+            message="Disposition recorded. The supervisor independently verifies the goal and remaining budgets.",
+            detail=_canonical({"status": self.progress_decision, "verified": False, "orchestration_only": True}))
+
+    def _action_digest(self, name: str, arguments: dict) -> str:
+        return hashlib.sha256(_canonical([self.step["step_id"], name, arguments]).encode("utf-8")).hexdigest()
+
+    def guard_continuation_action(self, name: str, arguments: dict) -> None:
+        from .hermes_reliability import is_mutating
+        state, _ = self._load()
+        record = state.observed_state["active_supervisor"]
+        if (is_mutating(name) and self.step["step_id"] in record.get("continuing_steps", [])
+                and self._action_digest(name, arguments) in record.get("successful_action_digests", [])):
+            raise SupervisorStopped("continuation_would_repeat_successful_action")
+
+    def remember_action(self, name: str, arguments: dict, result: Any) -> None:
+        from .hermes_reliability import is_mutating
+        if not is_mutating(name) or not bool(getattr(result, "success", False)):
+            return
+        state, version = self._load()
+        record = state.observed_state["active_supervisor"]
+        record["successful_action_digests"] = list(dict.fromkeys([
+            *record.get("successful_action_digests", []), self._action_digest(name, arguments),
+        ]))
+        self.runtime.context_store.save(state, expected_version=version)
+
     def consume_approval(self, name: str, arguments: dict) -> None:
         state, version = self._load()
         record = state.observed_state["active_supervisor"]
@@ -391,10 +478,12 @@ class ActiveMissionSupervisor:
             continuing_approval = record["state"] == SupervisorState.WAITING_APPROVAL.value
             self.step = pending_step if continuing_approval and pending_step else ready[0] if ready else plan["steps"][0]
             self.actions, self.observations, self.waiting_approval = [], [], False
+            self.progress_decision = None
             self.turn_result, self.process_id, self.allowed_tools = None, "", None
             self.agent_id = "unassigned"
             self.approval_tool = ""
             self.stop_event = stop_event
+            self.phase_callback = phase
             # A prior successful turn is only reobserved, never repeated while waiting for proof.
             waiting_proof = not continuing_approval and (not ready or
                              self.step["step_id"] in record.get("executed_steps", []))
@@ -429,10 +518,16 @@ class ActiveMissionSupervisor:
                     if not self.allowed_tools:
                         raise SupervisorStopped("responsibility_has_no_available_tools")
                     step_context = "[SUPERVISED STEP DATA]\n" + _canonical({
-                        "step": self.step, "objective": plan["objective"],
+                        "step": self.step, "objective": plan["objective"], "original_goal": state.user_goal,
                         "capability_proposal": proposed, "executor": "legacy_runtime", "responsible_agent": self.agent_id,
                         "allowed_tools": sorted(self.allowed_tools),
-                        "rule": "Observe actual targets before choosing arguments. Preserve existing approvals. Tool success is not goal success.",
+                        "rule": (
+                            "Preserve the whole original goal, not just the latest screen. Observe actual targets "
+                            "before choosing arguments. Preserve existing approvals. Tool success is not goal success. "
+                            "Before yielding use mission_checkpoint to distinguish ordinary remaining work, "
+                            "independent verification, or a real obstacle. Intermediate prose must not ask the "
+                            "operator to repeat an already authorized ordinary step."
+                        ),
                     }) + "\n[END SUPERVISED STEP DATA]"
                     process = self.factory.spawn(agent_id=self.agent_id, mission_id=self.mission_id)
                     self.process_id = process.process_id
@@ -466,10 +561,20 @@ class ActiveMissionSupervisor:
                     complete = all(s["state"] == "verified" for s in current_review["steps"])
                     state, version = self._load()
                 verified = next(s for s in current_review["steps"] if s["id"] == self.step["step_id"])["state"] == "verified"
+                continuation = (not verified and not waiting_proof and not self.waiting_approval
+                    and (self.progress_decision == "continue" or
+                         (self.progress_decision is None and getattr(result, "pause_reason", "") == "turn_budget_exhausted"))
+                    and bool(self.actions)
+                    and all(a["success"] and not a["outcome_unknown"] for a in self.actions)
+                    and not getattr(result, "end_session", False) and not getattr(result, "should_exit", False))
                 report = self._report(verified=verified, verifier_only=waiting_proof)
                 record = state.observed_state["active_supervisor"]
                 record["reports"] = [*record["reports"], report][-24:]
-                if not waiting_proof and not self.waiting_approval:
+                if continuation:
+                    record["continuing_steps"] = list(dict.fromkeys([
+                        *record.get("continuing_steps", []), self.step["step_id"],
+                    ]))
+                if not waiting_proof and not self.waiting_approval and not continuation:
                     record["executed_steps"] = list(dict.fromkeys([
                         *record.get("executed_steps", []), self.step["step_id"],
                     ]))
@@ -479,14 +584,15 @@ class ActiveMissionSupervisor:
                     "step_id": self.step["step_id"], "verified": verified,
                 })
                 target = (SupervisorState.WAITING_APPROVAL if self.waiting_approval else
-                          SupervisorState.COMPLETED if complete else SupervisorState.READY if verified else
+                          SupervisorState.COMPLETED if complete else SupervisorState.READY if verified or continuation else
                           SupervisorState.RECOVERING)
-                self.transition(target, tool=self.approval_tool if self.waiting_approval else "")
+                self.transition(target, tool=self.approval_tool if self.waiting_approval else "",
+                    reason="ordinary_work_remaining" if continuation else "")
                 if complete and not self.waiting_approval:
                     self.runtime.complete_mission(proof_ref="supervisor:" + uuid.uuid4().hex)
                 return {"mission_id": self.mission_id, "state": target.value,
                         "goal_verified": complete and not self.waiting_approval, "report": report,
-                        "text": str(getattr(result, "text", "") or ""), "_turn_result": result}
+                        "text": self._result_text(target, result), "_turn_result": result}
             except Exception as exc:
                 self.transition(SupervisorState.BLOCKED, reason=(str(exc) if isinstance(exc, SupervisorStopped) else type(exc).__name__))
                 state, version = self._load()
@@ -501,6 +607,17 @@ class ActiveMissionSupervisor:
             finally:
                 _SCOPE.reset(token)
                 self.allowed_tools, self.stop_event = None, None
+                self.phase_callback = None
+
+    @staticmethod
+    def _result_text(target: SupervisorState, result: Any) -> str:
+        if target == SupervisorState.WAITING_APPROVAL:
+            return str(getattr(result, "text", "") or "Confirmation explicite attendue.")
+        return {
+            SupervisorState.COMPLETED: "Objectif complet verifie par les preuves independantes du plan.",
+            SupervisorState.READY: "Progression enregistree. Poursuite des etapes autorisees.",
+            SupervisorState.RECOVERING: "Mission suspendue : objectif complet non verifie. Le checkpoint est conserve; aucune action n'est repetee.",
+        }.get(target, "Mission suspendue; objectif non verifie.")
 
     def _report(self, *, verified: bool, verifier_only: bool, error: str = "") -> dict:
         """Produced from trusted local observations, never parsed from model prose."""
@@ -515,6 +632,8 @@ class ActiveMissionSupervisor:
                             "scoped_tools": sorted(self.allowed_tools or ()),
                             "approval_pending": self.waiting_approval},
             "result": {"turn_returned": self.turn_result is not None,
+                       "mission_disposition": self.progress_decision,
+                       "pause_reason": str(getattr(self.turn_result, "pause_reason", "") or "")[:80],
                        "text_length": len(str(getattr(self.turn_result, "text", "") or "")),
                        "error": error[:120]},
             "evidence": [o["ref"] for o in self.observations if o["matched"]],
@@ -522,20 +641,28 @@ class ActiveMissionSupervisor:
             "risks": [error[:120]] if error else [] if verified else ["independent_evidence_missing"],
         }
 
-    def run_until_pause(self, *, max_steps: int = 24, stop_event=None, progress=None,
+    def run_until_pause(self, user_text: str | None = None, *, context: str = "", max_steps: int = 24, stop_event=None, progress=None,
                         log=None, phase=None) -> dict:
         """Sequential bounded coordination on the existing worker, never a retry loop."""
         if type(max_steps) is not int or not 1 <= max_steps <= 24:
             raise ValueError("invalid_delegation_step_limit")
         reports = []
+        actions = []
         last = {}
-        for _ in range(max_steps):
-            last = self.advance(stop_event=stop_event, log=log, phase=phase)
+        for index in range(max_steps):
+            last = self.advance(user_text if index == 0 else None, context=context,
+                                stop_event=stop_event, log=log, phase=phase)
             reports.append(last["report"])
+            turn = last.get("_turn_result")
+            actions.extend(getattr(turn, "actions", ()) or ())
             if progress:
                 progress({"mission_id": last["mission_id"], "status": last["state"],
                           "delegation": last["report"], "goal_verified": last["goal_verified"]})
-            if last["state"] != SupervisorState.READY.value:
+            if (last["state"] != SupervisorState.READY.value
+                    or getattr(turn, "end_session", False) or getattr(turn, "should_exit", False)):
                 break
+        from .agent_runtime import AgentTurnResult
+        last["_turn_result"] = AgentTurnResult(text=last.get("text", ""), actions=tuple(actions),
+            end_session=bool(getattr(turn, "end_session", False)), should_exit=bool(getattr(turn, "should_exit", False)))
         return {**last, "reports": reports, "steps_advanced": len(reports),
                 "coordination_paused": not last.get("goal_verified", False)}

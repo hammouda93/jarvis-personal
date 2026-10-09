@@ -10,6 +10,7 @@ import traceback
 from PySide6.QtCore import QObject, Signal, Slot
 
 from .agent_runtime import AgentRuntimeUnavailable, build_agent_runtime
+from .active_mission_supervisor import conversation_control
 from .mission_workbench import MissionControlInbox, perform_mission_command
 from .mcp_control import MCPControlInbox, perform_mcp_command
 from .mcp_server_registry import MCPRegistry
@@ -189,6 +190,17 @@ class AssistantWorker(QObject):
             self._state(AssistantState.THINKING, "Jarvis réfléchit…")
         elif phase == "acting":
             self._state(AssistantState.ACTING, "Jarvis agit…")
+        elif phase in {"observing", "verifying", "waiting_approval", "recovering", "blocked"}:
+            state = AssistantState.RECOVERING if phase == "blocked" else AssistantState(phase)
+            self._state(state)
+        elif phase.startswith("mission_progress:"):
+            try:
+                report = json.loads(phase.partition(":")[2])
+            except (ValueError, TypeError):
+                return
+            self.mission_control_result.emit({"success": True, "operation": "delegation_progress", **report})
+            self._state(AssistantState.ACTING if report.get("status") == "READY" else AssistantState.VERIFYING,
+                        "Progression enregistree; objectif complet " + ("verifie" if report.get("goal_verified") else "non encore verifie"))
         elif phase.startswith("researching:"):
             raw_payload = phase.split(":", 1)[1]
             try:
@@ -225,6 +237,7 @@ class AssistantWorker(QObject):
     @Slot()
     def stop(self) -> None:
         self._stop.set()
+        self._mission_control.stop_requested.set()
         self._input_mode.changed.set()
 
     def submit_text(self, text: str) -> bool:
@@ -278,6 +291,7 @@ class AssistantWorker(QObject):
         try:
             result = perform_mission_command(self._agent, command,
                 stop_event=self._mission_control.stop_requested,
+                log=self.log_line.emit, phase=self._agent_phase,
                 progress=lambda report: self.mission_control_result.emit({
                     "success": True, "operation": "delegation_progress", **report}))
         except Exception as exc:
@@ -312,6 +326,29 @@ class AssistantWorker(QObject):
             self._reply_source = "text"
             self._reply_with_voice = True
             self._deliver_reply(str(result["text"]))
+            self._restore_mission_phase()
+
+    def _restore_mission_phase(self) -> None:
+        mid = getattr(self._agent, "active_mission_id", None)
+        if not mid:
+            self._state(AssistantState.SUCCESS, "Prêt")
+            return
+        try:
+            data = self._agent.mission_snapshot(mid)
+            status = (data.get("active_supervisor") or {}).get("state", "")
+            # Snapshot's supervisor key is a public projection, not model prose.
+            status = status or (data.get("supervisor") or {}).get("state", "")
+            if data.get("status") == "blocked" or data.get("manual_review_required"):
+                status = "BLOCKED"
+        except (AttributeError, KeyError, OSError, ValueError, RuntimeError):
+            status = ""
+        state, label = {
+            "WAITING_APPROVAL": (AssistantState.WAITING_APPROVAL, "Confirmation explicite attendue"),
+            "BLOCKED": (AssistantState.RECOVERING, "Mission conservee; revision necessaire avant reprise"),
+            "RECOVERING": (AssistantState.RECOVERING, "Preuve finale attendue; aucune action repetee"),
+            "READY": (AssistantState.PAUSED, "Checkpoint conserve; objectif complet non verifie"),
+        }.get(status, (AssistantState.PAUSED, "Mission conservee; objectif complet non verifie"))
+        self._state(state, label)
 
     def _apply_input_mode(self) -> tuple[bool, int]:
         text_mode, generation = self._input_mode.snapshot()
@@ -756,12 +793,16 @@ class AssistantWorker(QObject):
             "Compréhension de votre demande…",
         )
 
+        control = getattr(self, "_mission_control", None)
+        reserved = bool(control and getattr(self._agent, "active_mission_id", None)
+                        and control.reserve_conversation())
         try:
-            turn = self._agent.run(
-                user_text,
-                log=self.log_line.emit,
-                phase=self._agent_phase,
-            )
+            with conversation_control(control.stop_requested if control else self._stop):
+                turn = self._agent.run(
+                    user_text,
+                    log=self.log_line.emit,
+                    phase=self._agent_phase,
+                )
         except AgentRuntimeUnavailable as exc:
             self._emit_operator_model()
             self.log_line.emit(f"[AGENT] unavailable: {exc}")
@@ -776,7 +817,23 @@ class AssistantWorker(QObject):
                 "Mon cerveau agent n'est pas disponible pour le moment. "
                 "Vérifiez le modèle configuré puis réessayez."
             )
+            if getattr(self._agent, "active_mission_id", None):
+                self._restore_mission_phase()
+            else:
+                self._state(AssistantState.ERROR, "Cerveau agent indisponible")
             return True
+        except Exception as exc:
+            self.log_line.emit("[MISSION] runtime_paused error_type=" + type(exc).__name__)
+            self._emit_operator_model()
+            self._deliver_reply("L'execution est suspendue. Je ne relance aucune action incertaine; consultez la mission avant toute reprise.")
+            if getattr(self._agent, "active_mission_id", None):
+                self._restore_mission_phase()
+            else:
+                self._state(AssistantState.ERROR, "Execution suspendue")
+            return True
+        finally:
+            if reserved:
+                control.finish_coordination()
 
         self._emit_operator_model()
         self._shadow_observe(
@@ -814,7 +871,7 @@ class AssistantWorker(QObject):
             self.log_line.emit("[SESSION] agent requested standby")
             return False
 
-        self._state(AssistantState.SUCCESS, "Prêt")
+        self._restore_mission_phase()
         self._level(0.0)
         return True
 

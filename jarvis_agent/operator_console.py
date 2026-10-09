@@ -7,7 +7,7 @@ from collections import deque
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextBrowser,
-    QVBoxLayout, QWidget,
+    QStyle, QVBoxLayout, QWidget,
 )
 
 from .operator_telemetry import snapshot
@@ -97,7 +97,7 @@ class OperatorConsole(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("operatorConsole")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(280)
         self._last_model = {}
         self._last_snapshot = {}
         self._render_cache: dict[str, str] = {}
@@ -131,7 +131,6 @@ class OperatorConsole(QFrame):
             line.setObjectName("operatorMetric")
             line.setWordWrap(True)
             sum_layout.addWidget(line)
-        layout.addWidget(summary)
 
         controls_box = QFrame()
         controls_box.setObjectName("operatorGroup")
@@ -140,6 +139,7 @@ class OperatorConsole(QFrame):
         mission_layout.setSpacing(6)
         control_title = QLabel("◉   MISSION EXPLICITE · MÊME CERVEAU")
         control_title.setObjectName("operatorSection")
+        control_title.setWordWrap(True)
         mission_layout.addWidget(control_title)
         self.mission_goal_input = QLineEdit()
         self.mission_goal_input.setMaxLength(2000)
@@ -150,6 +150,8 @@ class OperatorConsole(QFrame):
         self.mission_begin_button = QPushButton("▶ Démarrer et exécuter")
         self.mission_begin_button.setObjectName("missionButton")
         self.mission_picker = QComboBox()
+        self.mission_picker.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.mission_picker.setMinimumContentsLength(12)
         self.mission_picker.setObjectName("missionPicker")
         self.mission_picker.addItem("Choisir une mission enregistrée…", "")
         self._mission_choices = ()
@@ -178,6 +180,19 @@ class OperatorConsole(QFrame):
         self.mission_review_button.setObjectName("missionButton")
         self.mission_detach_button = QPushButton("Ⅱ Détacher sans conclure")
         self.mission_detach_button.setObjectName("missionButton")
+        for button, text, icon in (
+            (self.mission_begin_only_button, "Creer sans agir", QStyle.SP_FileIcon),
+            (self.mission_begin_button, "Demarrer", QStyle.SP_MediaPlay),
+            (self.mission_resume_button, "Reprendre", QStyle.SP_BrowserReload),
+            (self.mission_detach_button, "Detacher", QStyle.SP_MediaPause),
+            (self.mission_plan_button, "Criteres de reussite", QStyle.SP_DialogApplyButton),
+            (self.mission_auto_plan_button, "Generer un plan", QStyle.SP_FileDialogDetailedView),
+            (self.mission_route_button, "Proposer des agents", QStyle.SP_FileDialogListView),
+            (self.mission_review_button, "Verifier la progression", QStyle.SP_DialogApplyButton),
+        ):
+            button.setToolTip(button.text())
+            button.setText(text)
+            button.setIcon(self.style().standardIcon(icon))
         buttons = QHBoxLayout()
         buttons.setSpacing(5)
         buttons.addWidget(self.mission_resume_button)
@@ -200,7 +215,6 @@ class OperatorConsole(QFrame):
         mission_layout.addWidget(self.mission_route_button)
         mission_layout.addLayout(buttons)
         mission_layout.addWidget(self.mission_feedback)
-        layout.addWidget(controls_box)
         self.mission_begin_button.clicked.connect(
             lambda: self._request_mission("begin", self.mission_goal_input.text())
         )
@@ -233,6 +247,7 @@ class OperatorConsole(QFrame):
 
         self._views = {}
         scroll = QScrollArea(self)
+        self.scroll_area = scroll
         scroll.setObjectName("operatorScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -241,6 +256,8 @@ class OperatorConsole(QFrame):
         event_list = QVBoxLayout(content)
         event_list.setContentsMargins(0, 0, 0, 0)
         event_list.setSpacing(7)
+        event_list.addWidget(summary)
+        event_list.addWidget(controls_box)
         for key, label in [
             ("missions", "◉   MISSIONS / OBJECTIFS"),
             ("tasks", "◇   ÉTAPES / SUPERVISION"),
@@ -257,6 +274,7 @@ class OperatorConsole(QFrame):
             group_layout.setContentsMargins(9, 8, 9, 7)
             group_layout.setSpacing(4)
             header = QLabel(label)
+            header.setWordWrap(True)
             header.setObjectName("operatorSection")
             view = QTextBrowser()
             view.setOpenExternalLinks(False)
@@ -273,6 +291,18 @@ class OperatorConsole(QFrame):
         scroll.setWidget(content)
         layout.addWidget(scroll, 1)
         self.setStyleSheet("""
+            QLabel, QCheckBox {color:#b4dce7;font-size:10px;}
+            QLineEdit, QComboBox, QSpinBox, QTreeWidget {
+                background:#061a2b;color:#e4f9ff;border:1px solid #286278;
+                border-radius:6px;padding:5px;font-size:10px;
+                selection-background-color:#174d60;
+            }
+            QHeaderView::section {background:#0b3445;color:#b4dce7;padding:4px;border:0;}
+            QPushButton {background:#0b3445;color:#9ef3ed;border:1px solid #286278;
+                border-radius:6px;padding:6px;font-size:10px;}
+            QPushButton:hover {background:#155366;}
+            QPushButton:disabled {color:#718c9b;}
+            QCheckBox::indicator {width:14px;height:14px;}
             QFrame#operatorConsole {background: rgba(2,13,27,230);
                 border:1px solid rgba(56,164,192,105);border-radius:15px;}
             QFrame#operatorSummary {background:#072138; border-radius:11px;

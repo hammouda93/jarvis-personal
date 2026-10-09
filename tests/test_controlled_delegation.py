@@ -170,7 +170,7 @@ class ControlledDelegationTests(unittest.TestCase):
             return SimpleNamespace(text="no action", actions=())
         self.delegate.run_with_context = turn
         self.supervisor.advance()
-        self.assertEqual(observed, [["open_url"], ["open_url"]])
+        self.assertEqual(observed, [["open_url", "mission_checkpoint"], ["open_url", "mission_checkpoint"]])
 
     def test_out_of_scope_call_is_denied_even_if_model_ignores_its_schema(self):
         self.approve(assignments={"navigate": {"agent": "browser"}})

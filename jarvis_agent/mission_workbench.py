@@ -39,6 +39,15 @@ class MissionControlInbox:
         with self._lock:
             self._coordination_reserved = False
 
+    def reserve_conversation(self) -> bool:
+        """Worker-only admission for an attached mission's conversational run."""
+        with self._lock:
+            if self._coordination_reserved:
+                return False
+            self._coordination_reserved = True
+            self.stop_requested.clear()
+            return True
+
     def _submit(self, operation: str, value: str = "") -> bool:
         op = str(operation or "").strip().lower()
         raw = str(value or "").strip()
@@ -102,7 +111,7 @@ class MissionControlInbox:
         return not self._items.empty()
 
 
-def perform_mission_command(agent, command: MissionCommand, *, stop_event=None, progress=None) -> dict:
+def perform_mission_command(agent, command: MissionCommand, *, stop_event=None, progress=None, log=None, phase=None) -> dict:
     """Only on worker thread. Does not replay actions or assert goal proof."""
     op = command.operation
     if op == "approve_supervision":
@@ -116,13 +125,13 @@ def perform_mission_command(agent, command: MissionCommand, *, stop_event=None, 
         return {"success": True, "operation": op, "mission_id": report["mission_id"],
                 "status": report["state"], "tool_execution": False}
     if op == "advance_supervision":
-        report = agent.advance_supervised_mission(command.value or None, stop_event=stop_event)
+        report = agent.advance_supervised_mission(command.value or None, stop_event=stop_event, log=log, phase=phase)
         return {"success": True, "operation": op, "mission_id": report["mission_id"],
                 "status": report["state"], "goal_verified": report["goal_verified"],
                 "delegation": report.get("report", {}), "text": report.get("text", "")}
     if op == "run_supervision":
         report = agent.run_supervised_mission(max_steps=int(command.value or 24),
-                                             stop_event=stop_event, progress=progress)
+                                             stop_event=stop_event, progress=progress, log=log, phase=phase)
         return {"success": True, "operation": op, "mission_id": report["mission_id"],
                 "status": report["state"], "goal_verified": report["goal_verified"],
                 "delegation": report.get("report", {}), "steps_advanced": report["steps_advanced"],

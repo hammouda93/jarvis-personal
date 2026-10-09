@@ -620,14 +620,16 @@ class LiveMissionContinuityRuntime:
     def _supervised_conversation(self, user_text, *, context="", log=None, phase=None):
         if self.active_supervisor is None or self._active_mission_id is None:
             return None
-        from .active_mission_supervisor import execution_scope_active
+        from .active_mission_supervisor import execution_scope_active, conversation_stop_event
         if execution_scope_active():
             return None
         with self._lock:
             state, _ = self.context_store.load(self._active_mission_id)
             if not state.observed_state.get("active_supervisor"):
                 return None
-            report = self.active_supervisor.advance(user_text, context=context, log=log, phase=phase)
+            report = self.active_supervisor.run_until_pause(user_text, context=context, log=log, phase=phase,
+                stop_event=conversation_stop_event(),
+                progress=(lambda event: phase("mission_progress:" + json.dumps(event, ensure_ascii=False))) if phase else None)
             from .agent_runtime import AgentTurnResult
             turn = report.get("_turn_result")
             text = report.get("text") or ("Objectif verifie." if report["goal_verified"] else "Preuve independante attendue.")

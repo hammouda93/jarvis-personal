@@ -73,13 +73,16 @@ class MCPConnectionsPanel(QFrame):
         self.stdio_environment.setToolTip('References uniquement : {"SERVICE_TOKEN": "JARVIS_MCP_SERVICE_TOKEN"}')
         self.stdio_warning = QLabel("Ce programme local aura les droits de votre compte Windows/Linux.")
         self.stdio_warning.setWordWrap(True)
-        self.stdio_trust = QCheckBox("Programme local de confiance")
+        self.stdio_trust = QCheckBox("Confiance locale")
+        self.stdio_trust.setToolTip("Programme local de confiance : il s'execute avec les droits de votre compte.")
         for widget in (self.stdio_command, self.stdio_arguments, self.stdio_environment, self.stdio_warning, self.stdio_trust):
             layout.addWidget(widget)
         self.transport_picker.currentIndexChanged.connect(self._select_transport)
         self._select_transport()
-        self.add_button = QPushButton("Ajouter serveur distant (désactivé)")
-        self.hermes_button = QPushButton("Hermes local (sans installer)")
+        self.add_button = QPushButton("Ajouter distant")
+        self.add_button.setToolTip("Ajouter un serveur distant desactive; aucun outil n'est autorise automatiquement.")
+        self.hermes_button = QPushButton("Hermes local")
+        self.hermes_button.setToolTip("Enregistrer Hermes local, sans installer ni demarrer de programme.")
         for button in (self.add_button, self.hermes_button):
             button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
             button.setObjectName("missionButton")
@@ -112,7 +115,8 @@ class MCPConnectionsPanel(QFrame):
         self.oauth_scope.setMaxLength(600)
         self.oauth_scope.setPlaceholderText("Scopes OAuth explicites (facultatifs)")
         layout.addWidget(self.oauth_scope)
-        self.oauth_registered = QCheckBox("Client OAuth preenregistre")
+        self.oauth_registered = QCheckBox("Client preenregistre")
+        self.oauth_registered.setToolTip("Utiliser un client OAuth preenregistre au lieu de l'enregistrement dynamique.")
         layout.addWidget(self.oauth_registered)
         self.oauth_client_id = QLineEdit()
         self.oauth_client_id.setMaxLength(1200)
@@ -138,7 +142,8 @@ class MCPConnectionsPanel(QFrame):
             widget.setVisible(False)
         self.oauth_registered.toggled.connect(lambda checked: [widget.setVisible(checked) for widget in self._oauth_client_widgets])
         oauth = QHBoxLayout()
-        self.oauth_button = QPushButton("Consentement OAuth")
+        self.oauth_button = QPushButton("OAuth")
+        self.oauth_button.setToolTip("Ouvrir le consentement OAuth explicite")
         self.oauth_button.setIcon(self.style().standardIcon(QStyle.SP_DialogApplyButton))
         self.cancel_oauth_button = QPushButton()
         self.cancel_oauth_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserStop))
@@ -262,7 +267,7 @@ class MCPConnectionsPanel(QFrame):
         for widget in (self.stdio_command, self.stdio_arguments, self.stdio_environment, self.stdio_warning, self.stdio_trust):
             widget.setVisible(local)
         if hasattr(self, "add_button"):
-            self.add_button.setText("Ajouter serveur local (desactive)" if local else "Ajouter serveur distant (desactive)")
+            self.add_button.setText("Ajouter local" if local else "Ajouter distant")
 
     def _add_server(self):
         if self.transport_picker.currentData() != "stdio":

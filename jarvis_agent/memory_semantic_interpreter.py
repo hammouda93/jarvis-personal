@@ -438,6 +438,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             "model": self.model,
             "stream": False,
             "format": "json",
+            "think": False,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -462,7 +463,12 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             raise RuntimeError(
                 f"semantic_memory_ollama_unavailable:{exc}"
             ) from exc
-        return str((data.get("message") or {}).get("content") or "")
+        if data.get("done_reason") == "length":
+            raise RuntimeError("semantic_memory_structured_output_truncated")
+        content = str((data.get("message") or {}).get("content") or "")
+        if not content.strip():
+            raise RuntimeError("semantic_memory_structured_output_empty")
+        return content
 
     def _chat(self, system: str, payload: Any) -> dict[str, Any]:
         user = json.dumps(payload, ensure_ascii=False)
