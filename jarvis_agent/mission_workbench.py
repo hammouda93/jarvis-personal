@@ -5,6 +5,7 @@ No model calls, desktop tools, persistence, or hidden action dispatcher here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import queue
 import re
 import threading
@@ -19,23 +20,67 @@ class MissionCommand:
 class MissionControlInbox:
     """FIFO commands, consumed by the worker rather than Qt's UI thread."""
 
-    _OPS = frozenset({"begin", "begin_only", "resume", "detach", "review", "plan", "route", "auto_plan"})
+    _OPS = frozenset({"begin", "begin_only", "resume", "detach", "review", "plan", "route", "auto_plan", "clarify_plan",
+                      "approve_supervision", "advance_supervision", "recover_supervision",
+                      "run_supervision", "cancel_supervision"})
 
     def __init__(self) -> None:
         self._items: queue.Queue[MissionCommand] = queue.Queue(maxsize=32)
         self.changed = threading.Event()
+        self.stop_requested = threading.Event()
+        self._lock = threading.RLock()
+        self._coordination_reserved = False
 
     def submit(self, operation: str, value: str = "") -> bool:
+        with self._lock:
+            return self._submit(operation, value)
+
+    def finish_coordination(self) -> None:
+        with self._lock:
+            self._coordination_reserved = False
+
+    def reserve_conversation(self) -> bool:
+        """Worker-only admission for an attached mission's conversational run."""
+        with self._lock:
+            if self._coordination_reserved:
+                return False
+            self._coordination_reserved = True
+            self.stop_requested.clear()
+            return True
+
+    def _submit(self, operation: str, value: str = "") -> bool:
         op = str(operation or "").strip().lower()
         raw = str(value or "").strip()
         if op not in self._OPS:
             return False
+        if op == "cancel_supervision":
+            if raw:
+                return False
+            self.stop_requested.set()
+            self.changed.set()
+            return True  # Out-of-band signal, no runtime or tool on the UI thread.
+        if self._coordination_reserved:
+            return False
+        if op == "run_supervision":
+            if raw and (len(raw) > 2 or not raw.isascii() or not raw.isdecimal() or not 1 <= int(raw) <= 24):
+                return False
         if op in {"begin", "begin_only"} and not (1 <= len(raw) <= 2000):
             return False
         if op == "plan" and not (1 <= len(raw) <= 500):
             return False
         if op == "auto_plan" and raw:
             return False
+        if op == "clarify_plan" and not (1 <= len(raw) <= 2000):
+            return False
+        if op in {"approve_supervision", "advance_supervision", "recover_supervision"} and len(raw) > 24000:
+            return False
+        if op in {"approve_supervision", "recover_supervision"}:
+            try:
+                packet = json.loads(raw)
+                if not isinstance(packet, dict):
+                    return False
+            except (ValueError, TypeError):
+                return False
         if op in {"resume", "review", "route"} and raw and not re.fullmatch(r"live_[a-f0-9]{32}", raw):
             return False
         if op == "resume" and not raw:
@@ -43,11 +88,15 @@ class MissionControlInbox:
         if op == "detach":
             if raw:
                 return False
+        if op in {"run_supervision", "advance_supervision"}:
+            self.stop_requested.clear()
         try:
             self._items.put_nowait(MissionCommand(op, raw))
         except queue.Full:
             return False
         self.changed.set()
+        if op in {"run_supervision", "advance_supervision"}:
+            self._coordination_reserved = True
         return True
 
     def pop_nowait(self) -> MissionCommand | None:
@@ -64,9 +113,36 @@ class MissionControlInbox:
         return not self._items.empty()
 
 
-def perform_mission_command(agent, command: MissionCommand) -> dict:
+def perform_mission_command(agent, command: MissionCommand, *, stop_event=None, progress=None, log=None, phase=None) -> dict:
     """Only on worker thread. Does not replay actions or assert goal proof."""
     op = command.operation
+    if op == "approve_supervision":
+        from .active_mission_supervisor import MissionLimits
+        packet = json.loads(command.value)
+        if packet.get("mission_id") != getattr(agent, "active_mission_id", None):
+            raise ValueError("reviewed_mission_changed")
+        limits = MissionLimits(**packet.get("limits", {}))
+        report = agent.approve_supervised_plan(digest=packet["digest"], rules=packet.get("rules", {}),
+                                             limits=limits, assignments=packet.get("assignments", {}))
+        return {"success": True, "operation": op, "mission_id": report["mission_id"],
+                "status": report["state"], "tool_execution": False}
+    if op == "advance_supervision":
+        report = agent.advance_supervised_mission(command.value or None, stop_event=stop_event, log=log, phase=phase)
+        return {"success": True, "operation": op, "mission_id": report["mission_id"],
+                "status": report["state"], "goal_verified": report["goal_verified"],
+                "delegation": report.get("report", {}), "text": report.get("text", "")}
+    if op == "run_supervision":
+        report = agent.run_supervised_mission(max_steps=int(command.value or 24),
+                                             stop_event=stop_event, progress=progress, log=log, phase=phase)
+        return {"success": True, "operation": op, "mission_id": report["mission_id"],
+                "status": report["state"], "goal_verified": report["goal_verified"],
+                "delegation": report.get("report", {}), "steps_advanced": report["steps_advanced"],
+                "text": report.get("text", "")}
+    if op == "recover_supervision":
+        packet = json.loads(command.value)
+        state = agent.resolve_recovery(verified_outcome=packet["outcome"], proof_ref=packet["proof_ref"])
+        return {"success": True, "operation": op, "mission_id": state.mission_id,
+                "status": state.status.value, "tool_execution": False, "goal_verified": False}
     if op in {"begin", "begin_only"}:
         method = getattr(agent, "begin_mission", None)
         if not callable(method):
@@ -133,6 +209,13 @@ def perform_mission_command(agent, command: MissionCommand) -> dict:
             "mission_id": mission_id, "status": "criteria_registered_unverified",
             "criteria_count": len(requirements),
         }
+    if op == "clarify_plan":
+        revision = getattr(agent, "clarify_semantic_plan", None)
+        if not callable(revision):
+            return {"success": False, "operation": op,
+                    "reason": "convergence_not_enabled"}
+        report = revision(command.value)
+        return {"success": True, "operation": op, **report}
     if op == "auto_plan":
         generator = getattr(agent, "generate_semantic_plan", None)
         if not callable(generator):

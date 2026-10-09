@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from .sqlite_utils import ClosingConnection
 import threading
 import time
 import uuid
@@ -37,7 +38,7 @@ class ApprovalRequest:
 
 def _default_path() -> Path:
     root = Path(
-        os.getenv("LOCALAPPDATA")
+        os.getenv("JARVIS_DATA_DIR") or os.getenv("LOCALAPPDATA")
         or os.getenv("XDG_STATE_HOME")
         or Path.home()
     )
@@ -54,7 +55,7 @@ class HumanApprovalManager:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path), timeout=5.0)
+        conn = sqlite3.connect(str(self.path), timeout=5.0, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         return conn

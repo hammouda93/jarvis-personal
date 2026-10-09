@@ -1,0 +1,45 @@
+name: Jarvis final development cumulative regression
+
+on:
+  push:
+    branches:
+      - feature/codex-jarvis-final-development
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jarvis-final-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Linux Qt and audio libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libportaudio2 libasound2-dev libegl1
+      - name: Runtime and optional official MCP SDK
+        run: python -m pip install -r requirements.txt -r requirements-mcp.txt
+      - name: Python regression including Qt and safety contracts
+        run: python scripts/run_final_regression.py
+      - name: Browser Bridge replay contracts
+        run: node --test tests/browser_bridge_replay.mjs
+      - name: Official MCP SDK client contract
+        run: python -c "from mcp import ClientSession; from mcp.client.stdio import StdioServerParameters, stdio_client; from mcp.client.streamable_http import streamable_http_client; assert callable(stdio_client) and callable(streamable_http_client)"

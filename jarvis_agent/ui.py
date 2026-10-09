@@ -22,11 +22,15 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QScrollArea,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizeGrip,
     QSizePolicy,
+    QSplitter,
+    QStyle,
     QTextBrowser,
     QVBoxLayout,
     QTabWidget,
@@ -59,7 +63,7 @@ def _safe_console_log(value: object) -> None:
         pass
 
 
-NORMAL_MIN_SIZE = (1180, 720)
+NORMAL_MIN_SIZE = (660, 500)
 NORMAL_START_SIZE = (1500, 900)
 COMPACT_MIN_SIZE = (640, 420)
 COMPACT_START_SIZE = (760, 520)
@@ -76,6 +80,11 @@ STATE_COLORS: dict[str, QColor] = {
     AssistantState.UNDERSTANDING.value: QColor(84, 201, 255),
     AssistantState.THINKING.value: QColor(102, 221, 255),
     AssistantState.ACTING.value: QColor(75, 242, 210),
+    AssistantState.OBSERVING.value: QColor(91, 204, 255),
+    AssistantState.VERIFYING.value: QColor(103, 255, 206),
+    AssistantState.WAITING_APPROVAL.value: QColor(247, 198, 121),
+    AssistantState.RECOVERING.value: QColor(255, 139, 126),
+    AssistantState.PAUSED.value: QColor(247, 198, 121),
     AssistantState.SPEAKING.value: QColor(96, 227, 255),
     AssistantState.SUCCESS.value: QColor(103, 255, 206),
     AssistantState.ERROR.value: QColor(255, 100, 126),
@@ -471,14 +480,14 @@ class PersonalJarvisCanvas(QWidget):
         painter.setPen(QColor(236, 253, 255, 248))
         font = QFont("Segoe UI", max(11, int(radius * 0.135)))
         font.setWeight(QFont.Weight.DemiBold)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
         painter.setFont(font)
-        painter.drawText(title_rect, Qt.AlignCenter, "PERSONAL JARVIS")
+        painter.drawText(title_rect, Qt.AlignCenter, "JARVIS" if radius < 95 else "PERSONAL JARVIS")
 
         painter.setPen(QColor(112, 232, 248, 232))
         font = QFont("Segoe UI", max(8, int(radius * 0.082)))
         font.setWeight(QFont.Weight.DemiBold)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.1)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
         painter.setFont(font)
         painter.drawText(
             QRectF(
@@ -493,7 +502,7 @@ class PersonalJarvisCanvas(QWidget):
 
         painter.setPen(QColor(116, 174, 196, 215))
         font = QFont("Segoe UI", max(7, int(radius * 0.058)))
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.9)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
         painter.setFont(font)
         painter.drawText(
             QRectF(
@@ -503,7 +512,7 @@ class PersonalJarvisCanvas(QWidget):
                 radius * 0.16,
             ),
             Qt.AlignCenter,
-            "CEREBRAS · ORCHESTRATION CORE",
+            "AGENT CORE" if radius < 95 else "CEREBRAS · ORCHESTRATION CORE",
         )
 
     def _edge_path(
@@ -765,6 +774,11 @@ class PersonalJarvisCanvas(QWidget):
         self._draw_background(painter, rect)
 
         center = QPointF(rect.width() * 0.50, rect.height() * 0.53)
+        if rect.width() < 650 or rect.height() < 420:
+            scale = min(rect.width(), rect.height()) * 0.32
+            self._draw_orbits(painter, center, scale)
+            self._draw_core(painter, center, scale)
+            return
         scale = min(rect.width(), rect.height()) * 0.148
 
         self._draw_orbits(painter, center, scale)
@@ -938,8 +952,10 @@ class JarvisWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Personal Jarvis")
+        self.setFont(QFont("Segoe UI", 10))
         self.setMinimumSize(*NORMAL_MIN_SIZE)
-        self.resize(*NORMAL_START_SIZE)
+        screen = self.screen().availableGeometry()
+        self.resize(min(NORMAL_START_SIZE[0], screen.width()), min(NORMAL_START_SIZE[1], screen.height()))
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
         self.setObjectName("root")
         self._drag_position = None
@@ -953,11 +969,16 @@ class JarvisWindow(QWidget):
         self.operator_console = OperatorConsole(self)
         self.side_tabs = QTabWidget(self)
         self.side_tabs.setObjectName("sideTabs")
-        self.side_tabs.setMinimumWidth(340)
-        self.side_tabs.setMaximumWidth(410)
+        self.side_tabs.setMinimumWidth(300)
         self.side_tabs.addTab(self.operator_console, "◉  CONTRÔLE")
         self.side_tabs.addTab(self.flow_panel, "◇  TRAJET")
-        self.canvas.setMinimumSize(520, 360)
+        self.mcp_scroll = QScrollArea(self)
+        self.mcp_scroll.setWidgetResizable(True)
+        self.mcp_scroll.setFrameShape(QFrame.NoFrame)
+        self.mcp_scroll.setStyleSheet("QScrollArea {background:#081c2c;border:0;}")
+        self.mcp_scroll.setWidget(self.operator_console.mcp_panel)
+        self.side_tabs.addTab(self.mcp_scroll, "MCP")
+        self.canvas.setMinimumSize(240, 100)
 
         title = QLabel("PERSONAL JARVIS")
         title.setObjectName("brandTitle")
@@ -966,6 +987,7 @@ class JarvisWindow(QWidget):
             "Personal AI Agent réellement intelligent, généraliste, robuste et évolutif"
         )
         tagline.setObjectName("brandTagline")
+        tagline.setWordWrap(True)
         self.brand_tagline = tagline
 
         brand = QVBoxLayout()
@@ -979,7 +1001,9 @@ class JarvisWindow(QWidget):
         self.chip_msf = StatusChip("MS Football", "En attente")
         self.chip_research = StatusChip("Recherche arrière-plan", "En veille")
 
-        chips = QHBoxLayout()
+        self.chip_strip = QWidget(self)
+        chips = QHBoxLayout(self.chip_strip)
+        chips.setContentsMargins(0, 0, 0, 0)
         chips.setSpacing(8)
         chips.addWidget(self.chip_cerebras)
         chips.addWidget(self.chip_windows)
@@ -1014,6 +1038,20 @@ class JarvisWindow(QWidget):
         self.max_button.setObjectName("windowButton")
         self.close_button = QPushButton("×")
         self.close_button.setObjectName("windowButton")
+        for button, icon, tooltip in (
+            (self.clean_button, QStyle.SP_FileDialogContentsView, "Vue epuree"),
+            (self.operator_full_button, QStyle.SP_FileDialogDetailedView, "Supervision agrandie"),
+            (self.freeze_button, QStyle.SP_MediaPause, "Figer les animations"),
+            (self.compact_button, QStyle.SP_TitleBarShadeButton, "Mode compact"),
+            (self.min_button, QStyle.SP_TitleBarMinButton, "Reduire la fenetre"),
+            (self.max_button, QStyle.SP_TitleBarMaxButton, "Agrandir ou restaurer"),
+            (self.close_button, QStyle.SP_TitleBarCloseButton, "Fermer Jarvis"),
+        ):
+            button.setText("")
+            button.setIcon(self.style().standardIcon(icon))
+            button.setToolTip(tooltip)
+            button.setAccessibleName(tooltip)
+            button.setFixedSize(32, 32)
 
         controls = QHBoxLayout()
         controls.setSpacing(6)
@@ -1031,27 +1069,33 @@ class JarvisWindow(QWidget):
         header.setSpacing(14)
         header.addLayout(brand)
         header.addStretch(1)
-        header.addLayout(chips)
-        header.addStretch(1)
         header.addLayout(controls)
 
-        middle = QHBoxLayout()
-        middle.setSpacing(14)
-        middle.addWidget(self.canvas, 1)
-        middle.addWidget(self.side_tabs)
+        self.workspace_splitter = QSplitter(Qt.Horizontal, self)
+        self.workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter.addWidget(self.canvas)
+        self.workspace_splitter.addWidget(self.side_tabs)
+        self.workspace_splitter.setStretchFactor(0, 1)
+        self.workspace_splitter.setStretchFactor(1, 0)
+        self.workspace_splitter.setSizes([1000, 380])
+        self.workspace_splitter.setMinimumHeight(185)
 
         self.status_label = QLabel("Initialisation de Personal Jarvis…")
         self.status_label.setObjectName("liveStatus")
         self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setWordWrap(True)
 
         self.transcript_label = QLabel("")
         self.transcript_label.setObjectName("transcript")
         self.transcript_label.setWordWrap(True)
         self.transcript_label.setAlignment(Qt.AlignCenter)
+        self.transcript_label.hide()
 
         self.detail_label = QLabel("")
         self.detail_label.setObjectName("detail")
         self.detail_label.setAlignment(Qt.AlignCenter)
+        self.detail_label.setWordWrap(True)
+        self.detail_label.hide()
 
         status_stack = QVBoxLayout()
         status_stack.setSpacing(2)
@@ -1072,12 +1116,14 @@ class JarvisWindow(QWidget):
 
         self.chat_panel = QFrame()
         self.chat_panel.setObjectName("chatPanel")
-        self.chat_panel.setMaximumHeight(250)
+        self.chat_panel.setMinimumHeight(110)
 
         chat_title = QLabel("CONVERSATION")
         chat_title.setObjectName("chatTitle")
         chat_help = QLabel("Même contexte et mêmes outils · micro coupé · réponses texte + voix")
         chat_help.setObjectName("chatHelp")
+        chat_help.setWordWrap(True)
+        self.chat_help = chat_help
 
         chat_head = QHBoxLayout()
         chat_head.setContentsMargins(0, 0, 0, 0)
@@ -1091,6 +1137,7 @@ class JarvisWindow(QWidget):
         self.chat_history.setPlaceholderText(
             "Les échanges texte et voix apparaîtront ici."
         )
+        self.chat_history.setMinimumHeight(35)
 
         self.chat_input = QLineEdit()
         self.chat_input.setObjectName("chatInput")
@@ -1115,10 +1162,18 @@ class JarvisWindow(QWidget):
         chat_layout.addWidget(self.chat_history, 1)
         chat_layout.addLayout(chat_entry)
         self.chat_panel.hide()
+        self.conversation_splitter = QSplitter(Qt.Vertical, self)
+        self.conversation_splitter.setChildrenCollapsible(False)
+        self.conversation_splitter.addWidget(self.workspace_splitter)
+        self.conversation_splitter.addWidget(self.chat_panel)
+        self.conversation_splitter.setStretchFactor(0, 3)
+        self.conversation_splitter.setStretchFactor(1, 1)
+        self.conversation_splitter.setSizes([580, 180])
 
         self.bottom_hint = QLabel("Deux claquements pour parler")
         self.bottom_hint.setObjectName("bottomHint")
         self.bottom_hint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.bottom_hint.setWordWrap(True)
 
         self.bottom_dock = QFrame()
         self.bottom_dock.setObjectName("bottomDock")
@@ -1129,14 +1184,17 @@ class JarvisWindow(QWidget):
         bottom.addWidget(self.conversation_button)
         bottom.addStretch(1)
         bottom.addWidget(self.bottom_hint)
+        self.resize_grip = QSizeGrip(self)
+        self.resize_grip.setAccessibleName("Redimensionner la fenetre")
+        bottom.addWidget(self.resize_grip)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 18, 24, 18)
         root.setSpacing(10)
         root.addLayout(header)
-        root.addLayout(middle, 1)
+        root.addWidget(self.chip_strip)
+        root.addWidget(self.conversation_splitter, 1)
         root.addLayout(status_stack)
-        root.addWidget(self.chat_panel)
         root.addWidget(self.bottom_dock)
 
         self.setStyleSheet(
@@ -1149,7 +1207,7 @@ class JarvisWindow(QWidget):
                 color: #effcff;
                 font-size: 20px;
                 font-weight: 650;
-                letter-spacing: 3px;
+                letter-spacing: 0;
             }
             QLabel#brandTagline {
                 color: rgba(116, 197, 221, 205);
@@ -1407,6 +1465,8 @@ class JarvisWindow(QWidget):
         self.operator_console.mission_requested.connect(self._on_mission_request)
         self._worker.mcp_control_result.connect(self.operator_console.show_mcp_result)
         self.operator_console.mcp_requested.connect(self._on_mcp_request)
+        self._worker.skill_control_result.connect(self._on_skill_result)
+        self.operator_console.skill_requested.connect(self._on_skill_request)
 
         self.canvas.route_changed.connect(self._on_route_changed)
 
@@ -1445,20 +1505,31 @@ class JarvisWindow(QWidget):
             # Read-only monitoring must never stop user interaction.
             self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
 
+    def _on_skill_request(self, operation: str, value: str) -> None:
+        panel = (self.operator_console.operational_preferences if operation == "policy_set"
+                 else self.operator_console.skills_panel)
+        if not self._thread.isRunning():
+            panel.show_result({"success": False, "reason": "Moteur Jarvis non demarre."})
+        elif not self._worker.submit_skill_control(operation, value):
+            panel.show_result({"success": False, "reason": "Commande invalide ou file pleine."})
+
+    def _on_skill_result(self, result):
+        panel = (self.operator_console.operational_preferences if result.get("operation") == "policy_set"
+                 else self.operator_console.skills_panel)
+        panel.show_result(result)
+
     def _on_mcp_request(self, operation: str, server_id: str, value: str) -> None:
         """UI merely queues explicit MCP setup/discovery/policy commands."""
         if not self._thread.isRunning():
-            self.operator_console.mcp_panel.feedback.setText(
-                "Moteur Jarvis non démarré."
-            )
+            self.operator_console.mcp_panel.show_result({"success": False, "operation": operation,
+                "reason": "Moteur Jarvis non demarre."})
             return
         accepted = self._worker.submit_mcp_control(
             operation, server_id, value
         )
         if not accepted:
-            self.operator_console.mcp_panel.feedback.setText(
-                "Commande MCP rejetée : nom, outil ou adresse invalide."
-            )
+            self.operator_console.mcp_panel.show_result({"success": False, "operation": operation,
+                "reason": "Commande invalide ou consentement OAuth deja en cours."})
         else:
             self.operator_console.mcp_panel.feedback.setText(
                 "Commande en attente dans le worker ; aucune action de modèle lancée."
@@ -1485,6 +1556,7 @@ class JarvisWindow(QWidget):
     def _set_text_panel(self, enabled: bool) -> None:
         self._worker.set_text_mode(bool(enabled))
         self.chat_panel.setVisible(bool(enabled))
+        self.voice_button.setVisible(not enabled)
         self.conversation_button.setText(
             "🎤  Revenir à la voix"
             if enabled
@@ -1502,6 +1574,7 @@ class JarvisWindow(QWidget):
         )
         if enabled:
             self.chat_input.setFocus()
+        self._adapt_geometry()
 
     def _submit_text(self) -> None:
         text = self.chat_input.text().strip()
@@ -1568,9 +1641,8 @@ class JarvisWindow(QWidget):
             self.operator_full_button.setChecked(False)
             return
         self.side_tabs.setCurrentWidget(self.operator_console)
-        self.side_tabs.setMaximumWidth(16777215 if enabled else 410)
         self.canvas.setVisible(not enabled and not self._compact_mode)
-        self.operator_full_button.setText(
+        self.operator_full_button.setToolTip(
             "◉  Revenir au graphe" if enabled else "▤  Supervision"
         )
         self._refresh_operator_console()
@@ -1585,7 +1657,7 @@ class JarvisWindow(QWidget):
 
     def _set_animations_frozen(self, frozen: bool) -> None:
         self.canvas.set_animations_frozen(frozen)
-        self.freeze_button.setText(
+        self.freeze_button.setToolTip(
             "▶  Reprendre les animations"
             if frozen
             else "Ⅱ  Figer les animations"
@@ -1618,7 +1690,7 @@ class JarvisWindow(QWidget):
             else:
                 self.chat_panel.show()
             self.resize(*COMPACT_START_SIZE)
-            self.compact_button.setText("⇱  Normal")
+            self.compact_button.setToolTip("Revenir a la vue normale")
             self.bottom_hint.setText("Mode compact · texte + voix disponibles")
             self.chat_input.setFocus()
         else:
@@ -1634,11 +1706,28 @@ class JarvisWindow(QWidget):
             self.clean_button.show()
             self.freeze_button.show()
             self.transcript_label.show()
-            self.compact_button.setText("⇲  Compact")
+            self.compact_button.setToolTip("Mode compact")
             if self._normal_geometry is not None:
-                self.setGeometry(self._normal_geometry)
+                available = self.screen().availableGeometry()
+                geometry = self._normal_geometry.intersected(available)
+                self.setGeometry(geometry)
             else:
                 self.resize(*NORMAL_START_SIZE)
+        self._adapt_geometry()
+
+    def _adapt_geometry(self) -> None:
+        if not hasattr(self, "chip_strip") or not hasattr(self, "chat_help"):
+            return
+        roomy = self.height() >= 680 and not self._compact_mode
+        self.chip_strip.setVisible(roomy)
+        self.brand_tagline.setVisible(roomy)
+        self.chat_help.setVisible(roomy)
+        self.transcript_label.setVisible(roomy and bool(self.transcript_label.text()) and not self.chat_panel.isVisible())
+        self.detail_label.setVisible(roomy and bool(self.detail_label.text()) and not self.clean_button.isChecked())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._adapt_geometry()
 
     def _toggle_maximize(self) -> None:
         if self.isMaximized():
@@ -1673,10 +1762,12 @@ class JarvisWindow(QWidget):
     def _on_transcript(self, text: str) -> None:
         self.canvas.set_transcript(text)
         self.transcript_label.setText(f"« {text} »" if text else "")
+        self._adapt_geometry()
 
     def _on_detail(self, detail: str) -> None:
         self.canvas.ingest_detail(detail)
         self.detail_label.setText(detail)
+        self._adapt_geometry()
 
     def _on_log(self, line: str) -> None:
         self.canvas.ingest_log(line)

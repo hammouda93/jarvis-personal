@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from .mcp_server_registry import MCPRegistry
-from .mcp_sdk_transport import OfficialMCPTransport
+from .mcp_sdk_transport import MCPUnavailable, OfficialMCPTransport
 from .native_tools import AgentActionResult
 
 
@@ -23,10 +23,11 @@ def _alias(server: str, tool: str) -> str:
 class MCPToolRegistry:
     def __init__(self, delegate: Any, *,
                  registry: MCPRegistry | None = None,
-                 transport: Any | None = None):
+                 transport: Any | None = None, runtime_gate=None):
         self.delegate = delegate
         self.registry = registry or MCPRegistry()
         self.transport = transport or OfficialMCPTransport()
+        self.runtime_gate = runtime_gate
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
@@ -35,6 +36,8 @@ class MCPToolRegistry:
         found: dict[str, dict] = {}
         collided = set()
         try:
+            if self.runtime_gate is not None and not self.runtime_gate():
+                return {}
             allowed = self.registry.exposed_tools()
         except (OSError, ValueError, TypeError, KeyError):
             # A damaged/unavailable optional MCP file must never take down
@@ -117,11 +120,36 @@ class MCPToolRegistry:
             )
         # Never trust the model's ability to pick a tool name or remote
         # description to authorize a previously hidden capability.
+        activity = self.registry.activity()
+        try:
+            attempt = activity.reserve(server_id, "call", entry, tool=native_name)
+        except Exception:
+            return AgentActionResult(name=name, success=False,
+                message="Quota, cooldown ou journal MCP indisponible. Aucun appel effectue.",
+                detail='{"verified":false,"outcome_unknown":false,"guard":"mcp_budget_unavailable"}')
         try:
             result = self.transport.call_tool(
-                {"id": server_id, **entry}, native_name, dict(arguments or {})
+                {**entry, "id": server_id,
+                 "_credential_root": str(self.registry.path.parent / "mcp_credentials")},
+                native_name, dict(arguments or {})
             )
+        except MCPUnavailable as exc:
+            try:
+                activity.finish(attempt, "unknown" if exc.outcome_unknown else "preflight_failed")
+            except Exception:
+                pass
+            if exc.outcome_unknown:
+                return AgentActionResult(name=name, success=False,
+                    message="Resultat MCP incertain : verifier l'effet exterieur avant toute tentative.",
+                    detail='{"verified":false,"outcome_unknown":true}')
+            return AgentActionResult(name=name, success=False,
+                message="Configuration ou credential MCP indisponible avant execution.",
+                detail='{"verified":false,"outcome_unknown":false,"guard":"transport_preflight_failed"}')
         except Exception:
+            try:
+                activity.finish(attempt, "unknown")
+            except Exception:
+                pass
             return AgentActionResult(
                 name=name, success=False,
                 message="Résultat de l'appel MCP incertain : vérifier l'effet "
@@ -129,6 +157,12 @@ class MCPToolRegistry:
                 detail='{"verified":false,"outcome_unknown":true}',
             )
         successful = result.get("success") is True
+        try:
+            activity.finish(attempt, "success" if successful else "failed")
+        except Exception:
+            return AgentActionResult(name=name, success=False,
+                message="Appel termine mais journalisation MCP indisponible. Verification manuelle requise.",
+                detail='{"verified":false,"outcome_unknown":true}')
         structured = result.get("data")
         if not isinstance(structured, dict):
             structured = None

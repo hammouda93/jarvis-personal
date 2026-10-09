@@ -160,9 +160,36 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertEqual(intent.name, "app.open_named")
         self.assertEqual(intent.args["query"], "VLC Media Player")
 
+    def test_registered_application_discovery_is_read_only_and_not_launch_proof(self):
+        from jarvis_agent.windows_app_discovery import WindowsAppCandidate
+        candidate = WindowsAppCandidate("VLC media player", "start_apps", 0.97, app_id="fixture.app")
+        with patch("jarvis_agent.windows_app_discovery.resolve_registered_app", return_value=(candidate, (candidate,))) as resolve, \
+                patch("jarvis_agent.native_tools.CUA_DRIVER.launch_application") as launch, \
+                patch("jarvis_agent.native_tools.execute") as execute:
+            result = self.registry.execute("list_applications", {"query": "VLC"})
+        self.assertTrue(result.success)
+        data = json.loads(result.detail)
+        self.assertEqual(data["selected_name"], "VLC media player")
+        self.assertFalse(data["launch_performed"])
+        self.assertFalse(data["verified"])
+        resolve.assert_called_once_with("VLC")
+        launch.assert_not_called()
+        execute.assert_not_called()
+
+    def test_empty_inventory_and_unsupported_scheme_do_not_launch_or_claim_absence(self):
+        with patch("jarvis_agent.windows_app_discovery.resolve_registered_app", return_value=(None, ())), \
+                patch("jarvis_agent.native_tools.execute") as execute:
+            result = self.registry.execute("list_applications", {"query": "Unknown app"})
+            self.assertEqual(json.loads(result.detail)["status"], "no_match_not_exhaustive")
+            result = self.registry.execute("open_url", {"url": "vlc://"})
+            self.assertFalse(result.success)
+            self.assertEqual(json.loads(result.detail)["next_capability"], "list_applications")
+            self.assertFalse(self.registry.execute("list_applications", {"query": "vlc://"}).success)
+        execute.assert_not_called()
+
     @patch(
         "jarvis_agent.native_tools.settings",
-        replace(real_settings, operational_learning_enabled=True),
+        replace(real_settings, operational_learning_enabled=False, skills_enabled=True),
     )
     @patch("jarvis_agent.native_tools.os.startfile")
     @patch("jarvis_agent.native_tools.execute")
@@ -776,6 +803,7 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertEqual(payload["perception"]["vision_error"], "timed out")
         vision_mock.assert_called_once()
 
+    @patch("jarvis_agent.native_tools.settings", replace(real_settings, operational_learning_enabled=True))
     def test_verified_skill_tool_writes_to_injected_local_store(self):
         result = self.registry.execute(
             "save_verified_skill",
@@ -800,6 +828,7 @@ class NativeToolRegistryTests(unittest.TestCase):
             1,
         )
 
+    @patch("jarvis_agent.native_tools.settings", replace(real_settings, operational_learning_enabled=True))
     def test_feedback_lesson_tool_writes_to_injected_local_store(self):
         result = self.registry.execute(
             "save_feedback_lesson",
@@ -813,6 +842,7 @@ class NativeToolRegistryTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(self.knowledge.stats()["lessons"], 1)
 
+    @patch("jarvis_agent.native_tools.settings", replace(real_settings, skills_enabled=True))
     def test_search_agent_knowledge_returns_matching_context(self):
         self.knowledge.record_lesson(
             scope="messaging",

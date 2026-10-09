@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from .sqlite_utils import ClosingConnection
 import threading
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ from .kernel_contracts import MissionContext, MissionStatus
 
 def _default_path() -> Path:
     root = Path(
-        os.getenv("LOCALAPPDATA")
+        os.getenv("JARVIS_DATA_DIR") or os.getenv("LOCALAPPDATA")
         or os.getenv("XDG_STATE_HOME")
         or Path.home()
     )
@@ -30,7 +31,7 @@ class MissionContextStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path), timeout=5.0)
+        conn = sqlite3.connect(str(self.path), timeout=5.0, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
@@ -115,12 +116,12 @@ class MissionContextStore:
                 raise RuntimeError("mission_context_version_conflict")
 
             version = current_version + 1
-            conn.execute(
+            updated = conn.execute(
                 """
                 UPDATE mission_contexts
                 SET version=?, status=?, parent_mission_id=?, user_id=?,
                     owner_agent_id=?, goal_summary=?, state_json=?, updated_at=?
-                WHERE mission_id=?
+                WHERE mission_id=? AND version=?
                 """,
                 (
                     version,
@@ -132,8 +133,11 @@ class MissionContextStore:
                     self._payload(context),
                     now,
                     context.mission_id,
+                    current_version,
                 ),
             )
+            if updated.rowcount != 1:
+                raise RuntimeError("mission_context_version_conflict")
             return version
 
     def load(

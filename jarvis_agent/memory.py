@@ -3,12 +3,18 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from .sqlite_utils import ClosingConnection
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 def _default_db_path() -> Path:
+    custom = os.getenv("JARVIS_DATA_DIR", "").strip()
+    if custom:
+        root = Path(custom)
+        root.mkdir(parents=True, exist_ok=True)
+        return root / "memory.sqlite3"
     local = os.getenv("LOCALAPPDATA", "").strip()
     if local:
         root = Path(local) / "JarvisPersonal"
@@ -38,7 +44,7 @@ class LocalMemory:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.db_path), timeout=5)
+        return sqlite3.connect(str(self.db_path), timeout=5, factory=ClosingConnection)
 
     def _init_db(self) -> None:
         with self._connect() as conn:

@@ -6,6 +6,8 @@ from pathlib import Path
 from .agent_factory import AgentFactory
 from .agent_knowledge import AgentKnowledgeStore
 from .agent_knowledge_adapter import LegacyAgentKnowledgeBackend
+from .config import settings
+from .operational_preferences import learning_enabled, skills_enabled
 from .agent_router import CapabilityAgentRouter
 from .approval_manager import HumanApprovalManager
 from .capability_registry import (
@@ -99,6 +101,8 @@ def build_passive_kernel_stack(
     knowledge_backend = LegacyAgentKnowledgeBackend(
         knowledge_store,
         owner_user_id=owner_user_id,
+        read_allowed=lambda: skills_enabled(settings),
+        write_allowed=lambda: learning_enabled(settings),
     )
     knowledge = KnowledgeBroker(knowledge_backend)
     context_broker = ContextBroker()

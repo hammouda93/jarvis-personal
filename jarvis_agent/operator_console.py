@@ -7,12 +7,15 @@ from collections import deque
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextBrowser,
-    QVBoxLayout, QWidget,
+    QStyle, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .operator_telemetry import snapshot
 from .project_roadmap import snapshot as roadmap_snapshot
 from .mcp_operator_panel import MCPConnectionsPanel
+from .mission_supervisor_panel import MissionSupervisorPanel
+from .skills_operator_panel import SkillsPanel
+from .operational_preferences_panel import OperationalPreferencesPanel
 
 
 _STATUS = {
@@ -92,11 +95,12 @@ class OperatorConsole(QFrame):
 
     mission_requested = Signal(str, str)
     mcp_requested = Signal(str, str, str)
+    skill_requested = Signal(str, str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("operatorConsole")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(280)
         self._last_model = {}
         self._last_snapshot = {}
         self._render_cache: dict[str, str] = {}
@@ -108,7 +112,7 @@ class OperatorConsole(QFrame):
 
         title = QLabel("◈   CENTRE DE CONTRÔLE")
         title.setObjectName("operatorHeading")
-        subtitle = QLabel("ÉTATS RÉELS  ·  AUCUNE ACTION AUTOMATIQUE")
+        subtitle = QLabel("ÉTATS OBSERVÉS  ·  ACTIONS CONTRÔLÉES")
         subtitle.setObjectName("operatorSubtitle")
         layout.addWidget(title)
         layout.addWidget(subtitle)
@@ -130,7 +134,6 @@ class OperatorConsole(QFrame):
             line.setObjectName("operatorMetric")
             line.setWordWrap(True)
             sum_layout.addWidget(line)
-        layout.addWidget(summary)
 
         controls_box = QFrame()
         controls_box.setObjectName("operatorGroup")
@@ -139,6 +142,7 @@ class OperatorConsole(QFrame):
         mission_layout.setSpacing(6)
         control_title = QLabel("◉   MISSION EXPLICITE · MÊME CERVEAU")
         control_title.setObjectName("operatorSection")
+        control_title.setWordWrap(True)
         mission_layout.addWidget(control_title)
         self.mission_goal_input = QLineEdit()
         self.mission_goal_input.setMaxLength(2000)
@@ -149,6 +153,8 @@ class OperatorConsole(QFrame):
         self.mission_begin_button = QPushButton("▶ Démarrer et exécuter")
         self.mission_begin_button.setObjectName("missionButton")
         self.mission_picker = QComboBox()
+        self.mission_picker.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.mission_picker.setMinimumContentsLength(12)
         self.mission_picker.setObjectName("missionPicker")
         self.mission_picker.addItem("Choisir une mission enregistrée…", "")
         self._mission_choices = ()
@@ -177,6 +183,19 @@ class OperatorConsole(QFrame):
         self.mission_review_button.setObjectName("missionButton")
         self.mission_detach_button = QPushButton("Ⅱ Détacher sans conclure")
         self.mission_detach_button.setObjectName("missionButton")
+        for button, text, icon in (
+            (self.mission_begin_only_button, "Creer sans agir", QStyle.SP_FileIcon),
+            (self.mission_begin_button, "Demarrer", QStyle.SP_MediaPlay),
+            (self.mission_resume_button, "Reprendre", QStyle.SP_BrowserReload),
+            (self.mission_detach_button, "Detacher", QStyle.SP_MediaPause),
+            (self.mission_plan_button, "Criteres de reussite", QStyle.SP_DialogApplyButton),
+            (self.mission_auto_plan_button, "Generer un plan", QStyle.SP_FileDialogDetailedView),
+            (self.mission_route_button, "Proposer des agents", QStyle.SP_FileDialogListView),
+            (self.mission_review_button, "Verifier la progression", QStyle.SP_DialogApplyButton),
+        ):
+            button.setToolTip(button.text())
+            button.setText(text)
+            button.setIcon(self.style().standardIcon(icon))
         buttons = QHBoxLayout()
         buttons.setSpacing(5)
         buttons.addWidget(self.mission_resume_button)
@@ -199,7 +218,32 @@ class OperatorConsole(QFrame):
         mission_layout.addWidget(self.mission_route_button)
         mission_layout.addLayout(buttons)
         mission_layout.addWidget(self.mission_feedback)
-        layout.addWidget(controls_box)
+        # Plain-language plan and questions are visible next to the mission
+        # controls. The detailed diagnostic panes remain below.
+        self.plan_summary_title = QLabel("◈   PLAN ACTUEL · ÉTAPES ET QUESTIONS")
+        self.plan_summary_title.setObjectName("operatorSection")
+        self.plan_summary_title.setWordWrap(True)
+        self.plan_summary_view = QTextBrowser()
+        self.plan_summary_view.setMinimumWidth(0)
+        self.plan_summary_view.setMinimumHeight(110)
+        self.plan_summary_view.setMaximumHeight(240)
+        self.plan_summary_view.setHtml("<p>Créez une mission puis générez son plan.</p>")
+        self.clarification_input = QTextEdit()
+        self.clarification_input.setPlaceholderText("Réponse aux questions ci-dessus…")
+        self.clarification_input.setMaximumHeight(78)
+        self.clarification_input.setAccessibleName("Réponse de clarification de mission")
+        self.clarification_button = QPushButton("Réviser le plan")
+        self.clarification_button.setToolTip(
+            "Réviser le plan (1 requête IA), avant approbation et sans exécuter d'action")
+        self.clarification_input.setVisible(False)
+        self.clarification_button.setVisible(False)
+        mission_layout.addWidget(self.plan_summary_title)
+        mission_layout.addWidget(self.plan_summary_view)
+        mission_layout.addWidget(self.clarification_input)
+        mission_layout.addWidget(self.clarification_button)
+        self.clarification_button.clicked.connect(
+            lambda: self._request_mission("clarify_plan", self.clarification_input.toPlainText())
+        )
         self.mission_begin_button.clicked.connect(
             lambda: self._request_mission("begin", self.mission_goal_input.text())
         )
@@ -227,9 +271,12 @@ class OperatorConsole(QFrame):
 
         self.mcp_panel = MCPConnectionsPanel(self)
         self.mcp_panel.requested.connect(self.mcp_requested.emit)
+        self.active_panel = MissionSupervisorPanel(self)
+        self.active_panel.requested.connect(self.mission_requested.emit)
 
         self._views = {}
         scroll = QScrollArea(self)
+        self.scroll_area = scroll
         scroll.setObjectName("operatorScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -238,6 +285,11 @@ class OperatorConsole(QFrame):
         event_list = QVBoxLayout(content)
         event_list.setContentsMargins(0, 0, 0, 0)
         event_list.setSpacing(7)
+        event_list.addWidget(summary)
+        self.operational_preferences = OperationalPreferencesPanel(self)
+        self.operational_preferences.requested.connect(self.skill_requested.emit)
+        event_list.addWidget(self.operational_preferences)
+        event_list.addWidget(controls_box)
         for key, label in [
             ("missions", "◉   MISSIONS / OBJECTIFS"),
             ("tasks", "◇   ÉTAPES / SUPERVISION"),
@@ -254,6 +306,7 @@ class OperatorConsole(QFrame):
             group_layout.setContentsMargins(9, 8, 9, 7)
             group_layout.setSpacing(4)
             header = QLabel(label)
+            header.setWordWrap(True)
             header.setObjectName("operatorSection")
             view = QTextBrowser()
             view.setOpenExternalLinks(False)
@@ -264,11 +317,26 @@ class OperatorConsole(QFrame):
             group_layout.addWidget(header)
             group_layout.addWidget(view)
             event_list.addWidget(group)
-        event_list.addWidget(self.mcp_panel)
+        event_list.addWidget(self.active_panel)
+        self.skills_panel = SkillsPanel(self)
+        self.skills_panel.requested.connect(self.skill_requested.emit)
+        event_list.addWidget(self.skills_panel)
         event_list.addStretch(1)
         scroll.setWidget(content)
         layout.addWidget(scroll, 1)
         self.setStyleSheet("""
+            QLabel, QCheckBox {color:#b4dce7;font-size:10px;}
+            QLineEdit, QComboBox, QSpinBox, QTreeWidget, QPlainTextEdit {
+                background:#061a2b;color:#e4f9ff;border:1px solid #286278;
+                border-radius:6px;padding:5px;font-size:10px;
+                selection-background-color:#174d60;
+            }
+            QHeaderView::section {background:#0b3445;color:#b4dce7;padding:4px;border:0;}
+            QPushButton {background:#0b3445;color:#9ef3ed;border:1px solid #286278;
+                border-radius:6px;padding:6px;font-size:10px;}
+            QPushButton:hover {background:#155366;}
+            QPushButton:disabled {color:#718c9b;}
+            QCheckBox::indicator {width:14px;height:14px;}
             QFrame#operatorConsole {background: rgba(2,13,27,230);
                 border:1px solid rgba(56,164,192,105);border-radius:15px;}
             QFrame#operatorSummary {background:#072138; border-radius:11px;
@@ -305,7 +373,7 @@ class OperatorConsole(QFrame):
     def _request_mission(self, operation: str, value: str) -> None:
         """Signal request only. Worker is authoritative and owns runtime."""
         raw = str(value or "").strip()
-        if operation in {"begin", "begin_only", "resume", "plan"} and not raw:
+        if operation in {"begin", "begin_only", "resume", "plan", "clarify_plan"} and not raw:
             self.mission_feedback.setText("Objectif ou identifiant de mission requis.")
             return
         self.mission_requested.emit(operation, raw)
@@ -314,6 +382,7 @@ class OperatorConsole(QFrame):
         self.mcp_panel.show_result(result)
 
     def show_mission_result(self, result: dict) -> None:
+        self.active_panel.apply_result(result)
         success = result.get("success") is True
         operation = str(result.get("operation") or "")
         mid = str(result.get("mission_id") or "")
@@ -337,6 +406,13 @@ class OperatorConsole(QFrame):
                 "Aucune action effectuée, aucune preuve validée. "
                 "Utilisez « Vérifier la progression » avant de continuer."
             )
+            return
+        if success and operation == "clarify_plan":
+            self.clarification_input.clear()
+            self.mission_feedback.setText(
+                f"Plan révisé (version {int(result.get('revision') or 0)}) · "
+                f"{int(result.get('unresolved_count') or 0)} question(s) restante(s). "
+                "Aucune action lancée. Relisez les étapes et les questions.")
             return
         if success and operation == "plan":
             self.mission_criteria_input.clear()
@@ -414,6 +490,7 @@ class OperatorConsole(QFrame):
 
     def apply_snapshot(self, data: dict) -> None:
         self._last_snapshot = dict(data)
+        self.active_panel.apply_snapshot(data)
         self.mcp_panel.apply_snapshot(data.get("mcp") or {})
         missions, steps, actions = render_snapshot(data)
         candidates = tuple(
@@ -442,6 +519,34 @@ class OperatorConsole(QFrame):
         self._render_html("missions", missions)
         self._render_html("tasks", steps)
         review = data.get("supervisor")
+        questions = []
+        if isinstance(review, dict) and review.get("plan_registered"):
+            summary = ["<p><b>Étapes proposées (aucune action déclenchée par la planification) :</b></p>"]
+            for index, item in enumerate(list(review.get("steps") or []), 1):
+                summary.append(
+                    f'<p><b>{index}. {_escape(item.get("intent"), 1200)}</b><br>'
+                    f'<span style="color:#a6c5d2">État : {_escape(item.get("state"), 80)}</span></p>'
+                )
+            questions = list(review.get("unresolved") or [])
+            if questions:
+                summary.append('<p style="color:#f3c481"><b>❓ Questions à clarifier :</b></p>')
+                summary.extend(
+                    f'<p style="color:#f3c481">{index}. {_escape(question, 2000)}</p>'
+                    for index, question in enumerate(questions, 1)
+                )
+            else:
+                summary.append('<p style="color:#70dbbe">Aucune clarification en attente.</p>')
+            plan_html = "".join(summary)
+        else:
+            plan_html = "<p>Aucun plan enregistré. Créez une mission et générez son plan.</p>"
+        if self._render_cache.get("compact_plan") != plan_html:
+            self._render_cache["compact_plan"] = plan_html
+            self.plan_summary_view.setHtml(plan_html)
+        can_clarify = (bool(data.get("mission_enabled")) and bool(questions)
+                       and not bool(data.get("active_supervisor")))
+        self.clarification_input.setVisible(can_clarify)
+        self.clarification_button.setVisible(can_clarify)
+        self.clarification_button.setEnabled(can_clarify)
         if not data.get("mission_enabled"):
             review_html = "<p>Superviseur indisponible : missions désactivées.</p>"
         elif not isinstance(review, dict):
@@ -539,6 +644,7 @@ class OperatorConsole(QFrame):
             f"  ·  Navigateur : {'ON' if data.get('browser_core_enabled') else 'OFF'}"
             f"  ·  PC : {'ON' if data.get('computer_core_enabled') else 'OFF'}"
             f"  ·  Apprentissage : {'ON' if data.get('learning_enabled') else 'OFF'}"
+            f"  ·  Utilisation Skills : {'ON' if data.get('skills_enabled') else 'OFF'}"
         )
         knowledge = data.get("knowledge_stats") or {}
         memory = data.get("memory_stats") or {}

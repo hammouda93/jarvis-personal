@@ -10,6 +10,7 @@ from typing import Any
 from .agent_knowledge import AGENT_KNOWLEDGE
 from .background_web_research import BACKGROUND_WEB_RESEARCH
 from .config import settings
+from .operational_preferences import learning_enabled, skills_enabled
 from .cua_driver_bridge import CUA_DRIVER
 from .memory import LOCAL_MEMORY
 from .ms_football_bridge import MS_FOOTBALL_BRIDGE
@@ -182,6 +183,14 @@ class NativeToolRegistry:
 
     def ollama_tools(self) -> list[dict[str, Any]]:
         tools = [
+            self._ollama(
+                "list_applications",
+                "Recherche en lecture seule les applications Windows enregistrees par nom (Start Apps et App Paths). "
+                "Ne lance rien, ne prouve pas qu'une fenetre est ouverte. Pour une application de bureau inconnue, "
+                "decouvrir ici puis utiliser open_application avec le nom observe, jamais une URL de protocole inventee.",
+                {"query": {"type": "string", "description": "Nom d'application a rechercher, pas une URL ni une commande."}},
+                ["query"],
+            ),
             self._ollama(
                 "open_application",
                 "Trouve et ouvre une application de bureau installée sur Windows par son nom. Ne pas utiliser comme substitut à un contrôle déjà observé dans une application ouverte: si inspect_active_window montre la cible, agir sur sa ref. Ne pas utiliser pour ouvrir un site web: utiliser open_url.",
@@ -894,6 +903,22 @@ class NativeToolRegistry:
         approved: bool = False,
     ) -> AgentActionResult:
         args = dict(arguments or {})
+        if name in {"save_verified_skill", "save_feedback_lesson"} and not learning_enabled(settings):
+            return self._error(name, "operational_learning_disabled")
+        if name == "search_agent_knowledge" and not skills_enabled(settings):
+            return self._error(name, "operational_skills_disabled")
+
+        if name == "list_applications":
+            from .windows_app_discovery import resolve_registered_app
+            query = str(args.get("query", "")).strip()
+            if not self._safe_target(query) or len(query) > 200 or "://" in query:
+                return self._error(name, "Nom d'application requis, pas une URL ou une commande.")
+            candidate, matches = resolve_registered_app(query)
+            return AgentActionResult(name, True, "Inventaire Windows consulte; aucune application lancee.",
+                detail=json.dumps({"query": query, "candidates": [m.as_dict() for m in matches[:5]],
+                    "selected_name": candidate.name if candidate else "", "launch_performed": False,
+                    "status": "matched" if candidate else "ambiguous" if matches else "no_match_not_exhaustive",
+                    "verified": False}, ensure_ascii=False))
 
         if name == "open_application":
             target = str(args.get("name", "")).strip()
@@ -1048,7 +1073,9 @@ class NativeToolRegistry:
         if name == "open_url":
             url = str(args.get("url", "")).strip()
             if not url.startswith(("https://", "http://")):
-                return self._error(name, "URL non autorisée ou invalide.")
+                return AgentActionResult(name, False,
+                    "open_url accepte HTTP/HTTPS seulement. Pour une application Windows, utiliser list_applications puis open_application.",
+                    detail='{"guard":"unsupported_url_scheme","next_capability":"list_applications","outcome_unknown":false,"verified":false}')
             converted = self._convert(
                 name,
                 execute(ToolIntent("browser.open_url", {"url": url})),
@@ -1658,7 +1685,7 @@ class NativeToolRegistry:
         return self._error(name, "Cette capacité n'existe pas dans Jarvis.")
 
     def _open_from_learned_profile(self, target: str) -> ToolResult | None:
-        if not settings.operational_learning_enabled:
+        if not skills_enabled(settings):
             return None
         if not self._safe_target(target):
             return None
@@ -1697,7 +1724,7 @@ class NativeToolRegistry:
         if result.success:
             self._last_app_hint = target
 
-        if not settings.operational_learning_enabled:
+        if not learning_enabled(settings):
             return
         try:
             self.knowledge.upsert_app_profile(
@@ -1720,7 +1747,7 @@ class NativeToolRegistry:
             if not title:
                 return
             self._last_observed_window_title = title
-            if not settings.operational_learning_enabled:
+            if not learning_enabled(settings):
                 return
             parts = [
                 part.strip()

@@ -2647,7 +2647,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
     @patch(
         "jarvis_agent.agent_runtime.settings",
-        replace(real_settings, operational_learning_enabled=True),
+        replace(real_settings, operational_learning_enabled=False, skills_enabled=True),
     )
     def test_groq_injects_relevant_local_knowledge_ephemerally(self):
         tools = FakeTools()

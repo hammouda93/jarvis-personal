@@ -256,6 +256,9 @@ class SemanticMemoryEngine:
                 )
                 self._log_interpreter(log, "legacy_index")
             except Exception as exc:
+                from .active_mission_supervisor import SupervisorStopped
+                if isinstance(exc, SupervisorStopped):
+                    raise
                 for item in items:
                     self.store.mark_projection_error(
                         item.id,
@@ -933,6 +936,7 @@ class SemanticMemoryRuntime:
         action,
         *,
         external=(),
+        mission_context="",
         log=None,
         phase=None,
     ):
@@ -953,6 +957,7 @@ class SemanticMemoryRuntime:
             self.engine.store,
             external=external,
         )
+        context = "\n\n".join(part for part in (str(mission_context or ""), context) if part)
         if log:
             log(
                 "[MEMORY_V5] route=agentic_reasoning "
@@ -1099,10 +1104,31 @@ class SemanticMemoryRuntime:
             return " ; ".join(values), False
         return values[0], False
 
+    def _delegate_turn(self, user_text, context, *, log=None, phase=None):
+        method = getattr(self.delegate, "run_with_context", None)
+        if context and callable(method):
+            return method(user_text, context, log=log, phase=phase)
+        return self.delegate.run(user_text, log=log, phase=phase)
+
+    def run_with_context(self, user_text, context, *, log=None, phase=None):
+        # __getattr__ used to forward this directly, skipping explicit V5
+        # writes/recalls whenever a mission supplied grounding context.
+        return self._run(user_text, context=str(context or ""), log=log, phase=phase)
+
     def run(self, user_text, *, log=None, phase=None):
+        return self._run(user_text, log=log, phase=phase)
+
+    def _run(self, user_text, *, context="", log=None, phase=None):
         begin = getattr(self.tools, "begin_turn", None)
         if begin:
             begin(user_text)
+
+        from .active_mission_supervisor import execution_scope_active, delegation_context
+        if (execution_scope_active() and delegation_context().get("agent") != "memory"
+                and not is_explicit_memory_write_request(user_text)):
+            if log:
+                log("[MEMORY_V5] operation=pass fast_path=supervised_execution")
+            return self._delegate_turn(user_text, context, log=log, phase=phase)
 
         # Operational browser commands are already classified by the generic
         # local capability router. Calling the semantic-memory model again for
@@ -1131,8 +1157,8 @@ class SemanticMemoryRuntime:
                     "[MEMORY_V5] operation=pass "
                     "fast_path=operational_browser"
                 )
-            return self.delegate.run(
-                user_text,
+            return self._delegate_turn(
+                user_text, context,
                 log=log,
                 phase=phase,
             )
@@ -1144,6 +1170,9 @@ class SemanticMemoryRuntime:
                 log=log,
             )
         except Exception as exc:
+            from .active_mission_supervisor import SupervisorStopped
+            if isinstance(exc, SupervisorStopped):
+                raise
             if log:
                 log(
                     "[MEMORY_V5] interpreter_error="
@@ -1151,8 +1180,8 @@ class SemanticMemoryRuntime:
                 )
             # Semantic memory is fail-open for ordinary conversation: if the
             # semantic classifier is unavailable, do not fabricate memory.
-            return self.delegate.run(
-                user_text,
+            return self._delegate_turn(
+                user_text, context,
                 log=log,
                 phase=phase,
             )
@@ -1194,8 +1223,8 @@ class SemanticMemoryRuntime:
             refined = intent.query
             if refined is None:
                 self._pending_query = None
-                return self.delegate.run(
-                    user_text,
+                return self._delegate_turn(
+                    user_text, context,
                     log=log,
                     phase=phase,
                 )
@@ -1229,6 +1258,7 @@ class SemanticMemoryRuntime:
                     refined,
                     resolution,
                     action,
+                    mission_context=context,
                     log=log,
                     phase=phase,
                 )
@@ -1240,6 +1270,9 @@ class SemanticMemoryRuntime:
                     user_text=user_text,
                 )
             except Exception as exc:
+                from .active_mission_supervisor import SupervisorStopped
+                if isinstance(exc, SupervisorStopped):
+                    raise
                 if log:
                     log(
                         "[MEMORY_V5] clarification_error="
@@ -1263,8 +1296,8 @@ class SemanticMemoryRuntime:
                 )
 
         if intent.operation == "pass" or intent.confidence < 0.55:
-            return self.delegate.run(
-                user_text,
+            return self._delegate_turn(
+                user_text, context,
                 log=log,
                 phase=phase,
             )
@@ -1300,8 +1333,8 @@ class SemanticMemoryRuntime:
                         "[MEMORY_V5] operation=pass "
                         "guard=write_not_explicit"
                     )
-                return self.delegate.run(
-                    user_text,
+                return self._delegate_turn(
+                    user_text, context,
                     log=log,
                     phase=phase,
                 )
@@ -1342,6 +1375,9 @@ class SemanticMemoryRuntime:
                             f"{memory_id} projected_facts={len(facts)}"
                         )
                 except Exception as exc:
+                    from .active_mission_supervisor import SupervisorStopped
+                    if isinstance(exc, SupervisorStopped):
+                        raise
                     self.engine.store.mark_projection_error(
                         memory_id,
                         parser_version=self.engine.parser_version,
@@ -1361,8 +1397,8 @@ class SemanticMemoryRuntime:
 
         query = intent.query
         if query is None:
-            return self.delegate.run(
-                user_text,
+            return self._delegate_turn(
+                user_text, context,
                 log=log,
                 phase=phase,
             )
@@ -1374,6 +1410,9 @@ class SemanticMemoryRuntime:
                 session_facts=self._session_facts,
             )
         except Exception as exc:
+            from .active_mission_supervisor import SupervisorStopped
+            if isinstance(exc, SupervisorStopped):
+                raise
             if log:
                 log(
                     "[MEMORY_V5] recall_error="
@@ -1434,6 +1473,7 @@ class SemanticMemoryRuntime:
             query,
             resolution,
             action,
+            mission_context=context,
             external=external,
             log=log,
             phase=phase,

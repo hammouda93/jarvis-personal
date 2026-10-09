@@ -406,6 +406,8 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             timeout=self.timeout_s,
             max_retries=0,
         )
+        from .active_mission_supervisor import reserve_model_request
+        reserve_model_request()
         response = client.chat.completions.create(
             model=self._model_for(provider),
             messages=[
@@ -436,6 +438,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             "model": self.model,
             "stream": False,
             "format": "json",
+            "think": False,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -448,6 +451,8 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        from .active_mission_supervisor import reserve_model_request
+        reserve_model_request()
         try:
             with urllib.request.urlopen(
                 request,
@@ -458,7 +463,12 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             raise RuntimeError(
                 f"semantic_memory_ollama_unavailable:{exc}"
             ) from exc
-        return str((data.get("message") or {}).get("content") or "")
+        if data.get("done_reason") == "length":
+            raise RuntimeError("semantic_memory_structured_output_truncated")
+        content = str((data.get("message") or {}).get("content") or "")
+        if not content.strip():
+            raise RuntimeError("semantic_memory_structured_output_empty")
+        return content
 
     def _chat(self, system: str, payload: Any) -> dict[str, Any]:
         user = json.dumps(payload, ensure_ascii=False)
@@ -492,6 +502,10 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
                 self.last_attempts = tuple(attempts)
                 return parsed
             except Exception as exc:
+                from .active_mission_supervisor import SupervisorStopped
+                if isinstance(exc, SupervisorStopped):
+                    self.last_attempts = tuple(attempts)
+                    raise
                 errors.append(
                     f"{provider}:{type(exc).__name__}:{exc}"
                 )

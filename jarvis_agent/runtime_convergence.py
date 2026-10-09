@@ -102,6 +102,7 @@ class LiveMissionContinuityRuntime:
         self._active_mission_id: str | None = None
         self._explicit = False
         self._lock = threading.RLock()
+        self.active_supervisor = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
@@ -159,6 +160,8 @@ class LiveMissionContinuityRuntime:
             interrupted = (
                 context.status == MissionStatus.RUNNING
                 or any(node.status == TaskStatus.RUNNING for node in graph.nodes())
+                or (context.observed_state.get("active_supervisor") or {}).get("state")
+                in {"ACTING", "OBSERVING", "VERIFYING", "WAITING_APPROVAL"}
             )
             if interrupted:
                 for node in graph.nodes():
@@ -170,6 +173,9 @@ class LiveMissionContinuityRuntime:
                     "reason": "interrupted_outcome_unknown",
                     "manual_review_required": True,
                 }
+                if context.observed_state.get("active_supervisor"):
+                    context.observed_state["active_supervisor"]["state"] = "BLOCKED"
+                    context.observed_state["active_supervisor"].pop("approval_digest", None)
                 self.graph_store.save(graph)
                 self.context_store.save(context, expected_version=version)
                 self._audit(
@@ -254,6 +260,72 @@ class LiveMissionContinuityRuntime:
                 "tool_execution": False,
                 "goal_verified": False,
                 "review": self.review_mission(mid),
+            }
+
+    def clarify_semantic_plan(self, answer: str) -> dict[str, Any]:
+        """Revise an unapproved draft; never revise after any execution or proof.
+
+        The prior draft and user clarification stay in the owner-scoped
+        checkpoint. The LLM only authors a fresh, untrusted plan: it executes
+        no tools and grants no permissions or evidence.
+        """
+        response = str(answer or "").strip()
+        if not 1 <= len(response) <= 2000:
+            raise ValueError("mission_clarification_length_invalid")
+        with self._lock:
+            mid = self._active_mission_id
+            if not mid:
+                raise RuntimeError("no_active_mission")
+            loaded = self.context_store.load(mid)
+            graph = self.orchestrator.graph(mid)
+            if loaded is None or graph is None:
+                raise RuntimeError("mission_checkpoint_not_found")
+            state, version = loaded
+            if state.user_id != self.owner_user_id:
+                raise PermissionError("mission_owner_mismatch")
+            if state.status in (MissionStatus.BLOCKED, MissionStatus.COMPLETED, MissionStatus.FAILED):
+                raise RuntimeError("mission_revision_requires_review")
+            if state.observed_state.get("active_supervisor"):
+                raise RuntimeError("mission_already_approved")
+            if graph.nodes() or state.observed_state.get("plan_evidence"):
+                raise RuntimeError("mission_plan_has_execution_or_evidence")
+            previous = state.expected_state.get("semantic_contract")
+            if not isinstance(previous, dict):
+                raise RuntimeError("mission_plan_not_registered")
+            if not previous.get("unresolved"):
+                raise RuntimeError("mission_has_no_clarifications")
+            versions = list(state.expected_state.get("semantic_plan_history") or [])
+            if len(versions) >= 8:
+                raise RuntimeError("mission_plan_revision_limit")
+
+            from .llm_mission_planner import generate_draft
+            # One bounded request; if it fails the old draft stays unchanged.
+            draft = generate_draft(
+                self.delegate, state.user_goal,
+                previous_plan=previous, clarification=response,
+            )
+            draft.validate()
+            versions.append(previous)
+            revised = draft.as_dict()
+            revised.setdefault("metadata", {})["revision"] = len(versions)
+            state.expected_state["semantic_plan_history"] = versions
+            state.expected_state["semantic_contract"] = revised
+            clarifications = list(state.expected_state.get("mission_clarification_answers") or [])
+            clarifications.append({"answer": response, "revision": len(versions)})
+            state.expected_state["mission_clarification_answers"] = clarifications
+            state.observed_state["plan_evidence"] = {}
+            self.context_store.save(state, expected_version=version)
+            self._audit(mid, "mission.plan_revised", {
+                "revision": len(versions), "steps": len(draft.steps),
+                "unresolved": len(draft.unresolved), "tool_execution": False,
+            })
+            return {
+                "mission_id": mid, "status": "plan_revised_unverified",
+                "revision": len(versions),
+                "step_count": len(draft.steps),
+                "unresolved_count": len(draft.unresolved),
+                "model_request_count": 1,
+                "tool_execution": False, "goal_verified": False,
             }
 
     def register_goal_evidence(self, requirement: str, *, proof_ref: str) -> None:
@@ -391,6 +463,28 @@ class LiveMissionContinuityRuntime:
             state.current_step_id = None
             state.current_step = ""
             state.observed_state["last_recovery"] = verified_outcome
+            supervised = state.observed_state.get("active_supervisor")
+            if supervised:
+                used = int(supervised["usage"].get("recoveries", 0))
+                total = int(supervised["usage"].get("total_units", 0))
+                if verified_outcome != "cancel" and (used >= supervised["limits"]["recoveries"]
+                        or total >= supervised["limits"]["total_units"]):
+                    raise RuntimeError("mission_recovery_budget_exhausted")
+                if verified_outcome != "cancel":
+                    supervised["usage"]["recoveries"] = used + 1
+                    supervised["usage"]["total_units"] = total + 1
+                step_id = supervised.get("step_id")
+                if step_id and verified_outcome == "completed":
+                    supervised["executed_steps"] = list(dict.fromkeys([
+                        *supervised.get("executed_steps", []), step_id,
+                    ]))
+                elif step_id and verified_outcome == "not_executed":
+                    supervised["executed_steps"] = [s for s in supervised.get("executed_steps", []) if s != step_id]
+                supervised.pop("approval_digest", None)
+                supervised["state"] = (
+                    "FAILED" if verified_outcome == "cancel" else
+                    "RECOVERING" if verified_outcome == "completed" else "READY"
+                )
             # Resolving an individual action NEVER verifies the whole goal.
             state.observed_state["goal_verified"] = False
             self.graph_store.save(graph)
@@ -510,12 +604,13 @@ class LiveMissionContinuityRuntime:
             "goal_verified": bool(state.observed_state.get("goal_verified")),
             "semantic_plan": state.expected_state.get("semantic_contract"),
             "plan_evidence": dict(state.observed_state.get("plan_evidence") or {}),
+            "active_supervisor": dict(state.observed_state.get("active_supervisor") or {}),
             "manual_review_required": bool(
                 state.pending_action.get("manual_review_required")
             ),
             "task_summary": graph.summary(),
             "tasks": [
-                {"id": node.task_id, "status": node.status.value,
+                {"id": node.task_id, "status": node.status.value, "agent_id": node.agent_id,
                  "action_names": list(node.result.get("action_names", [])),
                  "agent_routes": list(node.result.get("agent_routes", [])),
                  "error": node.error}
@@ -545,10 +640,9 @@ class LiveMissionContinuityRuntime:
         tools = []
         try:
             from .mcp_server_registry import MCPRegistry
-            if os.getenv("JARVIS_MCP_ENABLED", "0").lower() in (
-                "1", "true", "yes", "on"
-            ):
-                tools = MCPRegistry().exposed_tools()
+            registry = MCPRegistry()
+            if registry.runtime_enabled():
+                tools = registry.exposed_tools()
         except (OSError, ValueError, KeyError, TypeError):
             # Broken/absent MCP config never prevents native mission review.
             tools = []
@@ -560,11 +654,103 @@ class LiveMissionContinuityRuntime:
             self._active_mission_id = None
             self._explicit = False
 
+    def approve_supervised_plan(self, *, digest: str, rules=None, limits=None, assignments=None):
+        if self.active_supervisor is None:
+            raise RuntimeError("active_supervisor_not_enabled")
+        return self.active_supervisor.approve(digest=digest, rules=rules, limits=limits, assignments=assignments)
+
+    def advance_supervised_mission(self, user_text=None, *, log=None, phase=None, stop_event=None):
+        if self.active_supervisor is None:
+            raise RuntimeError("active_supervisor_not_enabled")
+        return self.active_supervisor.advance(user_text, log=log, phase=phase, stop_event=stop_event)
+
+    def run_supervised_mission(self, *, max_steps=24, stop_event=None, progress=None, log=None, phase=None):
+        if self.active_supervisor is None:
+            raise RuntimeError("active_supervisor_not_enabled")
+        return self.active_supervisor.run_until_pause(max_steps=max_steps, stop_event=stop_event,
+                                                    progress=progress, log=log, phase=phase)
+
+    @staticmethod
+    def _mission_information_requested(user_text: str) -> bool:
+        """Narrow, local read-only intent for mission status, not an action router."""
+        text = str(user_text or "").strip().casefold()
+        if not text or len(text) > 260:
+            return False
+        if not any(word in text for word in ("mission", "plan", "étape", "etape")):
+            return False
+        return text.startswith((
+            "c quoi", "c'est quoi", "quelle est", "quel est",
+            "où en", "ou en", "montre", "affiche", "résume",
+            "resume", "rappelle", "statut", "état", "etat",
+            "what is", "what's", "show", "status",
+        ))
+
+    def _mission_information_reply(self, user_text: str):
+        """Consult an attached checkpoint even when execution is blocked.
+
+        Neither the model nor any browser/desktop tool is invoked.
+        """
+        if self._active_mission_id is None or not self._mission_information_requested(user_text):
+            return None
+        with self._lock:
+            snap = self.mission_snapshot(self._active_mission_id)
+        review = snap.get("supervisor") or {}
+        steps = review.get("steps") or []
+        questions = review.get("unresolved") or []
+        lines = [
+            "Mission : " + str(snap.get("user_goal") or "")[:400],
+            "État réel : " + str(snap.get("status") or "inconnu"),
+            "Objectif vérifié : " + ("oui" if snap.get("goal_verified") else "non"),
+            "Plan : " + str(len(steps)) + " étape(s).",
+        ]
+        for index, step in enumerate(steps[:6], 1):
+            lines.append(
+                str(index) + ". " + str(step.get("intent") or "")[:150]
+                + " — " + str(step.get("state") or "non vérifié")
+            )
+        if questions:
+            lines.append("À clarifier : " + " | ".join(str(q) for q in questions[:4])[:800])
+        if snap.get("manual_review_required"):
+            lines.append("Reprise des actions bloquée : vérification manuelle requise.")
+        from .agent_runtime import AgentTurnResult
+        return AgentTurnResult(text="\n".join(lines), actions=())
+
     def run(self, user_text: str, *, log=None, phase=None):
+        info = self._mission_information_reply(user_text)
+        if info is not None:
+            return info
+        result = self._supervised_conversation(user_text, log=log, phase=phase)
+        if result is not None:
+            return result
         return self._run(user_text, log=log, phase=phase)
 
     def run_with_context(self, user_text: str, context: str, *, log=None, phase=None):
+        info = self._mission_information_reply(user_text)
+        if info is not None:
+            return info
+        result = self._supervised_conversation(user_text, context=context, log=log, phase=phase)
+        if result is not None:
+            return result
         return self._run(user_text, context=context, log=log, phase=phase)
+
+    def _supervised_conversation(self, user_text, *, context="", log=None, phase=None):
+        if self.active_supervisor is None or self._active_mission_id is None:
+            return None
+        from .active_mission_supervisor import execution_scope_active, conversation_stop_event
+        if execution_scope_active():
+            return None
+        with self._lock:
+            state, _ = self.context_store.load(self._active_mission_id)
+            if not state.observed_state.get("active_supervisor"):
+                return None
+            report = self.active_supervisor.run_until_pause(user_text, context=context, log=log, phase=phase,
+                stop_event=conversation_stop_event(),
+                progress=(lambda event: phase("mission_progress:" + json.dumps(event, ensure_ascii=False))) if phase else None)
+            from .agent_runtime import AgentTurnResult
+            turn = report.get("_turn_result")
+            text = report.get("text") or ("Objectif verifie." if report["goal_verified"] else "Preuve independante attendue.")
+            return AgentTurnResult(text=text, actions=tuple(getattr(turn, "actions", ()) or ()),
+                end_session=bool(getattr(turn, "end_session", False)), should_exit=bool(getattr(turn, "should_exit", False)))
 
     def _run(self, user_text: str, *, context=None, log=None, phase=None):
         # Lock also prevents two threads executing a single mission step twice.
@@ -597,14 +783,17 @@ class LiveMissionContinuityRuntime:
                 if n.status == TaskStatus.COMPLETED
             ]
             previous_step = settled[-1].task_id if settled else None
+            from .active_mission_supervisor import delegation_context
+            delegated = delegation_context()
             node = TaskNode(
                 task_id=task_id,
                 mission_id=mission_id,
-                capability="interaction.live_turn",
-                agent_id="interaction",
+                capability="delegation.live_turn" if delegated else "interaction.live_turn",
+                agent_id=delegated.get("agent", "interaction"),
                 status=TaskStatus.RUNNING,
                 dependencies=({previous_step} if previous_step else set()),
-                payload={"source": "live_runtime", "input_length": len(str(user_text))},
+                payload={"source": "live_runtime", "input_length": len(str(user_text)),
+                         **({"delegation": delegated} if delegated else {})},
             )
             graph.add(node)
             self.graph_store.save(graph)
@@ -635,6 +824,7 @@ class LiveMissionContinuityRuntime:
             except Exception as exc:
                 # The delegate might have executed an external side effect.
                 # Fail closed, including on a quota error or storage timeout.
+                state, _ = self.context_store.load(mission_id)
                 node.status = TaskStatus.WAITING_EXTERNAL
                 node.error = type(exc).__name__[:100]
                 state.status = MissionStatus.BLOCKED
@@ -654,6 +844,8 @@ class LiveMissionContinuityRuntime:
                     self.detach_mission()
                 raise
 
+            # Registry gates may have persisted budgets/proofs during the turn.
+            state, _ = self.context_store.load(mission_id)
             actions = tuple(getattr(result, "actions", ()) or ())
             failed = sum(not bool(getattr(action, "success", False)) for action in actions)
             node.status = TaskStatus.FAILED if failed else TaskStatus.COMPLETED

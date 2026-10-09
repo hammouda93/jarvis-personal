@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from .agent_knowledge import AGENT_KNOWLEDGE
+from .operational_preferences import learning_enabled, skills_enabled
 from .config import settings
 from .connectors import CONNECTORS
 from .intent_guards import (
@@ -75,6 +76,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
 - pour agir dans une application déjà ouverte, ou dans une application que tu
   viens d'ouvrir pendant cette conversation, inspecte/active d'abord la fenêtre
   existante au lieu de relancer une nouvelle instance inutilement;
+- pour ouvrir une application de bureau inconnue, utilise list_applications
+  puis open_application avec le nom observe. N'invente jamais une URL de
+  protocole pour un logiciel local; open_url est reserve aux sites HTTP/HTTPS.
+  Un inventaire vide n'est pas une preuve d'absence exhaustive du logiciel;
 - pour agir dans une application déjà ouverte, utilise d'abord list_windows ou
   inspect_active_window afin d'observer l'interface réelle;
 - ne conclus jamais qu'une application ne supporte pas une fonction visible
@@ -236,8 +241,7 @@ ou de notes techniques destinées au modèle. Seule la réponse finale utile doi
 """
 
 
-_EXPERIMENTAL_SYSTEM_INSTRUCTIONS = """
-Extensions expérimentales optionnelles:
+_OPERATIONAL_LEARNING_INSTRUCTIONS = """
 - la mémoire opérationnelle locale (skills, lessons, app profiles) est distincte
   de la mémoire personnelle;
 - lorsqu'une procédure multi-étapes réutilisable vient de réussir avec une vraie
@@ -245,6 +249,10 @@ Extensions expérimentales optionnelles:
   save_verified_skill si cet outil est disponible;
 - lorsqu'un utilisateur corrige clairement ton comportement, tu peux enregistrer
   une règle générale avec save_feedback_lesson si cet outil est disponible;
+"""
+
+_EXPERIMENTAL_SYSTEM_INSTRUCTIONS = """
+Extensions expérimentales optionnelles:
 - une simple confirmation utilisateur ("oui c'est bon", "maintenant ça marche")
   confirme l'état précédent et ne demande jamais de répéter la mutation;
 - inspect_active_window reste la perception prioritaire. Son champ snapshot
@@ -368,8 +376,10 @@ FOUNDATION COMPUTER GROUNDING ACTIF:
 
 def _effective_system_instructions() -> str:
     instructions = _SYSTEM_INSTRUCTIONS
+    if learning_enabled(settings):
+        instructions += _OPERATIONAL_LEARNING_INSTRUCTIONS
     if (
-        settings.operational_learning_enabled
+        learning_enabled(settings)
         or settings.vision_enabled
         or settings.strict_proof_enabled
     ):
@@ -384,6 +394,7 @@ class AgentTurnResult:
     actions: tuple[AgentActionResult, ...] = ()
     end_session: bool = False
     should_exit: bool = False
+    pause_reason: str = ""
 
 
 class AgentRuntime(Protocol):
@@ -869,6 +880,34 @@ def _verified_browser_submit_seen(
     return False
 
 
+def _unverified_browser_send_claim(
+    user_text: str, response_text: str,
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> bool:
+    """A draft/composer write is not message delivery.
+
+    This is a conservative wording guard, not a click or a second planner.
+    It does not modify tools, permissions or the recipient.
+    """
+    request = normalize(user_text)
+    response = normalize(response_text)
+    if not re.search(
+        r"\b(?:envoie|envoies|envoyez|envoyer|send|transmets|transmettre)\b",
+        request,
+    ):
+        return False
+    if not re.search(
+        r"\b(?:envoye|envoyee|envoyes|envoyees|transmis|transmise|sent)\b",
+        response,
+    ):
+        return False
+    # The command can be 'envoie "bonjour"' without the word 'message'.
+    # Never let the model claim delivery merely because browser_write succeeded.
+    if not actions or any(a.name.startswith("browser_") for a in actions):
+        return not _verified_browser_submit_seen(actions)
+    return False
+
+
 def _browser_readback_request(text: str) -> bool:
     normalized = normalize(text)
     return bool(
@@ -1229,6 +1268,8 @@ def _actions_have_verified_proof(
 
 
 def _operational_knowledge_message(user_text: str, knowledge=None) -> str:
+    if not skills_enabled(settings):
+        return ""
     store = knowledge or AGENT_KNOWLEDGE
     try:
         context = store.relevant_context(user_text, limit=3)
@@ -1296,7 +1337,7 @@ def _record_operational_run(
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
     knowledge=None,
 ) -> None:
-    if not actions:
+    if not learning_enabled(settings) or not actions:
         return
     try:
         all_success = all(action.success for action in actions)
@@ -1604,13 +1645,13 @@ def _filter_optional_ollama_tools(
     tools: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     blocked: set[str] = set()
-    if not settings.operational_learning_enabled:
+    if not skills_enabled(settings):
+        blocked.update({"search_agent_knowledge", "agent_knowledge_stats"})
+    if not learning_enabled(settings):
         blocked.update(
             {
-                "search_agent_knowledge",
                 "save_verified_skill",
                 "save_feedback_lesson",
-                "agent_knowledge_stats",
             }
         )
     if not settings.vision_enabled:
@@ -1637,13 +1678,13 @@ def _filter_optional_openai_tools(
     tools: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     blocked: set[str] = set()
-    if not settings.operational_learning_enabled:
+    if not skills_enabled(settings):
+        blocked.update({"search_agent_knowledge", "agent_knowledge_stats"})
+    if not learning_enabled(settings):
         blocked.update(
             {
-                "search_agent_knowledge",
                 "save_verified_skill",
                 "save_feedback_lesson",
-                "agent_knowledge_stats",
             }
         )
     if not settings.vision_enabled:
@@ -1746,6 +1787,8 @@ class OllamaToolAgent:
                 )
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from .active_mission_supervisor import reserve_model_request
+        reserve_model_request()
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + "/api/chat",
@@ -1988,6 +2031,7 @@ class OllamaToolAgent:
             actions=tuple(actions),
             end_session=end_session,
             should_exit=should_exit,
+            pause_reason="turn_budget_exhausted",
         )
 
     def _trim_history(self) -> None:
@@ -2044,6 +2088,8 @@ class OpenAIResponsesAgent:
                 f"Clé API manquante pour le provider {self.provider_name}."
             )
 
+        from .active_mission_supervisor import reserve_model_request
+        reserve_model_request()
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + "/responses",
@@ -2083,9 +2129,13 @@ class OpenAIResponsesAgent:
             if self.provider_name == "openai"
             else settings.groq_browser_search
         )
-        if web_enabled:
+        from .active_mission_supervisor import execution_scope_active
+        if web_enabled and not execution_scope_active():
             tools.append({"type": self.web_search_tool_type})
-        tools.extend(CONNECTORS.openai_tools())
+        if not execution_scope_active():
+            # Provider-hosted connectors bypass the local ledger and role scope.
+            # Supervised missions use only Jarvis' confirmed local MCP registry.
+            tools.extend(CONNECTORS.openai_tools())
         return tools
 
     def run_with_context(
@@ -2166,6 +2216,9 @@ class OpenAIResponsesAgent:
             self._pending_function_response_id = None
 
         elif self._pending_mcp_approval is not None:
+            from .active_mission_supervisor import execution_scope_active, SupervisorStopped
+            if execution_scope_active():
+                raise SupervisorStopped("provider_hosted_connector_requires_separate_review")
             normalized = user_text.strip().lower().strip(" .!?")
             yes = normalized in {
                 "oui", "yes", "ok", "okay", "d'accord", "daccord",
@@ -2394,6 +2447,8 @@ class OpenAIResponsesAgent:
                         phase("acting")
 
                 if self.tools.requires_confirmation(name):
+                    from .active_mission_supervisor import bind_pending_tool_approval
+                    bind_pending_tool_approval(name, arguments)
                     self._pending_function_approval = {
                         "call_id": call_id,
                         "name": name,
@@ -2407,7 +2462,7 @@ class OpenAIResponsesAgent:
                         )
                     return AgentTurnResult(
                         text=(
-                            "Cette action va modifier les données MS Football. "
+                            "Cette action nécessite une autorisation. "
                             "J'ai besoin de votre confirmation explicite. "
                             "Dites oui pour exécuter ou non pour annuler."
                         ),
@@ -2470,6 +2525,7 @@ class OpenAIResponsesAgent:
             actions=tuple(actions),
             end_session=end_session,
             should_exit=should_exit,
+            pause_reason="turn_budget_exhausted",
         )
 
     @staticmethod
@@ -2522,6 +2578,9 @@ class GroqResponsesAgent:
         self._session_grounding: dict[str, str] = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
+
+        from .provider_rate_budget import ProviderRateGate
+        self._provider_rate_gate = ProviderRateGate()
 
     def reset(self) -> None:
         self._messages = [
@@ -2733,6 +2792,7 @@ class GroqResponsesAgent:
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=settings.ai_request_timeout_s,
+                max_retries=0,
             )
         return self._client
 
@@ -2803,17 +2863,15 @@ class GroqResponsesAgent:
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        tools = self.tools.ollama_tools()
-        if not settings.operational_learning_enabled:
+        tools = _filter_optional_ollama_tools(self.tools.ollama_tools())
+        if not learning_enabled(settings):
             tools = [
                 item
                 for item in tools
                 if str((item.get("function") or {}).get("name") or "")
                 not in {
-                    "search_agent_knowledge",
                     "save_verified_skill",
                     "save_feedback_lesson",
-                    "agent_knowledge_stats",
                 }
             ]
         if not settings.vision_enabled:
@@ -2849,7 +2907,7 @@ class GroqResponsesAgent:
                     "return_to_standby",
                 }
             )
-            if settings.operational_learning_enabled:
+            if skills_enabled(settings):
                 allowed.add("search_agent_knowledge")
             if self._skill_write_allowed:
                 allowed.add("save_verified_skill")
@@ -2945,7 +3003,10 @@ class GroqResponsesAgent:
                     if str((item.get("function") or {}).get("name") or "")
                     in browser_allowed
                 ]
-        return tools
+        from .active_mission_supervisor import progress_tool_definition
+        checkpoint_tool = progress_tool_definition()
+        tools = [t for t in tools if (t.get("function") or {}).get("name") != "mission_checkpoint"]
+        return [*tools, checkpoint_tool] if checkpoint_tool else tools
 
     @staticmethod
     def _is_ms_football_request(user_text: str) -> bool:
@@ -2988,6 +3049,9 @@ class GroqResponsesAgent:
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
     ):
+        gate = getattr(self, "_provider_rate_gate", None) if self.provider_name == "groq" else None
+        if gate is not None and not gate.available("groq"):
+            raise AgentRuntimeUnavailable("Groq cooldown or billing block; no request sent")
         client = self._get_client()
         tool_definitions = self._tool_definitions(
             ms_football_only=ms_football_only,
@@ -2995,6 +3059,8 @@ class GroqResponsesAgent:
         )
         try:
             request_messages = self._messages_for_request()
+            from .request_compaction import compact_duplicate_observations
+            request_messages, saved_chars = compact_duplicate_observations(request_messages)
             context_chars = len(
                 json.dumps(request_messages, ensure_ascii=False, separators=(",", ":"))
             )
@@ -3005,8 +3071,11 @@ class GroqResponsesAgent:
                 f"[AGENT_CONTEXT] provider={self.provider_name} "
                 f"messages_chars={context_chars} tools={len(tool_definitions)} "
                 f"tools_chars={tools_chars}"
+                f" deduplicated_chars={saved_chars}"
             )
-            return client.chat.completions.create(
+            from .active_mission_supervisor import reserve_model_request
+            reserve_model_request()
+            response = client.chat.completions.create(
                 model=self.model,
                 messages=request_messages,
                 tools=tool_definitions,
@@ -3016,8 +3085,16 @@ class GroqResponsesAgent:
                 temperature=0.1,
                 max_completion_tokens=256,
             )
+            from .active_mission_supervisor import record_model_usage
+            record_model_usage(getattr(response, "usage", None), self.provider_name)
+            return response
         except Exception as exc:
+            if gate is not None:
+                gate.note_failure("groq", exc)
             status = getattr(exc, "status_code", None)
+            from .active_mission_supervisor import SupervisorStopped
+            if isinstance(exc, SupervisorStopped):
+                raise
             body = getattr(exc, "body", None)
             detail = body if body is not None else str(exc)
             if status:
@@ -3404,7 +3481,7 @@ class GroqResponsesAgent:
         self._memory_write_allowed = _is_explicit_memory_write_request(user_text)
         self._skill_write_allowed = False
         self._lesson_write_allowed = (
-            settings.operational_learning_enabled
+            learning_enabled(settings)
             and _looks_like_clear_operational_feedback(user_text)
         )
         self._feedback_only_turn = _feedback_only_operational_turn(user_text)
@@ -3467,7 +3544,7 @@ class GroqResponsesAgent:
                     user_text,
                     self.knowledge,
                 )
-                if settings.operational_learning_enabled
+                if skills_enabled(settings)
                 else ""
             )
             if knowledge_message:
@@ -3793,6 +3870,19 @@ class GroqResponsesAgent:
                         "agent_knowledge_stats",
                     }
                 ]
+                from .active_mission_supervisor import execution_scope_active, progress_status
+                if (execution_scope_active() and progress_status() is None
+                        and round_index < settings.agent_max_tool_rounds):
+                    self._messages.append({"role": "user", "content": (
+                        "MISSION_DISPOSITION_REQUIRED: The model response does not complete the goal. "
+                        "Call mission_checkpoint before yielding: continue if authorized ordinary work "
+                        "remains, awaiting_verification if ready for independent final proof, or blocked "
+                        "for a real obstacle. Do not invent completion or ask the user to perform an "
+                        "already authorized ordinary step. No permission or evidence is granted by this checkpoint."
+                    )})
+                    if log:
+                        log("[MISSION] disposition_required")
+                    continue
                 learned_skill_this_turn = any(
                     action.name == "save_verified_skill" and action.success
                     for action in actions
@@ -3803,7 +3893,8 @@ class GroqResponsesAgent:
                 )
 
                 if (
-                    settings.operational_learning_enabled
+                    learning_enabled(settings)
+                    and not execution_scope_active()
                     and _actions_have_verified_proof(actions)
                     and len(reusable_actions) >= 3
                     and not learned_skill_this_turn
@@ -3833,7 +3924,7 @@ class GroqResponsesAgent:
                     continue
 
                 if (
-                    settings.operational_learning_enabled
+                    learning_enabled(settings)
                     and self._lesson_write_allowed
                     and not learned_lesson_this_turn
                     and not lesson_learning_checkpoint_attempted
@@ -3904,6 +3995,15 @@ class GroqResponsesAgent:
                         "le contexte de cette conversation."
                     )
 
+                if _unverified_browser_send_claim(user_text, text, actions):
+                    if log:
+                        log("[AGENT] blocked=unverified_browser_send_claim")
+                    text = (
+                        "Le texte a pu être préparé, mais je n'ai pas de preuve "
+                        "que le message a été envoyé. Vérifiez la conversation "
+                        "avant tout nouvel envoi pour éviter un doublon."
+                    )
+
                 unsupported_claims = _unsupported_browser_quoted_claims(
                     user_text,
                     text,
@@ -3923,7 +4023,7 @@ class GroqResponsesAgent:
 
                 if self._messages and self._messages[-1].get("role") == "assistant":
                     self._messages[-1]["content"] = text
-                if settings.operational_learning_enabled:
+                if learning_enabled(settings):
                     _record_operational_run(
                         user_text,
                         actions,
@@ -3982,6 +4082,8 @@ class GroqResponsesAgent:
                         phase("acting")
 
                 if self.tools.requires_confirmation(name):
+                    from .active_mission_supervisor import bind_pending_tool_approval
+                    bind_pending_tool_approval(name, arguments)
                     self._pending_function_approval = {
                         "call_id": str(call.id),
                         "name": name,
@@ -3989,7 +4091,7 @@ class GroqResponsesAgent:
                     }
                     return AgentTurnResult(
                         text=(
-                            "Cette action va modifier les données MS Football. "
+                            "Cette action nécessite votre autorisation explicite. "
                             "J'ai besoin de votre confirmation explicite. "
                             "Dites oui pour exécuter ou non pour annuler."
                         ),
@@ -4324,7 +4426,7 @@ class GroqResponsesAgent:
                 ):
                     close_recovery_required = True
                 if (
-                    settings.operational_learning_enabled
+                    learning_enabled(settings)
                     and _actions_have_verified_proof(actions)
                 ):
                     self._skill_write_allowed = True
@@ -4420,7 +4522,8 @@ class GroqResponsesAgent:
                 requested_capabilities = _requested_action_capabilities(
                     user_text
                 )
-                if _browser_verified_fast_completion(
+                from .active_mission_supervisor import execution_scope_active
+                if not execution_scope_active() and _browser_verified_fast_completion(
                     user_text,
                     actions,
                 ):
@@ -4442,7 +4545,7 @@ class GroqResponsesAgent:
                             "[AGENT] fast_complete=verified_browser "
                             + fast_reason
                         )
-                    if settings.operational_learning_enabled:
+                    if learning_enabled(settings):
                         _record_operational_run(
                             user_text,
                             actions,
@@ -4554,6 +4657,7 @@ class GroqResponsesAgent:
             actions=tuple(actions),
             end_session=end_session,
             should_exit=should_exit,
+            pause_reason="turn_budget_exhausted",
         )
 
 
@@ -4570,6 +4674,8 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         self.api_key = settings.cerebras_api_key
         self.provider_name = "cerebras"
         self.reasoning_effort = settings.cerebras_reasoning_effort
+        from .provider_rate_budget import ProviderRateGate
+        self._provider_rate_gate = ProviderRateGate()
 
     def _get_client(self):
         if not self.api_key:
@@ -4597,6 +4703,10 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             marker in detail
             for marker in (
                 "429",
+                "402",
+                "payment_required",
+                "billing",
+                "cooldown",
                 "quota",
                 "too_many_requests",
                 "rate limit",
@@ -4627,6 +4737,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             raise AgentRuntimeUnavailable(
                 "Fallback Groq GPT-OSS non configuré."
             )
+        gate = getattr(self, "_provider_rate_gate", None)
+        if gate is not None and not gate.available("groq_fallback"):
+            raise AgentRuntimeUnavailable("Fallback Groq cooldown or billing block; no request sent")
         try:
             from openai import OpenAI
         except ImportError as exc:
@@ -4640,21 +4753,49 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             timeout=min(settings.ai_request_timeout_s, 15.0),
             max_retries=0,
         )
+        request_messages = self._messages_for_request()
+        from .request_compaction import compact_duplicate_observations
+        request_messages, saved_chars = compact_duplicate_observations(request_messages)
+        if saved_chars:
+            print(f"[AGENT_CONTEXT] provider=groq_fallback deduplicated_chars={saved_chars}")
+        request_tools = self._tool_definitions(
+            ms_football_only=ms_football_only,
+            msf_tool_names=msf_tool_names,
+        )
+        from .provider_rate_budget import groq_fallback_preflight
+        allowed, estimate, budget = groq_fallback_preflight(
+            request_messages, request_tools,
+        )
+        if not allowed:
+            print(f"[AGENT_BUDGET] groq_fallback_skipped estimated_tokens={estimate} "
+                  f"configured_limit={budget}; no_request_sent")
+            raise AgentRuntimeUnavailable(
+                "Fallback Groq écarté avant API : contexte estimé trop volumineux. "
+                "Mission préservée; une nouvelle décision ou une réduction du "
+                "contexte est nécessaire."
+            )
         try:
-            return client.chat.completions.create(
+            from .active_mission_supervisor import reserve_model_request
+            reserve_model_request()
+            response = client.chat.completions.create(
                 model=settings.groq_agent_model,
-                messages=self._messages,
-                tools=self._tool_definitions(
-                    ms_football_only=ms_football_only,
-                    msf_tool_names=msf_tool_names,
-                ),
+                messages=request_messages,
+                tools=request_tools,
                 tool_choice=tool_choice,
                 parallel_tool_calls=False,
                 reasoning_effort=settings.groq_reasoning_effort,
                 temperature=0.1,
                 max_completion_tokens=256,
             )
+            from .active_mission_supervisor import record_model_usage
+            record_model_usage(getattr(response, "usage", None), "groq")
+            return response
         except Exception as exc:
+            from .active_mission_supervisor import SupervisorStopped
+            if isinstance(exc, SupervisorStopped):
+                raise
+            if gate is not None:
+                gate.note_failure("groq_fallback", exc)
             raise AgentRuntimeUnavailable(
                 f"Fallback Groq GPT-OSS indisponible: {exc}"
             ) from exc
@@ -4666,22 +4807,30 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
     ):
+        gate = self._provider_rate_gate
+        primary_attempted = False
         try:
+            if gate.billing_blocked("primary"):
+                raise AgentRuntimeUnavailable(
+                    "Cerebras primary disabled after HTTP 402 payment_required")
+            if not gate.available("primary"):
+                raise AgentRuntimeUnavailable("Cerebras primary cooldown after HTTP 429")
+            primary_attempted = True
             return super()._chat(
                 tool_choice=tool_choice,
                 ms_football_only=ms_football_only,
                 msf_tool_names=msf_tool_names,
             )
         except AgentRuntimeUnavailable as primary_error:
-            print(
-                "[AGENT] Cerebras primary error: "
-                + str(primary_error)[:900]
-            )
+            if primary_attempted:
+                gate.note_failure("primary", primary_error)
+            print("[AGENT] Cerebras primary unavailable: " + str(primary_error)[:250])
             if not self._should_try_secondary(primary_error):
                 raise
 
             secondary_error = None
-            if settings.cerebras_secondary_api_key:
+            if (settings.cerebras_secondary_api_key
+                    and gate.available("secondary")):
                 print(
                     "[AGENT] Cerebras primary unavailable; "
                     "trying secondary Cerebras API."
@@ -4701,10 +4850,8 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     )
                 except AgentRuntimeUnavailable as exc:
                     secondary_error = exc
-                    print(
-                        "[AGENT] Cerebras secondary error: "
-                        + str(exc)[:900]
-                    )
+                    gate.note_failure("secondary", exc)
+                    print("[AGENT] Cerebras secondary unavailable: " + str(exc)[:250])
                 finally:
                     self.api_key = primary_api_key
                     self.base_url = primary_base_url
@@ -4742,18 +4889,18 @@ def build_agent_runtime() -> AgentRuntime:
     # MCP is a generic optional tool surface: it never changes the brain,
     # Windows driver or Browser Bridge. All tools are denied by default;
     # model-facing calls still pass the existing reliability/trace wrappers.
-    if enabled("JARVIS_MCP_ENABLED"):
-        from .mcp_tool_registry import MCPToolRegistry
-        from .mcp_server_registry import MCPRegistry
-
-        tools = MCPToolRegistry(tools, registry=MCPRegistry())
+    from .mcp_tool_registry import MCPToolRegistry
+    from .mcp_server_registry import MCPRegistry
+    mcp_registry = MCPRegistry()
+    tools = MCPToolRegistry(tools, registry=mcp_registry, runtime_gate=mcp_registry.runtime_enabled)
 
     # Independent, opt-in Hermes-inspired per-action checkpointing.
     # This registry is the *only* additional boundary around the existing
     # executor; Browser Bridge / UIA / CUA dispatch remains unchanged.
     import os
     reliability_tools = None
-    if os.getenv("JARVIS_HERMES_RELIABILITY_ENABLED", "0").strip().lower() in (
+    active_supervision = enabled("JARVIS_ACTIVE_SUPERVISOR_ENABLED")
+    if active_supervision or os.getenv("JARVIS_HERMES_RELIABILITY_ENABLED", "0").strip().lower() in (
         "1", "true", "yes", "on",
     ):
         from .hermes_reliability import ActionLedger, ReliabilityToolRegistry
@@ -4763,6 +4910,12 @@ def build_agent_runtime() -> AgentRuntime:
             ActionLedger(os.getenv("JARVIS_HERMES_RELIABILITY_DIR") or None),
         )
         tools = reliability_tools
+
+    supervised_tools = None
+    if active_supervision:
+        from .active_mission_supervisor import SupervisedToolRegistry
+        supervised_tools = SupervisedToolRegistry(tools)
+        tools = supervised_tools
 
     tracing_tools = None
     journal = None
@@ -4849,7 +5002,7 @@ def build_agent_runtime() -> AgentRuntime:
     # authoritative. No tool is dispatched twice, and pending outcomes are
     # never resumed automatically after a restart.
     import os
-    if os.getenv("JARVIS_RUNTIME_CONVERGENCE_ENABLED", "0").strip().lower() in (
+    if active_supervision or os.getenv("JARVIS_RUNTIME_CONVERGENCE_ENABLED", "0").strip().lower() in (
         "1", "true", "yes", "on",
     ):
         from .runtime_convergence import LiveMissionContinuityRuntime
@@ -4859,6 +5012,9 @@ def build_agent_runtime() -> AgentRuntime:
             base_dir=os.getenv("JARVIS_RUNTIME_CONVERGENCE_DIR") or None,
             owner_user_id=settings.kernel_shadow_user_id,
         )
+        if supervised_tools is not None:
+            from .active_mission_supervisor import ActiveMissionSupervisor
+            runtime.active_supervisor = ActiveMissionSupervisor(runtime, supervised_tools)
     if reliability_tools is not None:
         from .hermes_reliability import HermesReliabilityRuntime
 
