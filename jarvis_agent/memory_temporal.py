@@ -123,3 +123,58 @@ def events_in_range(
         "truncated": total > len(hits),
         "read_only": True,
     }
+
+
+def yearless_date_guard(
+    store, user_text: str, selected_date: str,
+    *, reference_date: date | None = None,
+) -> dict[str, object]:
+    """Flag unsupported date inference, without guessing or rewriting SQLite.
+
+    An agent might select a year that the user never supplied (e.g. 2023
+    instead of 2026). A missing result for that fabricated year must not be
+    misrepresented as a memory-wide negative. Return grounded alternatives
+    so the same brain can choose a new query or ask the year.
+    """
+    import unicodedata
+    source = unicodedata.normalize("NFKD", str(user_text or "").casefold())
+    source = "".join(c for c in source if not unicodedata.combining(c))
+    months = {
+        "janvier": 1, "fevrier": 2, "mars": 3, "avril": 4,
+        "mai": 5, "juin": 6, "juillet": 7, "aout": 8,
+        "septembre": 9, "octobre": 10, "novembre": 11,
+        "decembre": 12,
+    }
+    match = re.search(
+        r"\b(\d{1,2})\s+(" + "|".join(months) + r")\b", source,
+    )
+    if not match or re.search(r"\b(?:19|20)\d{2}\b", source):
+        return {}
+    day, month = int(match.group(1)), months[match.group(2)]
+    chosen = iso_day(selected_date)
+    if not chosen:
+        return {}
+    chosen_date = date.fromisoformat(chosen)
+    if (chosen_date.day, chosen_date.month) != (day, month):
+        return {
+            "status": "date_argument_mismatch",
+            "requested_day_month": f"{month:02d}-{day:02d}",
+            "selected_date": chosen,
+        }
+    today = reference_date if reference_date is not None else date.today()
+    if abs(chosen_date.year - today.year) <= 1:
+        return {}
+    # Search known indexed facts for the SAME requested month/day, not for
+    # arbitrary other records. Candidate years are evidence, not assertions.
+    candidates = set()
+    for fact in store.semantic_facts(status="active"):
+        value, _ = event_day_and_warning(fact.projection, fact.raw_content)
+        if value and value[5:] == f"{month:02d}-{day:02d}":
+            candidates.add(value)
+    return {
+        "status": "year_not_grounded",
+        "selected_date": chosen,
+        "candidate_dates": sorted(candidates)[:8],
+        "note": "La demande ne spécifie pas l'année. Vérifie l'année avec "
+                "le contexte ou demande une précision avant de conclure.",
+    }
