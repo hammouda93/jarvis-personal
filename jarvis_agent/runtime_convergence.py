@@ -262,6 +262,72 @@ class LiveMissionContinuityRuntime:
                 "review": self.review_mission(mid),
             }
 
+    def clarify_semantic_plan(self, answer: str) -> dict[str, Any]:
+        """Revise an unapproved draft; never revise after any execution or proof.
+
+        The prior draft and user clarification stay in the owner-scoped
+        checkpoint. The LLM only authors a fresh, untrusted plan: it executes
+        no tools and grants no permissions or evidence.
+        """
+        response = str(answer or "").strip()
+        if not 1 <= len(response) <= 2000:
+            raise ValueError("mission_clarification_length_invalid")
+        with self._lock:
+            mid = self._active_mission_id
+            if not mid:
+                raise RuntimeError("no_active_mission")
+            loaded = self.context_store.load(mid)
+            graph = self.orchestrator.graph(mid)
+            if loaded is None or graph is None:
+                raise RuntimeError("mission_checkpoint_not_found")
+            state, version = loaded
+            if state.user_id != self.owner_user_id:
+                raise PermissionError("mission_owner_mismatch")
+            if state.status in (MissionStatus.BLOCKED, MissionStatus.COMPLETED, MissionStatus.FAILED):
+                raise RuntimeError("mission_revision_requires_review")
+            if state.observed_state.get("active_supervisor"):
+                raise RuntimeError("mission_already_approved")
+            if graph.nodes() or state.observed_state.get("plan_evidence"):
+                raise RuntimeError("mission_plan_has_execution_or_evidence")
+            previous = state.expected_state.get("semantic_contract")
+            if not isinstance(previous, dict):
+                raise RuntimeError("mission_plan_not_registered")
+            if not previous.get("unresolved"):
+                raise RuntimeError("mission_has_no_clarifications")
+            versions = list(state.expected_state.get("semantic_plan_history") or [])
+            if len(versions) >= 8:
+                raise RuntimeError("mission_plan_revision_limit")
+
+            from .llm_mission_planner import generate_draft
+            # One bounded request; if it fails the old draft stays unchanged.
+            draft = generate_draft(
+                self.delegate, state.user_goal,
+                previous_plan=previous, clarification=response,
+            )
+            draft.validate()
+            versions.append(previous)
+            revised = draft.as_dict()
+            revised.setdefault("metadata", {})["revision"] = len(versions)
+            state.expected_state["semantic_plan_history"] = versions
+            state.expected_state["semantic_contract"] = revised
+            clarifications = list(state.expected_state.get("mission_clarification_answers") or [])
+            clarifications.append({"answer": response, "revision": len(versions)})
+            state.expected_state["mission_clarification_answers"] = clarifications
+            state.observed_state["plan_evidence"] = {}
+            self.context_store.save(state, expected_version=version)
+            self._audit(mid, "mission.plan_revised", {
+                "revision": len(versions), "steps": len(draft.steps),
+                "unresolved": len(draft.unresolved), "tool_execution": False,
+            })
+            return {
+                "mission_id": mid, "status": "plan_revised_unverified",
+                "revision": len(versions),
+                "step_count": len(draft.steps),
+                "unresolved_count": len(draft.unresolved),
+                "model_request_count": 1,
+                "tool_execution": False, "goal_verified": False,
+            }
+
     def register_goal_evidence(self, requirement: str, *, proof_ref: str) -> None:
         """Trusted external verifier records evidence against a planned goal."""
         with self._lock:
