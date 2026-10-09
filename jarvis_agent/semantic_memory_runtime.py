@@ -222,6 +222,22 @@ class SemanticMemoryEngine:
             for fact in projected.get(item.id, ())
             if fact.confidence >= 0.55
         )
+        # V10B validates structured temporal fields against the original
+        # user-approved note. Keep V10A indexing unchanged by default.
+        from .foundation_tools import memory_agent_tools_enabled
+        if memory_agent_tools_enabled():
+            from .memory_temporal import validate_temporal_projection
+            checked = []
+            for fact in facts:
+                valid, warning = validate_temporal_projection(
+                    fact, item.content,
+                )
+                if warning and log:
+                    log("[MEMORY_V5] temporal_projection_validation="
+                        + warning)
+                if valid is not None:
+                    checked.append(valid)
+            facts = tuple(checked)
         self.store.save_projection(
             item.id,
             facts,
