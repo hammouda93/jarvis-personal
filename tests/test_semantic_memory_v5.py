@@ -3133,6 +3133,263 @@ class SemanticMemoryFactoryIntegrationTests(unittest.TestCase):
                     )
 
 
+class SemanticMemoryAgentToolsV10BTests(unittest.TestCase):
+    """Memory participates under the same agent, never an eager classifier."""
+
+    def build_adapter(self, projections=None):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        store = MemoryCoreStore(Path(temp.name) / "v10b.sqlite3")
+        interpreter = FixtureInterpreter(turns={}, projections=projections or {})
+        engine = SemanticMemoryEngine(store, interpreter)
+        adapter = FoundationToolAdapter(ToolSchemaDelegate(), memory=store)
+        adapter.attach_semantic_memory_engine(engine)
+        return store, interpreter, adapter
+
+    @staticmethod
+    def tool_mode():
+        return patch.dict("os.environ", {
+            "JARVIS_MEMORY_CORE_ENABLED": "1",
+            "JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1",
+            "JARVIS_MEMORY_AGENT_TOOLS_ENABLED": "1",
+        }, clear=False)
+
+    def test_v10b_memory_is_exposed_as_agent_tools(self):
+        _, interpreter, adapter = self.build_adapter()
+        with self.tool_mode():
+            names = {t["function"]["name"] for t in adapter.ollama_tools()}
+        self.assertIn("remember_information", names)
+        self.assertIn("semantic_memory_search", names)
+        self.assertIn("semantic_memory_inspect", names)
+        self.assertIn("semantic_memory_events_on_date", names)
+        self.assertIn("semantic_memory_events_in_range", names)
+        self.assertNotIn("recall_information", names)
+        self.assertEqual(interpreter.turn_calls, 0)
+
+    def test_v10b_user_sourced_write_is_guarded_and_not_retried(self):
+        user_text = (
+            "retient que j'ai une réunion le 10/10/2026 "
+            "et anniversaire le 16/10/2026"
+        )
+        store, interpreter, adapter = self.build_adapter({
+            user_text: (
+                projection("has_meeting", "2026-10-10", qualifiers={"date": "2026-10-10"}),
+                projection("has_birthday", "2026-10-16", qualifiers={"date": "2026-10-16"}),
+            ),
+        })
+        with self.tool_mode():
+            adapter.begin_turn(user_text)
+            result = adapter.execute(
+                "remember_information",
+                {"content": "INCORRECT MODEL INVENTION"},
+            )
+            self.assertTrue(result.success, result.detail)
+            self.assertIn("projected_facts=2", result.detail)
+            duplicate = adapter.execute(
+                "remember_information", {"content": "INCORRECT MODEL INVENTION"},
+            )
+            self.assertFalse(duplicate.success)
+            self.assertEqual(len(store.recent_memories(limit=5)), 1)
+            self.assertEqual(store.recent_memories(limit=5)[0].content, user_text)
+            self.assertEqual(len(store.semantic_facts()), 2)
+            self.assertEqual(interpreter.turn_calls, 0)
+            adapter.begin_turn("I am working on project Neptune.")
+            denied = adapter.execute(
+                "remember_information", {"content": "project Neptune"}
+            )
+            self.assertFalse(denied.success)
+            self.assertEqual(len(store.recent_memories(limit=5)), 1)
+
+    def test_v10b_reads_do_not_invoke_semantic_model_or_leak_unrelated(self):
+        text = "Mémorise que mon projet fictif Orion 63 a le code ALPHA-728."
+        store, interpreter, adapter = self.build_adapter({
+            text: (projection(
+                "has_code", "ALPHA-728", subject="project_orion_63",
+                entities=("Orion 63",),
+            ),),
+        })
+        with self.tool_mode():
+            adapter.begin_turn(text)
+            self.assertTrue(adapter.execute(
+                "remember_information", {"content": "invented"}
+            ).success)
+            adapter.begin_turn("Quels sont les films que je veux regarder ?")
+            missed = adapter.execute(
+                "semantic_memory_search",
+                {"query": "films regarder"},
+            )
+            self.assertTrue(missed.success)
+            self.assertEqual(json.loads(missed.detail)["raw_fallback"], [])
+            found = adapter.execute(
+                "semantic_memory_search", {"query": "Orion 63"}
+            )
+            payload = json.loads(found.detail)
+            self.assertEqual(payload["status"], "resolved")
+            self.assertEqual(payload["hits"][0]["value"], "ALPHA-728")
+            self.assertIn("created_at", payload["hits"][0])
+            self.assertIn("Orion 63", payload["raw_fallback"][0]["raw"])
+            inventory = adapter.execute("semantic_memory_inspect", {})
+            items = json.loads(inventory.detail)["items"]
+            self.assertEqual(len(items), 1)
+            self.assertIn("created_at", items[0])
+            self.assertEqual(interpreter.turn_calls, 0)
+            self.assertEqual(interpreter.project_calls, 1)
+
+    def test_v10b_memory_date_tool_returns_real_persisted_events(self):
+        source = "Retiens une réunion le 10 octobre 2026"
+        _, interpreter, adapter = self.build_adapter({
+            source: (
+                projection(
+                    "has_meeting", "2026-10-10",
+                    qualifiers={"date": "2026-10-10"},
+                ),
+            ),
+        })
+        with self.tool_mode():
+            adapter.begin_turn(source)
+            self.assertTrue(adapter.execute(
+                "remember_information", {"content": "meeting"},
+            ).success)
+            day = adapter.execute(
+                "semantic_memory_events_on_date", {"date": "2026-10-10"},
+            )
+            self.assertEqual(json.loads(day.detail)["status"], "resolved")
+            self.assertEqual(json.loads(day.detail)["hits"][0]["value"], "2026-10-10")
+            missing = adapter.execute(
+                "semantic_memory_events_on_date", {"date": "2026-10-11"},
+            )
+            self.assertEqual(json.loads(missing.detail)["hits"], [])
+            invalid = adapter.execute(
+                "semantic_memory_events_on_date", {"date": "tomorrow"},
+            )
+            self.assertFalse(invalid.success)
+            self.assertEqual(interpreter.turn_calls, 0)
+
+    def test_v10b_date_range_reads_multiple_events_without_extra_llm(self):
+        raw = (
+            "Retiens que ma réunion est le 10/10/2026 "
+            "et mon anniversaire le 16/10/2026"
+        )
+        store, interpreter, adapter = self.build_adapter({
+            raw: (
+                projection("has_meeting", "2026-10-10",
+                           qualifiers={"date": "2026-10-10"}),
+                projection("has_birthday", "2026-10-16",
+                           qualifiers={"date": "2026-01-16"}),
+            ),
+        })
+        with self.tool_mode():
+            adapter.begin_turn(raw)
+            write = adapter.execute("remember_information", {"content": "model guess"})
+            self.assertTrue(write.success, write.detail)
+            result = adapter.execute(
+                "semantic_memory_events_in_range",
+                {"start_date": "2026-10-09", "end_date": "2026-10-16"},
+            )
+            self.assertTrue(result.success, result.detail)
+            payload = json.loads(result.detail)
+            self.assertEqual(payload["status"], "resolved")
+            self.assertEqual(
+                [hit["event_date"] for hit in payload["hits"]],
+                ["2026-10-10", "2026-10-16"],
+            )
+            self.assertEqual(interpreter.turn_calls, 0)
+            facts = store.semantic_facts()
+            birthday = next(f for f in facts if f.projection.relation == "has_birthday")
+            self.assertEqual(birthday.projection.qualifiers["date"], "2026-10-16")
+            self.assertEqual(store.recent_memories(limit=5)[0].content, raw)
+
+            invalid = adapter.execute(
+                "semantic_memory_events_in_range",
+                {"start_date": "2026-10-01", "end_date": "2027-10-01"},
+            )
+            self.assertFalse(invalid.success)
+            self.assertIn("memory_date_range_requires_0_to_31_days", invalid.detail)
+
+    def test_v10b_corrupt_prior_sidecar_does_not_create_false_event_date(self):
+        raw = "Mon anniversaire est le 16/10/2026."
+        from jarvis_agent.memory_temporal import (
+            events_in_range, event_day_and_warning,
+        )
+        store, _, _ = self.build_adapter()
+        item = store.remember(raw)
+        store.save_projection(
+            item.id,
+            (
+                projection(
+                    "has_birthday", "2026-10-16",
+                    qualifiers={"date": "2026-01-16"},
+                ),
+            ),
+            parser_version="fixture-semantic-v1",
+            provenance="explicit",
+        )
+        wrong_day = events_in_range(store, "2026-01-16", "2026-01-16")
+        self.assertEqual(wrong_day["hits"], [])
+        right_day = events_in_range(store, "2026-10-16", "2026-10-16")
+        self.assertEqual(len(right_day["hits"]), 1)
+        self.assertEqual(
+            right_day["hits"][0]["warning"],
+            "conflicting_projection_dates",
+        )
+
+    def test_v10b_incomplete_projection_never_claims_empty_schedule(self):
+        raw = "Retiens une réunion demain le 10/10/2026"
+        store, interpreter, adapter = self.build_adapter(projections={})
+        with self.tool_mode():
+            adapter.begin_turn(raw)
+            result = adapter.execute(
+                "remember_information", {"content": "made up"}
+            )
+            self.assertTrue(result.success)
+            self.assertIn("projected_facts=0", result.detail)
+            reply = adapter.execute(
+                "semantic_memory_events_on_date", {"date": "2026-10-10"}
+            )
+            payload = json.loads(reply.detail)
+            self.assertEqual(payload["status"], "index_incomplete")
+            self.assertEqual(payload["hits"], [])
+            self.assertGreaterEqual(payload["projection_issue_count"], 1)
+            self.assertEqual(store.recent_memories(limit=5)[0].content, raw)
+            self.assertEqual(interpreter.turn_calls, 0)
+
+    def test_v10b_factory_does_not_wrap_agent_in_eager_memory_interpreter(self):
+        from dataclasses import replace
+        from jarvis_agent.agent_runtime import build_agent_runtime
+        from jarvis_agent.config import settings
+
+        store, interpreter, adapter = self.build_adapter()
+        with self.tool_mode(), patch.dict("os.environ", {
+            "JARVIS_BROWSER_CORE_ENABLED": "0",
+            "JARVIS_COMPUTER_CORE_ENABLED": "0",
+            "JARVIS_HERMES_RELIABILITY_ENABLED": "0",
+            "JARVIS_ACTIVE_SUPERVISOR_ENABLED": "0",
+            "JARVIS_RUNTIME_CONVERGENCE_ENABLED": "0",
+        }, clear=False), patch(
+            "jarvis_agent.agent_runtime.settings",
+            replace(
+                settings,
+                agent_provider="cerebras",
+                structured_tracing_enabled=False,
+            ),
+        ), patch(
+            "jarvis_agent.agent_runtime.CerebrasResponsesAgent",
+            return_value=NoLLM(),
+        ), patch(
+            "jarvis_agent.foundation_tools.build_foundation_tools",
+            return_value=adapter,
+        ), patch(
+            "jarvis_agent.memory_semantic_interpreter."
+            "build_semantic_memory_interpreter",
+            return_value=interpreter,
+        ):
+            runtime = build_agent_runtime()
+            result = runtime.run("Bonjour")
+            self.assertEqual(result.text, "delegate:Bonjour")
+            self.assertEqual(interpreter.turn_calls, 0)
+            self.assertEqual(store.recent_memories(limit=5), [])
+
+
 class SemanticMemoryLiveRunnerTests(unittest.TestCase):
     def test_live_evaluator_is_importable_as_repo_root_module(self):
         import importlib

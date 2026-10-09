@@ -353,6 +353,40 @@ FOUNDATION BROWSER CORE ACTIF:
 """
         )
 
+    if (enabled("JARVIS_MEMORY_CORE_ENABLED")
+            and enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED")
+            and enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")):
+        blocks.append(
+            """
+MEMORY V5 OUTILS ACTIFS (même cerveau, même conversation):
+- La mémoire persistante SQLite n'est pas dans le modèle IA. Choisis les
+  capacités mémoire comme les autres outils, seulement si nécessaire.
+- semantic_memory_search: recherche ciblée en lecture seule, preuves brutes
+  pertinentes avec leur date de création. Une recherche vide ne prouve pas
+  que la mémoire entière est vide.
+- semantic_memory_inspect: inventaire explicite des souvenirs réellement
+  enregistrés; ne prétends jamais que la mémoire est vide sans cette preuve.
+- semantic_memory_events_on_date: événements enregistrés pour une date ISO
+  YYYY-MM-DD; calcule la date locale visée avant l'appel. N'invente aucun
+  rendez-vous et distingue mémoire d'un véritable calendrier connecté.
+- remember_information: écriture SEULEMENT sur demande explicite de l'utilisateur.
+  La source durable est son propre énoncé, pas des faits inventés par le modèle.
+  Si la projection sémantique est indisponible, la note brute reste conservée.
+- Pour un horodatage d'enregistrement, utilise created_at des souvenirs,
+  pas la date de l'événement. Vérifie incohérences avant d'affirmer une date.
+- N'appelle pas Ollama pour classer les salutations ou les tours ordinaires.
+- Si l'utilisateur précise un événement déjà discuté ("c'est mon anniversaire",
+  etc.), actualise le CONTEXTE DE CONVERSATION pour répondre naturellement.
+  Ne prétends pas avoir modifié le souvenir SQLite sans demande explicite
+  de mémorisation. Tu peux proposer une correction uniquement si nécessaire.
+- N'utilise pas les outils de découverte des applications ni de perception
+  Windows pour répondre à une question sur les souvenirs. Le choix des outils
+  doit correspondre à l'objectif actuel, et non aux applications ouvertes.
+- Si un souvenir se limite à "événement personnel", précise que sa nature
+  est inconnue plutôt que d'inventer un anniversaire.
+"""
+        )
+
     if enabled("JARVIS_COMPUTER_CORE_ENABLED"):
         blocks.append(
             """
@@ -929,6 +963,24 @@ def _unsupported_browser_quoted_claims(
 ) -> list[str]:
     """Reject quoted page facts that are absent from all observed evidence."""
     if not _browser_readback_request(user_text):
+        return []
+    # The quote-proof policy belongs to browser/page observations, not
+    # general personal-memory questions. A successfully grounded memory
+    # quotation must never be rejected for lack of a browser DOM.
+    browser_actions = any(
+        action.name.startswith("browser_") for action in actions
+    )
+    page_request = bool(re.search(
+        r"\b(?:navigateur|onglet|chrome|browser|site|website|webpage|"
+        r"page web|sur la page|dans la page)\b",
+        normalize(user_text),
+    ))
+    browser_snapshot = "BROWSER_GROUNDING_READ_ONLY:" in str(context or "")
+    memory_only = (
+        any(action.name.startswith("semantic_memory_") for action in actions)
+        and not browser_actions and not page_request
+    )
+    if memory_only or not (browser_actions or page_request or browser_snapshot):
         return []
     claims = re.findall(
         r'(?:«([^»\n]+)»|“([^”\n]+)”|"([^"\n]+)")',
@@ -4975,12 +5027,17 @@ def build_agent_runtime() -> AgentRuntime:
                 foundation_tools.attach_semantic_memory_engine(
                     semantic_engine
                 )
-                runtime = SemanticMemoryRuntime(
-                    runtime,
-                    tools,
-                    semantic_engine,
-                    connector_resolver=MEMORY_CONNECTORS,
-                )
+                # V10B opt-in: Memory V5 stays a durable tool surface for
+                # the existing conversational agent. Do not put an eager
+                # second LLM intent interpreter ahead of Cerebras/Groq.
+                # Legacy V5 routing remains available until live validation.
+                if not enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED"):
+                    runtime = SemanticMemoryRuntime(
+                        runtime,
+                        tools,
+                        semantic_engine,
+                        connector_resolver=MEMORY_CONNECTORS,
+                    )
             else:
                 from .memory_router import MemoryRoutingRuntime
                 runtime = MemoryRoutingRuntime(
