@@ -371,6 +371,25 @@ class FoundationToolAdapter:
                             }},
                             ["date"],
                         ),
+                        self.delegate._ollama(
+                            "semantic_memory_events_in_range",
+                            "Recherche READ-ONLY des événements mémorisés entre "
+                            "deux dates inclusives (maximum 31 jours), distincte "
+                            "d'un agenda externe. Utilise get_current_time "
+                            "pour résoudre aujourd'hui/demain dans le fuseau "
+                            "local et préserver les sources des événements.",
+                            {
+                                "start_date": {
+                                    "type": "string",
+                                    "description": "Début ISO YYYY-MM-DD.",
+                                },
+                                "end_date": {
+                                    "type": "string",
+                                    "description": "Fin ISO YYYY-MM-DD incluse.",
+                                },
+                            },
+                            ["start_date", "end_date"],
+                        ),
                     ))
         if self.browser:
             legacy = {"list_browser_pages", "inspect_browser_page", "activate_browser_page",
@@ -590,59 +609,35 @@ class FoundationToolAdapter:
                     ],
                     "read_only": True,
                 }
-            elif name == "semantic_memory_events_on_date" and memory_agent_tools_enabled():
-                from datetime import date
-                value = str(args.get("date", "")).strip()
+            elif (
+                name in {
+                    "semantic_memory_events_on_date",
+                    "semantic_memory_events_in_range",
+                } and memory_agent_tools_enabled()
+            ):
+                from .memory_temporal import events_in_range
+                start = (
+                    str(args.get("date", "")).strip()
+                    if name == "semantic_memory_events_on_date"
+                    else str(args.get("start_date", "")).strip()
+                )
+                end = (
+                    start if name == "semantic_memory_events_on_date"
+                    else str(args.get("end_date", "")).strip()
+                )
                 try:
-                    target = date.fromisoformat(value)
-                except ValueError:
-                    raise RuntimeError("memory_date_requires_iso_yyyy_mm_dd")
-                if value != target.isoformat():
-                    raise RuntimeError("memory_date_requires_iso_yyyy_mm_dd")
-                hits = []
-                for fact in self.memory.semantic_facts(status="active"):
-                    projection = fact.projection
-                    date_text = str(projection.qualifiers.get("date") or "")
-                    value_text = str(projection.value or "")
-                    date_value = date_text[:10] if date_text else ""
-                    direct_value = value_text[:10] if len(value_text) >= 10 else ""
-                    qualifier_matches = date_value == value
-                    value_matches = direct_value == value
-                    if not (qualifier_matches or value_matches):
-                        continue
-                    inconsistent = bool(
-                        date_value and direct_value
-                        and len(direct_value) == 10
-                        and direct_value[4:5] == "-"
-                        and date_value != direct_value
+                    payload = events_in_range(
+                        self.memory, start, end, limit=30,
                     )
-                    hits.append({
-                        "memory_id": fact.memory_id,
-                        "subject": projection.subject,
-                        "relation": projection.relation,
-                        "value": projection.value,
-                        "qualifiers": dict(projection.qualifiers),
-                        "created_at": fact.created_at,
-                        "raw": str(fact.raw_content or "")[:900],
-                        "warning": (
-                            "conflicting_projection_dates"
-                            if inconsistent else ""
-                        ),
-                    })
+                except ValueError as exc:
+                    raise RuntimeError(str(exc)) from exc
                 pending = self.memory.pending_projection_items(
                     self.semantic_memory_engine.parser_version,
                     limit=256,
                 ) if self.semantic_memory_engine is not None else []
-                payload = {
-                    "status": (
-                        "resolved" if hits else
-                        "index_incomplete" if pending else "missing"
-                    ),
-                    "date": value,
-                    "hits": hits[:30],
-                    "unindexed_count": len(pending),
-                    "read_only": True,
-                }
+                payload["unindexed_count"] = len(pending)
+                if not payload["hits"] and pending:
+                    payload["status"] = "index_incomplete"
             elif (
                 name == "semantic_memory_search"
                 and self.semantic_memory_engine is not None
