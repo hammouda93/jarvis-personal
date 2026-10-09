@@ -471,6 +471,134 @@ class FakeGroqAgent(GroqResponsesAgent):
         return self._response_from_dict(self.responses.pop(0))
 
 
+class MemoryScopeV10CTests(unittest.TestCase):
+    def test_scope_is_conservative_and_does_not_capture_external_missions(self):
+        from jarvis_agent.memory_tool_scope import memory_only_request
+        self.assertTrue(memory_only_request("Quel est l'événement personnel du 16 octobre ?"))
+        self.assertTrue(memory_only_request("J'ai quoi demain ?"))
+        self.assertTrue(memory_only_request("un anniversaire"))
+        self.assertTrue(memory_only_request(
+            "oui", prior_assistant="Souhaitez-vous mémoriser cet événement ?"
+        ))
+        for command in (
+            "Ouvre Chrome et recherche mon anniversaire",
+            "Consulte mon calendrier et ma mémoire pour demain",
+            "Envoie un email pour la réunion",
+            "Ouvre le navigateur et note mon rendez-vous",
+            "oui",
+            "Vérifie GitHub puis modifie mon projet",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(memory_only_request(command))
+
+    def test_memory_read_tools_are_narrowed_only_under_opt_in(self):
+        from jarvis_agent.memory_tool_scope import narrow_memory_tools
+        tool = lambda name: {
+            "type": "function",
+            "function": {"name": name, "parameters": {"type": "object",
+                                                     "properties": {}}},
+        }
+        all_tools = [tool(name) for name in (
+            "semantic_memory_search",
+            "semantic_memory_inspect",
+            "get_current_time",
+            "remember_information",
+            "press_key",
+            "research_web",
+            "list_applications",
+        )]
+        names = lambda items: [x["function"]["name"] for x in items]
+        self.assertEqual(names(narrow_memory_tools(all_tools)),
+                         ["semantic_memory_search", "semantic_memory_inspect",
+                          "get_current_time"])
+        self.assertIn("remember_information",
+                      names(narrow_memory_tools(all_tools,
+                                                allow_explicit_write=True)))
+        self.assertNotIn("press_key",
+                         names(narrow_memory_tools(all_tools,
+                                                   allow_explicit_write=True)))
+
+    def test_memory_fallback_compaction_preserves_tool_result_chain(self):
+        from jarvis_agent.memory_tool_scope import compact_memory_fallback
+        from jarvis_agent.provider_rate_budget import groq_fallback_preflight
+        messages = [
+            {"role": "system", "content": "LONG SYSTEM " * 1900},
+            {"role": "user", "content": "Quelle est la météo ?"},
+            {"role": "assistant", "content": "Voici la réponse précédente."},
+            {"role": "user", "content": "J'ai quoi demain ?"},
+            {"role": "assistant", "tool_calls": [{
+                "id": "call_memory", "type": "function",
+                "function": {"name": "semantic_memory_events_on_date",
+                             "arguments": '{"date":"2026-10-10"}'}
+            }], "content": ""},
+            {"role": "tool", "tool_call_id": "call_memory",
+             "name": "semantic_memory_events_on_date",
+             "content": '{"hits":[{"event_date":"2026-10-10"}]}'},
+        ]
+        compact = compact_memory_fallback(messages, turn_start=3)
+        self.assertEqual(compact[-3:], messages[-3:])
+        self.assertNotIn("LONG SYSTEM", compact[0]["content"])
+        allowed, estimated, _ = groq_fallback_preflight(
+            compact,
+            [{"type": "function", "function": {
+                "name": "semantic_memory_events_on_date",
+                "description": "Lecture mémoire",
+                "parameters": {"type": "object", "properties": {
+                    "date": {"type": "string"}}}
+            }}],
+            limit_tokens=7000,
+        )
+        self.assertTrue(allowed, estimated)
+
+    def test_memory_only_turn_rejects_unrelated_keypress_at_execution_boundary(self):
+        from unittest.mock import patch
+        env = {
+            "JARVIS_MEMORY_CORE_ENABLED": "1",
+            "JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1",
+            "JARVIS_MEMORY_AGENT_TOOLS_ENABLED": "1",
+            "JARVIS_MEMORY_SCOPE_GUARD_ENABLED": "1",
+        }
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools,
+            [
+                {"output": [{"type": "function_call",
+                             "call_id": "call_wrong",
+                             "name": "press_key",
+                             "arguments": '{"key":"Enter"}'}]},
+                {"output": [{"type": "message", "content": [
+                    {"type": "output_text", "text": "La nature de cet événement est inconnue."}
+                ]}]},
+            ],
+        )
+        with patch.dict("os.environ", env, clear=False):
+            result = agent.run("Quelle est la nature de cet événement personnel ?")
+        self.assertTrue(any(
+            x.name == "press_key"
+            and x.detail == "memory_only_tool_scope_blocked"
+            for x in result.actions
+        ))
+        self.assertFalse(any(name == "press_key" for name, _ in tools.calls))
+        self.assertIn("inconnue", result.text)
+
+    def test_memory_scope_flag_off_does_not_change_existing_tools(self):
+        from unittest.mock import patch
+        tools = FakeTools()
+        agent = FakeGroqAgent(
+            tools, [{"output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "Bonjour"}
+            ]}]}],
+        )
+        with patch.dict("os.environ", {
+            "JARVIS_MEMORY_CORE_ENABLED": "1",
+            "JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1",
+            "JARVIS_MEMORY_AGENT_TOOLS_ENABLED": "1",
+            "JARVIS_MEMORY_SCOPE_GUARD_ENABLED": "0",
+        }, clear=False):
+            agent.run("Quelle est la nature de cet événement personnel ?")
+        self.assertFalse(agent._memory_scope_active)
+
+
 class AgentRuntimeTests(unittest.TestCase):
 
     def test_pseudo_tool_syntax_is_detected(self):
