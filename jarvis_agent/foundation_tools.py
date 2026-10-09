@@ -647,6 +647,23 @@ class FoundationToolAdapter:
                 payload["projection_issue_count"] = unresolved
                 if not payload["hits"] and unresolved:
                     payload["status"] = "index_incomplete"
+                # Guard against a model-invented year when the user only
+                # named day/month. Do not silently invent another event or
+                # reinterpret an explicitly specified year.
+                if (
+                    not payload["hits"]
+                    and name == "semantic_memory_events_on_date"
+                    and enabled("JARVIS_MEMORY_SCOPE_GUARD_ENABLED")
+                    and memory_agent_tools_enabled()
+                ):
+                    from .memory_temporal import yearless_date_guard
+                    ambiguity = yearless_date_guard(
+                        self.memory,
+                        str(self.current_user_text or ""),
+                        start,
+                    )
+                    if ambiguity:
+                        payload.update(ambiguity)
             elif (
                 name == "semantic_memory_search"
                 and self.semantic_memory_engine is not None
