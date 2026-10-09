@@ -474,11 +474,21 @@ class FakeGroqAgent(GroqResponsesAgent):
 class MemoryScopeV10CTests(unittest.TestCase):
     def test_scope_is_conservative_and_does_not_capture_external_missions(self):
         from jarvis_agent.memory_tool_scope import memory_only_request
-        self.assertTrue(memory_only_request("Quel est l'événement personnel du 16 octobre ?"))
-        self.assertTrue(memory_only_request("J'ai quoi demain ?"))
-        self.assertTrue(memory_only_request("un anniversaire"))
+        self.assertFalse(memory_only_request("Quel est l'événement personnel du 16 octobre ?"))
+        self.assertFalse(memory_only_request("J'ai quoi demain ?"))
+        self.assertFalse(memory_only_request("un anniversaire"))
+        self.assertTrue(memory_only_request(
+            "Quel est l'événement personnel du 16 octobre ?",
+            prior_memory_evidence=True,
+        ))
+        self.assertTrue(memory_only_request(
+            "un anniversaire", prior_memory_evidence=True,
+        ))
         self.assertTrue(memory_only_request(
             "oui", prior_assistant="Souhaitez-vous mémoriser cet événement ?"
+        ))
+        self.assertFalse(memory_only_request(
+            "J'ai quoi demain ?", prior_memory_evidence=True,
         ))
         for command in (
             "Ouvre Chrome et recherche mon anniversaire",
@@ -572,7 +582,7 @@ class MemoryScopeV10CTests(unittest.TestCase):
             ],
         )
         with patch.dict("os.environ", env, clear=False):
-            result = agent.run("Quelle est la nature de cet événement personnel ?")
+            result = agent.run("Quelle est la nature de cet événement mémorisé ?")
         self.assertTrue(any(
             x.name == "press_key"
             and x.detail == "memory_only_tool_scope_blocked"
