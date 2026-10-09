@@ -353,6 +353,31 @@ FOUNDATION BROWSER CORE ACTIF:
 """
         )
 
+    if (enabled("JARVIS_MEMORY_CORE_ENABLED")
+            and enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED")
+            and enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")):
+        blocks.append(
+            """
+MEMORY V5 OUTILS ACTIFS (même cerveau, même conversation):
+- La mémoire persistante SQLite n'est pas dans le modèle IA. Choisis les
+  capacités mémoire comme les autres outils, seulement si nécessaire.
+- semantic_memory_search: recherche ciblée en lecture seule, preuves brutes
+  pertinentes avec leur date de création. Une recherche vide ne prouve pas
+  que la mémoire entière est vide.
+- semantic_memory_inspect: inventaire explicite des souvenirs réellement
+  enregistrés; ne prétends jamais que la mémoire est vide sans cette preuve.
+- semantic_memory_events_on_date: événements enregistrés pour une date ISO
+  YYYY-MM-DD; calcule la date locale visée avant l'appel. N'invente aucun
+  rendez-vous et distingue mémoire d'un véritable calendrier connecté.
+- remember_information: écriture SEULEMENT sur demande explicite de l'utilisateur.
+  La source durable est son propre énoncé, pas des faits inventés par le modèle.
+  Si la projection sémantique est indisponible, la note brute reste conservée.
+- Pour un horodatage d'enregistrement, utilise created_at des souvenirs,
+  pas la date de l'événement. Vérifie incohérences avant d'affirmer une date.
+- N'appelle pas Ollama pour classer les salutations ou les tours ordinaires.
+"""
+        )
+
     if enabled("JARVIS_COMPUTER_CORE_ENABLED"):
         blocks.append(
             """
@@ -4975,12 +5000,17 @@ def build_agent_runtime() -> AgentRuntime:
                 foundation_tools.attach_semantic_memory_engine(
                     semantic_engine
                 )
-                runtime = SemanticMemoryRuntime(
-                    runtime,
-                    tools,
-                    semantic_engine,
-                    connector_resolver=MEMORY_CONNECTORS,
-                )
+                # V10B opt-in: Memory V5 stays a durable tool surface for
+                # the existing conversational agent. Do not put an eager
+                # second LLM intent interpreter ahead of Cerebras/Groq.
+                # Legacy V5 routing remains available until live validation.
+                if not enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED"):
+                    runtime = SemanticMemoryRuntime(
+                        runtime,
+                        tools,
+                        semantic_engine,
+                        connector_resolver=MEMORY_CONNECTORS,
+                    )
             else:
                 from .memory_router import MemoryRoutingRuntime
                 runtime = MemoryRoutingRuntime(
