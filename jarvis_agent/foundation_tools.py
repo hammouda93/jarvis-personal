@@ -635,8 +635,17 @@ class FoundationToolAdapter:
                     self.semantic_memory_engine.parser_version,
                     limit=256,
                 ) if self.semantic_memory_engine is not None else []
+                states = self.memory.semantic_summary().get(
+                    "projection_states", {}
+                )
+                unresolved = (
+                    len(pending)
+                    + int(states.get("error", 0))
+                    + int(states.get("unprojected", 0))
+                )
                 payload["unindexed_count"] = len(pending)
-                if not payload["hits"] and pending:
+                payload["projection_issue_count"] = unresolved
+                if not payload["hits"] and unresolved:
                     payload["status"] = "index_incomplete"
             elif (
                 name == "semantic_memory_search"
