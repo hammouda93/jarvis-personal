@@ -29,14 +29,20 @@ def memory_tool_scope_enabled() -> bool:
     )
 
 
-def memory_only_request(user_text: str, *, prior_assistant: str = "") -> bool:
-    """Narrow confidence gate, never used to authorize a durable write."""
+def memory_only_request(
+    user_text: str, *, prior_assistant: str = "",
+    prior_memory_evidence: bool = False,
+) -> bool:
+    """Restrict only explicit Memory V5 tasks or grounded follow-up turns.
+
+    A broad "What do I have tomorrow?" MUST retain Calendar, Gmail and all
+    connected tools: it is not automatically a SQLite-only request.
+    """
     text = _normalize(user_text).strip()
     if not text:
         return False
-    # Explicit outside-the-memory missions take precedence over memory hints.
-    # In particular, a request to inspect an external calendar must not be
-    # silently reduced to SQLite alone.
+    # An external, computer or mixed-service mission always has the
+    # ordinary tool catalog, even if it references a personal memory.
     outside = (
         r"\b(?:ouvre|ouvrir|lance|installer|installe|clique|"
         r"ferme|fermer|envoie|envoyer|telecharge|download|"
@@ -48,33 +54,31 @@ def memory_only_request(user_text: str, *, prior_assistant: str = "") -> bool:
     if re.search(outside, text):
         return False
 
-    memory_terms = (
+    durable = (
         r"\b(?:memoire|memorise|memorisee|memorises|memoriser|"
-        r"souvenir|souvenirs|retiens|retient|enregistre|enregistres|"
-        r"evenement|evenements|anniversaire|reunion|reunions|"
-        r"rendez-vous|rendez vous|rendezvous)\b"
+        r"souvenir|souvenirs|retiens|retient)\b"
     )
-    if re.search(memory_terms, text):
-        return True
-    # Natural personal-schedule queries such as "j'ai quoi demain ?" are
-    # limited to the memory backend ONLY while the user hasn't requested
-    # a real external calendar or a cross-app mission.
-    if re.search(
-        r"\b(?:j'ai|je dois|j'avais|ai-je|mes)\b.{0,70}"
-        r"\b(?:quoi|prevu|faire|demain|aujourd'hui|jours|date)\b",
-        text,
-    ):
+    if re.search(durable, text):
         return True
 
-    # Standalone answer to a memory clarification. Never treat an arbitrary
-    # "oui" after an unrelated workflow as a fresh memory authorization.
+    # One brief clarification can safely stay on SQLite ONLY if a real
+    # memory tool succeeded on the preceding conversational turn.
+    followup = (
+        r"\b(?:evenement|evenements|anniversaire|reunion|"
+        r"rendez-vous|rendez vous|cet evenement|ce souvenir)\b"
+    )
+    if prior_memory_evidence and re.search(followup, text):
+        return True
     reply = re.fullmatch(
         r"(?:oui|ok|d'accord|c'est ca|c'est bien ca|"
         r"un |une |c'est un |c'est une )[\w\s\-']{0,35}",
         text,
     )
     return bool(
-        reply and re.search(memory_terms, _normalize(prior_assistant))
+        reply and (
+            prior_memory_evidence
+            or re.search(durable, _normalize(prior_assistant))
+        )
     )
 
 
