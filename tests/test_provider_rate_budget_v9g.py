@@ -59,6 +59,29 @@ class ProviderRateBudgetTests(unittest.TestCase):
         self.assertLessEqual(agent._provider_rate_gate.remaining("primary"), 60)
         self.assertFalse(agent._provider_rate_gate.available("primary"))
 
+    def test_primary_402_disables_only_primary_for_process(self):
+        agent = CerebrasResponsesAgent.__new__(CerebrasResponsesAgent)
+        agent._provider_rate_gate = ProviderRateGate(cooldown_seconds=60)
+        agent.api_key = "dummy-primary"
+        agent.base_url = "https://primary.example.org"
+        agent._client = None
+        settings = SimpleNamespace(
+            cerebras_secondary_api_key="dummy-secondary",
+            cerebras_secondary_base_url="https://secondary.example.org",
+            cerebras_fallback_to_groq=False, groq_api_key="")
+        with patch("jarvis_agent.agent_runtime.settings", settings), patch.object(
+                GroqResponsesAgent, "_chat",
+                side_effect=[
+                    AgentRuntimeUnavailable("cerebras API error 402: payment_required"),
+                    "secondary ok", "secondary again"]) as mocked:
+            self.assertEqual(agent._chat(), "secondary ok")
+            self.assertEqual(agent._chat(), "secondary again")
+        # Only three actual calls: primary once and secondary twice.
+        self.assertEqual(mocked.call_count, 3)
+        self.assertTrue(agent._provider_rate_gate.billing_blocked("primary"))
+        self.assertTrue(agent._provider_rate_gate.available("secondary"))
+        self.assertFalse(agent._provider_rate_gate.available("primary"))
+
     def test_oversize_groq_request_is_rejected_before_network(self):
         agent = CerebrasResponsesAgent.__new__(CerebrasResponsesAgent)
         agent._messages_for_request = lambda: [
