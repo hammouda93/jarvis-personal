@@ -15,7 +15,7 @@ def is_explicit_memory_write_request(text: str) -> bool:
         # Common dictated typo/inflection "retient que ..." is an
         # explicit imperative only at the start of the user's utterance.
         # Do not admit third-person descriptions such as "il retient que".
-        r"^\\s*retient\\s+que\\b",
+        r"^\s*retient\s+que\b",
         r"\b(garde|gardez|conserve|conservez)\b.{0,32}\ben mémoire\b",
         r"\b(souviens-toi|souvenez-vous)\b",
         r"\b(remember|memorize|memorise)\b",
