@@ -552,11 +552,12 @@ class FoundationToolAdapter:
                     for item in raw_items
                 ]
 
-                # For broad inventory-style search phrases that match nothing
-                # lexically, return a bounded recent inventory rather than
-                # failing the tool. It is labelled as fallback evidence and the
-                # reasoning model must still decide relevance.
-                if not hits and not raw_fallback and self.memory is not None:
+                # Returning recent memories for an unrelated question
+                # exposes unrequested personal facts to the model. Only an
+                # explicitly interpreted inventory request may return recent
+                # rows. Specific queries with no evidence stay genuinely empty.
+                if (not hits and not raw_fallback and self.memory is not None
+                        and intent.operation == "inspect"):
                     raw_fallback = [
                         {
                             "memory_id": item.id,

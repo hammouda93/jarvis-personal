@@ -27,7 +27,8 @@ favorite favoris favorites bien encore maintenant what which the of about my
 your i you is are was name called tell do does did remember recall favorite
 favourite like liked love have has that it to in please know said saved test
 prochain prochaine prochaines prochains next prevu prevue scheduled quand when
-where memorisee memorises memorisees memoriser""".split())
+where memorisee memorises memorisees memoriser
+demande demandes demandee demandees demander demandais demandait asked requesting""".split())
 _STOP.update({"connais", "connait", "sait", "pourrais", "can", "remind", "donne", "reminds"})
 _CONCEPTS = {
     "movie": "film", "movies": "film", "films": "film",

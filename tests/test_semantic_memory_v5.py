@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from jarvis_agent.agent_runtime import AgentTurnResult
 from jarvis_agent.foundation_tools import FoundationToolAdapter
+from jarvis_agent.intent_guards import is_explicit_memory_write_request
 from jarvis_agent.memory_core_store import MemoryCoreStore
 from jarvis_agent.memory_semantic_interpreter import (
     ModelSemanticMemoryInterpreter,
@@ -2203,6 +2204,39 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(store.recent_memories(limit=10), [])
         self.assertFalse(tools._semantic_memory_write_authorized)
 
+    def test_dictated_french_retient_que_persists_both_facts(self):
+        user_text = (
+            "retient que j'ai une réunion demain le 10/10/2026 "
+            "et que mon anniversaire est le 16/10/2026"
+        )
+        raw = (
+            "j'ai une réunion demain le 10/10/2026 "
+            "et que mon anniversaire est le 16/10/2026"
+        )
+        self.assertTrue(is_explicit_memory_write_request(user_text))
+        self.assertFalse(is_explicit_memory_write_request(
+            "Le professeur retient que ces chiffres sont corrects."
+        ))
+        store, _, delegate, _, runtime = self.build_runtime(
+            turns={user_text: MemoryTurnInterpretation(
+                operation="write", write_text=raw,
+                confidence=0.95, reason="explicit memory command",
+            )},
+            projections={raw: (
+                projection("meeting_date", "10/10/2026"),
+                projection("birthday_date", "16/10/2026"),
+            )},
+        )
+        with patch.dict("os.environ", {"JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1"}):
+            result = runtime.run(user_text)
+        self.assertEqual(delegate.calls, 0)
+        self.assertEqual([a.name for a in result.actions], ["remember_information"])
+        self.assertEqual(len(store.recent_memories(limit=10)), 1)
+        self.assertEqual(
+            {fact.projection.value for fact in store.semantic_facts()},
+            {"10/10/2026", "16/10/2026"},
+        )
+
     def test_arbitrary_explicit_write_is_admitted_by_semantic_intent_not_regex(self):
         user_text = "Please keep this detail for another day: codeword Zeta"
         raw = "codeword Zeta"
@@ -2872,6 +2906,54 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["hits"][0]["raw"], "editor evidence")
         self.assertEqual(len(store.recent_memories(limit=20)), before)
 
+    def test_readonly_search_does_not_send_unrelated_recent_personal_facts(self):
+        query_text = "films que je veux regarder"
+        turns = {query_text: MemoryTurnInterpretation(
+            operation="pass", confidence=0.95, reason="unrelated search",
+        )}
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        store = MemoryCoreStore(Path(temp.name) / "unrelated.sqlite3")
+        interpreter = FixtureInterpreter(turns=turns, projections={})
+        engine = SemanticMemoryEngine(store, interpreter, min_score=0.45)
+        adapter = FoundationToolAdapter(ToolSchemaDelegate(), memory=store)
+        adapter.attach_semantic_memory_engine(engine)
+        store.remember("le code secret du projet Orion 63 est ALPHA-728")
+        result = adapter.execute("semantic_memory_search", {"query": query_text})
+        payload = json.loads(result.detail)
+        self.assertTrue(result.success)
+        self.assertEqual(payload["raw_fallback"], [])
+        self.assertEqual(payload["hits"], [])
+
+    def test_explicit_inspect_can_still_list_recent_memory(self):
+        query_text = "what is stored in my persistent memory"
+        turns = {query_text: MemoryTurnInterpretation(
+            operation="inspect", confidence=0.95, reason="inventory request",
+        )}
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        store = MemoryCoreStore(Path(temp.name) / "inventory.sqlite3")
+        interpreter = FixtureInterpreter(turns=turns, projections={})
+        engine = SemanticMemoryEngine(store, interpreter, min_score=0.45)
+        adapter = FoundationToolAdapter(ToolSchemaDelegate(), memory=store)
+        adapter.attach_semantic_memory_engine(engine)
+        store.remember("le projet Orion 63 est un projet fictif")
+        result = adapter.execute("semantic_memory_search", {"query": query_text})
+        payload = json.loads(result.detail)
+        self.assertTrue(result.success)
+        self.assertTrue(payload["raw_fallback"])
+
+    def test_meta_recall_phrase_retrieves_relevant_raw_evidence(self):
+        raw = "le code de mon projet fictif Orion 63 est ALPHA-728"
+        query = "code du projet fictif Orion 63 que j'ai demandé de mémoriser"
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        store = MemoryCoreStore(Path(temp.name) / "meta-recall.sqlite3")
+        store.remember(raw)
+        from jarvis_agent.memory_retrieval import search
+        matches = search(store, query)
+        self.assertEqual([item.content for item in matches], [raw])
+
     def test_readonly_semantic_memory_search_accepts_short_pass_phrase(self):
         query_text = "Atlas projet test"
         raw = "Le nom de mon projet test s'appelle Atlas"
@@ -2944,6 +3026,13 @@ class SemanticMemoryRuntimeTests(unittest.TestCase):
 
 
 class SemanticMemoryFactoryIntegrationTests(unittest.TestCase):
+    @patch.dict("os.environ", {
+        # Reproduce inherited toggles from a previous live Jarvis session.
+        # The test must keep its provider fixtures deterministic regardless.
+        "JARVIS_HERMES_RELIABILITY_ENABLED": "1",
+        "JARVIS_ACTIVE_SUPERVISOR_ENABLED": "1",
+        "JARVIS_RUNTIME_CONVERGENCE_ENABLED": "1",
+    }, clear=False)
     def test_factory_builds_semantic_memory_v5_before_provider_runtime(self):
         from dataclasses import replace
 
@@ -3002,6 +3091,13 @@ class SemanticMemoryFactoryIntegrationTests(unittest.TestCase):
                         "JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1",
                         "JARVIS_BROWSER_CORE_ENABLED": "0",
                         "JARVIS_COMPUTER_CORE_ENABLED": "0",
+                        # Testing the base providers requires isolation from
+                        # inherited opt-in runtime wrappers (e.g. an interactive
+                        # shell with Hermes enabled). The wrappers are tested
+                        # independently with their own explicit flags.
+                        "JARVIS_HERMES_RELIABILITY_ENABLED": "0",
+                        "JARVIS_ACTIVE_SUPERVISOR_ENABLED": "0",
+                        "JARVIS_RUNTIME_CONVERGENCE_ENABLED": "0",
                     },
                     clear=False,
                 ), patch(
