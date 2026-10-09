@@ -4859,9 +4859,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         # Bounded fallback only for read-only personal memory queries.
         # This preserves the active tool call/result chain; mutations and
         # multi-service missions retain their original full context.
-        if (self._memory_scope_active
-                and not self._memory_write_allowed
-                and self._pending_function_approval is None):
+        if (getattr(self, "_memory_scope_active", False)
+                and not getattr(self, "_memory_write_allowed", False)
+                and getattr(self, "_pending_function_approval", None) is None):
             from .memory_tool_scope import compact_memory_fallback
             request_messages = compact_memory_fallback(
                 request_messages, turn_start=self._request_turn_start_index,
