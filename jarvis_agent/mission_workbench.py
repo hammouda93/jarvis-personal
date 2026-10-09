@@ -20,7 +20,7 @@ class MissionCommand:
 class MissionControlInbox:
     """FIFO commands, consumed by the worker rather than Qt's UI thread."""
 
-    _OPS = frozenset({"begin", "begin_only", "resume", "detach", "review", "plan", "route", "auto_plan",
+    _OPS = frozenset({"begin", "begin_only", "resume", "detach", "review", "plan", "route", "auto_plan", "clarify_plan",
                       "approve_supervision", "advance_supervision", "recover_supervision",
                       "run_supervision", "cancel_supervision"})
 
@@ -69,6 +69,8 @@ class MissionControlInbox:
         if op == "plan" and not (1 <= len(raw) <= 500):
             return False
         if op == "auto_plan" and raw:
+            return False
+        if op == "clarify_plan" and not (1 <= len(raw) <= 2000):
             return False
         if op in {"approve_supervision", "advance_supervision", "recover_supervision"} and len(raw) > 24000:
             return False
@@ -207,6 +209,13 @@ def perform_mission_command(agent, command: MissionCommand, *, stop_event=None, 
             "mission_id": mission_id, "status": "criteria_registered_unverified",
             "criteria_count": len(requirements),
         }
+    if op == "clarify_plan":
+        revision = getattr(agent, "clarify_semantic_plan", None)
+        if not callable(revision):
+            return {"success": False, "operation": op,
+                    "reason": "convergence_not_enabled"}
+        report = revision(command.value)
+        return {"success": True, "operation": op, **report}
     if op == "auto_plan":
         generator = getattr(agent, "generate_semantic_plan", None)
         if not callable(generator):
