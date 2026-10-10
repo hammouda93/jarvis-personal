@@ -30,6 +30,15 @@ Premier lot corrige : 928 tests Windows, aucun echec/erreur/skip ; Node 45/45.
 CI du nouveau lot et recette desktop : encore a effectuer. Projection durable,
 corrections versionnees, missions generales et scheduler restent a poursuivre.
 
+Lot suivant : projection differee opt-in dans le SQLite existant, worker local,
+jobs durables/idempotents, leases/recovery bornes, protection source/owner,
+politique fournisseur epinglee et reprise operateur explicite. Counts reels
+queued/running/failed affiches dans la console, sans contenu prive. 943 tests
+Windows locaux passes, 14 tests de file inclus et un nouveau test Qt. Les
+identifiants opaques restent exacts sans perdre les pronoms francais historiques.
+CI 8cbd9ec Windows/Ubuntu verte ; CI du lot projection a observer. Recette et
+feuille de route generale : `docs/V10D_LIVE_RELIABILITY.md`, PR #22 brouillon.
+
 ## Reprise Memory V10 Du 2026-10-09
 
 Nouveau brief utilisateur : recuperer le checkpoint, auditer les PR #18/#19/#20

@@ -249,6 +249,8 @@ class MemoryCoreStore(LocalMemory):
         *,
         parser_version: str,
         provenance: str,
+        expected_raw_hash: str | None = None,
+        projection_job: dict | None = None,
     ) -> None:
         item = self.get_memory(memory_id)
         if item is None:
@@ -263,6 +265,16 @@ class MemoryCoreStore(LocalMemory):
             )
 
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute("SELECT content FROM memories WHERE id=?", (int(memory_id),)).fetchone()
+            if current is None or _hash_raw(current[0]) != (expected_raw_hash or raw_hash):
+                raise RuntimeError("projection_source_changed")
+            if projection_job is not None:
+                claim = conn.execute("SELECT status,owner FROM memory_projection_jobs WHERE id=? "
+                                     "AND memory_id=? AND raw_hash=? AND parser_version=?",
+                                     (projection_job["id"], int(memory_id), raw_hash, parser_version)).fetchone()
+                if claim != ("running", projection_job["owner"]):
+                    raise RuntimeError("projection_lease_lost")
             conn.execute(
                 "DELETE FROM memory_semantic_facts WHERE memory_id = ?",
                 (int(memory_id),),
@@ -358,6 +370,17 @@ class MemoryCoreStore(LocalMemory):
                     projected_at,
                 ),
             )
+            if projection_job is not None:
+                conn.execute("UPDATE memory_projection_jobs SET status='done',error='',lease_until=0 "
+                             "WHERE id=? AND owner=?", (projection_job["id"], projection_job["owner"]))
+
+    def projection_coverage(self, parser_version: str) -> dict:
+        with closing(self._connect()) as conn:
+            rows = conn.execute("""SELECT m.content,s.raw_hash,s.parser_version,s.status
+                FROM memories m LEFT JOIN memory_semantic_state s ON m.id=s.memory_id""").fetchall()
+        issues = sum(1 for raw, digest, version, status in rows
+                     if digest != _hash_raw(raw) or version != parser_version or status != "indexed")
+        return {"coverage": "incomplete" if issues else "complete", "projection_issue_count": issues}
 
     def mark_projection_error(
         self,

@@ -2,6 +2,7 @@ param(
     [string]$PythonExe = ".\.venv\Scripts\python.exe",
     [switch]$MemoryCore,
     [switch]$SemanticMemoryV5,
+    [switch]$AsyncMemoryProjection,
     [string]$SemanticMemoryProvider = "",
     [string]$SemanticMemoryModel = "",
     [switch]$AllowCloudSemanticMemory,
@@ -38,6 +39,12 @@ try {
     }
     if ($SemanticMemoryV5) {
         $MemoryCore = $true
+    }
+    if ($AsyncMemoryProjection) {
+        if (-not $SemanticMemoryV5 -or $env:JARVIS_MEMORY_AGENT_TOOLS_ENABLED -ne '1') {
+            throw 'AsyncMemoryProjection requires SemanticMemoryV5 and JARVIS_MEMORY_AGENT_TOOLS_ENABLED=1'
+        }
+        $env:JARVIS_MEMORY_ASYNC_PROJECTION_ENABLED = '1'
     }
 
     $python = $PythonExe

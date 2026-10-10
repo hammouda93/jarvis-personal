@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .intent_guards import is_explicit_memory_write_request
-from .memory_core_store import MemoryCoreStore
+from .memory_core_store import MemoryCoreStore, _hash_raw
 from .memory_semantic_interpreter import SemanticMemoryInterpreter
 from .semantic_memory import (
     MemoryProjection,
@@ -201,10 +201,13 @@ class SemanticMemoryEngine:
         *,
         provenance: str,
         log=None,
+        projection_job: dict | None = None,
     ) -> tuple[MemoryProjection, ...]:
         item = self.store.get_memory(memory_id)
         if item is None:
             raise KeyError(f"memory_not_found:{memory_id}")
+        if projection_job is not None and _hash_raw(item.content) != projection_job["raw_hash"]:
+            raise RuntimeError("projection_source_changed")
         if provenance == "explicit":
             # Admission is independent from successful semantic projection.
             # A later reindex must still know this raw row was user-approved.
@@ -243,6 +246,8 @@ class SemanticMemoryEngine:
             facts,
             parser_version=self.parser_version,
             provenance=provenance,
+            expected_raw_hash=_hash_raw(item.content),
+            projection_job=projection_job,
         )
         return tuple(facts)
 

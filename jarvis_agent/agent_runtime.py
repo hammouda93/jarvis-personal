@@ -5128,6 +5128,11 @@ def build_agent_runtime() -> AgentRuntime:
                 foundation_tools.attach_semantic_memory_engine(
                     semantic_engine
                 )
+                if (enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")
+                        and enabled("JARVIS_MEMORY_ASYNC_PROJECTION_ENABLED")):
+                    from .memory_projection import ProjectionWorker
+                    foundation_tools.projection_worker = ProjectionWorker(semantic_engine)
+                    foundation_tools.projection_worker.start()
                 # V10B opt-in: Memory V5 stays a durable tool surface for
                 # the existing conversational agent. Do not put an eager
                 # second LLM intent interpreter ahead of Cerebras/Groq.

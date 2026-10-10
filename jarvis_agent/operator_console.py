@@ -655,6 +655,11 @@ class OperatorConsole(QFrame):
             f"  ·  Profils : {count(knowledge.get('app_profiles'))}"
             f"  ·  Souvenirs : {count(memory.get('raw_count'))}"
         )
+        jobs = memory.get("projection_jobs")
+        if isinstance(jobs, dict):
+            self.learning_line.setText(self.learning_line.text() +
+                f"\nIndex : {jobs.get('queued', 0)} en attente, {jobs.get('running', 0)} en cours, "
+                f"{jobs.get('failed', 0)} en erreur")
         self.mission_line.setText(
             f"Missions observées : {len(data.get('missions') or [])}"
             + (" · échantillon récent" if mission_on else " · non instrumentées")

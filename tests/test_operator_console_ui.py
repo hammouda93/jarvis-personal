@@ -43,6 +43,18 @@ class OperatorConsoleWidgetTests(unittest.TestCase):
         finally:
             panel.close()
 
+    def test_projection_job_counts_are_actual_states_not_indexing_success(self):
+        panel = OperatorConsole()
+        try:
+            panel.apply_snapshot({"memory_stats": {"raw_count": 5,
+                "projection_jobs": {"queued": 2, "running": 1, "failed": 1, "done": 1}}})
+            self.assertIn("2 en attente", panel.learning_line.text())
+            self.assertIn("1 en cours", panel.learning_line.text())
+            self.assertIn("1 en erreur", panel.learning_line.text())
+            self.assertTrue(panel.learning_line.wordWrap())
+        finally:
+            panel.close()
+
     def test_widgets_project_real_data_and_do_not_start_agent(self):
         panel = OperatorConsole()
         try:

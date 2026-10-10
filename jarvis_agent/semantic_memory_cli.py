@@ -191,6 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status")
+    jobs = sub.add_parser("projection-jobs")
+    jobs.add_argument("--process", action="store_true", help="Explicitly process the durable queue.")
+    jobs.add_argument("--retry-failed", action="store_true", help="Retry matching failed jobs, at most 3 attempts.")
+    jobs.add_argument("--enqueue-missing", action="store_true", help="Explicitly queue old unindexed notes.")
+    jobs.add_argument("--max-items", type=int, default=16)
 
     inspect = sub.add_parser("inspect")
     inspect.add_argument("--limit", type=int, default=50)
@@ -211,6 +216,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         _print(semantic_status(store))
         return 0
+
+    if args.command == "projection-jobs":
+        from .memory_projection import ProjectionWorker
+        worker = ProjectionWorker(SemanticMemoryEngine(store, ModelSemanticMemoryInterpreter(
+            provider=args.provider, model=args.model, allow_cloud=args.allow_cloud)))
+        retried = worker.queue.retry_failed() if args.retry_failed else 0
+        queued = worker.queue.enqueue_missing(limit=args.max_items) if args.enqueue_missing else 0
+        processed = 0
+        if args.process:
+            for _ in range(max(1, min(args.max_items, 256))):
+                if not worker.process_one():
+                    break
+                processed += 1
+        counts = worker.queue.status()
+        _print({"ok": not counts.get("failed"), "projection_jobs": counts,
+                "retried": retried, "queued": queued, "processed": processed,
+                "coverage": store.projection_coverage(worker.engine.parser_version)})
+        return 2 if counts.get("failed") else 0
 
     if args.command == "inspect":
         _print(

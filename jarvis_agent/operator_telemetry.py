@@ -248,6 +248,13 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
             "raw_count": int(stored[0]["n"]) if stored else None,
             "active_semantic_facts": int(facts[0]["n"]) if facts else None,
         }
+        projections = _readonly(memory_db, "SELECT status,COUNT(*) AS n "
+                                "FROM memory_semantic_state GROUP BY status")
+        jobs = _readonly(memory_db, "SELECT status,COUNT(*) AS n "
+                        "FROM memory_projection_jobs GROUP BY status")
+        memory_stats["projection_states"] = {row["status"]: int(row["n"]) for row in projections}
+        memory_stats["projection_jobs"] = ({row["status"]: int(row["n"]) for row in jobs}
+                                           if jobs else None)
 
     from .config import settings
     from .mcp_server_registry import MCPRegistry
