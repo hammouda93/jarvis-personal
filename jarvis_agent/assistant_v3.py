@@ -771,6 +771,9 @@ class AssistantWorker(QObject):
             follow_up = self._pending_direct_follow_up
             self._pending_direct_follow_up = ""
             from .foundation_tools import enabled
+            from .tools import search_requires_agent
+            if follow_up == "search_query" and search_requires_agent(user_text):
+                follow_up = "qualified_search"
             if follow_up == "search_query" and enabled("JARVIS_BROWSER_CORE_ENABLED"):
                 follow_up = "foundation_browser_query"
             if follow_up == "search_query":

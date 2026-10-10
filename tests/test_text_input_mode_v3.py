@@ -23,6 +23,7 @@ class TextInputModeV3Tests(unittest.TestCase):
             )
         )
         self.agent = Mock()
+        self.agent.active_mission_id = None
         self.agent.run.return_value = AgentTurnResult("Bonjour.")
         self.tts = Mock()
         self.stack.enter_context(
@@ -99,6 +100,27 @@ class TextInputModeV3Tests(unittest.TestCase):
                 for item in self.logs
             )
         )
+
+    def test_old_browser_question_cannot_hijack_a_qualified_search(self):
+        self.worker.set_text_mode(True)
+        self.worker._pending_direct_follow_up = "search_query"
+        with patch("jarvis_agent.assistant_v3.execute") as execute:
+            self.worker._process_user_text("Cherche dans ma memoire", source="text")
+        execute.assert_not_called()
+        self.agent.run.assert_called_once()
+        self.assertEqual(self.agent.run.call_args.args[0], "Cherche dans ma memoire")
+        self.assertEqual(self.worker._pending_direct_follow_up, "")
+
+    def test_plain_reply_to_browser_question_still_searches(self):
+        from jarvis_agent.tools import ToolResult
+        self.worker.set_text_mode(True)
+        self.worker._pending_direct_follow_up = "search_query"
+        with patch("jarvis_agent.foundation_tools.enabled", return_value=False), patch(
+            "jarvis_agent.assistant_v3.execute", return_value=ToolResult(True, "Recherche ouverte")
+        ) as execute:
+            self.worker._process_user_text("Piano", source="text")
+        self.assertEqual(execute.call_args.args[0].name, "browser.search")
+        self.agent.run.assert_not_called()
 
 
 if __name__ == "__main__":

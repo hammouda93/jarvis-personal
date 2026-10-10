@@ -231,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
                 processed += 1
         counts = worker.queue.status()
         _print({"ok": not counts.get("failed"), "projection_jobs": counts,
+                "jobs": worker.queue.diagnostics(),
                 "retried": retried, "queued": queued, "processed": processed,
                 "coverage": store.projection_coverage(worker.engine.parser_version)})
         return 2 if counts.get("failed") else 0

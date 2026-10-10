@@ -41,6 +41,8 @@ class ProjectionQueue:
                 lease_until REAL NOT NULL DEFAULT 0, owner TEXT NOT NULL DEFAULT '',
                 error TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL,
                 UNIQUE(memory_id, raw_hash, parser_version, policy_key))""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_projection_ready ON "
+                         "memory_projection_jobs(policy_key,parser_version,status,lease_until,id)")
 
     def remember(self, content: str, *, tags: str = "") -> MemoryItem:
         raw, tags = str(content or "").strip(), str(tags or "").strip()
@@ -93,7 +95,9 @@ class ProjectionQueue:
             conn.row_factory = sqlite3.Row
             conn.execute("""UPDATE memory_projection_jobs SET status='failed',
                 error='projection_lease_retry_budget_exhausted',updated_at=?
-                WHERE status='running' AND lease_until<=? AND attempts>=3""", (instant, instant))
+                WHERE status='running' AND lease_until<=? AND attempts>=3
+                AND policy_key=? AND parser_version=?""",
+                (instant, instant, self.policy_key, self.parser_version))
             row = conn.execute("""SELECT * FROM memory_projection_jobs
                 WHERE policy_key=? AND parser_version=? AND
                 (status='queued' OR (status='running' AND lease_until<=? AND attempts<3))
@@ -137,6 +141,18 @@ class ProjectionQueue:
         with closing(self.store._connect()) as conn:
             counts = conn.execute("SELECT status,COUNT(*) FROM memory_projection_jobs GROUP BY status").fetchall()
         return {str(name): int(count) for name, count in counts}
+
+    def diagnostics(self, *, limit: int = 10) -> list[dict]:
+        with closing(self.store._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""SELECT id,memory_id,status,attempts,error,
+                policy_key,parser_version FROM memory_projection_jobs ORDER BY id DESC LIMIT ?""",
+                (max(1, min(limit, 50)),)).fetchall()
+        return [{"job_id": row["id"], "memory_id": row["memory_id"], "status": row["status"],
+                 "attempts": row["attempts"], "error": row["error"],
+                 "policy_matches": row["policy_key"] == self.policy_key
+                                   and row["parser_version"] == self.parser_version}
+                for row in rows]
 
 
 class ProjectionWorker:

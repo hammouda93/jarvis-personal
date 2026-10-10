@@ -14,7 +14,7 @@ Les journaux locaux retrouves sont anterieurs a cette recette : ses traces
 completes restent a fournir pour diagnostiquer exactement les anciens timeouts.
 Les tests nouveaux reproduisent les sorties structurees rapportees, sans compte.
 
-## Corrections Livrées
+## Corrections Livrees
 
 - Les recherches portant une destination dans/within/in/inside ou une source
   non web apres sur restent sous le cerveau conversationnel. Pas de liste
@@ -29,6 +29,28 @@ Les tests nouveaux reproduisent les sorties structurees rapportees, sans compte.
   reinterprete pas les conclusions d'une mission contenant d'autres sources.
 - Le runner neutralise les opt-ins V10 herites avant l'import du runtime.
   La CI transmet volontairement les options live pour verifier cette isolation.
+- La reponse a une ancienne question navigateur ne contourne plus le controle
+  de destination ; une reponse simple ("Piano") conserve le raccourci historique.
+
+## Fournisseurs Et Continuite
+
+Les reponses tronquees/filtrees ou les batches avec identites manquantes,
+arguments absents, JSON ambigu, non-objet ou non fini sont refuses AVANT le
+premier dispatch. Aucune mutation partielle, fabrication d'arguments vides ou
+reprise automatique n'est introduite. Le tour reste incomplet et la supervision
+conserve ses preuves ; l'utilisateur doit verifier les effets deja produits.
+
+Une observation navigateur recente ne remplace plus le contexte d'une mission
+supervisee, ses permissions, une approbation en attente ou un grounding de session.
+Le compactage navigateur ordinaire reste disponible. Les budgets ne sont pas
+augmentes pour masquer une requete trop grande : refus preflight toujours visible.
+
+Le runtime Cerebras/Groq enregistre le fournisseur du dernier retour API observe,
+la voie primary/secondary/groq_fallback et l'usage fourni, pas le fournisseur
+simplement configure. La console affiche ces valeurs ; un usage manquant n'est
+pas remplace par celui d'une ancienne reponse. Un test du vrai chemin local,
+avec clients SDK simules, traverse 402 puis 429 puis Groq avec contexte et preuve
+d'outil preserves, sans rejouer la mutation. Ce n'est PAS un appel fournisseur live.
 
 ## Projection Differee Opt-in
 
@@ -99,10 +121,17 @@ necessite cette nouvelle demande explicite ; aucun effacement/rejeu des notes.
 Premier checkpoint 8cbd9ec : 928 tests Windows locaux, Node 45/45;
 [CI 38042159567](https://github.com/hammouda93/jarvis-personal/actions/runs/38042159567)
 Windows/Ubuntu SUCCESS, isolation V10 active dans les deux jobs.
-Lot projection : 14 tests dedies SQLite/worker et un test Qt supplementaire.
-Regression locale cumulative : 943 passes, aucun echec/erreur/skip ; CI du
-nouveau lot encore a observer. DPAPI reste teste hors sandbox, jamais desactive.
+Checkpoint projection 7e24521 : 943 passes Windows, Ubuntu 938 passes et
+5 exclusions explicites ; Node 45/45 sur chaque OS.
+[CI 38042834584](https://github.com/hammouda93/jarvis-personal/actions/runs/38042834584)
+verte, logs verifies. Lot fournisseurs : 958 tests Windows locaux, aucun
+echec/erreur/skip, Node 45/45 ; CI de ce nouveau lot encore a observer.
+17 tests de file et 9 tests fournisseurs, plus regressions du worker et Qt.
+DPAPI reste teste hors sandbox, jamais desactive.
 L'affichage expose les vrais counts queued/running/failed, sans note privee.
+Rendus Qt hors ecran controles a 360 et 680 px avec Segoe UI chargee explicitement
+(la plateforme offscreen ne decouvre aucune police systeme par defaut ici).
+Les nouveaux champs se replient ; ce controle n'est pas une recette desktop/DPI.
 
 ## Hermes Et Sources
 
@@ -114,6 +143,9 @@ de sources. Ces principes sont reutilises, aucun code amont copie. Les fichiers
 MEMORY.md, prompts figes et gates fail-open ne remplacent pas SQLite/Jarvis.
 [Transactions SQLite Python](https://docs.python.org/3.12/library/sqlite3.html)
 restent la primitive de concurrence et publication, pas une nouvelle plateforme.
+[Cerebras tool use](https://inference-docs.cerebras.ai/capabilities/tool-use)
+et [Groq tool use](https://console.groq.com/docs/tool-use/overview) consultes
+pour le contrat local des identites, arguments et messages outils.
 
 ## Feuille De Route Globale
 
@@ -121,7 +153,7 @@ restent la primitive de concurrence et publication, pas une nouvelle plateforme.
 | --- | --- | --- |
 | A Routage universel | Sources qualifiees preservees, registre existant | Choix reel du modele, missions multi-app et inconnues |
 | B Memoire | Raw/source/coverage, file durable opt-in | Recette async, edits versionnes/preview/CAS, doublons, recurrences/timezones |
-| C Fournisseurs | Circuit breakers 402/429, budgets, fallback existant | Contextes longs/missions generales, erreurs incompletes, provenance |
+| C Fournisseurs | 402/429 preserves, batches incomplets refuses, provenance/usage reels, contexte supervise protege | Recette API reelle, contextes longs et optimisation continue |
 | D MCP/services | Hub SDK/OAuth/coffre/permissions existants | Comptes Gmail/Calendar/Drive/GitHub/WhatsApp/MS Football reels non connectes ici |
 | E Missions | Planification/verification/continuite existantes | Missions composees reelles, contradictions de sources |
 | F Computer use | Chrome Bridge, UIA/CUA/refs preserves | Recette Windows nouvelle branche, installation complete |
@@ -129,6 +161,6 @@ restent la primitive de concurrence et publication, pas une nouvelle plateforme.
 | H Scheduler | Queue kernel en memoire | Scheduler personnel horaire/durable non livre |
 | I Isolation/cloud | Contrats existants seulement | Session Windows/navigateur/agent cloud isoles non livres |
 | J Skills/learning | OFF, contrats/versionnement existants | Recette explicite apres moteur general |
-| K Interface | Etats reels, counts de projection | Provenance fournisseur et recette Qt/desktop |
+| K Interface | Etats reels, counts de projection, voie fournisseur observee et usage nullable | Desktop/DPI et missions reelles |
 
 Jarvis final generaliste n'est pas declare termine par ces lots.

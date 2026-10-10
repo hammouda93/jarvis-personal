@@ -729,7 +729,10 @@ class OperatorConsole(QFrame):
         if err:
             suffix += f" · erreur : {err[:35]}"
         if effective and effective != name:
-            suffix += f" · réponse via {effective}"
+            suffix += f" · dernier appel via {effective}"
+        credential = self._last_model.get("effective_credential")
+        if credential in {"primary", "secondary"}:
+            suffix += f" · compte {credential}"
         usage = self._last_model.get("reported_usage")
         if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
             suffix += f" · tokens API {usage['total_tokens']}"

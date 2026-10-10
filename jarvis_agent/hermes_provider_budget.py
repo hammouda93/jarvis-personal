@@ -54,13 +54,14 @@ class HermesBudgetedCerebrasAgent(CerebrasResponsesAgent):
                 "Budget des tours Cerebras atteint : arrêt contrôlé sans nouvelle requête."
             )
         self.reliability_rounds_used += 1
-        self.reliability_last_effective_provider = "cerebras"
+        self.reliability_last_effective_provider = ""
         try:
             response = super()._chat(
                 tool_choice=tool_choice,
                 ms_football_only=ms_football_only,
                 msf_tool_names=msf_tool_names,
             )
+            self.reliability_last_effective_provider = self.last_effective_provider
             usage = getattr(response, "usage", None)
             if usage is not None:
                 self.reliability_last_usage = {

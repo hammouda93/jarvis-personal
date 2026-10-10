@@ -164,6 +164,16 @@ class ProjectionQueueTests(unittest.TestCase):
         self.assertEqual(self.worker.queue.status(), {"failed": 1})
         self.assertEqual(self.worker.queue.retry_failed(), 0)
 
+    def test_other_policy_cannot_mark_expired_jobs_failed(self):
+        self.worker.queue.remember(self.raw)
+        for instant in (100, 106, 112):
+            self.worker.queue.claim(now=instant, lease_seconds=5)
+        other = ProjectionQueue(self.store, self.engine.parser_version, "other-policy")
+        self.assertIsNone(other.claim(now=118))
+        self.assertEqual(other.status(), {"running": 1})
+        self.assertIsNone(self.worker.queue.claim(now=118))
+        self.assertEqual(other.status(), {"failed": 1})
+
     def test_old_error_can_be_explicitly_queued_without_inventing_admission(self):
         item = self.store.remember(self.raw)
         self.store.mark_projection_error(item.id, parser_version=self.engine.parser_version, error="old timeout")
@@ -182,4 +192,33 @@ class ProjectionQueueTests(unittest.TestCase):
             state = snapshot()
         self.assertEqual(state["memory_stats"]["projection_jobs"], {"queued": 1})
         self.assertNotIn("SYNTH-582", repr(state))
+
+    def test_runtime_factory_wires_worker_only_with_explicit_opt_in(self):
+        from jarvis_agent.agent_runtime import build_agent_runtime
+        from jarvis_agent.memory import LOCAL_MEMORY
+        for mode in ("0", "1"):
+            worker = None
+            with patch.dict("os.environ", {**ENV, "JARVIS_MEMORY_ASYNC_PROJECTION_ENABLED": mode}), \
+                    patch.object(LOCAL_MEMORY, "db_path", self.path), \
+                    patch("jarvis_agent.memory_semantic_interpreter.build_semantic_memory_interpreter",
+                          return_value=self.interpreter):
+                runtime = build_agent_runtime()
+                worker = runtime.tools.projection_worker
+                try:
+                    self.assertEqual(worker is not None, mode == "1")
+                    self.assertEqual(self.interpreter.turn_calls, 0)
+                    self.assertEqual(self.interpreter.project_calls, 0)
+                finally:
+                    if worker is not None:
+                        self.assertTrue(worker.close(timeout=5))
+
+    def test_diagnostics_show_error_and_policy_mismatch_without_original_notes(self):
+        self.worker.queue.remember(self.raw)
+        with patch.object(self.interpreter, "project_batch", side_effect=TimeoutError("synthetic_timeout")):
+            self.worker.process_one()
+        other = ProjectionQueue(self.store, self.engine.parser_version, "new-policy")
+        diagnostic = other.diagnostics()
+        self.assertIn("TimeoutError", diagnostic[0]["error"])
+        self.assertFalse(diagnostic[0]["policy_matches"])
+        self.assertNotIn("SYNTH-582", repr(diagnostic))
 

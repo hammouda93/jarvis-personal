@@ -27,8 +27,8 @@ incomplet. Isolation automatique des opt-ins V10 dans le runner de regression.
 Baseline : 920 tests Windows passent hors sandbox. Dans le sandbox, un seul
 test DPAPI echoue (profil Windows indisponible) ; il n'est pas desactive.
 Premier lot corrige : 928 tests Windows, aucun echec/erreur/skip ; Node 45/45.
-CI du nouveau lot et recette desktop : encore a effectuer. Projection durable,
-corrections versionnees, missions generales et scheduler restent a poursuivre.
+CI 8cbd9ec verte sur les deux OS ; recette desktop encore a effectuer.
+Corrections versionnees, missions generales et scheduler restent a poursuivre.
 
 Lot suivant : projection differee opt-in dans le SQLite existant, worker local,
 jobs durables/idempotents, leases/recovery bornes, protection source/owner,
@@ -36,8 +36,19 @@ politique fournisseur epinglee et reprise operateur explicite. Counts reels
 queued/running/failed affiches dans la console, sans contenu prive. 943 tests
 Windows locaux passes, 14 tests de file inclus et un nouveau test Qt. Les
 identifiants opaques restent exacts sans perdre les pronoms francais historiques.
-CI 8cbd9ec Windows/Ubuntu verte ; CI du lot projection a observer. Recette et
+CI 7e24521 Windows 943 passes / Ubuntu 938 passes + 5 exclusions explicites,
+Node 45/45 sur chaque OS, logs verifies dans le run 38042834584. Recette et
 feuille de route generale : `docs/V10D_LIVE_RELIABILITY.md`, PR #22 brouillon.
+
+Troisieme lot : reponses fournisseurs tronquees/ambiguës refusees avant tout
+dispatch ; contexte supervise/approbations/proofs preserves lors du compactage
+navigateur ; mutation executee une fois durant la sequence SDK simulee 402/429/Groq.
+Fournisseur/voie/usage API observes affiches, sans inventer un usage manquant.
+958 tests Windows locaux passes, aucun echec/erreur/skip ; Node 45/45.
+9 tests fournisseurs et 17 tests de file, regressions du worker/Qt incluses.
+Rendus Qt hors ecran des nouveaux champs controles en largeur 360 et 680 px,
+avec police Windows chargee explicitement. Ni compte API live ni desktop valide.
+CI de ce lot a observer ; poursuite independante des contrats MCP et missions.
 
 ## Reprise Memory V10 Du 2026-10-09
 

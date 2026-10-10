@@ -55,6 +55,21 @@ class OperatorConsoleWidgetTests(unittest.TestCase):
         finally:
             panel.close()
 
+    def test_model_line_reports_observed_lane_without_inventing_usage(self):
+        panel = OperatorConsole()
+        try:
+            panel.update_model({"provider": "cerebras", "effective_provider": "cerebras",
+                                "effective_credential": "secondary", "reported_usage": None})
+            self.assertIn("compte secondary", panel.model_line.text())
+            self.assertNotIn("tokens API", panel.model_line.text())
+            panel.update_model({"provider": "cerebras", "effective_provider": "groq",
+                                "effective_credential": "groq_fallback", "reported_usage": {"total_tokens": 38}})
+            self.assertIn("dernier appel via groq", panel.model_line.text())
+            self.assertIn("tokens API 38", panel.model_line.text())
+            self.assertTrue(panel.model_line.wordWrap())
+        finally:
+            panel.close()
+
     def test_widgets_project_real_data_and_do_not_start_agent(self):
         panel = OperatorConsole()
         try:

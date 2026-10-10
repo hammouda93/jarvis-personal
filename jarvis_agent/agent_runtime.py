@@ -2637,6 +2637,9 @@ class GroqResponsesAgent:
         self._session_grounding: dict[str, str] = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
+        self.last_effective_provider = ""
+        self.last_effective_credential = ""
+        self.last_reported_usage = None
 
         from .provider_rate_budget import ProviderRateGate
         self._provider_rate_gate = ProviderRateGate()
@@ -2657,6 +2660,9 @@ class GroqResponsesAgent:
         self._session_grounding = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
+        self.last_effective_provider = ""
+        self.last_effective_credential = ""
+        self.last_reported_usage = None
 
     @staticmethod
     def _clean_grounding_value(value: Any, *, limit: int = 700) -> str:
@@ -3086,6 +3092,12 @@ class GroqResponsesAgent:
     def _messages_for_request(self) -> list[dict[str, Any]]:
         if "BROWSER_GROUNDING_READ_ONLY:" not in self._ephemeral_context:
             return self._messages
+        from .active_mission_supervisor import execution_scope_active
+        if (execution_scope_active() or self._pending_function_approval is not None
+                or self._session_grounding
+                or not self._ephemeral_context.startswith("BROWSER_GROUNDING_READ_ONLY:")):
+            # A fresh UI snapshot cannot replace mission permissions or proofs.
+            return self._messages
         if not self._messages:
             return []
         start = max(
@@ -3153,6 +3165,7 @@ class GroqResponsesAgent:
             )
             from .active_mission_supervisor import record_model_usage
             record_model_usage(getattr(response, "usage", None), self.provider_name)
+            self._note_model_response(response, self.provider_name)
             return response
         except Exception as exc:
             if gate is not None:
@@ -3170,6 +3183,17 @@ class GroqResponsesAgent:
             raise AgentRuntimeUnavailable(
                 f"{self.provider_name} n'est pas joignable: {detail}"
             ) from exc
+
+    def _note_model_response(self, response, provider: str, credential: str = "") -> None:
+        self.last_effective_provider = provider
+        self.last_effective_credential = credential
+        usage = getattr(response, "usage", None)
+        self.last_reported_usage = ({key: value if type(value) is int and value >= 0 else None
+            for key, value in (
+                ("input_tokens", getattr(usage, "prompt_tokens", None)),
+                ("output_tokens", getattr(usage, "completion_tokens", None)),
+                ("total_tokens", getattr(usage, "total_tokens", None)),
+            )} if usage is not None else None)
 
     def _append_assistant_message(self, message) -> list[Any]:
         tool_calls = list(getattr(message, "tool_calls", None) or [])
@@ -3547,6 +3571,10 @@ class GroqResponsesAgent:
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
         self._request_turn_start_index = len(self._messages)
+        self.last_effective_provider = ""
+        self.last_effective_credential = ""
+        self.last_reported_usage = None
+        self.last_api_error_category = ""
         actions: list[AgentActionResult] = []
         end_session = False
         should_exit = False
@@ -3725,11 +3753,18 @@ class GroqResponsesAgent:
                     f"seconds={time.perf_counter() - started:.2f}"
                 )
 
-            if not response.choices:
+            if not getattr(response, "choices", None):
                 raise AgentRuntimeUnavailable(
                     f"{self.provider_name} n'a retourné aucun choix."
                 )
 
+            from .provider_response import response_integrity_error
+            integrity_error = response_integrity_error(response.choices[0])
+            if integrity_error:
+                self.last_api_error_category = integrity_error
+                if log:
+                    log("[AGENT] response_rejected=" + integrity_error + " no_tool_dispatched")
+                raise AgentRuntimeUnavailable(integrity_error)
             message = response.choices[0].message
             calls = self._append_assistant_message(message)
 
@@ -4942,6 +4977,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             )
             from .active_mission_supervisor import record_model_usage
             record_model_usage(getattr(response, "usage", None), "groq")
+            self._note_model_response(response, "groq", "groq_fallback")
             return response
         except Exception as exc:
             from .active_mission_supervisor import SupervisorStopped
@@ -4969,11 +5005,13 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             if not gate.available("primary"):
                 raise AgentRuntimeUnavailable("Cerebras primary cooldown after HTTP 429")
             primary_attempted = True
-            return super()._chat(
+            response = super()._chat(
                 tool_choice=tool_choice,
                 ms_football_only=ms_football_only,
                 msf_tool_names=msf_tool_names,
             )
+            self.last_effective_credential = "primary"
+            return response
         except AgentRuntimeUnavailable as primary_error:
             if primary_attempted:
                 gate.note_failure("primary", primary_error)
@@ -4996,11 +5034,13 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 self.base_url = settings.cerebras_secondary_base_url.rstrip("/")
                 self._client = None
                 try:
-                    return super()._chat(
+                    response = super()._chat(
                         tool_choice=tool_choice,
                         ms_football_only=ms_football_only,
                         msf_tool_names=msf_tool_names,
                     )
+                    self.last_effective_credential = "secondary"
+                    return response
                 except AgentRuntimeUnavailable as exc:
                     secondary_error = exc
                     gate.note_failure("secondary", exc)
