@@ -19,6 +19,26 @@ WINDOWS_ONLY = frozenset({
 })
 
 
+def regression_environment(data_dir: Path) -> dict[str, str]:
+    """Override live opt-ins before discovery, including values from .env."""
+    flags = (
+        "JARVIS_CUA_DRIVER_ENABLED", "JARVIS_HERMES_RELIABILITY_ENABLED",
+        "JARVIS_RUNTIME_CONVERGENCE_ENABLED", "JARVIS_ACTIVE_SUPERVISOR_ENABLED",
+        "JARVIS_MEMORY_CORE_ENABLED", "JARVIS_SEMANTIC_MEMORY_V5_ENABLED",
+        "JARVIS_MEMORY_AGENT_TOOLS_ENABLED", "JARVIS_MEMORY_SCOPE_GUARD_ENABLED",
+        "JARVIS_MEMORY_ASYNC_PROJECTION_ENABLED", "JARVIS_BROWSER_CORE_ENABLED",
+        "JARVIS_COMPUTER_CORE_ENABLED",
+    )
+    env = {name: "0" for name in flags}
+    env.update({name: "" for name in (
+        "CEREBRAS_API_KEY", "CEREBRAS_SECONDARY_API_KEY", "GROQ_API_KEY",
+        "OPENAI_API_KEY", "ELEVENLABS_API_KEY",
+    )})
+    env.update(QT_QPA_PLATFORM="offscreen", JARVIS_DATA_DIR=str(data_dir),
+               JARVIS_MCP_CONFIG_PATH=str(data_dir / "mcp_servers.json"))
+    return env
+
+
 def platform_suite(suite: unittest.TestSuite) -> unittest.TestSuite:
     result = unittest.TestSuite()
     for test in suite:
@@ -41,20 +61,11 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root))
     os.chdir(root)
-    os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    os.environ["JARVIS_CUA_DRIVER_ENABLED"] = "0"
-    os.environ["JARVIS_HERMES_RELIABILITY_ENABLED"] = "0"
-    os.environ["JARVIS_RUNTIME_CONVERGENCE_ENABLED"] = "0"
-    os.environ["JARVIS_ACTIVE_SUPERVISOR_ENABLED"] = "0"
     # Global memory stores initialize at import. Never use personal data in tests.
     (root / ".cache").mkdir(exist_ok=True)
     faulthandler.dump_traceback_later(180, repeat=False)
     with tempfile.TemporaryDirectory(prefix="regression-", dir=root / ".cache") as isolated:
-        os.environ["JARVIS_DATA_DIR"] = isolated
-        os.environ["JARVIS_MCP_CONFIG_PATH"] = str(Path(isolated) / "mcp_servers.json")
-        for key in ("CEREBRAS_API_KEY", "CEREBRAS_SECONDARY_API_KEY", "GROQ_API_KEY",
-                    "OPENAI_API_KEY", "ELEVENLABS_API_KEY"):
-            os.environ[key] = ""
+        os.environ.update(regression_environment(Path(isolated)))
         suite = unittest.defaultTestLoader.discover("tests", pattern=args.pattern)
         result = unittest.TextTestRunner(verbosity=1).run(platform_suite(suite))
         gc.collect()

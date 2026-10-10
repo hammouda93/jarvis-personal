@@ -157,6 +157,20 @@ def _search_query_from_command(cmd: str) -> str:
     return body
 
 
+def search_requires_agent(text: str) -> bool:
+    """A qualified source is not permission to perform a generic web search."""
+    cmd = normalize(text)
+    if not re.search(r"\b(?:cherche|recherche|search)\b", cmd):
+        return False
+    if re.search(r"\b(?:dans|within|inside|in)\b", cmd):
+        return True
+    # Keep the proven web/site shortcuts. Other destinations, including
+    # unknown services, belong to the capability-aware conversational brain.
+    return bool(re.search(
+        r"\bsur\s+(?!(?:(?:le\s+)?(?:web|internet)|google|youtube)\b)\S+", cmd,
+    ))
+
+
 def route(text: str) -> ToolIntent:
     cmd = normalize(text)
 
@@ -291,6 +305,9 @@ def route(text: str) -> ToolIntent:
         )
     ):
         return ToolIntent("browser.back")
+
+    if search_requires_agent(text):
+        return ToolIntent("unknown", {"text": text})
 
     compound_search = re.search(
         r"\b(?:ouvre|ouvrir|lance|affiche)\b.*\b(youtube|google)\b"

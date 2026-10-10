@@ -2,6 +2,34 @@
 
 Date de demarrage : 2026-10-08 (Africa/Lagos).
 
+## Reprise Live V10D Du 2026-10-10
+
+Base retrouvee locale/distante : `4e9e330`, PR #18/#19/#20/#21 ouvertes,
+non fusionnees. Nouvelle branche isolee : `codex/live-regressions-v10d`.
+699b7eb, reference 9C, main et les quatre worktrees de validation preserves.
+Journaux utilisateur non suivis inchanges et exclus des commits.
+
+Le brief humain confirme sur 4e9e330 : demarrage Windows, isolation micro en
+texte, TTS Windows de secours, fallback Cerebras 402/Secondary/Groq dans les
+scenarios rapportes, stockage SQLite, rappel brut apres redemarrage et lectures
+par date/periode. Ce sont des resultats rapportes par l'utilisateur, pas de
+nouvelles executions desktop par Codex. Les logs disponibles ici sont anciens
+(2026-10-04 au plus tard) ; les traces completes de cette recette recente ne
+sont pas jointes. Les reproductions suivent les sorties structurees du brief.
+
+Premier lot : recherches avec destination explicite rendues au cerveau,
+pas d'exceptions par application ; raccourcis Google/YouTube preserves.
+Resultats memoire compactes en JSON valide, preuve brute avant projections,
+garde contre les conclusions d'absence contredites par une source ou un index
+incomplet. Isolation automatique des opt-ins V10 dans le runner de regression.
+8 nouveaux tests reproduisent les defauts avant correction.
+
+Baseline : 920 tests Windows passent hors sandbox. Dans le sandbox, un seul
+test DPAPI echoue (profil Windows indisponible) ; il n'est pas desactive.
+Premier lot corrige : 928 tests Windows, aucun echec/erreur/skip ; Node 45/45.
+CI du nouveau lot et recette desktop : encore a effectuer. Projection durable,
+corrections versionnees, missions generales et scheduler restent a poursuivre.
+
 ## Reprise Memory V10 Du 2026-10-09
 
 Nouveau brief utilisateur : recuperer le checkpoint, auditer les PR #18/#19/#20

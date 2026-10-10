@@ -527,6 +527,11 @@ class AssistantWorker(QObject):
         }:
             return False
 
+        if intent.name in {"browser.search", "browser.search_site", "browser.search_prompt"}:
+            from .tools import search_requires_agent
+            if search_requires_agent(user_text):
+                return False
+
         text = user_text.lower()
         # Never let the legacy router truncate a compound mission. If the
         # utterance contains sequencing or a second obvious action, let the

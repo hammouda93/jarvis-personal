@@ -5,6 +5,7 @@ on:
     branches:
       - feature/codex-jarvis-final-development
       - codex/integrate-memory-v10c
+      - codex/live-regressions-v10d
   pull_request:
   workflow_dispatch:
 
@@ -39,6 +40,11 @@ jobs:
       - name: Runtime and optional official MCP SDK
         run: python -m pip install -r requirements.txt -r requirements-mcp.txt
       - name: Python regression including Qt and safety contracts
+        env:
+          JARVIS_MEMORY_CORE_ENABLED: '1'
+          JARVIS_SEMANTIC_MEMORY_V5_ENABLED: '1'
+          JARVIS_MEMORY_AGENT_TOOLS_ENABLED: '1'
+          JARVIS_MEMORY_SCOPE_GUARD_ENABLED: '1'
         run: python scripts/run_final_regression.py
       - name: Browser Bridge replay contracts
         run: node --test tests/browser_bridge_replay.mjs
