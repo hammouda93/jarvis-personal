@@ -655,6 +655,11 @@ class OperatorConsole(QFrame):
             f"  ·  Profils : {count(knowledge.get('app_profiles'))}"
             f"  ·  Souvenirs : {count(memory.get('raw_count'))}"
         )
+        jobs = memory.get("projection_jobs")
+        if isinstance(jobs, dict):
+            self.learning_line.setText(self.learning_line.text() +
+                f"\nIndex : {jobs.get('queued', 0)} en attente, {jobs.get('running', 0)} en cours, "
+                f"{jobs.get('failed', 0)} en erreur")
         self.mission_line.setText(
             f"Missions observées : {len(data.get('missions') or [])}"
             + (" · échantillon récent" if mission_on else " · non instrumentées")
@@ -724,7 +729,10 @@ class OperatorConsole(QFrame):
         if err:
             suffix += f" · erreur : {err[:35]}"
         if effective and effective != name:
-            suffix += f" · réponse via {effective}"
+            suffix += f" · dernier appel via {effective}"
+        credential = self._last_model.get("effective_credential")
+        if credential in {"primary", "secondary"}:
+            suffix += f" · compte {credential}"
         usage = self._last_model.get("reported_usage")
         if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
             suffix += f" · tokens API {usage['total_tokens']}"

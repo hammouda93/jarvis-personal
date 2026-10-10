@@ -248,6 +248,13 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
             "raw_count": int(stored[0]["n"]) if stored else None,
             "active_semantic_facts": int(facts[0]["n"]) if facts else None,
         }
+        projections = _readonly(memory_db, "SELECT status,COUNT(*) AS n "
+                                "FROM memory_semantic_state GROUP BY status")
+        jobs = _readonly(memory_db, "SELECT status,COUNT(*) AS n "
+                        "FROM memory_projection_jobs GROUP BY status")
+        memory_stats["projection_states"] = {row["status"]: int(row["n"]) for row in projections}
+        memory_stats["projection_jobs"] = ({row["status"]: int(row["n"]) for row in jobs}
+                                           if jobs else None)
 
     from .config import settings
     from .mcp_server_registry import MCPRegistry
@@ -301,6 +308,8 @@ def runtime_model_snapshot(runtime: Any) -> dict[str, Any]:
     category = ""
     last_usage = None
     effective_provider = ""
+    effective_credential = ""
+    usage_observed = False
     seen = set()
     for _ in range(12):
         if current is None or id(current) in seen:
@@ -311,11 +320,19 @@ def runtime_model_snapshot(runtime: Any) -> dict[str, Any]:
             used = getattr(current, "reliability_rounds_used", None)
         if not effective_provider:
             effective_provider = str(
-                getattr(current, "reliability_last_effective_provider", "") or ""
+                getattr(current, "last_effective_provider", "")
+                or getattr(current, "reliability_last_effective_provider", "") or ""
             )
-        if last_usage is None:
-            value = getattr(current, "reliability_last_usage", None)
+        if not effective_credential:
+            effective_credential = str(getattr(current, "last_effective_credential", "") or "")
+        if not usage_observed:
+            if hasattr(current, "last_reported_usage"):
+                value = current.last_reported_usage
+                usage_observed = True
+            else:
+                value = getattr(current, "reliability_last_usage", None)
             if isinstance(value, dict):
+                usage_observed = True
                 last_usage = {
                     key: int(value[key]) if isinstance(value.get(key), int) else None
                     for key in ("input_tokens", "output_tokens", "total_tokens")
@@ -331,6 +348,7 @@ def runtime_model_snapshot(runtime: Any) -> dict[str, Any]:
     return {
         "provider": provider or "non renseigné",
         "effective_provider": effective_provider[:40],
+        "effective_credential": effective_credential[:40],
         "rounds_used": used if isinstance(used, int) else None,
         "rounds_limit": budget if isinstance(budget, int) else None,
         "failure_category": category[:50],

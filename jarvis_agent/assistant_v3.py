@@ -527,6 +527,11 @@ class AssistantWorker(QObject):
         }:
             return False
 
+        if intent.name in {"browser.search", "browser.search_site", "browser.search_prompt"}:
+            from .tools import search_requires_agent
+            if search_requires_agent(user_text):
+                return False
+
         text = user_text.lower()
         # Never let the legacy router truncate a compound mission. If the
         # utterance contains sequencing or a second obvious action, let the
@@ -766,6 +771,9 @@ class AssistantWorker(QObject):
             follow_up = self._pending_direct_follow_up
             self._pending_direct_follow_up = ""
             from .foundation_tools import enabled
+            from .tools import search_requires_agent
+            if follow_up == "search_query" and search_requires_agent(user_text):
+                follow_up = "qualified_search"
             if follow_up == "search_query" and enabled("JARVIS_BROWSER_CORE_ENABLED"):
                 follow_up = "foundation_browser_query"
             if follow_up == "search_query":

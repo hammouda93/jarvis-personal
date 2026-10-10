@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from .mcp_service_catalog import SERVICE_CARDS, find_card
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-    QPushButton, QSpinBox, QStyle, QTabWidget, QVBoxLayout,
+    QPushButton, QSpinBox, QStyle, QTabWidget, QVBoxLayout, QMessageBox,
 )
 
 
@@ -240,6 +240,20 @@ class MCPConnectionsPanel(QFrame):
         self.activity_label.setWordWrap(True)
         self.activity_label.setTextFormat(Qt.PlainText)
         layout.addWidget(self.activity_label)
+        review = QHBoxLayout()
+        self.outcome_picker = QComboBox()
+        self.outcome_picker.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.outcome_picker.setMinimumContentsLength(12)
+        self.review_outcome_button = QPushButton()
+        self.review_outcome_button.setIcon(self.style().standardIcon(QStyle.SP_DialogApplyButton))
+        self.review_outcome_button.setToolTip("Enregistrer ma verification de l'effet exterieur")
+        self.review_outcome_button.setAccessibleName("Revoir un appel MCP incertain")
+        self.review_outcome_button.clicked.connect(self._review_outcome)
+        self.outcome_picker.currentIndexChanged.connect(lambda _: self.review_outcome_button.setEnabled(
+            bool(self.outcome_picker.currentData()) and not self._authorization_pending))
+        review.addWidget(self.outcome_picker, 1)
+        review.addWidget(self.review_outcome_button)
+        layout.addLayout(review)
         layout.addStretch(1)
         layout = tools_layout
         self.tool_picker = QComboBox()
@@ -415,8 +429,21 @@ class MCPConnectionsPanel(QFrame):
             str(self.tool_picker.currentData() or "")
         )
 
+    def _review_outcome(self) -> None:
+        attempt = self.outcome_picker.currentData()
+        server = str(self.server_picker.currentData() or "")
+        if not attempt or not server or self._authorization_pending:
+            return
+        answer = QMessageBox.question(self, "Verification de l'effet MCP",
+            "Avez-vous verifie l'effet de cet appel dans le service externe ? "
+            "L'etat initial restera incertain dans l'historique. Aucun appel ne sera relance.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer == QMessageBox.Yes:
+            self._send("review_outcome", server, str(attempt))
+
     def _select_server(self, index: int) -> None:
         server_id = str(self.server_picker.currentData() or "")
+        previous_attempt = self.outcome_picker.currentData() if server_id == self._selected_server else None
         if server_id != self._selected_server:
             self.bearer.clear()
             self.oauth_client_secret.clear()
@@ -439,6 +466,10 @@ class MCPConnectionsPanel(QFrame):
         self.oauth_registered.setEnabled(False)
         self.oauth_scope.setEnabled(False)
         self.activity_label.setText("Aucune tentative enregistree.")
+        self.outcome_picker.blockSignals(True)
+        self.outcome_picker.clear()
+        self.outcome_picker.addItem("Appels incertains a verifier", None)
+        self.review_outcome_button.setEnabled(False)
         for entry in self._servers:
             if entry["id"] != server_id:
                 continue
@@ -456,6 +487,10 @@ class MCPConnectionsPanel(QFrame):
                     widget.setValue(limits.get(key, default))
                     widget.blockSignals(False)
             activity = entry.get("activity") or {}
+            for pending in activity.get("unresolved") or []:
+                if pending.get("reviewable") is True:
+                    self.outcome_picker.addItem("#" + str(pending["attempt_id"]) + " / "
+                        + str(pending.get("tool") or "")[:60], pending["attempt_id"])
             if activity.get("unavailable"):
                 self.activity_label.setText("Journal MCP indisponible ; les appels seront bloques.")
             else:
@@ -493,7 +528,14 @@ class MCPConnectionsPanel(QFrame):
                     item.get("name", "")
                 )
         self.tool_picker.blockSignals(False)
+        if previous_attempt is not None:
+            restored = self.outcome_picker.findData(previous_attempt)
+            if restored >= 0:
+                self.outcome_picker.setCurrentIndex(restored)
+        self.outcome_picker.blockSignals(False)
         busy = bool(self._authorization_pending)
+        self.outcome_picker.setEnabled(not busy)
+        self.review_outcome_button.setEnabled(not busy and bool(self.outcome_picker.currentData()))
         self.cancel_oauth_button.setEnabled(busy)
         self.server_picker.setEnabled(not busy)
         for button in (self.add_button, self.hermes_button, self.enable_button, self.disable_button,

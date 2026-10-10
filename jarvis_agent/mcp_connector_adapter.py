@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from .connector_gateway import ConnectorResult
 from .connector_registry import ConnectorBackend
+from .mcp_result import transport_outcome
 
 
 class MCPTransport(Protocol):
@@ -47,23 +48,25 @@ class MCPConnectorAdapter:
             )
 
         try:
-            raw = dict(
-                self.transport.call_tool(
-                    tool_name,
-                    dict(arguments or {}),
-                )
-                or {}
+            raw = self.transport.call_tool(
+                tool_name,
+                dict(arguments or {}),
             )
-        except Exception as exc:
+        except Exception:
             return ConnectorResult(
                 connector_id=self.connector_id,
                 capability=capability,
                 success=False,
                 message="Le transport MCP a échoué.",
-                error=str(exc)[:1200],
+                error="mcp_transport_outcome_unknown",
+                outcome_unknown=True,
             )
 
-        success = bool(raw.get("success", True))
+        success, unknown = transport_outcome(raw)
+        if unknown:
+            return ConnectorResult(self.connector_id, capability, False,
+                "Resultat MCP incertain ; verifier avant toute nouvelle tentative.",
+                error="mcp_execution_outcome_unknown", outcome_unknown=True)
         return ConnectorResult(
             connector_id=self.connector_id,
             capability=capability,
@@ -71,11 +74,11 @@ class MCPConnectorAdapter:
             message=str(
                 raw.get("message")
                 or (
-                    "Action MCP exécutée."
+                    "Retour MCP recu, non verifie independamment."
                     if success
                     else "L'outil MCP a signalé un échec."
                 )
             )[:1200],
-            data=dict(raw.get("data") or {}),
+            data=raw.get("data") if isinstance(raw.get("data"), dict) else None,
             error=str(raw.get("error") or "")[:1200],
         )

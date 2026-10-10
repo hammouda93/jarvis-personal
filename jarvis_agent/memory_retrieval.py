@@ -41,8 +41,15 @@ _CONCEPTS = {
 
 def terms(value: str) -> tuple[str, ...]:
     text = normalize(value).replace("rendez-vous", "rendezvous")
-    return tuple(dict.fromkeys(_CONCEPTS.get(t, t) for t in re.findall(r"\w+", text)
-                              if t not in _STOP and (len(t) > 1 or t.isdigit())))
+    words = [_CONCEPTS.get(t, t) for t in re.findall(r"\w+", text)
+             if t not in _STOP and (len(t) > 1 or t.isdigit())]
+    # Preserve complete opaque identifiers even when their components are
+    # stopwords or single letters. They must not become fuzzy entity matches.
+    clitics = {"je", "tu", "il", "elle", "nous", "vous", "ils", "elles", "toi", "moi"}
+    anchors = [token for token in re.findall(r"\w+(?:[-.]\w+)+", text)
+               if not (token.rsplit("-", 1)[-1] in clitics
+                       and token.split("-", 1)[0] in _STOP)]
+    return tuple(dict.fromkeys([*words, *anchors]))
 
 
 def relevance(query: str, content: str, tags: str = "") -> float:
@@ -54,6 +61,8 @@ def relevance(query: str, content: str, tags: str = "") -> float:
         if term in actual:
             scores.append(1.0)
             continue
+        if "-" in term or "." in term:
+            return 0.0
         # Never fuzzy-match numbers or short names. One extra plural s is safe.
         match = max((SequenceMatcher(None, term, token).ratio()
                      for token in actual if len(token) >= 5 and len(term) >= 5

@@ -2,6 +2,63 @@
 
 Date de demarrage : 2026-10-08 (Africa/Lagos).
 
+## Reprise Live V10D Du 2026-10-10
+
+Base retrouvee locale/distante : `4e9e330`, PR #18/#19/#20/#21 ouvertes,
+non fusionnees. Nouvelle branche isolee : `codex/live-regressions-v10d`.
+699b7eb, reference 9C, main et les quatre worktrees de validation preserves.
+Journaux utilisateur non suivis inchanges et exclus des commits.
+
+Le brief humain confirme sur 4e9e330 : demarrage Windows, isolation micro en
+texte, TTS Windows de secours, fallback Cerebras 402/Secondary/Groq dans les
+scenarios rapportes, stockage SQLite, rappel brut apres redemarrage et lectures
+par date/periode. Ce sont des resultats rapportes par l'utilisateur, pas de
+nouvelles executions desktop par Codex. Les logs disponibles ici sont anciens
+(2026-10-04 au plus tard) ; les traces completes de cette recette recente ne
+sont pas jointes. Les reproductions suivent les sorties structurees du brief.
+
+Premier lot : recherches avec destination explicite rendues au cerveau,
+pas d'exceptions par application ; raccourcis Google/YouTube preserves.
+Resultats memoire compactes en JSON valide, preuve brute avant projections,
+garde contre les conclusions d'absence contredites par une source ou un index
+incomplet. Isolation automatique des opt-ins V10 dans le runner de regression.
+8 nouveaux tests reproduisent les defauts avant correction.
+
+Baseline : 920 tests Windows passent hors sandbox. Dans le sandbox, un seul
+test DPAPI echoue (profil Windows indisponible) ; il n'est pas desactive.
+Premier lot corrige : 928 tests Windows, aucun echec/erreur/skip ; Node 45/45.
+CI 8cbd9ec verte sur les deux OS ; recette desktop encore a effectuer.
+Corrections versionnees, missions generales et scheduler restent a poursuivre.
+
+Lot suivant : projection differee opt-in dans le SQLite existant, worker local,
+jobs durables/idempotents, leases/recovery bornes, protection source/owner,
+politique fournisseur epinglee et reprise operateur explicite. Counts reels
+queued/running/failed affiches dans la console, sans contenu prive. 943 tests
+Windows locaux passes, 14 tests de file inclus et un nouveau test Qt. Les
+identifiants opaques restent exacts sans perdre les pronoms francais historiques.
+CI 7e24521 Windows 943 passes / Ubuntu 938 passes + 5 exclusions explicites,
+Node 45/45 sur chaque OS, logs verifies dans le run 38042834584. Recette et
+feuille de route generale : `docs/V10D_LIVE_RELIABILITY.md`, PR #22 brouillon.
+
+Troisieme lot : reponses fournisseurs tronquees/ambiguës refusees avant tout
+dispatch ; contexte supervise/approbations/proofs preserves lors du compactage
+navigateur ; mutation executee une fois durant la sequence SDK simulee 402/429/Groq.
+Fournisseur/voie/usage API observes affiches, sans inventer un usage manquant.
+958 tests Windows locaux passes, aucun echec/erreur/skip ; Node 45/45.
+9 tests fournisseurs et 17 tests de file, regressions du worker/Qt incluses.
+Rendus Qt hors ecran des nouveaux champs controles en largeur 360 et 680 px,
+avec police Windows chargee explicitement. Ni compte API live ni desktop valide.
+CI fournisseurs 5f09e7d verte : Windows 958 / Ubuntu 953 + 5 exclusions, Node
+45/45, run 38043762908 et logs verifies.
+
+Quatrieme lot MCP/kernel : enveloppes sans statut explicite ne valent plus
+succes ; erreurs apres dispatch restent incertaines ; provenance epinglee et
+claims distants non promus en verification. Blocage durable par outil meme
+Hermes OFF ; revue utilisateur dans le journal sans replay, nouvelle permission
+ni effacement de l'issue initiale. Inconnus preserves au-dela de la retention.
+12 nouveaux tests, 111 contrats MCP et 53 kernel passes. Regression cumulative
+locale 970 passes ; CI de ce lot a observer. Aucun compte personnel connecte.
+
 ## Reprise Memory V10 Du 2026-10-09
 
 Nouveau brief utilisateur : recuperer le checkpoint, auditer les PR #18/#19/#20

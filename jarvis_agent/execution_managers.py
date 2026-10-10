@@ -91,6 +91,8 @@ class ConnectorExecutionManager:
                 "capability": response.capability,
                 "message": response.message,
                 "data": response.data or {},
+                "outcome_unknown": response.outcome_unknown,
+                "verified": response.verified,
             },
             error=response.error,
         )

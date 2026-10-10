@@ -4,6 +4,32 @@ Statut : PREPAREE, non executee par Codex. Les observations humaines du brief
 2026-10-09 sont preservees dans `FINAL_DEVELOPMENT_PROGRESS.md`.
 Ne pas utiliser les fixtures cloud/offscreen comme preuves de comportements reels.
 
+## Priorite V10D
+
+Tester maintenant `codex/live-regressions-v10d`, PR brouillon #22, sans merge
+stable. La procedure isolee, les flags et la reprise de file se trouvent dans
+[V10D_LIVE_RELIABILITY.md](V10D_LIVE_RELIABILITY.md). Conserver la meme SQLite
+de recette au redemarrage. Les observations humaines V10C restent preservees.
+
+Priorites : preuve raw_fallback avec hits vide, index incomplet non transforme
+en agenda vide, recherche qualifiee apres une question navigateur, stockage
+immediat distinct de projection, reprise bornee, fournisseur/voie reellement
+observes et mutation unique apres fallback. Aucune saturation de compte pour
+provoquer 402/429. Une reponse tronquee doit interrompre le tour avant son batch
+d'outils, sans affirmer que les effets des tours precedents ont ete annules.
+
+Pour chaque cas conserver : commit/flags, demande, identifiants de memoire/job
+ou mission, sorties d'outils expurgees, fournisseur effectif et resultat observe.
+Le scheduler personnel, les comptes MCP et les sessions isolees ne sont pas
+declares disponibles par les corrections V10D.
+
+Avec un serveur MCP JETABLE uniquement : perdre une reponse apres action,
+redemarrer, attendre au-dela du cooldown et demander le meme outil. Il doit
+rester bloque sans nouvel appel, meme Hermes OFF. Verifier l'effet externe puis
+faire la revue dans Services > Journal. Aucune execution ni validation de mission
+par la revue ; refaire une demande/confirmation uniquement apres cette verification.
+Si Hermes/Supervisor sont ON, leurs registres inconnus restent a revoir separement.
+
 ## Preparation
 
 Utiliser la branche de developpement, noter son commit, conserver la reference

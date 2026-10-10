@@ -132,6 +132,7 @@ class FoundationToolAdapter:
         self._semantic_memory_write_authorized = False
         self._durable_memory_written_this_turn = False
         self.semantic_memory_engine = None
+        self.projection_worker = None
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
@@ -562,13 +563,18 @@ class FoundationToolAdapter:
                     raise RuntimeError("persistent_write_empty_user_source")
                 # Prevent an agent retry from writing the same turn twice.
                 # No duplicate write even if semantic projection later fails.
-                item = self.memory.remember(
+                writer = (self.projection_worker.queue if tool_mode and self.projection_worker is not None
+                          else self.memory)
+                item = writer.remember(
                     raw, tags=str(args.get("tags", "")),
                 )
                 if tool_mode:
                     self._durable_memory_written_this_turn = True
                     status = "raw_saved"
-                    if self.semantic_memory_engine is not None:
+                    if self.projection_worker is not None:
+                        status = "raw_saved projection_queued"
+                        self.projection_worker.start()
+                    elif self.semantic_memory_engine is not None:
                         try:
                             facts = self.semantic_memory_engine.project_memory(
                                 item.id, provenance="explicit",
@@ -708,6 +714,9 @@ class FoundationToolAdapter:
                             for item in matched
                         ],
                         "read_only": True,
+                        **self.memory.projection_coverage(self.semantic_memory_engine.parser_version),
+                        **({"projection_queue": self.projection_worker.queue.status()}
+                           if self.projection_worker is not None else {}),
                     }
                     return AgentActionResult(
                         name=name,
@@ -822,6 +831,10 @@ class FoundationToolAdapter:
             if name in browser_mutating_names and not isinstance(payload, dict):
                 raise RuntimeError("browser_mutation_missing_result")
             if isinstance(payload,dict):
+                if name.startswith("semantic_memory_") and self.semantic_memory_engine is not None:
+                    payload.update(self.memory.projection_coverage(self.semantic_memory_engine.parser_version))
+                    if self.projection_worker is not None:
+                        payload["projection_queue"] = self.projection_worker.queue.status()
                 scope = ("browser", (payload.get("tab") or {}).get("tab_id",args.get("tab_id"))) if self.browser and (
                     name.startswith("browser_") or name == "open_url" or "tab" in payload) else ("computer",args.get("window_id") or
                     ((payload.get("post_observation") or {}).get("window") or {}).get("window_id"))
