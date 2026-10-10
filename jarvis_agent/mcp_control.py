@@ -27,7 +27,7 @@ class MCPControlInbox:
         "add_http", "add_hermes", "discover", "enable", "disable",
         "allow_tool", "deny_tool", "add_stdio", "revoke_tools", "remove_server",
         "store_bearer", "store_api_key", "forget_credentials", "oauth_authorize", "cancel_oauth", "set_quotas",
-        "runtime_set", "connect", "reconnect", "disconnect"
+        "runtime_set", "connect", "reconnect", "disconnect", "review_outcome"
     })
 
     def __init__(self):
@@ -81,6 +81,9 @@ class MCPControlInbox:
                     return False
                 quota_limits({"quotas": packet})
             except (ValueError, TypeError):
+                return False
+        elif op == "review_outcome":
+            if not re.fullmatch(r"[1-9][0-9]{0,18}", val):
                 return False
         elif op == "oauth_authorize":
             try:
@@ -174,6 +177,10 @@ def perform_mcp_command(
         if sid or command.value not in {"true", "false"}:
             raise ValueError("invalid_mcp_runtime_flag")
         registry.set_runtime_enabled(command.value == "true")
+    elif op == "review_outcome":
+        registry.activity().review_outcome(sid, int(command.value))
+        return {"success": True, "operation": op, "server_id": sid,
+                "message": "Revue utilisateur enregistree ; aucun appel MCP relance, aucune preuve finale ajoutee."}
     elif op == "store_api_key":
         packet = api_key_options(command.value)
         entry = registry.get_server(sid)

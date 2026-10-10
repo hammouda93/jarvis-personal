@@ -23,6 +23,13 @@ ou mission, sorties d'outils expurgees, fournisseur effectif et resultat observe
 Le scheduler personnel, les comptes MCP et les sessions isolees ne sont pas
 declares disponibles par les corrections V10D.
 
+Avec un serveur MCP JETABLE uniquement : perdre une reponse apres action,
+redemarrer, attendre au-dela du cooldown et demander le meme outil. Il doit
+rester bloque sans nouvel appel, meme Hermes OFF. Verifier l'effet externe puis
+faire la revue dans Services > Journal. Aucune execution ni validation de mission
+par la revue ; refaire une demande/confirmation uniquement apres cette verification.
+Si Hermes/Supervisor sont ON, leurs registres inconnus restent a revoir separement.
+
 ## Preparation
 
 Utiliser la branche de developpement, noter son commit, conserver la reference

@@ -19,6 +19,8 @@ class ConnectorResult:
     message: str
     data: dict[str, Any] | None = None
     error: str = ""
+    outcome_unknown: bool = False
+    verified: bool = False
 
 
 class ConnectorAdapter(Protocol):
@@ -131,12 +133,19 @@ class ConnectorGateway:
                 capability,
                 dict(arguments or {}),
             )
-        except Exception as exc:
+        except Exception:
             return ConnectorResult(
                 connector_id=connector_id,
                 capability=capability,
                 success=False,
                 message="Le backend du connecteur a échoué.",
-                error=str(exc)[:800],
+                error="connector_outcome_unknown",
+                outcome_unknown=True,
             )
+        if (not isinstance(result, ConnectorResult) or type(result.success) is not bool
+                or result.connector_id != connector_id or result.capability != capability
+                or result.success and result.outcome_unknown):
+            return ConnectorResult(connector_id, capability, False,
+                "Reponse du connecteur incoherente ; verification independante requise.",
+                error="connector_result_invalid", outcome_unknown=True)
         return result

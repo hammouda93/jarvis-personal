@@ -40,6 +40,8 @@ class MCPActivityStore:
         try:
             conn.execute("CREATE TABLE IF NOT EXISTS usage (server TEXT, hour INTEGER, sessions INTEGER, calls INTEGER, PRIMARY KEY(server,hour))")
             conn.execute("CREATE TABLE IF NOT EXISTS attempts (id INTEGER PRIMARY KEY, server TEXT, operation TEXT, tool TEXT, started REAL, ended REAL, outcome TEXT)")
+            conn.execute("CREATE TABLE IF NOT EXISTS outcome_reviews (attempt_id INTEGER PRIMARY KEY, reviewed_at REAL NOT NULL)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_unresolved ON attempts(server,operation,tool,outcome)")
         except Exception:
             conn.close()
             raise
@@ -61,6 +63,14 @@ class MCPActivityStore:
         hour = int(now // 3600)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            if operation == "call" and tool:
+                unresolved = conn.execute("""SELECT a.id FROM attempts a
+                    LEFT JOIN outcome_reviews r ON r.attempt_id=a.id
+                    WHERE a.server=? AND a.operation='call' AND a.tool=?
+                    AND a.outcome IN ('reserved','unknown') AND r.attempt_id IS NULL LIMIT 1""",
+                    (server, tool)).fetchone()
+                if unresolved:
+                    raise MCPBudgetExceeded("mcp_unknown_requires_review")
             last = conn.execute("SELECT ended,outcome FROM attempts WHERE server=? ORDER BY id DESC LIMIT 1", (server,)).fetchone()
             if last and last["ended"] is not None and last["outcome"] in {"failed", "unknown", "preflight_failed"} and now - last["ended"] < 15:
                 raise MCPBudgetExceeded("mcp_failure_cooldown")
@@ -74,7 +84,9 @@ class MCPActivityStore:
                                   (server, operation, tool, now, "reserved"))
             attempt = cursor.lastrowid
             conn.execute("DELETE FROM usage WHERE hour < ?", (hour - 24,))
-            conn.execute("DELETE FROM attempts WHERE started < ? AND id NOT IN (SELECT id FROM attempts ORDER BY id DESC LIMIT 100)", (now - 86400,))
+            conn.execute("""DELETE FROM attempts WHERE started < ?
+                AND outcome NOT IN ('reserved','unknown')
+                AND id NOT IN (SELECT id FROM attempts ORDER BY id DESC LIMIT 100)""", (now - 86400,))
             return attempt
 
     def finish(self, attempt: int, outcome: str):
@@ -86,15 +98,40 @@ class MCPActivityStore:
             if changed != 1:
                 raise ValueError("mcp_attempt_already_finished")
 
+    def review_outcome(self, server: str, attempt: int) -> None:
+        """Explicit operator acknowledgement, not proof or automatic replay."""
+        self._server(server)
+        if type(attempt) is not int or attempt < 1:
+            raise ValueError("invalid_mcp_attempt_id")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT operation,outcome,started FROM attempts WHERE server=? AND id=?",
+                               (server, attempt)).fetchone()
+            if (row is None or row["operation"] != "call"
+                    or row["outcome"] not in {"unknown", "reserved"}):
+                raise ValueError("mcp_unknown_attempt_required")
+            # Transport requests are bounded at 45 s; never release a live
+            # dispatch reservation while its client can still be executing.
+            if row["outcome"] == "reserved" and self.clock() - row["started"] < 60:
+                raise ValueError("mcp_call_may_still_be_running")
+            conn.execute("INSERT INTO outcome_reviews VALUES (?,?) ON CONFLICT(attempt_id) DO NOTHING",
+                         (attempt, self.clock()))
+
     def summary(self, server: str) -> dict:
         self._server(server)
-        result = {"sessions_used": 0, "calls_used": 0, "last_attempt_utc": "", "last_outcome": "", "recent": []}
+        result = {"sessions_used": 0, "calls_used": 0, "last_attempt_utc": "", "last_outcome": "", "recent": [], "unresolved": []}
         if not self.path.exists():
             return result
         from datetime import datetime, timezone
         with self._connect() as conn:
             usage = conn.execute("SELECT sessions,calls FROM usage WHERE server=? AND hour=?", (server, int(self.clock() // 3600))).fetchone()
             rows = conn.execute("SELECT operation,tool,started,ended,outcome FROM attempts WHERE server=? ORDER BY id DESC LIMIT 8", (server,)).fetchall()
+            unknown = conn.execute("""SELECT a.id,a.tool,a.outcome,a.started FROM attempts a
+                LEFT JOIN outcome_reviews r ON r.attempt_id=a.id
+                WHERE a.server=? AND a.operation='call' AND a.outcome IN ('reserved','unknown')
+                AND r.attempt_id IS NULL ORDER BY a.id DESC LIMIT 20""", (server,)).fetchall()
+        result["unresolved"] = [{"attempt_id": row["id"], "tool": row["tool"], "outcome": row["outcome"],
+            "reviewable": row["outcome"] == "unknown" or self.clock() - row["started"] >= 60} for row in unknown]
         if usage:
             result.update(sessions_used=usage["sessions"], calls_used=usage["calls"])
         for row in rows:

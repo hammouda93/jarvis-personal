@@ -48,7 +48,16 @@ Fournisseur/voie/usage API observes affiches, sans inventer un usage manquant.
 9 tests fournisseurs et 17 tests de file, regressions du worker/Qt incluses.
 Rendus Qt hors ecran des nouveaux champs controles en largeur 360 et 680 px,
 avec police Windows chargee explicitement. Ni compte API live ni desktop valide.
-CI de ce lot a observer ; poursuite independante des contrats MCP et missions.
+CI fournisseurs 5f09e7d verte : Windows 958 / Ubuntu 953 + 5 exclusions, Node
+45/45, run 38043762908 et logs verifies.
+
+Quatrieme lot MCP/kernel : enveloppes sans statut explicite ne valent plus
+succes ; erreurs apres dispatch restent incertaines ; provenance epinglee et
+claims distants non promus en verification. Blocage durable par outil meme
+Hermes OFF ; revue utilisateur dans le journal sans replay, nouvelle permission
+ni effacement de l'issue initiale. Inconnus preserves au-dela de la retention.
+12 nouveaux tests, 111 contrats MCP et 53 kernel passes. Regression cumulative
+locale 970 passes ; CI de ce lot a observer. Aucun compte personnel connecte.
 
 ## Reprise Memory V10 Du 2026-10-09
 

@@ -78,6 +78,30 @@ Le worker est local au processus ; Jarvis ferme ne traite pas la file. Apres un
 arret brutal, un job running attend l'expiration de sa lease (300 s par defaut).
 Ce n'est pas un scheduler de rappels, un service Windows ou un agent cloud.
 
+## Contrats MCP Et Reprise
+
+Les deux chemins MCP (registre live et adaptateur kernel passif) exigent un
+statut booleen explicite du transport Jarvis. Une reponse manquante/malformee,
+un succes contredit par outcome_unknown, un timeout ou une erreur apres dispatch
+restent incertains, jamais "aucun effet". Le SDK officiel convertit le resultat
+protocolaire ; ce contrat n'impose pas un champ success au serveur MCP distant.
+Les bodies d'exceptions ne deviennent pas des diagnostics partageables du kernel.
+Provenance serveur/outil/tentative epinglee ; donnees distantes jamais preuve finale.
+
+Le journal MCP bloque durablement le meme outil apres effet inconnu ou reservation
+en vol, meme Hermes OFF, apres redemarrage et au-dela du cooldown. Les inconnus
+ne sont pas purges par la retention ordinaire. La revue explicite est dans
+MCP > Services > Journal : selectionner la tentative, verifier l'effet dans le
+service puis confirmer avec le bouton de revue (defaut Non). Elle ajoute un
+acknowledgement local sans effacer l'issue initiale, autoriser un nouvel outil,
+marquer la mission terminee ou relancer l'appel. Une reservation recente n'est
+pas liberable ; un arret brutal exige attente et verification externe.
+
+Hermes et Supervisor conservent leurs protections independantes : cette revue
+MCP ne resout pas automatiquement une action inconnue dans leur propre registre.
+Tous les appels ulterieurs exigent toujours une nouvelle confirmation exacte.
+Le catalogue, les comptes personnels et OAuth ne sont pas connectes par ces tests.
+
 ## Recette Isolee
 
 Dans PowerShell, utiliser le meme dossier de donnees lors du redemarrage :
@@ -124,14 +148,19 @@ Windows/Ubuntu SUCCESS, isolation V10 active dans les deux jobs.
 Checkpoint projection 7e24521 : 943 passes Windows, Ubuntu 938 passes et
 5 exclusions explicites ; Node 45/45 sur chaque OS.
 [CI 38042834584](https://github.com/hammouda93/jarvis-personal/actions/runs/38042834584)
-verte, logs verifies. Lot fournisseurs : 958 tests Windows locaux, aucun
-echec/erreur/skip, Node 45/45 ; CI de ce nouveau lot encore a observer.
+verte, logs verifies. Checkpoint fournisseurs 5f09e7d : Windows 958 passes,
+Ubuntu 953 passes + 5 exclusions explicites, Node 45/45 sur chaque OS,
+[CI 38043762908](https://github.com/hammouda93/jarvis-personal/actions/runs/38043762908)
+verte, logs verifies.
 17 tests de file et 9 tests fournisseurs, plus regressions du worker et Qt.
 DPAPI reste teste hors sandbox, jamais desactive.
 L'affichage expose les vrais counts queued/running/failed, sans note privee.
 Rendus Qt hors ecran controles a 360 et 680 px avec Segoe UI chargee explicitement
 (la plateforme offscreen ne decouvre aucune police systeme par defaut ici).
 Les nouveaux champs se replient ; ce controle n'est pas une recette desktop/DPI.
+Lot MCP : 12 nouveaux tests reproduisent les enveloppes invalides et les reprises
+incertaines. 111 tests MCP et 53 tests kernel passes. Regression cumulative locale
+970 passes, aucun echec/erreur/skip ; nouvelle CI encore a observer.
 
 ## Hermes Et Sources
 
@@ -146,6 +175,11 @@ restent la primitive de concurrence et publication, pas une nouvelle plateforme.
 [Cerebras tool use](https://inference-docs.cerebras.ai/capabilities/tool-use)
 et [Groq tool use](https://console.groq.com/docs/tool-use/overview) consultes
 pour le contrat local des identites, arguments et messages outils.
+Hermes [mcp_tool_content.py](https://github.com/NousResearch/hermes-agent/blob/a7b2ba02e3b9bb95d0cac87a6312cc82a3bc3eed/tools/mcp_tool_content.py)
+et [mcp_tool_errors.py](https://github.com/NousResearch/hermes-agent/blob/a7b2ba02e3b9bb95d0cac87a6312cc82a3bc3eed/tools/mcp_tool_errors.py)
+consultes : bornes de contenu et distinction erreur protocole/execution.
+[MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+consulte ; les annotations du serveur ne conferent jamais de confiance locale.
 
 ## Feuille De Route Globale
 
@@ -154,7 +188,7 @@ pour le contrat local des identites, arguments et messages outils.
 | A Routage universel | Sources qualifiees preservees, registre existant | Choix reel du modele, missions multi-app et inconnues |
 | B Memoire | Raw/source/coverage, file durable opt-in | Recette async, edits versionnes/preview/CAS, doublons, recurrences/timezones |
 | C Fournisseurs | 402/429 preserves, batches incomplets refuses, provenance/usage reels, contexte supervise protege | Recette API reelle, contextes longs et optimisation continue |
-| D MCP/services | Hub SDK/OAuth/coffre/permissions existants | Comptes Gmail/Calendar/Drive/GitHub/WhatsApp/MS Football reels non connectes ici |
+| D MCP/services | SDK/OAuth/coffre/permissions, provenance et inconnus bloques/revus durablement | Comptes Gmail/Calendar/Drive/GitHub/WhatsApp/MS Football reels non connectes ici |
 | E Missions | Planification/verification/continuite existantes | Missions composees reelles, contradictions de sources |
 | F Computer use | Chrome Bridge, UIA/CUA/refs preserves | Recette Windows nouvelle branche, installation complete |
 | G Autonomie | Supervision bornee et recovery existants | Longues missions et reprise reelles |

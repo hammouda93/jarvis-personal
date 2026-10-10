@@ -12,6 +12,8 @@ from typing import Any
 
 from .mcp_server_registry import MCPRegistry
 from .mcp_sdk_transport import MCPUnavailable, OfficialMCPTransport
+from .mcp_activity import MCPBudgetExceeded
+from .mcp_result import transport_outcome
 from .native_tools import AgentActionResult
 
 
@@ -123,6 +125,14 @@ class MCPToolRegistry:
         activity = self.registry.activity()
         try:
             attempt = activity.reserve(server_id, "call", entry, tool=native_name)
+        except MCPBudgetExceeded as exc:
+            if str(exc) == "mcp_unknown_requires_review":
+                return AgentActionResult(name=name, success=False,
+                    message="Appel MCP precedent incertain : revue explicite requise dans le centre MCP.",
+                    detail='{"verified":false,"outcome_unknown":true,"guard":"mcp_unknown_requires_review"}')
+            return AgentActionResult(name=name, success=False,
+                message="Quota ou cooldown MCP atteint. Aucun nouvel appel effectue.",
+                detail='{"verified":false,"outcome_unknown":false,"guard":"mcp_budget_unavailable"}')
         except Exception:
             return AgentActionResult(name=name, success=False,
                 message="Quota, cooldown ou journal MCP indisponible. Aucun appel effectue.",
@@ -156,13 +166,20 @@ class MCPToolRegistry:
                         "extérieur avant toute nouvelle tentative.",
                 detail='{"verified":false,"outcome_unknown":true}',
             )
-        successful = result.get("success") is True
+        successful, unknown = transport_outcome(result)
+        source = {"server_id": server_id, "tool_name": native_name,
+                  "attempt_id": attempt, "trust": "external_unverified"}
         try:
-            activity.finish(attempt, "success" if successful else "failed")
+            activity.finish(attempt, "unknown" if unknown else "success")
         except Exception:
             return AgentActionResult(name=name, success=False,
                 message="Appel termine mais journalisation MCP indisponible. Verification manuelle requise.",
                 detail='{"verified":false,"outcome_unknown":true}')
+        if unknown:
+            return AgentActionResult(name=name, success=False,
+                message="Resultat MCP incomplet ou en erreur : verifier les effets avant toute reprise.",
+                detail=json.dumps({"verified": False, "outcome_unknown": True,
+                                   "source": source}, ensure_ascii=False))
         structured = result.get("data")
         if not isinstance(structured, dict):
             structured = None
@@ -172,6 +189,7 @@ class MCPToolRegistry:
         safe_detail = json.dumps({
             "verified": False,
             "outcome_unknown": False,
+            "source": source,
             "mcp_output": str(result.get("message") or "")[:2200],
             "mcp_structured": structured,
         }, ensure_ascii=False, default=str)
