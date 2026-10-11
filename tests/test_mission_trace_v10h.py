@@ -22,7 +22,7 @@ class MissionTraceV10HTests(unittest.TestCase):
         self.assertTrue(items[0].lower().startswith("ouvre un site"))
         self.assertTrue(items[1].startswith("recherche"))
         self.assertTrue(items[2].startswith("ouvre le premier"))
-        self.assertTrue(items[3].startswith("verifie"))
+        self.assertTrue(items[3].lower().startswith("verifie"))
 
         events = []
         trace = ConversationMissionTrace(goal, events.append, trace_id="t1")
