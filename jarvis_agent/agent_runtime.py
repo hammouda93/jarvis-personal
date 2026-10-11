@@ -19,6 +19,7 @@ from .intent_guards import (
     is_explicit_memory_write_request,
 )
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
+from .runtime_identity import annotate_provider_request
 from .tools import normalize
 
 
@@ -2669,6 +2670,7 @@ class GroqResponsesAgent:
         self.last_effective_provider = ""
         self.last_effective_credential = ""
         self.last_reported_usage = None
+        self.last_effective_model = ""
 
         from .provider_rate_budget import ProviderRateGate
         self._provider_rate_gate = ProviderRateGate()
@@ -3157,6 +3159,14 @@ class GroqResponsesAgent:
                 request_messages, archived_chars = context.compact(request_messages)
                 tool_definitions = self._tool_definitions(ms_football_only=ms_football_only, msf_tool_names=msf_tool_names)
             request_messages, saved_chars = compact_duplicate_observations(request_messages)
+            label = self.provider_name
+            if (label == "cerebras" and settings.cerebras_secondary_api_key
+                    and settings.cerebras_secondary_api_key != settings.cerebras_api_key
+                    and self.api_key == settings.cerebras_secondary_api_key):
+                label = "cerebras-secondary"
+            request_messages = annotate_provider_request(
+                request_messages, provider=label, model=self.model,
+            )
             context_chars = len(
                 json.dumps(request_messages, ensure_ascii=False, separators=(",", ":"))
             )
@@ -3204,9 +3214,10 @@ class GroqResponsesAgent:
                 f"{self.provider_name} n'est pas joignable: {detail}"
             ) from exc
 
-    def _note_model_response(self, response, provider: str, credential: str = "") -> None:
+    def _note_model_response(self, response, provider: str, credential: str = "", *, model: str | None = None) -> None:
         self.last_effective_provider = provider
         self.last_effective_credential = credential
+        self.last_effective_model = model or self.model
         usage = getattr(response, "usage", None)
         self.last_reported_usage = ({key: value if type(value) is int and value >= 0 else None
             for key, value in (
@@ -3776,6 +3787,11 @@ class GroqResponsesAgent:
                 log(
                     f"[PERF] {self.provider_name}_round={round_index} "
                     f"seconds={time.perf_counter() - started:.2f}"
+                )
+                log(
+                    f"[AGENT_MODEL] effective_provider={self.last_effective_provider or self.provider_name} "
+                    f"model={self.last_effective_model or self.model} "
+                    f"credential={self.last_effective_credential or 'unknown'}"
                 )
 
             if not getattr(response, "choices", None):
@@ -4972,6 +4988,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             request_messages, archived_chars = context.compact(request_messages)
             print(f"[AGENT_CONTEXT] provider=groq_fallback archived_chars={archived_chars}")
         request_messages, saved_chars = compact_duplicate_observations(request_messages)
+        request_messages = annotate_provider_request(
+            request_messages, provider="groq-fallback", model=settings.groq_agent_model,
+        )
         if saved_chars:
             print(f"[AGENT_CONTEXT] provider=groq_fallback deduplicated_chars={saved_chars}")
         # Bounded fallback only for read-only personal memory queries.
@@ -5000,6 +5019,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         )
         if not allowed and context is not None and context.enabled:
             request_messages, saved_chars = context.compact(self._messages_for_request(), retain_latest=1, preview_chars=80)
+            request_messages = annotate_provider_request(
+                request_messages, provider="groq-fallback", model=settings.groq_agent_model,
+            )
             request_tools = context.fallback_tools(self._tool_definitions(
                 ms_football_only=ms_football_only, msf_tool_names=msf_tool_names), request_messages)
             if isinstance(tool_choice, dict):
@@ -5034,7 +5056,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             )
             from .active_mission_supervisor import record_model_usage
             record_model_usage(getattr(response, "usage", None), "groq")
-            self._note_model_response(response, "groq", "groq_fallback")
+            self._note_model_response(response, "groq", "groq_fallback", model=settings.groq_agent_model)
             return response
         except Exception as exc:
             from .active_mission_supervisor import SupervisorStopped
@@ -5087,7 +5109,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         for brain in brains:
             # Compaction for one model's limit must not silently weaken the
             # context or capabilities offered to the next model.
-            request_messages = base_messages
+            request_messages = annotate_provider_request(
+                base_messages, provider=brain.provider, model=brain.model,
+            )
             request_tools = list(base_tools)
             gate_id = "brain:" + brain.id
             if not self._provider_rate_gate.available(gate_id):
@@ -5117,7 +5141,10 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     completion_tokens=brain.completion_tokens,
                 )
                 if allowed:
-                    request_messages, request_tools = compacted, compacted_tools
+                    request_messages = annotate_provider_request(
+                        compacted, provider=brain.provider, model=brain.model,
+                    )
+                    request_tools = compacted_tools
             if not allowed:
                 print("[AGENT_BUDGET] configured_brain_skipped id=" + brain.id
                       + " estimated_tokens=" + str(estimated) + " budget=" + str(budget))
@@ -5138,7 +5165,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 response = client.chat.completions.create(**kwargs)
                 self._check_complete_response(response)
                 record_model_usage(getattr(response, "usage", None), brain.provider)
-                self._note_model_response(response, brain.provider, brain.id)
+                self._note_model_response(response, brain.provider, brain.id, model=brain.model)
                 self.last_effective_credential = "brain:" + brain.id
                 print("[AGENT] configured brain succeeded id=" + brain.id)
                 return response
