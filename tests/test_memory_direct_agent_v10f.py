@@ -24,7 +24,11 @@ DIRECT = {
 
 class MinimalNativeRegistry:
     def ollama_tools(self):
-        return []
+        return [self._ollama(
+            "remember_information", "Durable write requires user request",
+            {"content": {"type": "string"}, "tags": {"type": "string"}},
+            ["content"],
+        )]
 
     def _ollama(self, name, description, properties, required):
         return {"type": "function", "function": {
