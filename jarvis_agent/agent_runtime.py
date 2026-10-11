@@ -4457,6 +4457,21 @@ class GroqResponsesAgent:
                     # model and inspect the real foreground window instead.
                     arguments = {}
 
+                # A model suggestion of "new_instance=true" does not create
+                # user authorization to duplicate an application. Preserve
+                # the default reuse contract unless the request was explicit.
+                if name == "open_application" and arguments.get("new_instance") is True:
+                    request = normalize(user_text)
+                    explicit_duplicate = re.search(
+                        r"\b(?:nouvelle|nouvel|autre|seconde|deuxieme|"
+                        r"additional|another|second|new)\s+"
+                        r"(?:instance|fenetre|window)\b",
+                        request,
+                    )
+                    if not explicit_duplicate:
+                        arguments["new_instance"] = False
+                        if log:
+                            log("[MISSION] policy=reuse_existing_application_instance")
                 if log:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
                 if empty_precondition_pending and name in {"write_ui_element", "computer_write"}:
