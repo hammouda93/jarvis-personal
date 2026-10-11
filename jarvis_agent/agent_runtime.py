@@ -5032,9 +5032,6 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             request_messages, archived_chars = context.compact(request_messages)
             print(f"[AGENT_CONTEXT] provider=groq_fallback archived_chars={archived_chars}")
         request_messages, saved_chars = compact_duplicate_observations(request_messages)
-        request_messages = annotate_provider_request(
-            request_messages, provider="groq-fallback", model=settings.groq_agent_model,
-        )
         if saved_chars:
             print(f"[AGENT_CONTEXT] provider=groq_fallback deduplicated_chars={saved_chars}")
         # Bounded fallback only for read-only personal memory queries.
@@ -5063,9 +5060,6 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         )
         if not allowed and context is not None and context.enabled:
             request_messages, saved_chars = context.compact(self._messages_for_request(), retain_latest=1, preview_chars=80)
-            request_messages = annotate_provider_request(
-                request_messages, provider="groq-fallback", model=settings.groq_agent_model,
-            )
             request_tools = context.fallback_tools(self._tool_definitions(
                 ms_football_only=ms_football_only, msf_tool_names=msf_tool_names), request_messages)
             if isinstance(tool_choice, dict):
