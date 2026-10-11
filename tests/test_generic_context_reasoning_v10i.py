@@ -148,6 +148,24 @@ class GenericContextReasoningTests(unittest.TestCase):
                          ["open_application", "open_application"])
         self.assertTrue(result.actions[-1].success)
 
+    def test_application_instance_reuse_is_the_default(self):
+        for request, expected_new in (
+            ("Ouvre Application locale.", False),
+            ("Ouvre une nouvelle instance de Application locale.", True),
+        ):
+            with self.subTest(request=request):
+                tools = FakeTools()
+                agent = FakeGroqAgent(tools, [
+                    tool_call("open_application", {
+                        "name": "Application locale", "new_instance": True,
+                    }, "open"),
+                    answer("L'action Windows a été appelée."),
+                ])
+                with patch("jarvis_agent.agent_runtime.settings",
+                           replace(real_settings, agent_max_tool_rounds=3)):
+                    agent.run(request)
+                self.assertEqual(tools.calls[0][1]["new_instance"], expected_new)
+
     def test_runtime_requires_post_mutation_window_inventory(self):
         class WindowTools(FakeTools):
             def execute(self, name, args, *, approved=False):
