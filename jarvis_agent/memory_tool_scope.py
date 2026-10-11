@@ -58,6 +58,22 @@ def memory_only_request(
         r"\b(?:memoire|memorise|memorisee|memorises|memoriser|"
         r"souvenir|souvenirs|retiens|retient)\b"
     )
+    # A mixed mission may name the other target only by a pronoun:
+    # "Vérifie qu'elle est ouverte, puis retrouve mon code en mémoire."
+    # Never narrow a non-memory action out of the general tool catalog.
+    # This is an action-vs-source guard, not an app-name or noun classifier.
+    clauses = re.split(
+        r"\b(?:puis|ensuite|then)\b|[;,]|\bet\s+(?=(?:verifie|verifier|"
+        r"inspecte|inspecter|controle|controler|check|verify|inspect)\b)",
+        text,
+    )
+    for clause in clauses:
+        if (re.search(
+            r"\b(?:verifie|verifier|inspecte|inspecter|controle|controler|"
+            r"check|verify|inspect|actionne|actionner|utilise|utiliser)\b",
+            clause,
+        ) and not re.search(durable, clause)):
+            return False
     if re.search(durable, text):
         return True
 
