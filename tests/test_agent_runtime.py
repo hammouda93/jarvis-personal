@@ -3362,7 +3362,7 @@ class AgentRuntimeTests(unittest.TestCase):
                             "content": [
                                 {
                                     "type": "output_text",
-                                    "text": "Je ferme l'onglet demandé.",
+                                    "text": "La réinitialisation du contexte est refusée; aucune fermeture d'onglet n'a été effectuée.",
                                 }
                             ],
                         }
