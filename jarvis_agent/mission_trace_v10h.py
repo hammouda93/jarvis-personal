@@ -80,6 +80,10 @@ def _tool_step_hint(tool: str, steps: tuple[str, ...]) -> int | None:
         return None
     matches = [i + 1 for i, step in enumerate(steps)
                if re.search(pattern, _normalized(step))]
+    # Opening a new destination belongs to the earliest requested opening
+    # stage. An ordinal result is a separate later click, not open_url.
+    if tool in {"open_url", "open_application", "open_file"} and matches:
+        return matches[0]
     return matches[0] if len(matches) == 1 else None
 
 
