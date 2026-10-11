@@ -137,8 +137,80 @@ def post_mutation_observation_missing(user_text: str, actions) -> bool:
         detail = json.loads(str(getattr(last_action, "detail", "") or "{}"))
     except (ValueError, TypeError):
         detail = {}
-    if (isinstance(detail, dict)
-            and detail.get("verified") is True
-            and isinstance(detail.get("post_observation"), dict)):
-        return False
+    if isinstance(detail, dict):
+        post = detail.get("post_observation")
+        if (detail.get("verified") is True and isinstance(post, dict)):
+            return False
+        # The Windows UI adapter takes an actual fresh UIA snapshot after a
+        # click. It is a real post-action observation, even though the wrapper
+        # does not set an overall "verified" flag. This read avoids paying for
+        # another round solely to collect the same UI again; it does not imply
+        # that the whole requested goal is completed.
+        if (getattr(last_action, "name", "") == "click_ui_element"
+                and detail.get("auto_reinspection") is True
+                and detail.get("requires_fresh_inspection") is False
+                and isinstance(post, dict)
+                and isinstance(post.get("window"), dict)
+                and isinstance(post.get("controls"), list)
+                and post.get("observation_id")
+                and post.get("observation_id") != detail.get("source_observation_id")):
+            return False
     return True
+
+
+def preterminal_continuation_pending(user_text: str, actions) -> bool:
+    """Advisory only: a multi-step mission stopped before its requested boundary.
+
+    Never dispatch a UI action based on this classification. A visible generic
+    forward affordance is *not* permission to activate it; the agent must
+    reconsider the original user instructions, the screen, approvals and stop
+    conditions. Conservatively refuse to prompt continuation if any final or
+    irreversible action label is visible.
+    """
+    request = _plain(user_text)
+    if not re.search(r"\b(?:arrete|arreter|stop|pause|suspend)\b.{0,100}\b(?:avant|before)\b", request):
+        return False
+    if not re.search(r"\b(?:continue|continuer|poursuis|poursuivre|parcours|parcourir|avance|avancer)\b", request):
+        return False
+    if not actions or not getattr(actions[-1], "success", False):
+        return False
+    last = actions[-1]
+    if getattr(last, "name", "") not in {"inspect_active_window", "click_ui_element"}:
+        return False
+    try:
+        detail = json.loads(str(getattr(last, "detail", "") or "{}"))
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(detail, dict):
+        return False
+    observation = (
+        detail.get("post_observation")
+        if getattr(last, "name", "") == "click_ui_element"
+        else detail
+    )
+    if not isinstance(observation, dict) or not observation.get("observation_id"):
+        return False
+    controls = observation.get("controls")
+    if not isinstance(controls, list):
+        return False
+    enabled_buttons = {
+        _plain(control.get("name"))
+        for control in controls
+        if isinstance(control, dict)
+        and control.get("type") in {"Button", "button"}
+        and control.get("enabled") is True
+    }
+    # A final-action button in the same UI means the requested boundary may
+    # already be reached. No continuation should be encouraged.
+    terminal = re.compile(
+        r"\b(?:installer|install|installieren|finish|terminer|supprimer|delete|"
+        r"payer|pay|envoyer|send|valider|confirm|confirmer|appliquer|apply)\b"
+    )
+    if any(terminal.search(label) for label in enabled_buttons):
+        return False
+    # Generic navigation labels across desktop setup/wizard workflows.
+    # Their presence leads only to one reasoning checkpoint, never a click.
+    forward = re.compile(
+        r"^(?:suivant|next|weiter|continue|continuer|poursuivre|avance|avancer)\b"
+    )
+    return any(forward.search(label) for label in enabled_buttons)
