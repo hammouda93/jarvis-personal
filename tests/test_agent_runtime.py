@@ -479,8 +479,12 @@ class MemoryScopeV10CTests(unittest.TestCase):
             "JARVIS_MEMORY_AGENT_TOOLS_ENABLED", "JARVIS_MEMORY_SCOPE_GUARD_ENABLED")}
         for supervised, context in ((True, ""), (False, "approved multi-source mission")):
             with self.subTest(supervised=supervised, context=context):
-                agent = FakeGroqAgent(FakeTools(), [{"output": [{"type": "message", "content": [
-                    {"type": "output_text", "text": "La mission reste ouverte."}]}]}])
+                agent = FakeGroqAgent(FakeTools(), [
+                    {"output": [{"type": "message", "content": [
+                        {"type": "output_text", "text": "La mission reste ouverte."}]}]},
+                    {"output": [{"type": "message", "content": [
+                        {"type": "output_text", "text": "La consultation mémoire n'est pas vérifiée."}]}]},
+                ])
                 agent._ephemeral_context = context
                 with patch.dict("os.environ", env, clear=False), patch(
                         "jarvis_agent.active_mission_supervisor.execution_scope_active", return_value=supervised), patch(
