@@ -33,7 +33,10 @@ def positive_instruction_clauses(text):
 
 def has_windows_objective(text):
     return any(not re.search(r"https?://|\b(?:chrome|browser|navigateur|onglet|tab|site|web)\b", clause)
-               and re.search(r"\b(?:fichier|file|document|dossier|folder|bureau|desktop|fenetre|window|application|installateur|installer|exe)\b", clause)
+               and re.search(r"\b(?:fichier|file|document|dossier|folder|bureau|desktop|fenetre|window|application|"
+                             r"installateur|installer|installation|installe|setup|msi|exe|"
+                             r"telecharge|telechargee|telecharges|telechargees|telechargements|"
+                             r"downloads|downloaded|executable)\b", clause)
                for clause in positive_instruction_clauses(text))
 
 
