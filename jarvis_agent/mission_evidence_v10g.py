@@ -19,6 +19,16 @@ _OBSERVATION_TOOLS = frozenset({
     "browser_get_active_tab", "browser_list_tabs", "observe_screen",
     "verify_file_artifact",
 })
+_UI_EFFECT_TOOLS = frozenset({
+    "open_url", "open_application", "close_window", "close_tab",
+    "click_ui_element", "click_visual_target", "write_ui_element",
+    "write_visual_target", "type_text_active_window", "press_key",
+    "browser_navigate", "browser_activate_tab", "browser_click",
+    "browser_write", "browser_press", "browser_select", "browser_back",
+    "browser_forward", "browser_close_tab", "browser_download",
+    "computer_click", "computer_write", "computer_press",
+    "computer_shortcut",
+})
 _INTERNAL_TOOLS = frozenset({
     "mission_checkpoint", "request_tool_capabilities",
     "read_observation_evidence",
@@ -34,7 +44,7 @@ _TERMINAL_CLAIM = re.compile(
     r"installe|installed|done|acheve|achevee)\b|\bc.est fait\b"
 )
 _IMMEDIATE_ACTION_CLAIM = re.compile(
-    r"\b(?:je|j)\s*(?:vais\s+)?(?:clique|click|ouvre|open|lance|launch|"
+    r"\b(?:je|j)[\s']*(?:vais\s+)?(?:clique|click|ouvre|open|lance|launch|"
     r"ferme|close|installe|install|appuie|ecris|saisis|envoie|send)\b",
 )
 
@@ -47,9 +57,7 @@ def _normalized(value: str) -> str:
 def _effect_result(action: Any) -> bool:
     return (
         getattr(action, "success", False) is True
-        and str(getattr(action, "name", "")) not in _OBSERVATION_TOOLS
-        and str(getattr(action, "name", "")) not in _INTERNAL_TOOLS
-        and not str(getattr(action, "name", "")).startswith("semantic_memory_")
+        and str(getattr(action, "name", "")) in _UI_EFFECT_TOOLS
     )
 
 
@@ -67,7 +75,8 @@ def _terminal_proof(actions: list[Any] | tuple[Any, ...]) -> bool:
             proof = json.loads(str(getattr(action, "detail", "") or "{}"))
         except (ValueError, TypeError):
             continue
-        if (isinstance(proof, dict)
+        if (str(getattr(action, "name", "")) in _OBSERVATION_TOOLS
+                and isinstance(proof, dict)
                 and proof.get("goal_verified") is True
                 and proof.get("verified") is True
                 and isinstance(proof.get("postcondition"), str)
@@ -107,6 +116,29 @@ def guard_unverified_mission_reply(
             "Je n'ai pas de preuve d'une nouvelle action dans ce tour. "
             "La mission précédente reste en attente.",
             "continuation_without_effect",
+        )
+
+    # A spoken assertion of verification is not an observation. In a mixed
+    # task, the memory search cannot independently verify a GUI/window state.
+    sections = re.split(r"\b(?:puis|ensuite|then)\b|[;,]", user)
+    external_check = any(
+        re.search(r"\b(?:verifie|verification|controle|inspecte|check|verify)\b", part)
+        and not re.search(r"\b(?:memoire|souvenir|memorise|memory)\b", part)
+        for part in sections
+    )
+    claims_check = bool(re.search(
+        r"\b(?:verifie|verification|confirme|constate|bien ouverte|"
+        r"bien ouvert|est ouverte|est ouvert|verified|confirmed)\b",
+        answer,
+    ))
+    if (external_check and claims_check
+            and not any(getattr(a, "success", False)
+                        and str(getattr(a, "name", "")) in _OBSERVATION_TOOLS
+                        for a in actions)):
+        return (
+            "Je n'ai pas effectué de nouvelle observation de l'interface "
+            "dans ce tour ; son état ne peut pas encore être confirmé.",
+            "external_verification_without_observation",
         )
 
     if (_TERMINAL_GOAL.search(user) and _TERMINAL_CLAIM.search(answer)
