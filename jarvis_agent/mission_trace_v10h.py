@@ -41,9 +41,15 @@ _ACTION = (
     r"envoie|envoyer|send|installe|installer"
 )
 _SPLIT_INSTRUCTION = re.compile(
-    r"\s*(?:,|\bet\b)\s*(?=(?:" + _ACTION + r")\b)",
+    r"\b(?:puis|ensuite|then)\b|"
+    r"[,;]\s*(?=(?:" + _ACTION + r")\b)|"
+    r"\bet\b\s+(?=(?:" + _ACTION + r")\b)",
     re.I,
 )
+_QUOTED = re.compile(r"""(?:"[^"\n]*"|«[^»\n]*»|“[^”\n]*”)""")
+_NEGATIVE_START = re.compile(r"^\s*(?:ne\b|n['’]|never\b|do not\b|don't\b)", re.I)
+_OPTIONAL_START = re.compile(r"^\s*(?:si\b|if\b|unless\b|facultativement\b)", re.I)
+
 _RESUME = frozenset({"oui", "ok", "continue", "poursuis", "vas y", "vas-y", "go", "d'accord"})
 _OBSERVERS = frozenset({
     "list_windows", "inspect_active_window", "inspect_interface", "observe_screen",
@@ -56,13 +62,28 @@ _VERIFIERS = frozenset({"computer_verify", "browser_verify", "verify_file_artifa
 
 
 def requested_steps(user_text: str) -> tuple[str, ...]:
+    # Keep exact user-supplied entity names in quotes. Mask those spans during
+    # splitting so a quoted instruction cannot become a new requested action.
+    raw = str(user_text or "")
+    masked = _QUOTED.sub(lambda m: "Q" * len(m.group(0)), raw)
+    matches = list(_SPLIT_INSTRUCTION.finditer(masked))
+    spans = []
+    start = 0
+    for match in matches:
+        spans.append(raw[start:match.start()])
+        start = match.end()
+    spans.append(raw[start:])
     result: list[str] = []
-    for item in positive_instruction_clauses(user_text):
-        for clause in _SPLIT_INSTRUCTION.split(item):
-            cleaned = clause.strip(" ,")
-            if cleaned:
-                result.append(cleaned)
-    # No claim that a local keyword split equals the semantic plan.
+    for clause in spans:
+        cleaned = clause.strip(" ,;.!?\n\t")
+        if not cleaned or _NEGATIVE_START.match(cleaned) or _OPTIONAL_START.match(cleaned):
+            continue
+        # A prohibitive addendum is a constraint, not another positive step.
+        cleaned = re.split(r"\b(?:mais\s+ne|but\s+do\s+not)\b",
+                           cleaned, maxsplit=1, flags=re.I)[0].strip(" ,;")
+        if cleaned:
+            result.append(cleaned)
+    # Provisional instructions only: never grant permission or mark success.
     return tuple(result[:12])
 
 
