@@ -37,10 +37,15 @@ def has_windows_objective(text):
                for clause in positive_instruction_clauses(text))
 
 
+def has_instruction_constraints(text):
+    raw = _normalized(str(text or ""))
+    return bool(re.search(r"\b(?:ne\s+|n'|never|do not|don't|sans|without|si|if)\b", raw))
+
+
 def requires_agent_routing(text):
     raw = _normalized(str(text or ""))
     # A direct primitive cannot implement multiple goals or retain constraints.
-    if re.search(r"\b(?:ne\s+|n'|never|do not|don't|sans|without|si|if)\b", raw):
+    if has_instruction_constraints(text):
         return True
     clauses = positive_instruction_clauses(raw)
     action = r"\b(?:ouvre|ouvrir|lance|affiche|ferme|ecris|saisis|lis|verifie|cherche|recherche|clique|reviens|open|close|write|read|search)\b"

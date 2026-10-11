@@ -173,10 +173,10 @@ def search_requires_agent(text: str) -> bool:
 
 def route(text: str) -> ToolIntent:
     cmd = normalize(text)
-    from .instruction_clauses import requires_agent_routing
+    from .instruction_clauses import requires_agent_routing, has_instruction_constraints
     simple_site_search = bool(re.fullmatch(
         r"(?:jarvis\s+)?(?:ouvre|ouvrir|lance|affiche)\s+(?:youtube|google)\s+et\s+(?:recherche|cherche)\s+[^.;!?]+", cmd
-    ))
+    )) and not has_instruction_constraints(text)
     if requires_agent_routing(text) and not simple_site_search:
         return ToolIntent("unknown", {"text": text})
 

@@ -101,3 +101,10 @@ class GeneralMissionTests(unittest.TestCase):
         self.assertFalse(_requests_ui_submission("Si necessaire, envoie le message."))
         self.assertFalse(_requests_search_submission("Ne lance aucune recherche."))
         self.assertTrue(_requests_result_selection("Ouvre le premier resultat."))
+
+    def test_legacy_site_search_with_constraints_returns_to_brain(self):
+        for text in ("Ouvre YouTube et cherche piano sans fermer aucun autre onglet",
+                     "Ouvre Google et cherche piano si necessaire"):
+            with self.subTest(text=text):
+                self.assertEqual(route(text).name, "unknown")
+        self.assertEqual(route("Ouvre YouTube et cherche piano").name, "browser.search_site")

@@ -59,6 +59,7 @@ def verify_file_artifact(arguments):
 def guard_saved_file_answer(user_text, answer, actions):
     from .instruction_clauses import positive_instruction_clauses
     requested = any(re.search(r"\b(?:enregistre|enregistrer|sauvegarde|sauvegarder|save)\b", clause)
+                    and not re.search(r"\b(?:en\s+|dans\s+(?:(?:la|ma)\s+)?|in\s+(?:the\s+)?)(?:memoire|memory)\b", clause)
                     for clause in positive_instruction_clauses(user_text))
     claim = any(re.search(r"\b(?:enregistre|sauvegarde|saved|fait|termine)\b", clause)
                 for clause in positive_instruction_clauses(answer))

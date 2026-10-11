@@ -55,3 +55,10 @@ class FileArtifactTests(unittest.TestCase):
         self.assertTrue(guarded)
         self.assertIn("pas de preuve", answer)
         self.assertEqual(guard_saved_file_answer("Enregistre ce fichier", "Verifie.", [result]), ("Verifie.", False))
+
+    def test_memory_storage_claim_is_not_a_file_save_claim(self):
+        answer = "Le fait est enregistre en memoire."
+        memory = AgentActionResult("semantic_memory_store", True, answer,
+                                   '{"stored_raw":true,"memory_id":"fixture"}')
+        self.assertEqual(guard_saved_file_answer("Enregistre ce fait en memoire", answer, [memory]),
+                         (answer, False))

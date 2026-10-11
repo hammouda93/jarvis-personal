@@ -27,7 +27,17 @@ seraient `function`; Groq expose aussi `browser_search` selon configuration).
 Corrige pour tester les deux configurations sans retirer les assertions sur
 les outils Windows. Regression locale corrigee : 1008 passes en 41,575 s,
 0 echec/erreur/exclusion; nouvelle CI en cours de verification.
-38 nouveaux tests V10E passes, sans remplacement des suites historiques.
+38 nouveaux tests V10E passes dans ce premier lot, sans remplacement des suites
+historiques. Correctif de fixture pousse en `a50f9b8`.
+
+Revue suivante : deux reproductions supplementaires avant correction. Un
+raccourci historique recherche pouvait convertir `sans fermer ... onglet` en
+close-tab; les contraintes priment desormais sur cette exception. Le garde
+de sauvegarde fichier pouvait bloquer une memorisation explicite; cibles
+memoire distinguees. Tests cibles : missions 12/12 et fichiers 6/6 passes.
+40 nouveaux tests au total; regression cumulative finale : 1010 passes en
+41,941 s, 0 echec/erreur/exclusion. Premier job Windows CI annule par la
+concurrence au push du correctif; aucune validation Windows n'en est deduite.
 
 Mesure synthetique reproductible : messages 54488 -> 22706 caracteres,
 schemas 16771 -> 13788, outils 33 -> 25, politique 14775 -> 5728; six lectures

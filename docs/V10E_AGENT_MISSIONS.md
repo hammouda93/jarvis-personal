@@ -13,6 +13,8 @@ sont pas remplaces. Skills/Learning restent independants et OFF par defaut.
 - Routage : les objectifs composes/contraints reviennent au cerveau. Les
   interdictions et conditions ne deviennent plus des actions positives dans
   les reparations lexicales. `texte affiche` n'ouvre pas une application.
+  Les raccourcis historiques ne passent pas devant `sans`/`si`/une negation;
+  les recherches simples sans contrainte restent compatibles.
 - Domaines : une observation navigateur n'est plus une politique supprimant
   les outils Windows. Un objectif fichier explicite peut ouvrir le fichier
   puis quitter le mode navigateur, sans lever le garde de saisie OS.
@@ -29,6 +31,7 @@ sont pas remplaces. Skills/Learning restent independants et OFF par defaut.
 - Sauvegarde : outil read-only `verify_file_artifact`, chemin absolu local,
   nom exact et contenu UTF-8 ou SHA256, lecture bornee 4 Mio, fichier stable
   pendant lecture. Existence seule/Ctrl+S ne prouvent pas une sauvegarde.
+  Une memorisation explicite (`en memoire`) n'est pas un enregistrement fichier.
 - Document vide : contrainte explicite injectee avant premiere ecriture UIA
   ou Computer Core; valeur fraiche vide obligatoire. Valeur inconnue/non vide
   bloque avant dispatch. Saisie aveugle/visuelle refusee dans ce cas.
@@ -70,12 +73,14 @@ tokens factures ni une mesure de cout/latence/calls sur mission live.
 Baseline V10D : CI run 38044416414, Windows 970 passes; Linux 965 passes et
 5 exclusions explicites (970 executes). Node 45 passes sur chaque OS.
 V10E local initial : 1005 tests passes, puis ajout de 3 tests d'integration
-contexte/factory/superviseur. Final local : 1008 tests passes en 41,755 s,
-0 echec/erreur/exclusion; Node 45/45. CI du checkpoint suivie dans
+contexte/factory/superviseur. Deux cas de limites reproduits puis corriges :
+contraintes avant raccourcis, memorisation distincte de sauvegarde fichier.
+Final local : 1010 tests passes en 41,941 s, 0 echec/erreur/exclusion; Node 45/45.
+CI du checkpoint suivie dans
 [FINAL_DEVELOPMENT_PROGRESS.md](FINAL_DEVELOPMENT_PROGRESS.md).
 
-38 nouveaux tests V10E : missions 11, contexte 12, fournisseurs/memoire 4,
-preuve fichier 5, preconditions 6. Regressions historiques conservees; fixtures
+40 nouveaux tests V10E : missions 12, contexte 12, fournisseurs/memoire 4,
+preuve fichier 6, preconditions 6. Regressions historiques conservees; fixtures
 fournisseurs mises a jour pour representer une reponse SDK complete, sans
 desactiver les assertions de cooldown/ordre/nombre d'appels.
 
