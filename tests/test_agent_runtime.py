@@ -3552,6 +3552,60 @@ class AgentRuntimeTests(unittest.TestCase):
             ),
         )
 
+    def test_v10g_false_action_promise_repaired_into_real_tool_call(self):
+        class StepTools(FakeTools):
+            def ollama_tools(self):
+                return [{
+                    "type": "function", "function": {
+                        "name": "click_ui_element", "description": "click observed UI ref",
+                        "parameters": {"type": "object", "properties": {
+                            "ref": {"type": "string"}}, "required": ["ref"]},
+                    },
+                }]
+        tools = StepTools()
+        agent = FakeGroqAgent(tools, [
+            {"output": [{"type": "message", "content": [{
+                "type": "output_text", "text": "Je clique sur Suivant."
+            }]}]},
+            {"output": [{"type": "function_call", "call_id": "real-click",
+                "name": "click_ui_element", "arguments": '{"ref":"observed:button"}'}]},
+            {"output": [{"type": "message", "content": [{
+                "type": "output_text", "text": "Le bouton a été actionné."
+            }]}]},
+        ])
+        with patch("jarvis_agent.agent_runtime.settings",
+                   replace(real_settings, agent_max_tool_rounds=3)):
+            result = agent.run("Clique sur Suivant dans l'interface observée.")
+        self.assertEqual(len(agent.payloads), 3)
+        self.assertEqual(tools.calls,
+                         [("click_ui_element", {"ref": "observed:button"})])
+        self.assertIn("actionné", result.text)
+
+    def test_v10g_installer_click_never_proves_terminal_goal(self):
+        class StepTools(FakeTools):
+            def ollama_tools(self):
+                return [{
+                    "type": "function", "function": {
+                        "name": "click_ui_element", "description": "click observed button",
+                        "parameters": {"type": "object", "properties": {
+                            "ref": {"type": "string"}}, "required": ["ref"]},
+                    },
+                }]
+        tools = StepTools()
+        agent = FakeGroqAgent(tools, [
+            {"output": [{"type": "function_call", "call_id": "installer-next",
+                "name": "click_ui_element", "arguments": '{"ref":"next"}'}]},
+            {"output": [{"type": "message", "content": [{
+                "type": "output_text", "text": "L'installation est terminée."
+            }]}]},
+        ])
+        with patch("jarvis_agent.agent_runtime.settings",
+                   replace(real_settings, agent_max_tool_rounds=2)):
+            result = agent.run("Installe l'application depuis l'installateur.")
+        self.assertEqual([name for name, _ in tools.calls], ["click_ui_element"])
+        self.assertNotIn("installation est terminée", result.text)
+        self.assertIn("n'a pas encore été vérifié", result.text)
+
     def test_v10g_browser_navigation_stage_must_precede_result_selection(self):
         from jarvis_agent.instruction_clauses import positive_instruction_clauses
         mixed = "Ouvre un site dans Chrome, recherche un sujet, puis ouvre le premier résultat."
