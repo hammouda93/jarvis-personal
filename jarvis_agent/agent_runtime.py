@@ -5434,14 +5434,23 @@ def build_agent_runtime() -> AgentRuntime:
                     raise AgentRuntimeUnavailable(
                         "Semantic Memory V5 requires Memory Core storage."
                     )
-                semantic_engine = SemanticMemoryEngine(
-                    foundation_tools.memory,
-                    build_semantic_memory_interpreter(),
+                # Direct-agent V10F: the *same* Cerebras/brain cascade
+                # interprets retrieved raw SQLite evidence through tools.
+                # No second Ollama/cloud model is constructed or called, and
+                # writes remain immediate even if old projections are broken.
+                direct_agent_memory = (
+                    enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")
+                    and enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED")
                 )
-                foundation_tools.attach_semantic_memory_engine(
-                    semantic_engine
-                )
-                if (enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")
+                semantic_engine = None
+                if not direct_agent_memory:
+                    semantic_engine = SemanticMemoryEngine(
+                        foundation_tools.memory,
+                        build_semantic_memory_interpreter(),
+                    )
+                    foundation_tools.attach_semantic_memory_engine(semantic_engine)
+                if (semantic_engine is not None
+                        and enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")
                         and enabled("JARVIS_MEMORY_ASYNC_PROJECTION_ENABLED")):
                     from .memory_projection import ProjectionWorker
                     foundation_tools.projection_worker = ProjectionWorker(semantic_engine)
