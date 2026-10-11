@@ -5046,6 +5046,103 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 f"Fallback Groq GPT-OSS indisponible: {exc}"
             ) from exc
 
+    def _chat_via_configured_brains(
+        self,
+        *,
+        tool_choice: Any,
+        ms_football_only: bool,
+        msf_tool_names: set[str] | None,
+    ):
+        """Optional fallback after Cerebras Primary, Secondary and Groq.
+
+        Reuses the *same* mission tool/result history. No tool is dispatched
+        here; the native agent dispatches only after response validation.
+        """
+        from .brain_cascade import BrainConfigError, load_extra_brains, resolved_api_key
+        from .provider_rate_budget import groq_fallback_preflight
+        from .request_compaction import compact_duplicate_observations
+        try:
+            brains = tuple(brain for brain in load_extra_brains() if brain.enabled)
+        except BrainConfigError as exc:
+            print("[AGENT] configured brain registry invalid: " + str(exc))
+            raise AgentRuntimeUnavailable("configured_brain_registry_invalid") from exc
+        if not brains:
+            raise AgentRuntimeUnavailable("no_configured_additional_brains")
+
+        # Private semantic recall cannot be sent automatically to an
+        # unreviewed extra cloud provider merely due to upstream 429/402.
+        if getattr(self, "_memory_scope_active", False):
+            raise AgentRuntimeUnavailable("configured_brain_cloud_memory_scope_not_authorized")
+
+        original = self._messages_for_request()
+        context = getattr(self, "request_context", None)
+        if context is not None:
+            original, _ = context.compact(original)
+        request_messages, _ = compact_duplicate_observations(original)
+        request_tools = self._tool_definitions(
+            ms_football_only=ms_football_only, msf_tool_names=msf_tool_names,
+        )
+        from openai import OpenAI
+        last_error = None
+        for brain in brains:
+            gate_id = "brain:" + brain.id
+            if not self._provider_rate_gate.available(gate_id):
+                continue
+            key = resolved_api_key(brain)
+            if not key:
+                print("[AGENT] configured brain " + brain.id + " skipped: no credential")
+                continue
+            allowed, estimated, budget = groq_fallback_preflight(
+                request_messages, request_tools, limit_tokens=brain.max_estimated_tokens,
+                completion_tokens=brain.completion_tokens,
+            )
+            if not allowed and context is not None and getattr(context, "enabled", False):
+                compacted, _ = context.compact(
+                    self._messages_for_request(), retain_latest=1, preview_chars=80,
+                )
+                compacted_tools = context.fallback_tools(request_tools, compacted)
+                allowed, estimated, budget = groq_fallback_preflight(
+                    compacted, compacted_tools, limit_tokens=brain.max_estimated_tokens,
+                    completion_tokens=brain.completion_tokens,
+                )
+                if allowed:
+                    request_messages, request_tools = compacted, compacted_tools
+            if not allowed:
+                print("[AGENT_BUDGET] configured_brain_skipped id=" + brain.id
+                      + " estimated_tokens=" + str(estimated) + " budget=" + str(budget))
+                continue
+            try:
+                from .active_mission_supervisor import reserve_model_request, record_model_usage
+                reserve_model_request()
+                client = OpenAI(
+                    api_key=key, base_url=brain.base_url,
+                    timeout=brain.timeout_s, max_retries=0,
+                )
+                kwargs = dict(
+                    model=brain.model, messages=request_messages,
+                    **{brain.completion_parameter: brain.completion_tokens},
+                )
+                if request_tools:
+                    kwargs.update(tools=request_tools, tool_choice=tool_choice)
+                response = client.chat.completions.create(**kwargs)
+                self._check_complete_response(response)
+                record_model_usage(getattr(response, "usage", None), brain.provider)
+                self._note_model_response(response, brain.provider, brain.id)
+                self.last_effective_credential = "brain:" + brain.id
+                print("[AGENT] configured brain succeeded id=" + brain.id)
+                return response
+            except Exception as exc:
+                from .active_mission_supervisor import SupervisorStopped
+                if isinstance(exc, SupervisorStopped):
+                    raise
+                self._provider_rate_gate.note_failure(gate_id, exc)
+                last_error = type(exc).__name__
+                print("[AGENT] configured brain failed id=" + brain.id
+                      + " error_type=" + last_error)
+        raise AgentRuntimeUnavailable(
+            "configured_brains_unavailable" + (": " + last_error if last_error else "")
+        )
+
     def _chat(
         self,
         *,
@@ -5109,6 +5206,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     self.base_url = primary_base_url
                     self._client = primary_client
 
+            groq_error = None
             if (
                 settings.cerebras_fallback_to_groq
                 and settings.groq_api_key
@@ -5117,12 +5215,34 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     "[AGENT] Cerebras stalled/unavailable; "
                     "trying Groq GPT-OSS fallback."
                 )
-                return self._chat_via_groq_fallback(
-                    tool_choice=tool_choice,
-                    ms_football_only=ms_football_only,
-                    msf_tool_names=msf_tool_names,
-                )
+                try:
+                    return self._chat_via_groq_fallback(
+                        tool_choice=tool_choice,
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    )
+                except AgentRuntimeUnavailable as exc:
+                    groq_error = exc
+                    print("[AGENT] Groq unavailable; checking configured extra brains.")
 
+            from .brain_cascade import load_extra_brains, BrainConfigError
+            try:
+                has_extra = any(brain.enabled for brain in load_extra_brains())
+            except BrainConfigError as exc:
+                print("[AGENT] extra brain configuration error: " + str(exc))
+                has_extra = False
+            if has_extra:
+                try:
+                    return self._chat_via_configured_brains(
+                        tool_choice=tool_choice,
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    )
+                except AgentRuntimeUnavailable as exc:
+                    print("[AGENT] configured brain chain unavailable: " + str(exc))
+
+            if groq_error is not None:
+                raise groq_error
             if secondary_error is not None:
                 raise secondary_error
             raise primary_error
