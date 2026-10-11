@@ -766,6 +766,39 @@ def _requests_open_and_search(text: str) -> bool:
     )
 
 
+def _preselection_navigation_pending(
+    user_text: str,
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> bool:
+    """Only the initial navigation phase of a genuine compound request.
+
+    A later ordinal selection must still use an observed ref. The preceding
+    opening instruction does not authorize replacing an unrelated tab, nor
+    does it relax the standalone result-selection guard.
+    """
+    from .instruction_clauses import positive_instruction_clauses
+
+    clauses = positive_instruction_clauses(user_text)
+    selection = next((
+        i for i, clause in enumerate(clauses)
+        if _clause_result_selection(clause)
+    ), None)
+    if selection is None or selection == 0:
+        return False
+    prior_open = any(
+        re.search(r"\b(?:ouvre|ouvres|ouvrez|ouvrir|open|affiche|afficher)\b", clause)
+        and not _clause_result_selection(clause)
+        for clause in clauses[:selection]
+    )
+    if not prior_open:
+        return False
+    # Once the destination is reached, the initial navigation phase is over.
+    return not any(
+        action.success and action.name in {"open_url", "browser_navigate"}
+        for action in actions
+    )
+
+
 def _requests_search_submission(text: str) -> bool:
     from .instruction_clauses import positive_instruction_clauses
     return any(_clause_search_submission(clause) for clause in positive_instruction_clauses(text))
@@ -3799,6 +3832,7 @@ class GroqResponsesAgent:
         ui_verification_repair_attempted = False
         ui_verification_required = False
         goal_completion_repair_attempted = False
+        mission_proof_repair_attempted = False
         close_recovery_required = False
         close_recovery_attempted = False
         pending_ui_action: dict[str, Any] | None = None
@@ -3917,13 +3951,17 @@ class GroqResponsesAgent:
                         {
                             "role": "user",
                             "content": (
-                                "La mission demande de sélectionner un résultat ordinal "
-                                "déjà visible. Elle n'est pas terminée tant qu'une vraie "
-                                "action de sélection groundée n'a pas été exécutée. En "
-                                "Browser Core, utilise l'observation courante puis appelle "
-                                "browser_click avec tab_id ET ref. Sur un chemin UI legacy "
-                                "déjà inspecté, utilise la ref UI observée. N'ouvre pas une "
-                                "URL inventée et ne relance pas la recherche."
+                                (
+                                    "La mission comprend d'abord l'ouverture d'une destination. "
+                                    "Accomplis cette étape avant de tenter la sélection finale; "
+                                    "n'écrase pas un onglet sans lien avec la mission."
+                                    if _preselection_navigation_pending(user_text, actions)
+                                    else
+                                    "La mission demande de sélectionner un résultat déjà affiché. "
+                                    "Si une recherche doit encore être soumise, termine-la avant "
+                                    "le clic. Utilise une cible réellement observée (tab_id et ref) "
+                                    "pour sélectionner le résultat; n'invente pas d'URL."
+                                )
                             ),
                         }
                     )
@@ -4223,6 +4261,41 @@ class GroqResponsesAgent:
                         "avant tout nouvel envoi pour éviter un doublon."
                     )
 
+                # A model response is not evidence that it performed an
+                # action. An intermediate UI click is also not proof that a
+                # terminal workflow (installation/deployment/etc.) finished.
+                from .mission_evidence_v10g import guard_unverified_mission_reply
+                continuation = bool(re.fullmatch(
+                    r"\s*(?:vas[- ]?y|continue|poursuis|ok|oui|go)\s*[.!]?\s*",
+                    normalize(user_text),
+                ))
+                safe_text, evidence_reason = guard_unverified_mission_reply(
+                    user_text, text, actions, continuation=continuation,
+                )
+                if (evidence_reason and not mission_proof_repair_attempted
+                        and round_index < settings.agent_max_tool_rounds):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "MISSION_EVIDENCE_MISSING: " + evidence_reason + ". "
+                            "L'affirmation précédente n'est pas vérifiée. "
+                            "Ne la répète pas et ne réexécute pas aveuglément "
+                            "une mutation déjà effectuée. Observe l'état actuel, "
+                            "reprends uniquement une étape encore autorisée, "
+                            "puis rapporte honnêtement les preuves disponibles."
+                        ),
+                    })
+                    mission_proof_repair_attempted = True
+                    if log:
+                        log("[MISSION] proof_repair=" + evidence_reason)
+                    continue
+                if evidence_reason:
+                    text = safe_text
+                    if log:
+                        log("[MISSION] unverified_claim_blocked=" + evidence_reason)
+
                 from .memory_evidence import guard_memory_answer
                 text, memory_guard = guard_memory_answer(text, actions)
                 if memory_guard and log:
@@ -4503,7 +4576,10 @@ class GroqResponsesAgent:
                             _requests_search_submission(user_text)
                             and not _requests_open_and_search(user_text)
                         )
-                        or _requests_result_selection(user_text)
+                        or (
+                            _requests_result_selection(user_text)
+                            and not _preselection_navigation_pending(user_text, actions)
+                        )
                     )
                 ):
                     result = AgentActionResult(

@@ -31,6 +31,7 @@ from jarvis_agent.agent_runtime import (
     _missing_requested_action_capabilities,
     _requests_open_and_search,
     _requests_result_selection,
+    _preselection_navigation_pending,
     _requests_ui_submission,
     _requests_submit_without_rewrite,
     _browser_result_selection_verified,
@@ -3361,7 +3362,7 @@ class AgentRuntimeTests(unittest.TestCase):
                             "content": [
                                 {
                                     "type": "output_text",
-                                    "text": "Je ferme l'onglet demandé.",
+                                    "text": "La réinitialisation du contexte est refusée; aucune fermeture d'onglet n'a été effectuée.",
                                 }
                             ],
                         }
@@ -3550,6 +3551,139 @@ class AgentRuntimeTests(unittest.TestCase):
                 "Ajoute du texte dans le document."
             ),
         )
+
+    def test_v10g_false_action_promise_repaired_into_real_tool_call(self):
+        class StepTools(FakeTools):
+            def ollama_tools(self):
+                return [{
+                    "type": "function", "function": {
+                        "name": "click_ui_element", "description": "click observed UI ref",
+                        "parameters": {"type": "object", "properties": {
+                            "ref": {"type": "string"}}, "required": ["ref"]},
+                    },
+                }]
+        tools = StepTools()
+        agent = FakeGroqAgent(tools, [
+            {"output": [{"type": "message", "content": [{
+                "type": "output_text", "text": "Je clique sur Suivant."
+            }]}]},
+            {"output": [{"type": "function_call", "call_id": "real-click",
+                "name": "click_ui_element", "arguments": '{"ref":"observed:button"}'}]},
+            {"output": [{"type": "message", "content": [{
+                "type": "output_text", "text": "Le bouton a été actionné."
+            }]}]},
+        ])
+        with patch("jarvis_agent.agent_runtime.settings",
+                   replace(real_settings, agent_max_tool_rounds=3)):
+            result = agent.run("Clique sur Suivant dans l'interface observée.")
+        self.assertEqual(len(agent.payloads), 3)
+        self.assertEqual(tools.calls,
+                         [("click_ui_element", {"ref": "observed:button"})])
+        self.assertIn("actionné", result.text)
+
+    def test_v10g_installer_click_never_proves_terminal_goal(self):
+        class StepTools(FakeTools):
+            def ollama_tools(self):
+                return [{
+                    "type": "function", "function": {
+                        "name": "click_ui_element", "description": "click observed button",
+                        "parameters": {"type": "object", "properties": {
+                            "ref": {"type": "string"}}, "required": ["ref"]},
+                    },
+                }]
+        tools = StepTools()
+        agent = FakeGroqAgent(tools, [
+            {"output": [{"type": "function_call", "call_id": "installer-next",
+                "name": "click_ui_element", "arguments": '{"ref":"next"}'}]},
+            {"output": [{"type": "message", "content": [{
+                "type": "output_text", "text": "L'installation est terminée."
+            }]}]},
+        ])
+        with patch("jarvis_agent.agent_runtime.settings",
+                   replace(real_settings, agent_max_tool_rounds=2)):
+            result = agent.run("Installe l'application depuis l'installateur.")
+        self.assertEqual([name for name, _ in tools.calls], ["click_ui_element"])
+        self.assertNotIn("installation est terminée", result.text)
+        self.assertIn("n'a pas encore été vérifié", result.text)
+
+    def test_v10g_browser_navigation_stage_must_precede_result_selection(self):
+        from jarvis_agent.instruction_clauses import positive_instruction_clauses
+        mixed = "Ouvre un site dans Chrome, recherche un sujet, puis ouvre le premier résultat."
+        self.assertTrue(_requests_result_selection(mixed))
+        self.assertTrue(_preselection_navigation_pending(mixed, []))
+        self.assertIn("site_search", _requested_action_capabilities(mixed))
+        self.assertFalse(_preselection_navigation_pending(
+            "Ouvre le premier résultat de la recherche.", []))
+        opened = AgentActionResult(name="open_url", success=True,
+                                   message="Navigation started", detail="{}")
+        self.assertFalse(_preselection_navigation_pending(mixed, [opened]))
+        self.assertFalse(_preselection_navigation_pending(
+            "Ouvre le premier résultat.", [opened]))
+
+    def test_v10g_compound_browser_dispatch_keeps_grounded_click(self):
+        class BrowserTools(FakeTools):
+            def ollama_tools(self):
+                return [{
+                    "type": "function", "function": {
+                        "name": n, "description": n,
+                        "parameters": {"type": "object", "properties": {},
+                                       "additionalProperties": True},
+                    },
+                } for n in ("open_url", "browser_write", "browser_press",
+                            "browser_click")]
+
+            def execute(self, name, arguments, *, approved=False):
+                self.calls.append((name, arguments))
+                if name == "open_url":
+                    detail = {"dispatched": True, "verified": False,
+                              "postcondition": "navigation_pending"}
+                elif name == "browser_write":
+                    detail = {"dispatched": True, "verified": True,
+                              "postcondition": "element_value",
+                              "post_observation": {"tab": {"url": "https://example.org/"}}}
+                elif name == "browser_press":
+                    detail = {"dispatched": True, "verified": True,
+                              "postcondition": "navigation_observed",
+                              "post_observation": {"tab": {
+                                  "url": "https://example.org/results?q=topic"}}}
+                else:
+                    detail = {"dispatched": True, "verified": True,
+                              "postcondition": "navigation_observed",
+                              "post_observation": {"tab": {
+                                  "url": "https://example.org/item/1"}}}
+                return AgentActionResult(name=name, success=True, message="ok",
+                                         detail=json.dumps(detail))
+
+        tools = BrowserTools()
+        responses = [{
+            "output": [{"type": "function_call", "call_id": f"phase-{i}",
+                        "name": name, "arguments": json.dumps(args)}]
+        } for i, (name, args) in enumerate((
+            ("open_url", {"url": "https://example.org/"}),
+            ("browser_write", {"tab_id": 17, "ref": "input:1", "text": "topic"}),
+            ("browser_press", {"tab_id": 17, "ref": "input:1", "key": "Enter"}),
+            ("browser_click", {"tab_id": 17, "ref": "result:1"}),
+        ))]
+        agent = FakeGroqAgent(tools, responses)
+        with patch("jarvis_agent.agent_runtime.settings",
+                   replace(real_settings, agent_max_tool_rounds=6)):
+            result = agent.run(
+                "Ouvre un site dans Chrome, recherche un sujet, "
+                "puis ouvre le premier résultat."
+            )
+        self.assertEqual([n for n, _ in tools.calls],
+                         ["open_url", "browser_write", "browser_press", "browser_click"])
+        self.assertFalse(any(not action.success for action in result.actions))
+        self.assertEqual(result.text, "C'est fait et vérifié dans l'interface.")
+
+    def test_v10g_mixed_memory_and_implicit_window_verification_not_narrowed(self):
+        from jarvis_agent.memory_tool_scope import memory_only_request
+        self.assertFalse(memory_only_request(
+            "Vérifie qu'elle est ouverte, puis retrouve mon code dans ta mémoire."))
+        self.assertFalse(memory_only_request(
+            "Inspecte la fenêtre, puis lis mon souvenir."))
+        self.assertTrue(memory_only_request(
+            "Consulte la mémoire persistante et retrouve mon code."))
 
     def test_compound_open_and_search_requires_site_search_completion(self):
         self.assertIn(
