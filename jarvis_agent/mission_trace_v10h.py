@@ -34,7 +34,7 @@ def _safe(value: str, *, limit: int = 500) -> str:
 _ACTION = (
     r"ouvre|ouvres|ouvrez|ouvrir|open|lance|lancer|"
     r"recherche|chercher|cherche|search|trouve|trouver|"
-    r"verifie|verifier|controle|controler|inspecte|inspecter|"
+    r"v[eé]rifie|v[eé]rifier|contr[oô]le|contr[oô]ler|inspecte|inspecter|"
     r"clique|cliquer|click|ferme|fermer|close|"
     r"ecris|ecrire|saisis|saisir|write|read|lis|lire|"
     r"retourne|reviens|back|rappelle|retrouve|"
