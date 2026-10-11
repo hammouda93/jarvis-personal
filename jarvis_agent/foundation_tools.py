@@ -335,12 +335,14 @@ class FoundationToolAdapter:
                     self.delegate._ollama(
                         "semantic_memory_search",
                         "Recherche READ-ONLY dans la mémoire personnelle V5. "
-                        "Utilise-la seulement quand une question personnelle "
-                        "nécessite d'autres souvenirs que les preuves déjà "
-                        "présentes. Fournis une question de recherche naturelle "
-                        "et précise; l'outil retourne des preuves brutes et des "
-                        "indices sémantiques, jamais une réponse à recopier "
-                        "aveuglément.",
+                        "Utilise-la quand une question personnelle nécessite un "
+                        "souvenir non déjà prouvé. Préserve le sujet et les "
+                        "qualificatifs de la demande originale : ne réduis pas "
+                        "la question à un mot générique. En cas de résultat "
+                        "missing, ce n'est PAS une preuve d'absence dans SQLite. "
+                        "Utilise seulement les preuves effectivement retrouvées, "
+                        "ne complète pas par invention, et traite plusieurs "
+                        "faits divergents comme des sources distinctes.",
                         {
                             "query": {
                                 "type": "string",
@@ -692,6 +694,17 @@ class FoundationToolAdapter:
                     # with previously indexed facts included only for matches.
                     from .memory_retrieval import search as raw_search
                     matched = raw_search(self.memory, query_text, limit=12)
+                    search_source = "tool_query"
+                    # The LLM may reduce "Quel est mon nom ?" to "nom" or
+                    # otherwise lose essential context. On a true miss,
+                    # retry the ORIGINAL trusted user request as a separate
+                    # bounded query. No application-, field- or entity-specific
+                    # branching; never broaden to arbitrary recent memories.
+                    user_request = str(self.current_user_text or "").strip()
+                    if not matched and user_request and user_request != query_text:
+                        matched = raw_search(self.memory, user_request, limit=12)
+                        if matched:
+                            search_source = "original_user_request"
                     matched_ids = {item.id for item in matched}
                     facts = [
                         fact
@@ -702,6 +715,8 @@ class FoundationToolAdapter:
                         "status": "resolved" if matched else "missing",
                         "parser_operation": "agent_tool_direct",
                         "query": query_text,
+                        "search_source": search_source if matched else "no_matching_evidence",
+                        "missing_means": "No matching evidence, not proof that the memory does not exist",
                         "hits": [
                             {
                                 "memory_id": fact.memory_id,
