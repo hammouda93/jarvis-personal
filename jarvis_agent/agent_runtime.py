@@ -3866,6 +3866,7 @@ class GroqResponsesAgent:
         mission_proof_repair_attempted = False
         discovery_repair_attempted = False
         final_observation_repair_attempted = False
+        explicit_memory_repair_attempted = False
         close_recovery_required = False
         close_recovery_attempted = False
         pending_ui_action: dict[str, Any] | None = None
@@ -4043,6 +4044,31 @@ class GroqResponsesAgent:
                     browser_submit_repair_attempted = True
                     if log:
                         log("[AGENT] repair=verified_browser_submit_required")
+                    continue
+
+                # If the user explicitly requested a persistent source
+                # lookup, a text-only model assertion is not a retrieval.
+                # The safeguard is generic across mixed browser/desktop turns.
+                from .mission_reasoning_v10i import explicit_memory_read_not_attempted
+                if (explicit_memory_read_not_attempted(user_text, actions)
+                        and not explicit_memory_repair_attempted
+                        and round_index < settings.agent_max_tool_rounds):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "EXPLICIT_MEMORY_READ_PENDING: The original mission "
+                            "asked to retrieve facts from persistent memory, but "
+                            "no memory read tool has been called. Use the exposed "
+                            "memory read tool, or request its capability schema "
+                            "if hidden. Never invent remembered content. Do not "
+                            "redo already verified external actions."
+                        ),
+                    })
+                    explicit_memory_repair_attempted = True
+                    if log:
+                        log("[MISSION] recovery=explicit_memory_read")
                     continue
 
                 # A failed action can still produce trusted discovery data.
@@ -4350,6 +4376,18 @@ class GroqResponsesAgent:
                         "que le message a été envoyé. Vérifiez la conversation "
                         "avant tout nouvel envoi pour éviter un doublon."
                     )
+
+                # An explicit persistent-memory lookup requires a read,
+                # not an answer inferred or fabricated from unrelated tools.
+                from .mission_reasoning_v10i import explicit_memory_read_not_attempted
+                if explicit_memory_read_not_attempted(user_text, actions):
+                    text = (
+                        "La consultation de mémoire persistante demandée "
+                        "n'a pas été effectuée. Je ne peux pas attribuer de "
+                        "souvenir sans preuve de lecture."
+                    )
+                    if log:
+                        log("[MISSION] explicit_memory_read_missing")
 
                 # Do not claim an explicitly requested final verification
                 # when the last state observation predates the last mutation.
