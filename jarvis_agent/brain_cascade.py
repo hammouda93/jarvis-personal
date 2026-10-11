@@ -166,7 +166,9 @@ def store_api_key(brain_id: str, secret: str) -> None:
     win32cred.CredWrite({
         "Type": win32cred.CRED_TYPE_GENERIC,
         "TargetName": target,
-        "CredentialBlob": secret.encode("utf-16-le"),
+        # pywin32 requires a Python Unicode string; it converts to UTF-16.
+        # Pre-encoding this as bytes raises TypeError before CredWrite.
+        "CredentialBlob": secret,
         "Persist": win32cred.CRED_PERSIST_LOCAL_MACHINE,
         "UserName": "JarvisPersonal",
     }, 0)
