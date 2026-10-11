@@ -5078,13 +5078,17 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         context = getattr(self, "request_context", None)
         if context is not None:
             original, _ = context.compact(original)
-        request_messages, _ = compact_duplicate_observations(original)
-        request_tools = self._tool_definitions(
+        base_messages, _ = compact_duplicate_observations(original)
+        base_tools = self._tool_definitions(
             ms_football_only=ms_football_only, msf_tool_names=msf_tool_names,
         )
         from openai import OpenAI
         last_error = None
         for brain in brains:
+            # Compaction for one model's limit must not silently weaken the
+            # context or capabilities offered to the next model.
+            request_messages = base_messages
+            request_tools = list(base_tools)
             gate_id = "brain:" + brain.id
             if not self._provider_rate_gate.available(gate_id):
                 continue
@@ -5101,6 +5105,13 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     self._messages_for_request(), retain_latest=1, preview_chars=80,
                 )
                 compacted_tools = context.fallback_tools(request_tools, compacted)
+                if isinstance(tool_choice, dict):
+                    required_name = (tool_choice.get("function") or {}).get("name")
+                    for definition in base_tools:
+                        if (definition.get("function") or {}).get("name") == required_name:
+                            if definition not in compacted_tools:
+                                compacted_tools.append(definition)
+                            break
                 allowed, estimated, budget = groq_fallback_preflight(
                     compacted, compacted_tools, limit_tokens=brain.max_estimated_tokens,
                     completion_tokens=brain.completion_tokens,
