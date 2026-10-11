@@ -62,9 +62,22 @@ _VERIFIERS = frozenset({"computer_verify", "browser_verify", "verify_file_artifa
 
 
 def requested_steps(user_text: str) -> tuple[str, ...]:
+    raw = str(user_text or "")
+    # Explicit user-authored numbered instructions are more reliable than
+    # splitting arbitrary prose. They remain only a provisional log outline,
+    # never an instruction source or a source of permissions.
+    numbered = [
+        match.group(1).strip()
+        for match in re.finditer(
+            r"^\\s*(?:[1-9]|1[0-2])[.)]\\s+([^\\r\\n]+)\\s*$",
+            raw, flags=re.M,
+        )
+        if not _NEGATIVE_START.match(match.group(1))
+    ]
+    if len(numbered) >= 2:
+        return tuple(numbered[:12])
     # Keep exact user-supplied entity names in quotes. Mask those spans during
     # splitting so a quoted instruction cannot become a new requested action.
-    raw = str(user_text or "")
     masked = _QUOTED.sub(lambda m: "Q" * len(m.group(0)), raw)
     matches = list(_SPLIT_INSTRUCTION.finditer(masked))
     spans = []
