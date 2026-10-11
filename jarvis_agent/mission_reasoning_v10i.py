@@ -137,8 +137,22 @@ def post_mutation_observation_missing(user_text: str, actions) -> bool:
         detail = json.loads(str(getattr(last_action, "detail", "") or "{}"))
     except (ValueError, TypeError):
         detail = {}
-    if (isinstance(detail, dict)
-            and detail.get("verified") is True
-            and isinstance(detail.get("post_observation"), dict)):
-        return False
+    if isinstance(detail, dict):
+        post = detail.get("post_observation")
+        if (detail.get("verified") is True and isinstance(post, dict)):
+            return False
+        # The Windows UI adapter takes an actual fresh UIA snapshot after a
+        # click. It is a real post-action observation, even though the wrapper
+        # does not set an overall "verified" flag. This read avoids paying for
+        # another round solely to collect the same UI again; it does not imply
+        # that the whole requested goal is completed.
+        if (getattr(last_action, "name", "") == "click_ui_element"
+                and detail.get("auto_reinspection") is True
+                and detail.get("requires_fresh_inspection") is False
+                and isinstance(post, dict)
+                and isinstance(post.get("window"), dict)
+                and isinstance(post.get("controls"), list)
+                and post.get("observation_id")
+                and post.get("observation_id") != detail.get("source_observation_id")):
+            return False
     return True
