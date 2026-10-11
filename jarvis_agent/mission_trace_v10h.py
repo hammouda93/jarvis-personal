@@ -45,6 +45,14 @@ _SPLIT_INSTRUCTION = re.compile(
     re.I,
 )
 _RESUME = frozenset({"oui", "ok", "continue", "poursuis", "vas y", "vas-y", "go", "d'accord"})
+_OBSERVERS = frozenset({
+    "list_windows", "inspect_active_window", "inspect_interface", "observe_screen",
+    "computer_observe", "computer_find", "computer_list_windows",
+    "browser_list_tabs", "browser_get_active_tab", "browser_observe_dom",
+    "browser_find", "semantic_memory_search", "semantic_memory_inspect",
+    "read_observation_evidence",
+})
+_VERIFIERS = frozenset({"computer_verify", "browser_verify", "verify_file_artifact"})
 
 
 def requested_steps(user_text: str) -> tuple[str, ...]:
@@ -153,11 +161,19 @@ class ConversationMissionTrace:
             name = match.group(1)
             self.tool_calls.append(name)
             hint = _tool_step_hint(name, self.steps)
+            phase = ("VERIFYING" if name in _VERIFIERS else
+                     "OBSERVING" if name in _OBSERVERS else "ACTING")
             self._log(
-                f"[MISSION_TRACE] id={self.trace_id} state=ACTING "
+                f"[MISSION_TRACE] id={self.trace_id} state={phase} "
                 f"tool={name} step_hint={hint if hint is not None else 'unresolved'} "
                 f"hint_is_not_proof=true"
             )
+            if hint is not None:
+                self._log(
+                    f"[MISSION_STEP] id={self.trace_id} step={hint}/{len(self.steps)} "
+                    f"state=ACTIVE_HINT tool={name} "
+                    f"authoritative_assignment=false"
+                )
             return
         match = re.search(r"^\[AGENT_TOOL\] result=([^\s]+) success=(True|False)", line)
         if match:
