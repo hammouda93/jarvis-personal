@@ -52,39 +52,50 @@ def terms(value: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys([*words, *anchors]))
 
 
-def _personal_identity_slot(query: str) -> tuple[str, ...]:
-    """Resolve only a direct request about the user's own name.
+# Function words only. When the historic high-precision query stoplist
+# removes every token, recover the *actual topic* from the user's wording,
+# whatever that topic is. No person/field/application-specific exceptions.
+_QUESTION_SYNTAX = frozenset("""
+quel quelle quels quelles que quoi qui comment pourquoi est sont etait etais
+ce cet cette ces de du des le la les un une mon ma mes ton ta tes son sa ses
+notre nos votre vos leur leurs je j tu il elle nous vous ils elles me te se
+moi toi pour dans sur avec et ou au aux en as ai a ne pas dire dis donne
+donner peux peut pourrais sais savez tu vous rappelle rappelles rappeler
+souviens souviens-toi qu est ce c est know tell remember recall which what
+who how why the a an of for from your my you i it is are was do does did
+can could please me us our mine yours about
+""".split())
 
-    The normal stopword vocabulary deliberately drops 'nom', 'prenom' and
-    'appelle', so without this typed slot "quel est mon nom ?" matches
-    *nothing*. Do not treat a project/child/other person's name as self.
+
+def _topic_terms(value: str) -> tuple[str, ...]:
+    """Literal topic fallback for degenerate zero-term queries.
+
+    This is *not* semantic inference. A topic is selected from the
+    user's actual wording and must occur in the source text/tags. We never
+    turn a generic question into permission to return recent unrelated rows.
     """
-    text = normalize(query)
-    if not re.search(r"\b(?:mon|ma|je|moi|my|i)\b", text):
-        return ()
-    if re.search(r"\bprenoms?\b", text):
-        return ("prenom",)
-    if re.search(r"\bnom\b", text) or re.search(r"\bname\b", text):
-        return ("nom", "prenom")
-    if re.search(r"\bappell(?:e|es|ez|er|ait)\b", text):
-        return ("prenom", "nom")
-    return ()
+    value = normalize(value).replace("rendez-vous", "rendezvous")
+    tokens = re.findall(r"\w+", value)
+    result = [
+        token for token in tokens
+        if token not in _QUESTION_SYNTAX and len(token) >= 3
+    ]
+    return tuple(dict.fromkeys(result))
 
 
 def relevance(query: str, content: str, tags: str = "") -> float:
-    wanted, actual = terms(query), terms(content + " " + tags)
+    wanted = terms(query)
+    # The normal search uses high-precision content terms. If all were
+    # treated as common query language, fall back to the literal subject of
+    # the question; never infer synonyms or return unrelated recent facts.
+    topic_fallback = not wanted
+    if topic_fallback:
+        wanted = _topic_terms(query)
     if not wanted:
-        slots = _personal_identity_slot(query)
-        if not slots:
-            return 0.0
-        # Only source-proven identity records (including original labels
-        # preserved in SQLite), never an unrelated recent memory.
-        raw = normalize(content + " " + tags)
-        if any(re.search(r"\b" + re.escape(slot) + r"\b", raw) for slot in slots):
-            return 1.0
-        if "prenom" in slots and re.search(r"\b(?:je m'appelle|mon prenom|my name is)\b", raw):
-            return 0.98
         return 0.0
+    actual = set(terms(content + " " + tags))
+    if topic_fallback:
+        actual.update(_topic_terms(content + " " + tags))
     if not actual:
         return 0.0
     scores = []
