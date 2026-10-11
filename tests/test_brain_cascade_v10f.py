@@ -20,7 +20,7 @@ from jarvis_agent.agent_runtime import (
     AgentRuntimeUnavailable, CerebrasResponsesAgent,
 )
 from jarvis_agent.config import settings
-from jarvis_agent.runtime_identity import annotate_provider_request
+from jarvis_agent.runtime_identity import annotate_provider_request, google_tool_call_extra
 from jarvis_agent.native_tools import AgentActionResult
 from test_agent_runtime import FakeTools
 from test_provider_continuity_v10d import response
@@ -152,6 +152,66 @@ class BrainRoutingContracts(unittest.TestCase):
         detail = json.loads(content["detail"])
         self.assertFalse(detail["launch_performed"])
         self.assertIn("not proof", detail["next_step"])
+
+    def test_gemini_tool_signature_survives_round_trip_without_cross_provider_leak(self):
+        secret_signature = "OPAQUE_GOOGLE_FIXTURE_NOT_A_SECRET"
+        tool_call = SimpleNamespace(
+            id="call-gemini-1",
+            function=SimpleNamespace(name="open_application", arguments='{"name":"Editor"}'),
+            model_extra={"extra_content": {"google": {"thought_signature": secret_signature}}},
+        )
+        self.assertEqual(google_tool_call_extra(tool_call)["google"]["thought_signature"],
+                         secret_signature)
+        agent = CerebrasResponsesAgent(FakeTools())
+        agent._append_assistant_message(SimpleNamespace(content=None, tool_calls=[tool_call]))
+        history = agent._messages
+        original_call = history[-1]["tool_calls"][0]
+        self.assertEqual(original_call["extra_content"]["google"]["thought_signature"],
+                         secret_signature)
+        history.append({"role": "tool", "name": "open_application",
+                        "tool_call_id": "call-gemini-1", "content": "Opened"})
+        gemini = annotate_provider_request(history, provider="gemini", model="fixture-gemini")
+        self.assertNotIn("content", gemini[-2])
+        self.assertEqual(gemini[-2]["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+                         secret_signature)
+        self.assertEqual(gemini[-1]["tool_call_id"], "call-gemini-1")
+        cerebras = annotate_provider_request(history, provider="cerebras", model="gpt-oss-120b")
+        self.assertNotIn("extra_content", cerebras[-2]["tool_calls"][0])
+        self.assertIn("extra_content", history[-2]["tool_calls"][0])
+        self.assertIn("content", history[-2])
+
+    def test_actual_gemini_extra_request_replays_tool_signature(self):
+        signature = "OPAQUE_MOCK_SIGNATURE"
+        brain = ExtraBrain.parse({"id": "gemini-extra", "provider": "gemini",
+                                  "model": "fixture-gemini", "max_estimated_tokens": 100000})
+        fake = Mock()
+        fake.chat.completions.create.return_value = response(text="Opened and verified")
+        agent = CerebrasResponsesAgent(FakeTools())
+        agent._messages = [
+            {"role": "system", "content": "Mission"},
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": "call1", "type": "function",
+                "function": {"name": "open_application", "arguments": '{"name":"Editor"}'},
+                "extra_content": {"google": {"thought_signature": signature}},
+            }]},
+            {"role": "tool", "tool_call_id": "call1",
+             "name": "open_application", "content": "Opened"},
+        ]
+        with (
+            patch("jarvis_agent.brain_cascade.load_extra_brains", return_value=(brain,)),
+            patch("jarvis_agent.brain_cascade.resolved_api_key", return_value="fake-credential"),
+            patch("openai.OpenAI", return_value=fake),
+        ):
+            result = agent._chat_via_configured_brains(
+                tool_choice="auto", ms_football_only=False, msf_tool_names=None,
+            )
+        self.assertEqual(result.choices[0].message.content, "Opened and verified")
+        sent = fake.chat.completions.create.call_args.kwargs["messages"]
+        self.assertEqual(sent[1]["tool_calls"][0]["extra_content"]["google"]["thought_signature"], signature)
+        self.assertNotIn("content", sent[1])
+        self.assertEqual(sent[2]["name"], "open_application")
+        self.assertEqual(agent.last_effective_provider, "gemini")
+        self.assertEqual(agent.last_effective_model, brain.model)
 
     def test_primary_and_secondary_requests_get_truthful_runtime_identity(self):
         cfg = replace(settings, cerebras_api_key="fixture-primary",
