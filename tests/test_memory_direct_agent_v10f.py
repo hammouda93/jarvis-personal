@@ -58,12 +58,51 @@ class DirectMemoryV10FTests(unittest.TestCase):
         self.assertEqual(search(self.memory, "Quel est mon restaurant ?"), [])
         self.assertEqual(terms("Quel est mon nom ?"), ())
 
-    def test_self_first_name_and_call_me_aliases(self):
+    def test_generic_subject_recovery_requires_matching_source_evidence(self):
         self.memory.remember("Mon prénom est Amine", tags="prénom")
-        for question in ("Quel est mon prénom ?", "Comment je m'appelle ?"):
-            with self.subTest(question=question):
-                self.assertEqual(search(self.memory, question)[0].content,
-                                 "Mon prénom est Amine")
+        self.memory.remember("Je m'appelle Amine", tags="identité")
+        self.memory.remember("Mon adresse est rue des Jasmins", tags="adresse")
+        self.assertTrue(search(self.memory, "Quel est mon prénom ?"))
+        self.assertTrue(search(self.memory, "Comment je m'appelle ?"))
+        self.assertEqual(search(self.memory, "Quel est mon nom d'utilisateur ?"), [])
+        self.assertEqual(search(self.memory, "Qui ?", ), [])
+        self.assertEqual(search(self.memory, "Quel est mon restaurant ?"), [])
+        self.assertTrue(search(self.memory, "Quelle est mon adresse ?"))
+
+    def test_context_recovery_uses_original_request_without_broad_inventory(self):
+        with patch.dict(os.environ, DIRECT):
+            self.memory.remember("Mon équipe joue vendredi", tags="équipe")
+            self.memory.remember("Ma réunion du club est lundi", tags="réunion")
+            self.memory.remember("Retiens que mon nom est Mhedhebi", tags="nom")
+            tools = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            # A model may shorten a full request to a meaningless token.
+            tools.begin_turn("Quand est ma réunion du club ?")
+            result = tools.execute("semantic_memory_search", {"query": "quoi"})
+            self.assertTrue(result.success)
+            payload = json.loads(result.detail)
+            self.assertEqual(payload["search_source"], "original_user_request")
+            self.assertEqual([x["raw"] for x in payload["raw_fallback"]],
+                             ["Ma réunion du club est lundi"])
+            tools.begin_turn("Quel est mon restaurant préféré ?")
+            no_match = json.loads(tools.execute(
+                "semantic_memory_search", {"query": "quoi"}).detail)
+            self.assertEqual(no_match["status"], "missing")
+            self.assertEqual(no_match["raw_fallback"], [])
+
+    def test_short_model_query_keeps_all_matching_conflicting_evidence(self):
+        with patch.dict(os.environ, DIRECT):
+            self.memory.remember("Retiens que mon nom est Salah", tags="nom")
+            self.memory.remember("Retiens que mon nom est Mhedhebi", tags="nom")
+            tools = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            tools.begin_turn("Quel est mon nom ?")
+            answer = json.loads(tools.execute(
+                "semantic_memory_search", {"query": "nom"}).detail)
+            self.assertEqual(answer["status"], "resolved")
+            self.assertEqual(answer["search_source"], "tool_query")
+            raw = [x["raw"] for x in answer["raw_fallback"]]
+            self.assertEqual(len(raw), 2)
+            self.assertTrue(any("Salah" in x for x in raw))
+            self.assertTrue(any("Mhedhebi" in x for x in raw))
 
     def test_direct_write_read_and_restart_without_projection(self):
         with patch.dict(os.environ, DIRECT):
