@@ -60,6 +60,7 @@ class BrainManagerPanel(QWidget):
         super().__init__(parent)
         self._brains: tuple[ExtraBrain, ...] = ()
         self._probe = None
+        self._config_valid = True
         layout = QVBoxLayout(self)
         info = QLabel(
             "CASCADE : Cerebras Primary → Cerebras Secondary → Groq → modèles ajoutés. "
@@ -140,8 +141,10 @@ class BrainManagerPanel(QWidget):
     def _refresh(self):
         try:
             self._brains = load_extra_brains()
-        except BrainConfigError as exc:
-            self.status.setText("Configuration invalide : " + str(exc))
+            self._config_valid = True
+        except (BrainConfigError, OSError) as exc:
+            self._config_valid = False
+            self.status.setText("Configuration invalide : " + type(exc).__name__ + ". Corrige le fichier avant toute modification.")
             self._brains = ()
         builtins = [
             ("1", "Cerebras Primary", "GPT-OSS 120B", "Hérité"),
@@ -168,12 +171,17 @@ class BrainManagerPanel(QWidget):
         return row
 
     def _persist(self, brains):
+        if not self._config_valid:
+            self.status.setText("Modification bloquée : configuration existante invalide, données préservées.")
+            return False
         try:
             save_extra_brains(brains)
             self.status.setText("Configuration enregistrée. Redémarre Jarvis pour l'activer.")
             self._refresh()
+            return True
         except (OSError, BrainConfigError) as exc:
             self.status.setText("Enregistrement impossible : " + type(exc).__name__)
+            return False
 
     def _add(self):
         raw = {
@@ -183,6 +191,10 @@ class BrainManagerPanel(QWidget):
             "base_url": self.endpoint.text().strip(),
             "api_key_env": self.environment.text().strip(),
         }
+        if not self._config_valid:
+            self.status.setText("Ajout bloqué : corrige d'abord la configuration existante.")
+            self.credential.clear()
+            return
         try:
             brain = ExtraBrain.parse(raw)
             if brain.id in {item.id for item in self._brains}:
@@ -203,11 +215,11 @@ class BrainManagerPanel(QWidget):
         brain = self._brains[row]
         if QMessageBox.question(self, "Supprimer", "Supprimer la configuration " + brain.id + " ?") != QMessageBox.Yes:
             return
-        self._persist([item for item in self._brains if item.id != brain.id])
-        try:
-            delete_api_key(brain.id)
-        except Exception:
-            pass
+        if self._persist([item for item in self._brains if item.id != brain.id]):
+            try:
+                delete_api_key(brain.id)
+            except Exception:
+                pass
 
     def _toggle(self):
         row = self._selection()
