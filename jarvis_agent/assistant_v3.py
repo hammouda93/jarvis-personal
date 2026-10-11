@@ -703,7 +703,7 @@ class AssistantWorker(QObject):
         from .native_tools import AgentActionResult
         trace = ConversationMissionTrace(
             user_request=user_text, emit=self.log_line.emit,
-            previous=self._previous_conversation_trace,
+            previous=getattr(self, "_previous_conversation_trace", None),
         )
         trace.start()
         trace.ingest(f"[AGENT_TOOL] call={intent.name}")
@@ -808,7 +808,7 @@ class AssistantWorker(QObject):
                 from .native_tools import AgentActionResult
                 trace = ConversationMissionTrace(
                     user_request=user_text, emit=self.log_line.emit,
-                    previous=self._previous_conversation_trace,
+                    previous=getattr(self, "_previous_conversation_trace", None),
                 )
                 trace.start()
                 trace.ingest(f"[AGENT_TOOL] call={follow_intent.name}")
@@ -874,7 +874,7 @@ class AssistantWorker(QObject):
             user_request=user_text,
             emit=self.log_line.emit,
             mission_id=str(getattr(self._agent, "active_mission_id", "") or ""),
-            previous=self._previous_conversation_trace,
+            previous=getattr(self, "_previous_conversation_trace", None),
         )
         trace.start()
 
