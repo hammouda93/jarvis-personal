@@ -3258,6 +3258,44 @@ class GroqResponsesAgent:
         except (TypeError, ValueError, json.JSONDecodeError):
             parsed = result.detail
 
+        # Some Windows launchers return ranked discovery candidates when the
+        # requested name could not be resolved. The result is *not* a launch
+        # confirmation: surface the observed names without guessing or
+        # executing an ambiguous candidate automatically.
+        if name == "open_application" and not result.success and isinstance(parsed, list):
+            candidates = [
+                {
+                    key: item[key]
+                    for key in ("name", "source", "score", "launch_kind")
+                    if key in item
+                }
+                for item in parsed[:5]
+                if isinstance(item, dict) and isinstance(item.get("name"), str)
+                and item.get("name", "").strip()
+            ]
+            if candidates:
+                parsed = {
+                    "status": "not_launched_candidate_discovery",
+                    "candidates": candidates,
+                    "next_step": (
+                        "Do not repeat the failed name or use new_instance to retry. "
+                        "When one observed candidate unambiguously matches the user's "
+                        "intent, call open_application with its exact observed name. "
+                        "Otherwise ask which application is intended. "
+                        "Do not report a successful launch without tool evidence."
+                    ),
+                }
+        elif name == "list_applications" and isinstance(parsed, dict):
+            candidates = parsed.get("candidates")
+            if isinstance(candidates, list) and candidates:
+                parsed = dict(parsed)
+                parsed["next_step"] = (
+                    "Use the exact observed candidate name in open_application "
+                    "only when the user's intent is unambiguous. "
+                    "If candidates are ambiguous, ask instead. Discovery alone "
+                    "is not proof that an application has been launched."
+                )
+
         from .memory_evidence import MEMORY_READ_TOOLS, compact_memory_payload
         if name in MEMORY_READ_TOOLS and isinstance(parsed, dict):
             return json.dumps({
