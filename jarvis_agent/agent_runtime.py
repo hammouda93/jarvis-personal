@@ -19,7 +19,7 @@ from .intent_guards import (
     is_explicit_memory_write_request,
 )
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
-from .runtime_identity import annotate_provider_request
+from .runtime_identity import annotate_provider_request, google_tool_call_extra
 from .tools import normalize
 
 
@@ -3233,8 +3233,12 @@ class GroqResponsesAgent:
             "content": str(getattr(message, "content", "") or ""),
         }
         if tool_calls:
-            item["tool_calls"] = [
-                {
+            # Preserve opaque provider metadata on the tool call where it was
+            # returned. Gemini 3.x requires its thought_signature unchanged in
+            # the subsequent request after a function call. Do not log it.
+            item["tool_calls"] = []
+            for call in tool_calls:
+                wire_call = {
                     "id": str(call.id),
                     "type": "function",
                     "function": {
@@ -3242,8 +3246,10 @@ class GroqResponsesAgent:
                         "arguments": str(call.function.arguments or "{}"),
                     },
                 }
-                for call in tool_calls
-            ]
+                extra = google_tool_call_extra(call)
+                if extra is not None:
+                    wire_call["extra_content"] = extra
+                item["tool_calls"].append(wire_call)
         self._messages.append(item)
         return tool_calls
 
