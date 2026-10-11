@@ -3866,6 +3866,7 @@ class GroqResponsesAgent:
         mission_proof_repair_attempted = False
         discovery_repair_attempted = False
         final_observation_repair_attempted = False
+        preterminal_repair_attempted = False
         explicit_memory_repair_attempted = False
         close_recovery_required = False
         close_recovery_attempted = False
@@ -4119,6 +4120,41 @@ class GroqResponsesAgent:
                     final_observation_repair_attempted = True
                     if log:
                         log("[MISSION] recovery=post_mutation_observation")
+                    continue
+
+                # The user may have asked to traverse allowed intermediate
+                # screens and stop *before* an irreversible final action.
+                # A trustworthy read of an intermediate screen can show that
+                # the stop boundary has not yet been reached. Do not convert
+                # that observation into a blind click: give the model one
+                # bounded continuation checkpoint with the original authority.
+                from .mission_reasoning_v10i import preterminal_continuation_pending
+                if (
+                    preterminal_continuation_pending(user_text, actions)
+                    and not preterminal_repair_attempted
+                    and round_index < settings.agent_max_tool_rounds
+                ):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "AUTHORIZED_MISSION_BOUNDARY_PENDING: a verified "
+                            "read of the current UI still exposes an ordinary "
+                            "forward-navigation control, not the requested "
+                            "terminal stopping boundary. Re-read the original "
+                            "mission and explicit prohibitions. Decide whether "
+                            "another intermediate action is actually authorized; "
+                            "never click a terminal install/commit/send/delete "
+                            "control or accept new conditions. Use only fresh "
+                            "grounded refs, prefer existing post-observation, "
+                            "and ask for confirmation if the next action or "
+                            "its effect is ambiguous. Never repeat a mutation."
+                        ),
+                    })
+                    preterminal_repair_attempted = True
+                    if log:
+                        log("[MISSION] recovery=intermediate_screen_before_stop_boundary")
                     continue
 
                 missing_capabilities = (
