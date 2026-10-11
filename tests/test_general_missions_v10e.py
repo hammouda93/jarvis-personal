@@ -41,6 +41,8 @@ class GeneralMissionTests(unittest.TestCase):
         self.assertEqual(route("Ferme cet onglet").name, "browser.close_tab")
 
     def test_fresh_browser_snapshot_does_not_remove_file_discovery(self):
+        from dataclasses import replace
+        from jarvis_agent.config import settings
         delegate = Mock()
         delegate.ollama_tools.return_value = [
             {"type": "function", "function": {"name": name, "description": "local",
@@ -48,9 +50,14 @@ class GeneralMissionTests(unittest.TestCase):
             for name in ("open_file", "list_windows", "browser_observe_dom", "browser_verify")]
         agent = GroqResponsesAgent(delegate)
         agent._ephemeral_context = "BROWSER_GROUNDING_READ_ONLY:{}"
-        names = {item["function"]["name"] for item in agent._tool_definitions()}
-        self.assertIn("open_file", names)
-        self.assertIn("list_windows", names)
+        for browser_search in (False, True):
+            with self.subTest(browser_search=browser_search), patch(
+                    "jarvis_agent.agent_runtime.settings", replace(settings, groq_browser_search=browser_search)):
+                schemas = agent._tool_definitions()
+                names = {item["function"]["name"] for item in schemas if item.get("type") == "function"}
+                self.assertIn("open_file", names)
+                self.assertIn("list_windows", names)
+                self.assertEqual(any(item.get("type") == "browser_search" for item in schemas), browser_search)
 
     def test_windows_request_after_browser_resets_scope_without_app_allowlist(self):
         adapter = FoundationToolAdapter(Mock(), browser=object())

@@ -101,7 +101,9 @@ garde de reponse est lexical; plusieurs artefacts/format Word demandent un
 contrat supervise explicite et une verification adaptee.
 
 Archive de contexte en RAM seulement; aucune reprise durable automatique de
-cette archive. Precondition vide appliquee a la premiere ecriture du tour, pas
+cette archive. Archive limitee au transcript du tour retenu; la retention de
+conversation historique n'est pas remplacee. Precondition vide appliquee a
+la premiere ecriture du tour, pas
 encore un invariant semantique durable a travers restart/confirmation. CUA sans
 preuve fraiche reste bloque. UIA n'offre pas de compare-and-set atomique.
 Un historique massif de mutations/unknown ou une observation recente trop

@@ -20,7 +20,13 @@ Initial local : 1005 tests Windows passes, 0 echec/erreur/exclusion. Trois tests
 d'integration contexte/factory/superviseur ajoutes; final local : 1008 tests
 passes en 41,755 s, 0 echec/erreur/exclusion. Node : 45/45 passes.
 Baseline CI V10D run 38044416414 : Windows 970 passes; Ubuntu 965 passes et
-5 exclusions explicites, Node 45/45 sur les deux OS. CI V10E pas encore publiee.
+5 exclusions explicites, Node 45/45 sur les deux OS.
+Checkpoint source `42967f5` pousse, PR #23 brouillon vers V10D. Premiere CI
+38100516855 : Linux echoue sur une hypothese du nouveau test (tous les schemas
+seraient `function`; Groq expose aussi `browser_search` selon configuration).
+Corrige pour tester les deux configurations sans retirer les assertions sur
+les outils Windows. Regression locale corrigee : 1008 passes en 41,575 s,
+0 echec/erreur/exclusion; nouvelle CI en cours de verification.
 38 nouveaux tests V10E passes, sans remplacement des suites historiques.
 
 Mesure synthetique reproductible : messages 54488 -> 22706 caracteres,
@@ -32,7 +38,7 @@ complexes, contraintes durables a travers restart, comptes MCP, installation
 complete/licences, Skills avances et scheduler. Aucun statut final/autonome.
 Rapport causes/limites/feuille de route : `docs/V10E_AGENT_MISSIONS.md`.
 Procedure VS Code et 11 cas live : `docs/V10E_WINDOWS_ACCEPTANCE.md`.
-Prochain travail : CI du checkpoint, recette composee et froid/chaud, puis
+Prochain travail : CI du checkpoint corrige, recette composee et froid/chaud, puis
 invariants de mission durables et integration scheduler revue.
 
 ## Reprise Live V10D Du 2026-10-10
