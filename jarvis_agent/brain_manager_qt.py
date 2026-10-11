@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QComboBox, QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView,
@@ -127,7 +127,7 @@ class BrainManagerPanel(QWidget):
         row2.addWidget(probe)
         layout.addLayout(row2)
 
-        self.status = QLabel("Les changements prennent effet au prochain démarrage de Jarvis.")
+        self.status = QLabel("Configuration locale. Les nouveaux fournisseurs sont utilisés après Cerebras Primary, Secondary et Groq. Les requêtes vers ces services peuvent être facturées.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
@@ -157,7 +157,7 @@ class BrainManagerPanel(QWidget):
         for i, cells in enumerate(builtins + extras):
             for j, value in enumerate(cells):
                 item = QTableWidgetItem(value)
-                item.setFlags(item.flags() & ~__import__("PySide6.QtCore", fromlist=["Qt"]).Qt.ItemIsEditable)
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(i, j, item)
 
     def _selection(self):
@@ -193,9 +193,8 @@ class BrainManagerPanel(QWidget):
             self.credential.clear()
         except Exception as exc:
             self.credential.clear()
-            self.status.setText("Ajout impossible : " + type(exc).__name__ + " — " +
-                                str(exc)[:100] if isinstance(exc, BrainConfigError)
-                                else "Ajout impossible : " + type(exc).__name__)
+            message = (str(exc)[:100] if isinstance(exc, BrainConfigError) else type(exc).__name__)
+            self.status.setText("Ajout impossible : " + message)
 
     def _remove(self):
         row = self._selection()
