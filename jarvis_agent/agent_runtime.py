@@ -3832,6 +3832,7 @@ class GroqResponsesAgent:
         ui_verification_repair_attempted = False
         ui_verification_required = False
         goal_completion_repair_attempted = False
+        mission_proof_repair_attempted = False
         close_recovery_required = False
         close_recovery_attempted = False
         pending_ui_action: dict[str, Any] | None = None
@@ -4259,6 +4260,41 @@ class GroqResponsesAgent:
                         "que le message a été envoyé. Vérifiez la conversation "
                         "avant tout nouvel envoi pour éviter un doublon."
                     )
+
+                # A model response is not evidence that it performed an
+                # action. An intermediate UI click is also not proof that a
+                # terminal workflow (installation/deployment/etc.) finished.
+                from .mission_evidence_v10g import guard_unverified_mission_reply
+                continuation = bool(re.fullmatch(
+                    r"\s*(?:vas[- ]?y|continue|poursuis|ok|oui|go)\s*[.!]?\s*",
+                    normalize(user_text),
+                ))
+                safe_text, evidence_reason = guard_unverified_mission_reply(
+                    user_text, text, actions, continuation=continuation,
+                )
+                if (evidence_reason and not mission_proof_repair_attempted
+                        and round_index < settings.agent_max_tool_rounds):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "MISSION_EVIDENCE_MISSING: " + evidence_reason + ". "
+                            "L'affirmation précédente n'est pas vérifiée. "
+                            "Ne la répète pas et ne réexécute pas aveuglément "
+                            "une mutation déjà effectuée. Observe l'état actuel, "
+                            "reprends uniquement une étape encore autorisée, "
+                            "puis rapporte honnêtement les preuves disponibles."
+                        ),
+                    })
+                    mission_proof_repair_attempted = True
+                    if log:
+                        log("[MISSION] proof_repair=" + evidence_reason)
+                    continue
+                if evidence_reason:
+                    text = safe_text
+                    if log:
+                        log("[MISSION] unverified_claim_blocked=" + evidence_reason)
 
                 from .memory_evidence import guard_memory_answer
                 text, memory_guard = guard_memory_answer(text, actions)
