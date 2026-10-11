@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import uuid
+from types import SimpleNamespace
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,6 +14,7 @@ from unittest.mock import Mock, patch
 
 from jarvis_agent.brain_cascade import (
     BrainConfigError, ExtraBrain, load_extra_brains, save_extra_brains,
+    store_api_key, delete_api_key,
 )
 from jarvis_agent.agent_runtime import (
     AgentRuntimeUnavailable, CerebrasResponsesAgent,
@@ -57,6 +61,41 @@ class BrainConfigTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             with self.assertRaises(BrainConfigError):
                 save_extra_brains([a, a], Path(td) / "config.json")
+
+    def test_windows_credential_writer_requires_unicode_not_bytes(self):
+        fake_win32cred = Mock()
+        fake_win32cred.CRED_TYPE_GENERIC = 1
+        fake_win32cred.CRED_PERSIST_LOCAL_MACHINE = 2
+        secret_fixture = "fake-gemini-key-not-real"
+
+        def strict_credwrite(credential, flags):
+            if not isinstance(credential["CredentialBlob"], str):
+                raise TypeError("pywin32 CredentialBlob requires PyUnicode")
+            self.assertEqual(credential["CredentialBlob"], secret_fixture)
+            self.assertEqual(credential["TargetName"], "Jarvis/brain/jarvis_gemini")
+            self.assertEqual(flags, 0)
+
+        fake_win32cred.CredWrite.side_effect = strict_credwrite
+        with (
+            patch("jarvis_agent.brain_cascade.os", SimpleNamespace(name="nt")),
+            patch.dict(sys.modules, {"win32cred": fake_win32cred}),
+        ):
+            store_api_key("jarvis_gemini", secret_fixture)
+        fake_win32cred.CredWrite.assert_called_once()
+
+    @unittest.skipUnless(os.name == "nt", "Windows Credential Manager only")
+    def test_windows_credential_manager_real_round_trip(self):
+        from jarvis_agent.brain_cascade import resolved_api_key
+        brain_id = "test-" + uuid.uuid4().hex[:24]
+        secret_fixture = "fixture-only-" + uuid.uuid4().hex
+        brain = ExtraBrain.parse({
+            "id": brain_id, "provider": "gemini", "model": "test-model",
+        })
+        try:
+            store_api_key(brain_id, secret_fixture)
+            self.assertEqual(resolved_api_key(brain), secret_fixture)
+        finally:
+            delete_api_key(brain_id)
 
     def test_malformed_configuration_not_silently_accepted(self):
         with TemporaryDirectory() as td:
