@@ -69,7 +69,7 @@ def requested_steps(user_text: str) -> tuple[str, ...]:
     numbered = [
         match.group(1).strip()
         for match in re.finditer(
-            r"^\\s*(?:[1-9]|1[0-2])[.)]\\s+([^\\r\\n]+)\\s*$",
+            r"^\s*(?:[1-9]|1[0-2])[.)]\s+([^\r\n]+)\s*$",
             raw, flags=re.M,
         )
         if not _NEGATIVE_START.match(match.group(1))
