@@ -15,6 +15,7 @@ from jarvis_agent.config import settings as real_settings
 from jarvis_agent.mission_reasoning_v10i import (
     recoverable_discovery,
     post_mutation_observation_missing,
+    explicit_memory_read_not_attempted,
 )
 from jarvis_agent.mission_trace_v10h import requested_steps
 from jarvis_agent.native_tools import AgentActionResult
@@ -147,6 +148,56 @@ class GenericContextReasoningTests(unittest.TestCase):
         self.assertEqual([name for name, _ in tools.calls],
                          ["open_application", "open_application"])
         self.assertTrue(result.actions[-1].success)
+
+    def test_explicit_persistent_memory_read_requires_source_access(self):
+        goal = ("Ouvre une application et retrouve dans la mémoire "
+                "persistante mon code de test.")
+        self.assertTrue(explicit_memory_read_not_attempted(
+            goal, [action("open_application")]))
+        self.assertFalse(explicit_memory_read_not_attempted(
+            goal, [action("open_application"),
+                   action("semantic_memory_search", False)]))
+        self.assertFalse(explicit_memory_read_not_attempted(
+            "Mémorise ma préférence.", []))
+        self.assertFalse(explicit_memory_read_not_attempted(
+            "Explique le fonctionnement de SQLite.", []))
+
+    def test_runtime_recovers_explicit_memory_lookup_after_desktop_action(self):
+        class MixedTools(FakeTools):
+            def ollama_tools(self):
+                return [
+                    *super().ollama_tools(),
+                    {"type": "function", "function": {
+                        "name": "semantic_memory_search",
+                        "description": "Read personal memory",
+                        "parameters": {"type": "object",
+                                       "properties": {"query": {"type": "string"}},
+                                       "required": ["query"]},
+                    }},
+                ]
+            def execute(self, name, args, *, approved=False):
+                self.calls.append((name, args))
+                if name == "semantic_memory_search":
+                    return action(name, True, {"raw_fallback": [
+                        {"memory_id": 1, "raw": "A stored testing fact"},
+                    ]})
+                return action(name, True)
+
+        tools = MixedTools()
+        agent = FakeGroqAgent(tools, [
+            tool_call("open_application", {"name": "Application locale"}, "open"),
+            answer("Je retrouve une valeur sans interroger SQLite."),
+            tool_call("semantic_memory_search", {"query": "code de test"}, "read"),
+            answer("Une entrée mémoire a été lue."),
+        ])
+        with patch("jarvis_agent.agent_runtime.settings",
+                   replace(real_settings, agent_max_tool_rounds=5)):
+            outcome = agent.run(
+                "Ouvre Application locale puis retrouve mon code dans la mémoire persistante."
+            )
+        self.assertEqual([n for n, _ in tools.calls],
+                         ["open_application", "semantic_memory_search"])
+        self.assertEqual(len(outcome.actions), 2)
 
     def test_application_instance_reuse_is_the_default(self):
         for request, expected_new in (
