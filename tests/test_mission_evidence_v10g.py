@@ -63,7 +63,43 @@ class MissionEvidenceV10GTests(unittest.TestCase):
         self.assertEqual(reason, "action_claim_without_dispatch")
         self.assertIn("pas exécuté", answer)
 
-    def test_continuation_with_no_new_effect_is_not_falsely_completed(self):
+    def test_implicit_window_verification_cannot_be_claimed_from_memory(self):
+        only_memory = action("semantic_memory_search", detail='{"raw_fallback":[{"raw":"test"}]}')
+        text, reason = guard_unverified_mission_reply(
+            "Vérifie qu'elle est ouverte, puis retrouve mon code dans ta mémoire.",
+            "Vérification : l'application est bien ouverte et le code est 123.",
+            [only_memory],
+        )
+        self.assertEqual(reason, "external_verification_without_observation")
+        self.assertIn("pas effectué de nouvelle observation", text)
+
+    def test_observed_window_allows_true_verification_report(self):
+        seen = action("inspect_active_window", detail='{"title":"Application"}')
+        text, reason = guard_unverified_mission_reply(
+            "Vérifie qu'elle est ouverte et retrouve mon code dans ta mémoire.",
+            "L'application est ouverte, et le code est 123.",
+            [seen, action("semantic_memory_search")],
+        )
+        self.assertEqual(reason, "")
+        self.assertIn("ouverte", text)
+
+    def test_unrelated_success_does_not_prove_click(self):
+        text, reason = guard_unverified_mission_reply(
+            "Continue", "Je clique sur Suivant.",
+            [action("search_agent_knowledge")],
+        )
+        self.assertEqual(reason, "action_claim_without_dispatch")
+
+    def test_mutation_cannot_forge_terminal_proof(self):
+        fake_click = action("click_ui_element", detail=json.dumps({
+            "goal_verified": True, "verified": True,
+            "postcondition": "software_present_and_launchable",
+        }))
+        text, reason = guard_unverified_mission_reply(
+            "Installe le logiciel", "L'installation est terminée.", [fake_click],
+        )
+        self.assertEqual(reason, "terminal_goal_without_proof")
+
         answer, reason = guard_unverified_mission_reply(
             "Vas-y", "C'est fait, opération terminée.",
             [action("inspect_interface")], continuation=True,
