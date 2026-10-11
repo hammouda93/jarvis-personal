@@ -524,6 +524,24 @@ class ActiveMissionSupervisor:
             pending_step = next((s for s in plan["steps"] if s["step_id"] == record.get("step_id")), None)
             continuing_approval = record["state"] == SupervisorState.WAITING_APPROVAL.value
             self.step = pending_step if continuing_approval and pending_step else ready[0] if ready else plan["steps"][0]
+            if log:
+                # These are genuine reviewed semantic-contract steps (unlike
+                # the provisional user-clause outline in conversation mode).
+                # States come from the authoritative mission review only.
+                goal_text = json.dumps(str(plan.get("objective") or state.user_goal)[:500],
+                                       ensure_ascii=False)
+                log(f"[MISSION_TRACE] id={self.mission_id} state=SUPERVISED "
+                    f"objective={goal_text} outline_source=reviewed_semantic_contract "
+                    f"steps={len(plan['steps'])}")
+                for number, item in enumerate(plan["steps"], 1):
+                    step_id = str(item.get("step_id") or "")
+                    reviewed = by_id.get(step_id) or {}
+                    status = str(reviewed.get("state") or "not_verified")
+                    label = json.dumps(str(item.get("intent") or step_id)[:300],
+                                       ensure_ascii=False)
+                    log(f"[MISSION_STEP] id={self.mission_id} "
+                        f"step={number}/{len(plan['steps'])} step_id={step_id} "
+                        f"state={status} active={str(item is self.step).lower()} title={label}")
             self.actions, self.observations, self.waiting_approval = [], [], False
             self.progress_decision = None
             self.turn_result, self.process_id, self.allowed_tools = None, "", None
@@ -637,6 +655,12 @@ class ActiveMissionSupervisor:
                     reason="ordinary_work_remaining" if continuation else "")
                 if complete and not self.waiting_approval:
                     self.runtime.complete_mission(proof_ref="supervisor:" + uuid.uuid4().hex)
+                if log:
+                    log(f"[MISSION_TRACE] id={self.mission_id} "
+                        f"state={target.value} active_step={self.step['step_id']} "
+                        f"step_verified={str(verified).lower()} "
+                        f"goal_verified={str(complete and not self.waiting_approval).lower()} "
+                        "source=independent_mission_review")
                 return {"mission_id": self.mission_id, "state": target.value,
                         "goal_verified": complete and not self.waiting_approval, "report": report,
                         "text": self._result_text(target, result), "_turn_result": result}
