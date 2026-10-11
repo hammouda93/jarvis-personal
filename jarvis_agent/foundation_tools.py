@@ -329,17 +329,20 @@ class FoundationToolAdapter:
                 item for item in tools
                 if item["function"]["name"] not in hidden
             ]
-            if self.semantic_memory_engine is not None:
+            if (self.semantic_memory_engine is not None
+                    or (tool_mode and enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED"))):
                 tools.append(
                     self.delegate._ollama(
                         "semantic_memory_search",
                         "Recherche READ-ONLY dans la mémoire personnelle V5. "
-                        "Utilise-la seulement quand une question personnelle "
-                        "nécessite d'autres souvenirs que les preuves déjà "
-                        "présentes. Fournis une question de recherche naturelle "
-                        "et précise; l'outil retourne des preuves brutes et des "
-                        "indices sémantiques, jamais une réponse à recopier "
-                        "aveuglément.",
+                        "Utilise-la quand une question personnelle nécessite un "
+                        "souvenir non déjà prouvé. Préserve le sujet et les "
+                        "qualificatifs de la demande originale : ne réduis pas "
+                        "la question à un mot générique. En cas de résultat "
+                        "missing, ce n'est PAS une preuve d'absence dans SQLite. "
+                        "Utilise seulement les preuves effectivement retrouvées, "
+                        "ne complète pas par invention, et traite plusieurs "
+                        "faits divergents comme des sources distinctes.",
                         {
                             "query": {
                                 "type": "string",
@@ -575,7 +578,8 @@ class FoundationToolAdapter:
                 )
                 if tool_mode:
                     self._durable_memory_written_this_turn = True
-                    status = "raw_saved"
+                    status = ("raw_saved direct_agent_no_projection"
+                              if enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED") else "raw_saved")
                     if self.projection_worker is not None:
                         status = "raw_saved projection_queued"
                         self.projection_worker.start()
@@ -656,7 +660,7 @@ class FoundationToolAdapter:
                 )
                 payload["unindexed_count"] = len(pending)
                 payload["projection_issue_count"] = unresolved
-                if not payload["hits"] and unresolved:
+                if not payload["hits"] and unresolved and self.semantic_memory_engine is not None:
                     payload["status"] = "index_incomplete"
                 # Guard against a model-invented year when the user only
                 # named day/month. Do not silently invent another event or
@@ -677,7 +681,9 @@ class FoundationToolAdapter:
                         payload.update(ambiguity)
             elif (
                 name == "semantic_memory_search"
-                and self.semantic_memory_engine is not None
+                and (self.semantic_memory_engine is not None
+                     or (memory_agent_tools_enabled()
+                         and enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED")))
             ):
                 query_text = str(args.get("query", "")).strip()
                 if not query_text:
@@ -688,6 +694,17 @@ class FoundationToolAdapter:
                     # with previously indexed facts included only for matches.
                     from .memory_retrieval import search as raw_search
                     matched = raw_search(self.memory, query_text, limit=12)
+                    search_source = "tool_query"
+                    # The LLM may reduce "Quel est mon nom ?" to "nom" or
+                    # otherwise lose essential context. On a true miss,
+                    # retry the ORIGINAL trusted user request as a separate
+                    # bounded query. No application-, field- or entity-specific
+                    # branching; never broaden to arbitrary recent memories.
+                    user_request = str(self.current_user_text or "").strip()
+                    if not matched and user_request and user_request != query_text:
+                        matched = raw_search(self.memory, user_request, limit=12)
+                        if matched:
+                            search_source = "original_user_request"
                     matched_ids = {item.id for item in matched}
                     facts = [
                         fact
@@ -698,6 +715,8 @@ class FoundationToolAdapter:
                         "status": "resolved" if matched else "missing",
                         "parser_operation": "agent_tool_direct",
                         "query": query_text,
+                        "search_source": search_source if matched else "no_matching_evidence",
+                        "missing_means": "No matching evidence, not proof that the memory does not exist",
                         "hits": [
                             {
                                 "memory_id": fact.memory_id,
@@ -719,7 +738,12 @@ class FoundationToolAdapter:
                             for item in matched
                         ],
                         "read_only": True,
-                        **self.memory.projection_coverage(self.semantic_memory_engine.parser_version),
+                        **(self.memory.projection_coverage(self.semantic_memory_engine.parser_version)
+                           if self.semantic_memory_engine is not None else {
+                               "coverage": "raw_direct",
+                               "projection_required": False,
+                               "projection_issue_count": 0,
+                           }),
                         **({"projection_queue": self.projection_worker.queue.status()}
                            if self.projection_worker is not None else {}),
                     }

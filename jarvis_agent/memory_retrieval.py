@@ -52,9 +52,51 @@ def terms(value: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys([*words, *anchors]))
 
 
+# Function words only. When the historic high-precision query stoplist
+# removes every token, recover the *actual topic* from the user's wording,
+# whatever that topic is. No person/field/application-specific exceptions.
+_QUESTION_SYNTAX = frozenset("""
+quel quelle quels quelles que quoi qui comment pourquoi est sont etait etais
+ce cet cette ces de du des le la les un une mon ma mes ton ta tes son sa ses
+notre nos votre vos leur leurs je j tu il elle nous vous ils elles me te se
+moi toi pour dans sur avec et ou au aux en as ai a ne pas dire dis donne
+donner peux peut pourrais sais savez tu vous rappelle rappelles rappeler
+souviens souviens-toi qu est ce c est know tell remember recall which what
+who how why the a an of for from your my you i it is are was do does did
+can could please me us our mine yours about
+""".split())
+
+
+def _topic_terms(value: str) -> tuple[str, ...]:
+    """Literal topic fallback for degenerate zero-term queries.
+
+    This is *not* semantic inference. A topic is selected from the
+    user's actual wording and must occur in the source text/tags. We never
+    turn a generic question into permission to return recent unrelated rows.
+    """
+    value = normalize(value).replace("rendez-vous", "rendezvous")
+    tokens = re.findall(r"\w+", value)
+    result = [
+        token for token in tokens
+        if token not in _QUESTION_SYNTAX and len(token) >= 3
+    ]
+    return tuple(dict.fromkeys(result))
+
+
 def relevance(query: str, content: str, tags: str = "") -> float:
-    wanted, actual = terms(query), terms(content + " " + tags)
-    if not wanted or not actual:
+    wanted = terms(query)
+    # The normal search uses high-precision content terms. If all were
+    # treated as common query language, fall back to the literal subject of
+    # the question; never infer synonyms or return unrelated recent facts.
+    topic_fallback = not wanted
+    if topic_fallback:
+        wanted = _topic_terms(query)
+    if not wanted:
+        return 0.0
+    actual = set(terms(content + " " + tags))
+    if topic_fallback:
+        actual.update(_topic_terms(content + " " + tags))
+    if not actual:
         return 0.0
     scores = []
     for term in wanted:
