@@ -105,7 +105,10 @@ class GenericContextReasoningTests(unittest.TestCase):
                 "puis ouvre le premier résultat.")
         actions = [
             action("open_url", True, {"dispatched": True, "verified": False}),
-            action("browser_write", True, {"dispatched": True, "verified": True}),
+            action("browser_write", True, {
+                "dispatched": True, "verified": True,
+                "post_observation": {"tab": {"url": "https://example.org/"}},
+            }),
             action("browser_click", True, {
                 "dispatched": True, "verified": True,
                 "post_observation": {"tab": {"url": "https://example.org/results"}},
