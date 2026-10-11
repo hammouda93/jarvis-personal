@@ -699,7 +699,26 @@ class AssistantWorker(QObject):
         ):
             return False
 
-        result = execute(intent)
+        from .mission_trace_v10h import ConversationMissionTrace
+        from .native_tools import AgentActionResult
+        trace = ConversationMissionTrace(
+            user_request=user_text, emit=self.log_line.emit,
+            previous=self._previous_conversation_trace,
+        )
+        trace.start()
+        trace.ingest(f"[AGENT_TOOL] call={intent.name}")
+        try:
+            result = execute(intent)
+        except Exception as exc:
+            trace.finish((), error=type(exc).__name__)
+            self._previous_conversation_trace = trace
+            raise
+        trace.ingest(f"[AGENT_TOOL] result={intent.name} success={result.success}")
+        trace.finish((AgentActionResult(
+            name=intent.name, success=result.success,
+            message=result.message, detail=str(result.detail or ""),
+        ),))
+        self._previous_conversation_trace = trace
         self._pending_direct_follow_up = result.follow_up or ""
         self.log_line.emit(
             f"[DIRECT] simple={intent.name} success={result.success} "
@@ -785,7 +804,28 @@ class AssistantWorker(QObject):
                 follow_intent = ToolIntent("unknown", {"text": user_text})
 
             if follow_intent.name != "unknown":
-                result = execute(follow_intent)
+                from .mission_trace_v10h import ConversationMissionTrace
+                from .native_tools import AgentActionResult
+                trace = ConversationMissionTrace(
+                    user_request=user_text, emit=self.log_line.emit,
+                    previous=self._previous_conversation_trace,
+                )
+                trace.start()
+                trace.ingest(f"[AGENT_TOOL] call={follow_intent.name}")
+                try:
+                    result = execute(follow_intent)
+                except Exception as exc:
+                    trace.finish((), error=type(exc).__name__)
+                    self._previous_conversation_trace = trace
+                    raise
+                trace.ingest(
+                    f"[AGENT_TOOL] result={follow_intent.name} success={result.success}"
+                )
+                trace.finish((AgentActionResult(
+                    name=follow_intent.name, success=result.success,
+                    message=result.message, detail=str(result.detail or ""),
+                ),))
+                self._previous_conversation_trace = trace
                 self.log_line.emit(
                     f"[DIRECT] follow_up={follow_up} "
                     f"success={result.success} args={follow_intent.args}"
