@@ -66,6 +66,8 @@ class MissionTraceV10HTests(unittest.TestCase):
         trace.ingest("[AGENT_TOOL] call=open_application args={}")
         trace.ingest("[AGENT_TOOL] call=inspect_active_window args={}")
         trace.ingest("[AGENT_TOOL] call=semantic_memory_search args={}")
+        self.assertIn("state=OBSERVING tool=semantic_memory_search",
+                      "\n".join(events))
         trace.finish([
             result("open_application", True),
             result("inspect_active_window", True),
@@ -75,6 +77,18 @@ class MissionTraceV10HTests(unittest.TestCase):
         self.assertIn("step_hint=3", all_logs)
         self.assertIn("effect=FAILED", all_logs)
         self.assertIn("goal_verification=not_certified", all_logs)
+
+    def test_verification_phase_is_distinct_from_effect_and_goal(self):
+        events = []
+        trace = ConversationMissionTrace(
+            "Vérifie qu'une fenêtre est ouverte", events.append, trace_id="verify",
+        )
+        trace.start()
+        trace.ingest("[AGENT_TOOL] call=computer_verify args={}")
+        self.assertIn("state=VERIFYING tool=computer_verify", "\n".join(events))
+        trace.finish([result("computer_verify", detail='{"verified":true}')])
+        self.assertIn("effect=TOOL_EFFECT_VERIFIED", "\n".join(events))
+        self.assertIn("goal_verification=not_certified", "\n".join(events))
 
     def test_tool_names_do_not_make_completion_claims(self):
         events = []
