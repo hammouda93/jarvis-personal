@@ -4,6 +4,15 @@ Statut : PREPAREE, non executee par Codex. Les observations humaines du brief
 2026-10-09 sont preservees dans `FINAL_DEVELOPMENT_PROGRESS.md`.
 Ne pas utiliser les fixtures cloud/offscreen comme preuves de comportements reels.
 
+## Priorite V10E
+
+Branche `codex/agent-missions-v10e`, base V10D `56a8cfc`, sans merge stable.
+Ouverture dans VS Code et recette accompagnee :
+[V10E_WINDOWS_ACCEPTANCE.md](V10E_WINDOWS_ACCEPTANCE.md).
+Priorites : mission navigateur/fichier composee, interdictions preservees,
+document vraiment vide, preuve de sauvegarde, contexte/fallback et Ollama froid.
+Rapport et limites : [V10E_AGENT_MISSIONS.md](V10E_AGENT_MISSIONS.md).
+
 ## Priorite V10D
 
 Tester maintenant `codex/live-regressions-v10d`, PR brouillon #22, sans merge

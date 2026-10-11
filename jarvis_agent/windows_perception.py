@@ -437,6 +437,30 @@ def _compact_window(wrapper: Any) -> dict[str, Any]:
     }
 
 
+def _strict_control_value(wrapper: Any) -> str | None:
+    """Fresh provider value including empty/whitespace, never a label fallback."""
+    try:
+        getter = getattr(wrapper, "get_value", None)
+    except Exception:
+        getter = None
+    if callable(getter):
+        try:
+            value = getter()
+            if isinstance(value, str):
+                return value
+        except Exception:
+            pass
+    for read in (lambda: wrapper.iface_value.CurrentValue,
+                 lambda: wrapper.iface_text.DocumentRange.GetText(-1)):
+        try:
+            value = read()
+            if isinstance(value, str):
+                return value
+        except Exception:
+            pass
+    return None
+
+
 def _control_value(wrapper: Any) -> str:
     """Best-effort readable value for text controls and hyperlinks."""
     if wrapper is None:
@@ -2550,6 +2574,7 @@ def write_ui_element(
     ref: str = "",
     mode: str = "replace",
     delivery_mode: str = "background",
+    precondition_value: str | None = None,
 ) -> UIActionResult:
     target = (name or "").strip()
     value = str(text or "")
@@ -2601,6 +2626,12 @@ def write_ui_element(
                 _json(alternatives),
             )
         return UIActionResult(False, f"Champ introuvable: {target}.")
+
+    if precondition_value is not None:
+        current_value = None if isinstance(wrapper, CuaElement) else _strict_control_value(wrapper)
+        if not isinstance(precondition_value, str) or current_value is None or current_value != precondition_value:
+            return UIActionResult(False, "La precondition de contenu n'est pas prouvee; aucune ecriture.",
+                _json({"precondition_failed": True, "value_unknown": current_value is None, "dispatched": False}))
 
     if isinstance(wrapper, CuaElement):
         if not wrapper.writable:

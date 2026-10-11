@@ -183,6 +183,11 @@ class NativeToolRegistry:
 
     def ollama_tools(self) -> list[dict[str, Any]]:
         tools = [
+            self._ollama("verify_file_artifact",
+                "Lecture locale independante du fichier attendu: nom exact, chemin absolu et contenu UTF-8 ou SHA256. Ctrl+S et existence seule ne prouvent pas un enregistrement. Aucune ecriture; maximum 4 MiB, chemins reseau/rediriges refuses. Comparaison texte avec CRLF/LF normalises. Ne devine pas les attentes ni le chemin.",
+                {"path": {"type": "string"}, "expected_name": {"type": "string"},
+                 "expected_text": {"type": "string"}, "expected_sha256": {"type": "string"}},
+                ["path", "expected_name"]),
             self._ollama(
                 "list_applications",
                 "Recherche en lecture seule les applications Windows enregistrees par nom (Start Apps et App Paths). "
@@ -416,6 +421,7 @@ class NativeToolRegistry:
                 "write_ui_element",
                 "Écrit dans un contrôle éditable observé (Edit, Document ou ComboBox). Choisis mode=replace pour remplacer tout le contenu, append pour conserver le contenu existant et ajouter à la fin, insert pour écrire à la position actuelle du curseur. N'utilise jamais un Text, TabItem ou libellé statique.",
                 {
+                    "precondition_value": {"type": "string", "description": "Valeur exacte a relire avant toute ecriture; vide pour un document explicitement demande vide. Valeur inconnue bloque l'action."},
                     "name": {
                         "type": "string",
                         "description": "Libellé ou automation_id du champ.",
@@ -1035,6 +1041,13 @@ class NativeToolRegistry:
                 invalidate_ui_snapshot()
             return converted
 
+        if name == "verify_file_artifact":
+            from .file_artifact import verify_file_artifact
+            evidence = verify_file_artifact(args)
+            return AgentActionResult(name=name, success=evidence["verified"],
+                message="Fichier attendu verifie." if evidence["verified"] else "Fichier attendu non verifie.",
+                detail=json.dumps(evidence, ensure_ascii=False))
+
         if name == "open_file":
             target = str(args.get("name", "")).strip()
             within = str(args.get("within", "")).strip()
@@ -1404,8 +1417,9 @@ class NativeToolRegistry:
                 ref=ref,
                 mode=mode,
                 delivery_mode=delivery_mode,
+                **({"precondition_value": args["precondition_value"]} if "precondition_value" in args else {}),
             )
-            if not result.success and ref:
+            if not result.success and ref and "precondition_value" not in args:
                 try:
                     stale = bool(
                         json.loads(result.detail or "{}").get("stale_ref")

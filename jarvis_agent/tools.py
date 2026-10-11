@@ -173,6 +173,12 @@ def search_requires_agent(text: str) -> bool:
 
 def route(text: str) -> ToolIntent:
     cmd = normalize(text)
+    from .instruction_clauses import requires_agent_routing, has_instruction_constraints
+    simple_site_search = bool(re.fullmatch(
+        r"(?:jarvis\s+)?(?:ouvre|ouvrir|lance|affiche)\s+(?:youtube|google)\s+et\s+(?:recherche|cherche)\s+[^.;!?]+", cmd
+    )) and not has_instruction_constraints(text)
+    if requires_agent_routing(text) and not simple_site_search:
+        return ToolIntent("unknown", {"text": text})
 
     if any(
         phrase in cmd
@@ -225,7 +231,7 @@ def route(text: str) -> ToolIntent:
         "snipping tool",
     )
     if any(term in cmd for term in screenshot_terms):
-        if any(word in cmd for word in ("ouvre", "ouvrir", "lance", "affiche", "outil")):
+        if re.search(r"\b(?:ouvre|ouvrir|lance|affiche|outil)\b", cmd):
             return ToolIntent("app.open", {"app": "snippingtool"})
 
     if (
@@ -323,7 +329,7 @@ def route(text: str) -> ToolIntent:
             },
         )
 
-    if any(word in cmd for word in ("ouvre", "ouvrir", "lance", "affiche")):
+    if re.match(r"^(?:(?:jarvis|peux tu|tu peux|s il te plait|stp)\s+)*(?:ouvre|ouvrir|lance|affiche)\b", cmd):
         if "youtube" in cmd:
             return ToolIntent("browser.open_url", {"url": "https://www.youtube.com"})
         if "google" in cmd:
