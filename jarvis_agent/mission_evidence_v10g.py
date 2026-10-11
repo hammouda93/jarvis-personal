@@ -120,7 +120,7 @@ def guard_unverified_mission_reply(
 
     # A spoken assertion of verification is not an observation. In a mixed
     # task, the memory search cannot independently verify a GUI/window state.
-    sections = re.split(r"\b(?:puis|ensuite|then)\b|[;,]", user)
+    sections = re.split(r"\b(?:puis|ensuite|then|et|and)\b|[;,]", user)
     external_check = any(
         re.search(r"\b(?:verifie|verification|controle|inspecte|check|verify)\b", part)
         and not re.search(r"\b(?:memoire|souvenir|memorise|memory)\b", part)
