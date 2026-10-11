@@ -20,6 +20,8 @@ from jarvis_agent.agent_runtime import (
     AgentRuntimeUnavailable, CerebrasResponsesAgent,
 )
 from jarvis_agent.config import settings
+from jarvis_agent.runtime_identity import annotate_provider_request
+from jarvis_agent.native_tools import AgentActionResult
 from test_agent_runtime import FakeTools
 from test_provider_continuity_v10d import response
 
@@ -103,6 +105,76 @@ class BrainConfigTests(unittest.TestCase):
             path.write_text('{"version":1,"brains":{"wrong":true}}', encoding="utf8")
             with self.assertRaises(BrainConfigError):
                 load_extra_brains(path)
+
+
+
+class BrainRoutingContracts(unittest.TestCase):
+    def test_provider_identity_annotation_does_not_mutate_mission_or_tool_history(self):
+        original = [
+            {"role": "system", "content": "Mission system"},
+            {"role": "user", "content": "Open an app"},
+            {"role": "assistant", "tool_calls": [{"id": "call-1", "type": "function",
+                "function": {"name": "open_application", "arguments": '{"name":"Editor"}'}}]},
+            {"role": "tool", "tool_call_id": "call-1", "content": "Opened"},
+        ]
+        cerebras = annotate_provider_request(original, provider="cerebras", model="gpt-oss-120b")
+        gemini = annotate_provider_request(original, provider="gemini", model="fixture-gemini")
+        self.assertIn('"provider": "cerebras"', cerebras[0]["content"])
+        self.assertIn('"model": "fixture-gemini"', gemini[0]["content"])
+        self.assertEqual(original[0]["content"], "Mission system")
+        self.assertEqual(cerebras[1:], original[1:])
+        self.assertEqual(gemini[1:], original[1:])
+        self.assertIsNot(cerebras[0], original[0])
+
+    def test_app_failure_returns_observed_candidate_and_never_claims_launch(self):
+        result = AgentActionResult(
+            "open_application", False, "Name unresolved",
+            json.dumps([{"name": "Editeur local", "score": 0.81,
+                         "source": "start_apps", "launch_kind": "aumid"}]),
+        )
+        agent = CerebrasResponsesAgent(FakeTools())
+        content = json.loads(agent._compact_tool_content("open_application", result))
+        self.assertFalse(content["success"])
+        detail = json.loads(content["detail"])
+        self.assertEqual(detail["status"], "not_launched_candidate_discovery")
+        self.assertEqual(detail["candidates"][0]["name"], "Editeur local")
+        self.assertIn("exact observed name", detail["next_step"])
+        self.assertIn("Do not repeat", detail["next_step"])
+
+    def test_app_discovery_is_not_a_launch_confirmation(self):
+        result = AgentActionResult(
+            "list_applications", True, "Discovered only",
+            json.dumps({"candidates": [{"name": "Editeur local", "score": 0.81}],
+                        "status": "ambiguous", "launch_performed": False}),
+        )
+        agent = CerebrasResponsesAgent(FakeTools())
+        content = json.loads(agent._compact_tool_content("list_applications", result))
+        detail = json.loads(content["detail"])
+        self.assertFalse(detail["launch_performed"])
+        self.assertIn("not proof", detail["next_step"])
+
+    def test_primary_and_secondary_requests_get_truthful_runtime_identity(self):
+        cfg = replace(settings, cerebras_api_key="fixture-primary",
+                      cerebras_secondary_api_key="fixture-secondary",
+                      groq_api_key="", cerebras_fallback_to_groq=False)
+        primary = Mock()
+        secondary = Mock()
+        primary.chat.completions.create.side_effect = RuntimeError("402 payment_required")
+        secondary.chat.completions.create.return_value = response(text="secondary response")
+        agent = CerebrasResponsesAgent(FakeTools())
+        with (patch("jarvis_agent.agent_runtime.settings", cfg),
+              patch.object(agent, "_get_client", side_effect=lambda:
+                           secondary if agent.api_key == "fixture-secondary" else primary)):
+            result = agent._chat()
+        self.assertEqual(result.choices[0].message.content, "secondary response")
+        self.assertEqual(agent.last_effective_provider, "cerebras")
+        self.assertEqual(agent.last_effective_credential, "secondary")
+        self.assertEqual(agent.last_effective_model, cfg.cerebras_agent_model)
+        sent = secondary.chat.completions.create.call_args.kwargs["messages"]
+        self.assertIn('"provider": "cerebras-secondary"', sent[0]["content"])
+        self.assertEqual(primary.chat.completions.create.call_count, 1)
+        self.assertEqual(secondary.chat.completions.create.call_count, 1)
+
 
 
 class BrainCascadeTests(unittest.TestCase):
