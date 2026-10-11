@@ -52,9 +52,40 @@ def terms(value: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys([*words, *anchors]))
 
 
+def _personal_identity_slot(query: str) -> tuple[str, ...]:
+    """Resolve only a direct request about the user's own name.
+
+    The normal stopword vocabulary deliberately drops 'nom', 'prenom' and
+    'appelle', so without this typed slot "quel est mon nom ?" matches
+    *nothing*. Do not treat a project/child/other person's name as self.
+    """
+    text = normalize(query)
+    if not re.search(r"\b(?:mon|ma|je|moi|my|i)\b", text):
+        return ()
+    if re.search(r"\bprenoms?\b", text):
+        return ("prenom",)
+    if re.search(r"\bnom\b", text) or re.search(r"\bname\b", text):
+        return ("nom", "prenom")
+    if re.search(r"\bappell(?:e|es|ez|er|ait)\b", text):
+        return ("prenom", "nom")
+    return ()
+
+
 def relevance(query: str, content: str, tags: str = "") -> float:
     wanted, actual = terms(query), terms(content + " " + tags)
-    if not wanted or not actual:
+    if not wanted:
+        slots = _personal_identity_slot(query)
+        if not slots:
+            return 0.0
+        # Only source-proven identity records (including original labels
+        # preserved in SQLite), never an unrelated recent memory.
+        raw = normalize(content + " " + tags)
+        if any(re.search(r"\b" + re.escape(slot) + r"\b", raw) for slot in slots):
+            return 1.0
+        if "prenom" in slots and re.search(r"\b(?:je m'appelle|mon prenom|my name is)\b", raw):
+            return 0.98
+        return 0.0
+    if not actual:
         return 0.0
     scores = []
     for term in wanted:
