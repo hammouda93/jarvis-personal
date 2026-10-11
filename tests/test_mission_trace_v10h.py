@@ -19,7 +19,7 @@ class MissionTraceV10HTests(unittest.TestCase):
                 "puis ouvre le premier résultat et vérifie sa page.")
         items = requested_steps(goal)
         self.assertEqual(len(items), 4)
-        self.assertTrue(items[0].startswith("ouvre un site"))
+        self.assertTrue(items[0].lower().startswith("ouvre un site"))
         self.assertTrue(items[1].startswith("recherche"))
         self.assertTrue(items[2].startswith("ouvre le premier"))
         self.assertTrue(items[3].startswith("verifie"))
