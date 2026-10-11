@@ -132,6 +132,7 @@ class AssistantWorker(QObject):
         self._agent = build_agent_runtime()
         self._conversation_language = "fr"
         self._pending_direct_follow_up = ""
+        self._previous_conversation_trace = None
         # Session-local surface grounding. This is not persistent learning:
         # it only prevents an ambiguous follow-up such as "Recherche Hamza"
         # from being hijacked by the browser fast-path after a desktop app
@@ -828,6 +829,19 @@ class AssistantWorker(QObject):
             "Compréhension de votre demande…",
         )
 
+        from .mission_trace_v10h import ConversationMissionTrace
+        trace = ConversationMissionTrace(
+            user_request=user_text,
+            emit=self.log_line.emit,
+            mission_id=str(getattr(self._agent, "active_mission_id", "") or ""),
+            previous=self._previous_conversation_trace,
+        )
+        trace.start()
+
+        def traced_agent_log(line: str) -> None:
+            self.log_line.emit(line)
+            trace.ingest(line)
+
         control = getattr(self, "_mission_control", None)
         reserved = bool(control and getattr(self._agent, "active_mission_id", None)
                         and control.reserve_conversation())
@@ -835,10 +849,12 @@ class AssistantWorker(QObject):
             with conversation_control(control.stop_requested if control else self._stop):
                 turn = self._agent.run(
                     user_text,
-                    log=self.log_line.emit,
+                    log=traced_agent_log,
                     phase=self._agent_phase,
                 )
         except AgentRuntimeUnavailable as exc:
+            trace.finish((), error=type(exc).__name__)
+            self._previous_conversation_trace = trace
             self._emit_operator_model()
             self.log_line.emit(f"[AGENT] unavailable: {exc}")
             self._shadow_observe(
@@ -858,6 +874,8 @@ class AssistantWorker(QObject):
                 self._state(AssistantState.ERROR, "Cerveau agent indisponible")
             return True
         except Exception as exc:
+            trace.finish((), error=type(exc).__name__)
+            self._previous_conversation_trace = trace
             self.log_line.emit("[MISSION] runtime_paused error_type=" + type(exc).__name__)
             self._emit_operator_model()
             self._deliver_reply("L'execution est suspendue. Je ne relance aucune action incertaine; consultez la mission avant toute reprise.")
@@ -870,6 +888,8 @@ class AssistantWorker(QObject):
             if reserved:
                 control.finish_coordination()
 
+        trace.finish(turn.actions)
+        self._previous_conversation_trace = trace
         self._emit_operator_model()
         self._shadow_observe(
             user_text,
