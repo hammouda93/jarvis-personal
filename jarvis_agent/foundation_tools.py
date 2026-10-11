@@ -329,7 +329,8 @@ class FoundationToolAdapter:
                 item for item in tools
                 if item["function"]["name"] not in hidden
             ]
-            if self.semantic_memory_engine is not None:
+            if (self.semantic_memory_engine is not None
+                    or (tool_mode and enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED"))):
                 tools.append(
                     self.delegate._ollama(
                         "semantic_memory_search",
@@ -575,7 +576,8 @@ class FoundationToolAdapter:
                 )
                 if tool_mode:
                     self._durable_memory_written_this_turn = True
-                    status = "raw_saved"
+                    status = ("raw_saved direct_agent_no_projection"
+                              if enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED") else "raw_saved")
                     if self.projection_worker is not None:
                         status = "raw_saved projection_queued"
                         self.projection_worker.start()
@@ -656,7 +658,7 @@ class FoundationToolAdapter:
                 )
                 payload["unindexed_count"] = len(pending)
                 payload["projection_issue_count"] = unresolved
-                if not payload["hits"] and unresolved:
+                if not payload["hits"] and unresolved and self.semantic_memory_engine is not None:
                     payload["status"] = "index_incomplete"
                 # Guard against a model-invented year when the user only
                 # named day/month. Do not silently invent another event or
@@ -677,7 +679,9 @@ class FoundationToolAdapter:
                         payload.update(ambiguity)
             elif (
                 name == "semantic_memory_search"
-                and self.semantic_memory_engine is not None
+                and (self.semantic_memory_engine is not None
+                     or (memory_agent_tools_enabled()
+                         and enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED")))
             ):
                 query_text = str(args.get("query", "")).strip()
                 if not query_text:
@@ -719,7 +723,12 @@ class FoundationToolAdapter:
                             for item in matched
                         ],
                         "read_only": True,
-                        **self.memory.projection_coverage(self.semantic_memory_engine.parser_version),
+                        **(self.memory.projection_coverage(self.semantic_memory_engine.parser_version)
+                           if self.semantic_memory_engine is not None else {
+                               "coverage": "raw_direct",
+                               "projection_required": False,
+                               "projection_issue_count": 0,
+                           }),
                         **({"projection_queue": self.projection_worker.queue.status()}
                            if self.projection_worker is not None else {}),
                     }
