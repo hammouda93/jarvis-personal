@@ -50,6 +50,35 @@ def recoverable_discovery(actions) -> dict | None:
     }
 
 
+_MEMORY_READ_TOOLS = frozenset({
+    "semantic_memory_search", "semantic_memory_inspect",
+    "recall_information",
+})
+
+
+def explicit_memory_read_not_attempted(user_text: str, actions) -> bool:
+    """Explicit source-retrieval request needs actual source evidence.
+
+    This concerns a generic data source (persistent memory), never specific
+    stored values, user names, slots or entities. A failed read counts as
+    attempted; the agent can then report unavailable evidence honestly.
+    """
+    request = _plain(user_text)
+    if not re.search(r"\b(?:memoire|souvenir|souvenirs|memory)\b", request):
+        return False
+    if not re.search(
+        r"\b(?:retrouve|retrouver|recherche|rechercher|cherche|chercher|"
+        r"consulte|consulter|lis|lire|affiche|afficher|montre|montrer|"
+        r"recupere|recuperer|recall|read|find|search|inspect)\b",
+        request,
+    ):
+        return False
+    return not any(
+        getattr(action, "name", "") in _MEMORY_READ_TOOLS
+        for action in actions
+    )
+
+
 _MUTATION_TOOLS = frozenset({
     "open_application", "open_file", "open_url", "close_window", "close_tab",
     "click_ui_element", "write_ui_element", "press_key",
