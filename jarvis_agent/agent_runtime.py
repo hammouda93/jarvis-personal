@@ -947,6 +947,33 @@ def _result_selection_action_seen(
     return False
 
 
+def _compound_result_selection_verified(
+    actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
+) -> bool:
+    """Separate search submission from selection in compound browser missions.
+
+    A single click that submits a just-entered query must not count as the
+    later result selection. This uses only chronological tool evidence, not
+    a site-specific URL, CSS selector or button label.
+    """
+    wrote_query = False
+    submitted = False
+    for action in actions:
+        if not action.success:
+            continue
+        evidence = _action_detail_dict(action)
+        if action.name == "browser_write" and evidence.get("verified") is True:
+            wrote_query = True
+        elif wrote_query and action.name in {"browser_press", "browser_click"}:
+            if not submitted:
+                submitted = bool(evidence.get("dispatched")
+                                 and evidence.get("post_observation"))
+            elif (action.name == "browser_click"
+                  and evidence.get("verified") is True):
+                return True
+    return False
+
+
 def _browser_result_selection_verified(
     actions: list[AgentActionResult] | tuple[AgentActionResult, ...],
 ) -> bool:
@@ -1121,6 +1148,10 @@ def _browser_verified_fast_completion(
         return False
 
     if _requests_result_selection(user_text):
+        if _requests_open_and_search(user_text) and any(
+            a.success and a.name == "browser_write" for a in actions
+        ):
+            return _compound_result_selection_verified(actions)
         return last_browser.name == "browser_click"
 
     if _requests_ui_submission(user_text):
@@ -3833,6 +3864,9 @@ class GroqResponsesAgent:
         ui_verification_required = False
         goal_completion_repair_attempted = False
         mission_proof_repair_attempted = False
+        discovery_repair_attempted = False
+        final_observation_repair_attempted = False
+        explicit_memory_repair_attempted = False
         close_recovery_required = False
         close_recovery_attempted = False
         pending_ui_action: dict[str, Any] | None = None
@@ -3941,7 +3975,14 @@ class GroqResponsesAgent:
 
                 if (
                     _requests_result_selection(user_text)
-                    and not _result_selection_action_seen(actions)
+                    and (
+                        not _result_selection_action_seen(actions)
+                        or (
+                            _requests_open_and_search(user_text)
+                            and any(a.success and a.name == "browser_write" for a in actions)
+                            and not _compound_result_selection_verified(actions)
+                        )
+                    )
                     and not browser_result_selection_repair_attempted
                     and round_index < settings.agent_max_tool_rounds
                 ):
@@ -4003,6 +4044,81 @@ class GroqResponsesAgent:
                     browser_submit_repair_attempted = True
                     if log:
                         log("[AGENT] repair=verified_browser_submit_required")
+                    continue
+
+                # If the user explicitly requested a persistent source
+                # lookup, a text-only model assertion is not a retrieval.
+                # The safeguard is generic across mixed browser/desktop turns.
+                from .mission_reasoning_v10i import explicit_memory_read_not_attempted
+                if (explicit_memory_read_not_attempted(user_text, actions)
+                        and not explicit_memory_repair_attempted
+                        and round_index < settings.agent_max_tool_rounds):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "EXPLICIT_MEMORY_READ_PENDING: The original mission "
+                            "asked to retrieve facts from persistent memory, but "
+                            "no memory read tool has been called. Use the exposed "
+                            "memory read tool, or request its capability schema "
+                            "if hidden. Never invent remembered content. Do not "
+                            "redo already verified external actions."
+                        ),
+                    })
+                    explicit_memory_repair_attempted = True
+                    if log:
+                        log("[MISSION] recovery=explicit_memory_read")
+                    continue
+
+                # A failed action can still produce trusted discovery data.
+                # Give the reasoning model one chance to use that evidence,
+                # rather than incorrectly declaring the capability missing.
+                from .mission_reasoning_v10i import (
+                    recoverable_discovery,
+                    post_mutation_observation_missing,
+                )
+                recovery = recoverable_discovery(actions)
+                if (recovery and not discovery_repair_attempted
+                        and round_index < settings.agent_max_tool_rounds):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "TOOL_DISCOVERY_FOLLOWUP (observation only, not permission): "
+                            + json.dumps(recovery, ensure_ascii=False) +
+                            " Do not claim the tool is unavailable; preserve the "
+                            "original goal. A new tool call still requires the "
+                            "existing runtime permissions and fresh targets."
+                        ),
+                    })
+                    discovery_repair_attempted = True
+                    if log:
+                        log("[MISSION] recovery=grounded_discovery")
+                    continue
+
+                # A pre-mutation inventory cannot verify a later effect.
+                if (post_mutation_observation_missing(user_text, actions)
+                        and not final_observation_repair_attempted
+                        and round_index < settings.agent_max_tool_rounds):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "FINAL_OBSERVATION_PENDING: the user explicitly "
+                            "requested a verification after the last change. "
+                            "An earlier observation does not prove that state. "
+                            "Perform a fresh read/verify with existing tools; "
+                            "do not repeat the successful mutation. If the "
+                            "relevant tool is hidden, discover its schema. "
+                            "If proof is unavailable, report it accurately."
+                        ),
+                    })
+                    final_observation_repair_attempted = True
+                    if log:
+                        log("[MISSION] recovery=post_mutation_observation")
                     continue
 
                 missing_capabilities = (
@@ -4261,6 +4377,30 @@ class GroqResponsesAgent:
                         "avant tout nouvel envoi pour éviter un doublon."
                     )
 
+                # An explicit persistent-memory lookup requires a read,
+                # not an answer inferred or fabricated from unrelated tools.
+                from .mission_reasoning_v10i import explicit_memory_read_not_attempted
+                if explicit_memory_read_not_attempted(user_text, actions):
+                    text = (
+                        "La consultation de mémoire persistante demandée "
+                        "n'a pas été effectuée. Je ne peux pas attribuer de "
+                        "souvenir sans preuve de lecture."
+                    )
+                    if log:
+                        log("[MISSION] explicit_memory_read_missing")
+
+                # Do not claim an explicitly requested final verification
+                # when the last state observation predates the last mutation.
+                from .mission_reasoning_v10i import post_mutation_observation_missing
+                if post_mutation_observation_missing(user_text, actions):
+                    text = (
+                        "Des actions ont été exécutées, mais la vérification "
+                        "finale demandée après la dernière modification n'a "
+                        "pas été obtenue. L'objectif complet reste non vérifié."
+                    )
+                    if log:
+                        log("[MISSION] final_verification_missing")
+
                 # A model response is not evidence that it performed an
                 # action. An intermediate UI click is also not proof that a
                 # terminal workflow (installation/deployment/etc.) finished.
@@ -4355,6 +4495,21 @@ class GroqResponsesAgent:
                     # model and inspect the real foreground window instead.
                     arguments = {}
 
+                # A model suggestion of "new_instance=true" does not create
+                # user authorization to duplicate an application. Preserve
+                # the default reuse contract unless the request was explicit.
+                if name == "open_application" and arguments.get("new_instance") is True:
+                    request = normalize(user_text)
+                    explicit_duplicate = re.search(
+                        r"\b(?:nouvelle|nouvel|autre|seconde|deuxieme|"
+                        r"additional|another|second|new)\s+"
+                        r"(?:instance|fenetre|window)\b",
+                        request,
+                    )
+                    if not explicit_duplicate:
+                        arguments["new_instance"] = False
+                        if log:
+                            log("[MISSION] policy=reuse_existing_application_instance")
                 if log:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
                 if empty_precondition_pending and name in {"write_ui_element", "computer_write"}:

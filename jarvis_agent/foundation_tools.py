@@ -403,8 +403,10 @@ class FoundationToolAdapter:
             legacy = {"list_browser_pages", "inspect_browser_page", "activate_browser_page",
                       "write_browser_element", "click_browser_element", "press_browser_element",
                       "scroll_browser_element", "open_web_search", "close_tab"}
-            tools = [t for t in tools if t["function"]["name"] not in legacy and
-                     not (self.browser_mode and t["function"]["name"] in _OS_MUTATIONS)]
+            # Tool visibility is not an execution permission. Keep desktop
+            # schemas available to reason across mixed browser/Windows goals;
+            # execute() still rejects OS mutations while browser scoped.
+            tools = [t for t in tools if t["function"]["name"] not in legacy]
             for op, (fields, required) in _BROWSER_FIELDS.items():
                 tools.append(self.delegate._ollama(
                     "browser_" + op,
@@ -859,7 +861,22 @@ class FoundationToolAdapter:
                         if route(self.current_user_text).name.startswith("browser."):
                             raise RuntimeError("browser_mission_requires_browser_navigate")
                     self.browser_mode = False
-                return self.delegate.execute(name, arguments, approved=approved)
+                result = self.delegate.execute(name, arguments, approved=approved)
+                if (result.success and name in {"list_windows", "inspect_active_window"}
+                        and self.browser_mode):
+                    # An actual desktop observation can ground a change of
+                    # scope; a string guessed by the model cannot. Preserve
+                    # browser scope if the *user* explicitly asked for tabs
+                    # or web page content.
+                    import re
+                    browser_objective = re.search(
+                        r"https?://|\b(?:chrome|navigateur|browser|onglet|onglets|"
+                        r"tab|tabs|page web|site web)\b",
+                        self.current_user_text, re.I,
+                    )
+                    if not browser_objective:
+                        self.browser_mode = False
+                return result
             browser_mutating_names = {
                 "open_url", "browser_navigate", "browser_click", "browser_write",
                 "browser_select", "browser_press", "browser_back",

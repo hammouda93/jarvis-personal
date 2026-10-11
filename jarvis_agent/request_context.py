@@ -15,6 +15,16 @@ _CONTEXT_TOOLS = {"request_tool_capabilities", "read_observation_evidence"}
 _ROOTS = {"open_file", "open_folder", "open_application", "list_windows",
           "browser_list_tabs", "browser_get_active_tab", "get_current_time",
           "mission_checkpoint", "return_to_standby", "reset_conversation_context"}
+# Essential read/verify tools and the generic Windows close primitive must not
+# disappear when a conversational mission crosses browser, desktop and memory.
+# This is schema exposure only; original execution scopes and confirmation
+# policy remain authoritative.
+_CROSS_DOMAIN = {
+    "inspect_active_window", "inspect_interface", "close_window",
+    "semantic_memory_search", "semantic_memory_inspect",
+    "recall_information", "computer_verify", "computer_observe",
+    "browser_observe_dom", "browser_verify",
+}
 
 EFFICIENT_SYSTEM_POLICY = """Tu es Jarvis, assistant personnel generaliste Windows. Reponds en francais, naturellement et brievement; ne revele pas le raisonnement interne. Converse sans outil si aucune action/preuve externe n'est necessaire.
 MISSION: distingue objectif positif, resultat attendu, conditions, interdictions, permissions et etapes facultatives. Une interdiction n'est jamais une action demandee. Conserve les objectifs, contraintes, faits utiles pour cette mission, actions executees, preuves et effets incertains. Termine toutes les etapes demandees, pas seulement une action reussie. N'invente ni capacite, source, resultat ni succes. Une confirmation d'un effet precedent ne demande pas de le repeter. Une clarification corrige le contexte sans relancer les effets deja prouves. Pose une question seulement si un choix essentiel est ambigu ou une permission manque.
@@ -61,7 +71,7 @@ class RequestContext:
         self.available = available
         if self.selected is None:
             def relevant(name):
-                if name in _ROOTS:
+                if name in _ROOTS or name in _CROSS_DOMAIN:
                     return True
                 if browser_mode:
                     return name.startswith("browser_") or name == "open_url"
@@ -71,7 +81,7 @@ class RequestContext:
             if not selected:
                 selected = available
         else:
-            selected = (self.selected | _ROOTS) & available
+            selected = (self.selected | _ROOTS | _CROSS_DOMAIN) & available
         result = [s for s in schemas if s.get("function", {}).get("name") in selected or s.get("type") != "function"]
         result.append(_schema("request_tool_capabilities",
             "Local read-only tool selection, NOT an authorization or action. Choose needed names from the available enum to expose their original schemas on the next request, including another domain. Hidden tools are not missing capabilities. Existing execution guards still apply.",
