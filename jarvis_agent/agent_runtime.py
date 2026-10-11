@@ -19,6 +19,7 @@ from .intent_guards import (
     is_explicit_memory_write_request,
 )
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
+from .runtime_identity import annotate_provider_request, google_tool_call_extra
 from .tools import normalize
 
 
@@ -2669,6 +2670,7 @@ class GroqResponsesAgent:
         self.last_effective_provider = ""
         self.last_effective_credential = ""
         self.last_reported_usage = None
+        self.last_effective_model = ""
 
         from .provider_rate_budget import ProviderRateGate
         self._provider_rate_gate = ProviderRateGate()
@@ -3157,6 +3159,14 @@ class GroqResponsesAgent:
                 request_messages, archived_chars = context.compact(request_messages)
                 tool_definitions = self._tool_definitions(ms_football_only=ms_football_only, msf_tool_names=msf_tool_names)
             request_messages, saved_chars = compact_duplicate_observations(request_messages)
+            label = self.provider_name
+            if (label == "cerebras" and settings.cerebras_secondary_api_key
+                    and settings.cerebras_secondary_api_key != settings.cerebras_api_key
+                    and self.api_key == settings.cerebras_secondary_api_key):
+                label = "cerebras-secondary"
+            request_messages = annotate_provider_request(
+                request_messages, provider=label, model=self.model,
+            )
             context_chars = len(
                 json.dumps(request_messages, ensure_ascii=False, separators=(",", ":"))
             )
@@ -3204,9 +3214,10 @@ class GroqResponsesAgent:
                 f"{self.provider_name} n'est pas joignable: {detail}"
             ) from exc
 
-    def _note_model_response(self, response, provider: str, credential: str = "") -> None:
+    def _note_model_response(self, response, provider: str, credential: str = "", *, model: str | None = None) -> None:
         self.last_effective_provider = provider
         self.last_effective_credential = credential
+        self.last_effective_model = model or self.model
         usage = getattr(response, "usage", None)
         self.last_reported_usage = ({key: value if type(value) is int and value >= 0 else None
             for key, value in (
@@ -3222,8 +3233,12 @@ class GroqResponsesAgent:
             "content": str(getattr(message, "content", "") or ""),
         }
         if tool_calls:
-            item["tool_calls"] = [
-                {
+            # Preserve opaque provider metadata on the tool call where it was
+            # returned. Gemini 3.x requires its thought_signature unchanged in
+            # the subsequent request after a function call. Do not log it.
+            item["tool_calls"] = []
+            for call in tool_calls:
+                wire_call = {
                     "id": str(call.id),
                     "type": "function",
                     "function": {
@@ -3231,8 +3246,10 @@ class GroqResponsesAgent:
                         "arguments": str(call.function.arguments or "{}"),
                     },
                 }
-                for call in tool_calls
-            ]
+                extra = google_tool_call_extra(call)
+                if extra is not None:
+                    wire_call["extra_content"] = extra
+                item["tool_calls"].append(wire_call)
         self._messages.append(item)
         return tool_calls
 
@@ -3246,6 +3263,44 @@ class GroqResponsesAgent:
             parsed = json.loads(result.detail) if result.detail else {}
         except (TypeError, ValueError, json.JSONDecodeError):
             parsed = result.detail
+
+        # Some Windows launchers return ranked discovery candidates when the
+        # requested name could not be resolved. The result is *not* a launch
+        # confirmation: surface the observed names without guessing or
+        # executing an ambiguous candidate automatically.
+        if name == "open_application" and not result.success and isinstance(parsed, list):
+            candidates = [
+                {
+                    key: item[key]
+                    for key in ("name", "source", "score", "launch_kind")
+                    if key in item
+                }
+                for item in parsed[:5]
+                if isinstance(item, dict) and isinstance(item.get("name"), str)
+                and item.get("name", "").strip()
+            ]
+            if candidates:
+                parsed = {
+                    "status": "not_launched_candidate_discovery",
+                    "candidates": candidates,
+                    "next_step": (
+                        "Do not repeat the failed name or use new_instance to retry. "
+                        "When one observed candidate unambiguously matches the user's "
+                        "intent, call open_application with its exact observed name. "
+                        "Otherwise ask which application is intended. "
+                        "Do not report a successful launch without tool evidence."
+                    ),
+                }
+        elif name == "list_applications" and isinstance(parsed, dict):
+            candidates = parsed.get("candidates")
+            if isinstance(candidates, list) and candidates:
+                parsed = dict(parsed)
+                parsed["next_step"] = (
+                    "Use the exact observed candidate name in open_application "
+                    "only when the user's intent is unambiguous. "
+                    "If candidates are ambiguous, ask instead. Discovery alone "
+                    "is not proof that an application has been launched."
+                )
 
         from .memory_evidence import MEMORY_READ_TOOLS, compact_memory_payload
         if name in MEMORY_READ_TOOLS and isinstance(parsed, dict):
@@ -3776,6 +3831,11 @@ class GroqResponsesAgent:
                 log(
                     f"[PERF] {self.provider_name}_round={round_index} "
                     f"seconds={time.perf_counter() - started:.2f}"
+                )
+                log(
+                    f"[AGENT_MODEL] effective_provider={self.last_effective_provider or self.provider_name} "
+                    f"model={self.last_effective_model or self.model} "
+                    f"credential={self.last_effective_credential or 'unknown'}"
                 )
 
             if not getattr(response, "choices", None):
@@ -4972,6 +5032,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             request_messages, archived_chars = context.compact(request_messages)
             print(f"[AGENT_CONTEXT] provider=groq_fallback archived_chars={archived_chars}")
         request_messages, saved_chars = compact_duplicate_observations(request_messages)
+        request_messages = annotate_provider_request(
+            request_messages, provider="groq-fallback", model=settings.groq_agent_model,
+        )
         if saved_chars:
             print(f"[AGENT_CONTEXT] provider=groq_fallback deduplicated_chars={saved_chars}")
         # Bounded fallback only for read-only personal memory queries.
@@ -5000,6 +5063,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         )
         if not allowed and context is not None and context.enabled:
             request_messages, saved_chars = context.compact(self._messages_for_request(), retain_latest=1, preview_chars=80)
+            request_messages = annotate_provider_request(
+                request_messages, provider="groq-fallback", model=settings.groq_agent_model,
+            )
             request_tools = context.fallback_tools(self._tool_definitions(
                 ms_football_only=ms_football_only, msf_tool_names=msf_tool_names), request_messages)
             if isinstance(tool_choice, dict):
@@ -5034,7 +5100,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             )
             from .active_mission_supervisor import record_model_usage
             record_model_usage(getattr(response, "usage", None), "groq")
-            self._note_model_response(response, "groq", "groq_fallback")
+            self._note_model_response(response, "groq", "groq_fallback", model=settings.groq_agent_model)
             return response
         except Exception as exc:
             from .active_mission_supervisor import SupervisorStopped
@@ -5045,6 +5111,119 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             raise AgentRuntimeUnavailable(
                 f"Fallback Groq GPT-OSS indisponible: {exc}"
             ) from exc
+
+    def _chat_via_configured_brains(
+        self,
+        *,
+        tool_choice: Any,
+        ms_football_only: bool,
+        msf_tool_names: set[str] | None,
+    ):
+        """Optional fallback after Cerebras Primary, Secondary and Groq.
+
+        Reuses the *same* mission tool/result history. No tool is dispatched
+        here; the native agent dispatches only after response validation.
+        """
+        from .brain_cascade import BrainConfigError, load_extra_brains, resolved_api_key
+        from .provider_rate_budget import groq_fallback_preflight
+        from .request_compaction import compact_duplicate_observations
+        try:
+            brains = tuple(brain for brain in load_extra_brains() if brain.enabled)
+        except BrainConfigError as exc:
+            print("[AGENT] configured brain registry invalid: " + str(exc))
+            raise AgentRuntimeUnavailable("configured_brain_registry_invalid") from exc
+        if not brains:
+            raise AgentRuntimeUnavailable("no_configured_additional_brains")
+
+        # Private semantic recall cannot be sent automatically to an
+        # unreviewed extra cloud provider merely due to upstream 429/402.
+        if getattr(self, "_memory_scope_active", False):
+            raise AgentRuntimeUnavailable("configured_brain_cloud_memory_scope_not_authorized")
+
+        original = self._messages_for_request()
+        context = getattr(self, "request_context", None)
+        if context is not None:
+            original, _ = context.compact(original)
+        base_messages, _ = compact_duplicate_observations(original)
+        base_tools = self._tool_definitions(
+            ms_football_only=ms_football_only, msf_tool_names=msf_tool_names,
+        )
+        from openai import OpenAI
+        last_error = None
+        for brain in brains:
+            # Compaction for one model's limit must not silently weaken the
+            # context or capabilities offered to the next model.
+            request_messages = annotate_provider_request(
+                base_messages, provider=brain.provider, model=brain.model,
+            )
+            request_tools = list(base_tools)
+            gate_id = "brain:" + brain.id
+            if not self._provider_rate_gate.available(gate_id):
+                continue
+            key = resolved_api_key(brain)
+            if not key:
+                print("[AGENT] configured brain " + brain.id + " skipped: no credential")
+                continue
+            allowed, estimated, budget = groq_fallback_preflight(
+                request_messages, request_tools, limit_tokens=brain.max_estimated_tokens,
+                completion_tokens=brain.completion_tokens,
+            )
+            if not allowed and context is not None and getattr(context, "enabled", False):
+                compacted, _ = context.compact(
+                    self._messages_for_request(), retain_latest=1, preview_chars=80,
+                )
+                compacted_tools = context.fallback_tools(request_tools, compacted)
+                if isinstance(tool_choice, dict):
+                    required_name = (tool_choice.get("function") or {}).get("name")
+                    for definition in base_tools:
+                        if (definition.get("function") or {}).get("name") == required_name:
+                            if definition not in compacted_tools:
+                                compacted_tools.append(definition)
+                            break
+                allowed, estimated, budget = groq_fallback_preflight(
+                    compacted, compacted_tools, limit_tokens=brain.max_estimated_tokens,
+                    completion_tokens=brain.completion_tokens,
+                )
+                if allowed:
+                    request_messages = annotate_provider_request(
+                        compacted, provider=brain.provider, model=brain.model,
+                    )
+                    request_tools = compacted_tools
+            if not allowed:
+                print("[AGENT_BUDGET] configured_brain_skipped id=" + brain.id
+                      + " estimated_tokens=" + str(estimated) + " budget=" + str(budget))
+                continue
+            try:
+                from .active_mission_supervisor import reserve_model_request, record_model_usage
+                reserve_model_request()
+                client = OpenAI(
+                    api_key=key, base_url=brain.base_url,
+                    timeout=brain.timeout_s, max_retries=0,
+                )
+                kwargs = dict(
+                    model=brain.model, messages=request_messages,
+                    **{brain.completion_parameter: brain.completion_tokens},
+                )
+                if request_tools:
+                    kwargs.update(tools=request_tools, tool_choice=tool_choice)
+                response = client.chat.completions.create(**kwargs)
+                self._check_complete_response(response)
+                record_model_usage(getattr(response, "usage", None), brain.provider)
+                self._note_model_response(response, brain.provider, brain.id, model=brain.model)
+                self.last_effective_credential = "brain:" + brain.id
+                print("[AGENT] configured brain succeeded id=" + brain.id)
+                return response
+            except Exception as exc:
+                from .active_mission_supervisor import SupervisorStopped
+                if isinstance(exc, SupervisorStopped):
+                    raise
+                self._provider_rate_gate.note_failure(gate_id, exc)
+                last_error = type(exc).__name__
+                print("[AGENT] configured brain failed id=" + brain.id
+                      + " error_type=" + last_error)
+        raise AgentRuntimeUnavailable(
+            "configured_brains_unavailable" + (": " + last_error if last_error else "")
+        )
 
     def _chat(
         self,
@@ -5109,6 +5288,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     self.base_url = primary_base_url
                     self._client = primary_client
 
+            groq_error = None
             if (
                 settings.cerebras_fallback_to_groq
                 and settings.groq_api_key
@@ -5117,12 +5297,34 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     "[AGENT] Cerebras stalled/unavailable; "
                     "trying Groq GPT-OSS fallback."
                 )
-                return self._chat_via_groq_fallback(
-                    tool_choice=tool_choice,
-                    ms_football_only=ms_football_only,
-                    msf_tool_names=msf_tool_names,
-                )
+                try:
+                    return self._chat_via_groq_fallback(
+                        tool_choice=tool_choice,
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    )
+                except AgentRuntimeUnavailable as exc:
+                    groq_error = exc
+                    print("[AGENT] Groq unavailable; checking configured extra brains.")
 
+            from .brain_cascade import load_extra_brains, BrainConfigError
+            try:
+                has_extra = any(brain.enabled for brain in load_extra_brains())
+            except BrainConfigError as exc:
+                print("[AGENT] extra brain configuration error: " + str(exc))
+                has_extra = False
+            if has_extra:
+                try:
+                    return self._chat_via_configured_brains(
+                        tool_choice=tool_choice,
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    )
+                except AgentRuntimeUnavailable as exc:
+                    print("[AGENT] configured brain chain unavailable: " + str(exc))
+
+            if groq_error is not None:
+                raise groq_error
             if secondary_error is not None:
                 raise secondary_error
             raise primary_error

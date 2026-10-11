@@ -978,6 +978,13 @@ class JarvisWindow(QWidget):
         self.mcp_scroll.setStyleSheet("QScrollArea {background:#081c2c;border:0;}")
         self.mcp_scroll.setWidget(self.operator_console.mcp_panel)
         self.side_tabs.addTab(self.mcp_scroll, "MCP")
+        from .brain_manager_qt import BrainManagerPanel
+        self.brain_manager = BrainManagerPanel(self)
+        self.brain_scroll = QScrollArea(self)
+        self.brain_scroll.setWidgetResizable(True)
+        self.brain_scroll.setFrameShape(QFrame.NoFrame)
+        self.brain_scroll.setWidget(self.brain_manager)
+        self.side_tabs.addTab(self.brain_scroll, "CERVEAUX")
         self.canvas.setMinimumSize(240, 100)
 
         title = QLabel("PERSONAL JARVIS")
