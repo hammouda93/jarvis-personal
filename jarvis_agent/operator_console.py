@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import re
 from collections import deque
 
 from PySide6.QtCore import Qt, Signal
@@ -105,6 +106,7 @@ class OperatorConsole(QFrame):
         self._last_snapshot = {}
         self._render_cache: dict[str, str] = {}
         self._live_events: deque[dict] = deque(maxlen=36)
+        self._mission_log_events: deque[str] = deque(maxlen=100)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(13, 13, 13, 13)
@@ -288,9 +290,18 @@ class OperatorConsole(QFrame):
         event_list.addWidget(summary)
         self.operational_preferences = OperationalPreferencesPanel(self)
         self.operational_preferences.requested.connect(self.skill_requested.emit)
-        event_list.addWidget(self.operational_preferences)
+        # The user sends objectives through the conversation. Plan editing is
+        # diagnostics-only, never a required step to start a normal mission.
+        self.advanced_toggle = QPushButton("Diagnostics techniques (facultatif)")
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setChecked(False)
+        self.advanced_toggle.toggled.connect(controls_box.setVisible)
+        event_list.addWidget(self.mcp_panel)
+        event_list.addWidget(self.advanced_toggle)
         event_list.addWidget(controls_box)
+        controls_box.setVisible(False)
         for key, label in [
+            ("mission_log", "◈   JOURNAL DE MISSION EN DIRECT"),
             ("missions", "◉   MISSIONS / OBJECTIFS"),
             ("tasks", "◇   ÉTAPES / SUPERVISION"),
             ("supervisor", "◉   CONTRÔLE SÉMANTIQUE / PREUVES"),
@@ -318,9 +329,12 @@ class OperatorConsole(QFrame):
             group_layout.addWidget(view)
             event_list.addWidget(group)
         event_list.addWidget(self.active_panel)
+        self.active_panel.setVisible(False)
+        self.advanced_toggle.toggled.connect(self.active_panel.setVisible)
         self.skills_panel = SkillsPanel(self)
         self.skills_panel.requested.connect(self.skill_requested.emit)
-        event_list.addWidget(self.skills_panel)
+        # Skills/Learning remain implemented but are postponed in the user UI.
+        # They are not deleted and retain their OFF-by-default configuration.
         event_list.addStretch(1)
         scroll.setWidget(content)
         layout.addWidget(scroll, 1)
@@ -670,6 +684,32 @@ class OperatorConsole(QFrame):
             f"  ·  protections : {data.get('guarded_visible', 0)}"
         )
         self.update_model(self._last_model)
+
+    def record_mission_log(self, line: str) -> None:
+        """Show bounded, escaped mission receipts without leaking tool arguments.
+
+        Raw provider outputs and tool argument bodies are never copied here.
+        This local projection is not itself a goal-completion certificate.
+        """
+        value = str(line or "").strip()
+        if value.startswith("[AGENT_TOOL]"):
+            match = re.match(r"^\\[AGENT_TOOL\\] (?:call|result)=[A-Za-z0-9_.-]{1,100}(?: success=(?:True|False))?", value)
+            if match is None:
+                return
+            value = match.group(0)
+        elif not value.startswith(("[MISSION_AUTO]", "[MISSION_TRACE]", "[MISSION_STEP]",
+                                   "[MISSION_EVIDENCE]", "[MISSION_CONTROL]", "[MISSION]")):
+            return
+        # The mission objective is intentionally visible only in the local UI;
+        # trim every line and prevent accidental key/token display.
+        value = re.sub(r"(?i)(bearer\\s+)[A-Za-z0-9._-]+", r"\\1[masqué]", value)
+        value = re.sub(r"(?i)(api[_-]?key|token|secret)=\\S+", r"\\1=[masqué]", value)
+        self._mission_log_events.appendleft(value[:550])
+        html_lines = "".join(
+            '<p style="margin-bottom:5px">' + _escape(item, 550) + '</p>'
+            for item in self._mission_log_events
+        )
+        self._render_html("mission_log", html_lines)
 
     def update_live_event(self, event: dict) -> None:
         """Local Qt-worker signal; shows real activity even with shadow OFF."""

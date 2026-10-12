@@ -5598,7 +5598,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         if error:
             raise AgentRuntimeUnavailable(error)
 
-def build_agent_runtime() -> AgentRuntime:
+def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
 
     tools = NATIVE_TOOLS
@@ -5748,7 +5748,7 @@ def build_agent_runtime() -> AgentRuntime:
     # authoritative. No tool is dispatched twice, and pending outcomes are
     # never resumed automatically after a restart.
     import os
-    if active_supervision or os.getenv("JARVIS_RUNTIME_CONVERGENCE_ENABLED", "0").strip().lower() in (
+    if active_supervision or unified_missions or os.getenv("JARVIS_RUNTIME_CONVERGENCE_ENABLED", "0").strip().lower() in (
         "1", "true", "yes", "on",
     ):
         from .runtime_convergence import LiveMissionContinuityRuntime

@@ -129,7 +129,7 @@ class AssistantWorker(QObject):
         self._stop = threading.Event()
         self._stt = build_stt()
         self._tts = ElevenLabsTTS()
-        self._agent = build_agent_runtime()
+        self._agent = build_agent_runtime(unified_missions=True)
         self._conversation_language = "fr"
         self._pending_direct_follow_up = ""
         self._previous_conversation_trace = None
@@ -857,6 +857,14 @@ class AssistantWorker(QObject):
                 )
                 return True
 
+        # A single mission entry: complex work attaches to the existing durable
+        # runtime automatically. Simple commands retain their cheap direct path.
+        from .auto_mission import prepare as prepare_automatic_mission
+        admission = prepare_automatic_mission(
+            self._agent, user_text, log=self.log_line.emit,
+        )
+        if admission.track:
+            self._pending_direct_follow_up = ""
         resolved_intent = legacy_intent or route(user_text)
         if (
             not getattr(self._agent, "active_mission_id", None)
