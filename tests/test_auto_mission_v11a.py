@@ -31,7 +31,8 @@ class AutomaticMissionTests(unittest.TestCase):
         agent.begin_mission.assert_called_once()
         agent.generate_semantic_plan.assert_called_once_with()
         self.assertTrue(any("PLAN_DRAFTED" in event for event in events))
-        self.assertFalse(hasattr(agent, "execute_called"))
+        agent.run.assert_not_called()
+        agent.approve_supervised_plan.assert_not_called()
 
     def test_existing_mission_keeps_single_owner(self):
         agent = Mock()

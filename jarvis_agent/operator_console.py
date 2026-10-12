@@ -693,7 +693,7 @@ class OperatorConsole(QFrame):
         """
         value = str(line or "").strip()
         if value.startswith("[AGENT_TOOL]"):
-            match = re.match(r"^\\[AGENT_TOOL\\] (?:call|result)=[A-Za-z0-9_.-]{1,100}(?: success=(?:True|False))?", value)
+            match = re.match(r"^\[AGENT_TOOL\] (?:call|result)=[A-Za-z0-9_.-]{1,100}(?: success=(?:True|False))?", value)
             if match is None:
                 return
             value = match.group(0)
@@ -702,8 +702,8 @@ class OperatorConsole(QFrame):
             return
         # The mission objective is intentionally visible only in the local UI;
         # trim every line and prevent accidental key/token display.
-        value = re.sub(r"(?i)(bearer\\s+)[A-Za-z0-9._-]+", r"\\1[masqué]", value)
-        value = re.sub(r"(?i)(api[_-]?key|token|secret)=\\S+", r"\\1=[masqué]", value)
+        value = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._-]+", r"\1[masqué]", value)
+        value = re.sub(r"(?i)(api[_-]?key|token|secret)=\S+", r"\1=[masqué]", value)
         self._mission_log_events.appendleft(value[:550])
         html_lines = "".join(
             '<p style="margin-bottom:5px">' + _escape(item, 550) + '</p>'
