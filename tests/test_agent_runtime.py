@@ -841,6 +841,67 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("visible", result.text)
 
+    def test_active_browser_surface_survives_business_domain_tool_scope(self):
+        """Regression: business context must not hide controls in a live UI."""
+        from jarvis_agent.request_context import RequestContext
+
+        class MixedTools(FakeTools):
+            def __init__(self):
+                super().__init__()
+                self.browser_mode = True
+
+            def ollama_tools(self):
+                original = super().ollama_tools()
+                def make(name):
+                    return {"type": "function", "function": {
+                        "name": name, "description": name,
+                        "parameters": {"type": "object",
+                                       "properties": {},
+                                       "required": []}}}
+                return original + [
+                    make("browser_list_tabs"),
+                    make("browser_get_active_tab"),
+                    make("browser_observe_dom"),
+                    make("browser_find"),
+                    make("browser_click"),
+                    make("browser_verify"),
+                    make("msf_count_records"),
+                    make("msf_query_records"),
+                ]
+
+        tools = MixedTools()
+        agent = GroqResponsesAgent(tools)
+        context = RequestContext(enabled=True)
+        agent.request_context = context
+        names = lambda: {t["function"]["name"] for t in agent._tool_definitions(
+            ms_football_only=True,
+            msf_tool_names={"msf_count_records", "msf_query_records"},
+        ) if t.get("type") == "function"}
+
+        available = names()
+        for essential in (
+            "browser_observe_dom", "browser_find", "browser_click",
+            "browser_verify", "msf_count_records", "request_tool_capabilities",
+        ):
+            self.assertIn(essential, available)
+        # Changing the selection must not turn the surface into a DB-only pack.
+        context.select_tools({"names": ["browser_find", "browser_click"]})
+        self.assertIn("browser_click", names())
+        self.assertIn("msf_query_records", context.available)
+
+        # Feedback does not grant fresh browser mutations.
+        agent._feedback_only_turn = True
+        restricted = names()
+        self.assertIn("browser_observe_dom", restricted)
+        self.assertNotIn("browser_click", restricted)
+        self.assertNotIn("msf_describe_schema", restricted)
+
+        # Without any current browser scope, don't expose unrelated UI tools.
+        tools.browser_mode = False
+        context.begin_turn()
+        self.assertNotIn("browser_click", names())
+        self.assertIn("msf_count_records", names())
+
     def test_browser_grounding_is_not_an_execution_domain_policy(self):
         class BrowserScopeTools(FakeTools):
             def ollama_tools(self):

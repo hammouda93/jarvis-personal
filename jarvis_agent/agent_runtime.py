@@ -3079,7 +3079,29 @@ class GroqResponsesAgent:
                 != "type_text_active_window"
             ]
         if ms_football_only:
+            # A domain context only augments the available business tools.
+            # It must NOT erase the currently observed interaction surface:
+            # a follow-up asking to interact with a menu/button remains a
+            # browser/desktop action even if the page exposes a database API.
+            # This is based on active runtime scope, never on site/app names.
             allowed = set(msf_tool_names or ())
+            if bool(getattr(self.tools, "browser_mode", False)):
+                browser_surface_names = {
+                    str((item.get("function") or {}).get("name") or "")
+                    for item in tools
+                    if (
+                        str((item.get("function") or {}).get("name") or "").startswith("browser_")
+                        or str((item.get("function") or {}).get("name") or "") == "open_url"
+                    )
+                }
+                if self._feedback_only_turn:
+                    # Feedback about an action is not authorization for new
+                    # browser mutations, regardless of domain selection.
+                    browser_surface_names &= {
+                        "browser_list_tabs", "browser_get_active_tab",
+                        "browser_observe_dom", "browser_find", "browser_verify",
+                    }
+                allowed.update(browser_surface_names)
             allowed.update(
                 {
                     "reset_conversation_context",
