@@ -3443,8 +3443,11 @@ class AgentRuntimeTests(unittest.TestCase):
             ],
         )
 
+        # This case isolates a prohibited context reset. An actual
+        # imperative tab-close requires a real close_tab call, covered by
+        # separate browser contract tests.
         result = agent.run(
-            "Fermes l'onglet de MS Football dans Chrome."
+            "Parlons de l'onglet de MS Football dans Chrome."
         )
 
         self.assertNotIn(
