@@ -905,6 +905,8 @@ class AgentRuntimeTests(unittest.TestCase):
         tools.browser_mode = False
         context.begin_turn()
         self.assertNotIn("browser_click", names())
+        self.assertIn("msf_count_records", context.available)
+        context.select_tools({"names": ["msf_count_records"]})
         self.assertIn("msf_count_records", names())
 
     def test_browser_grounding_is_not_an_execution_domain_policy(self):
