@@ -484,6 +484,46 @@ class FoundationToolAdapter:
                     payload = self.browser.call(name[8:], **args)
                 self.browser_mode = True
 
+                # A zero-result search in the current DOM is not proof that
+                # a control doesn't exist or the app cannot do the task.
+                # Provide a SMALL fresh read-only inventory of actionable
+                # controls, with observed refs, so the model can decide whether
+                # to expand a menu, inspect another surface, or ask a question.
+                # No mutation or guessed selector is dispatched here.
+                if (name == "browser_find" and isinstance(payload, dict)
+                        and not payload.get("matches")
+                        and isinstance(args.get("tab_id"), int)):
+                    try:
+                        fresh = self.browser.observe_dom(args["tab_id"])
+                        candidates = [
+                            {
+                                "ref": item.get("ref"),
+                                "type": item.get("type"),
+                                "name": item.get("name") or item.get("aria_label")
+                                        or item.get("placeholder"),
+                                "region": item.get("region"),
+                                "writable": bool(item.get("writable")),
+                            }
+                            for item in (fresh.get("controls") or [])
+                            if isinstance(item, dict) and item.get("ref")
+                            and (item.get("actionable") or item.get("writable"))
+                            and (item.get("name") or item.get("aria_label")
+                                 or item.get("placeholder"))
+                        ][:18]
+                        payload = {
+                            **payload,
+                            "observation_id": fresh.get("observation_id"),
+                            "available_controls": candidates,
+                            "no_match_guidance": (
+                                "No exact match in the previous snapshot. "
+                                "Use only the fresh observed controls/refs; "
+                                "consider a collapsed menu or a different "
+                                "observed role. No click has occurred."
+                            ),
+                        }
+                    except Exception:
+                        pass
+
                 # A replace write is idempotent, so an unknown outcome can be
                 # recovered locally without risking a duplicate side effect:
                 # verify the fresh target value first, then retry at most once

@@ -3757,6 +3757,10 @@ class GroqResponsesAgent:
         self.last_reported_usage = None
         self.last_api_error_category = ""
         actions: list[AgentActionResult] = []
+        # Keep an in-memory, turn-scoped receipt for a model/provider failure
+        # that happens AFTER tools have already returned. This is evidence of
+        # past dispatch, not permission to rerun any action or proof of goal.
+        self._last_partial_actions = actions
         end_session = False
         should_exit = False
         failed_results: dict[str, AgentActionResult] = {}

@@ -38,3 +38,17 @@ Do not special-case YouTube or any application. A failed read-only sensor call i
 ## Generic cross-capability domain context (MS Football live finding)
 
 Real desktop logs showed an already open browser UI, but a business domain follow-up selected only database schemas and rejected `browser_find` / `browser_click` as unavailable. The cause was `_tool_definitions(ms_football_only=True)` discarding the actual browser capability surface, then the efficient context catalog offering only the now-filtered schemas. Fix the **generic contract**: a domain adds its business APIs while the already active browser scope retains DOM discovery and observation/click tools. Model instructions prioritize the observed UI for UI requests, while a data question still uses the business API. This does not target a specific site, menu label or URL. In feedback-only turns mutating browser tools remain hidden; all original approvals and dispatch safeguards remain intact.
+
+## Post-acceptance general recovery (2026-10-12)
+
+Live user logs showed a browser command successfully reaching a real page, but the
+following model request exhausted Cerebras quota, and the fallback budget rejected
+a lengthy transcript. A **model-only** `AgentRuntimeUnavailable` is now recorded
+as a resumable checkpoint with partial tool names if and only if no uncertain
+failed effect or unknown tool scope exists. A later user turn must first observe
+the current actual state; it must not replay the earlier side effect. Other
+exceptions (timeouts, transport uncertainty, storage issues) retain the BLOCKED
+safety gate. Zero-result DOM finds additionally return a short **fresh observed
+control inventory** without a click, instead of misleading Jarvis that a
+capability is missing. This does not solve API quota or deliver autonomous
+multi-turn scheduling by itself.

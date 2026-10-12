@@ -172,6 +172,40 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertEqual(ctx.proof_refs, ["independent-review-42"])
         self.assertIsNone(self.runtime.active_mission_id)
 
+    def test_provider_quota_pause_keeps_mission_resumable_without_replay(self):
+        from jarvis_agent.agent_runtime import AgentRuntimeUnavailable
+        mission_id = self.runtime.begin_mission("Browse and inspect")
+        self.delegate._last_partial_actions = [
+            SimpleNamespace(name="browser_press", success=True,
+                            detail='{"verified":true,"postcondition":"navigation_observed"}')
+        ]
+        self.delegate.error = AgentRuntimeUnavailable("429 quota")
+        with self.assertRaises(AgentRuntimeUnavailable):
+            self.runtime.run("Step 1")
+        paused = self.saved(mission_id)
+        self.assertEqual(paused.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(paused.pending_action.get("manual_review_required"))
+        self.assertTrue(paused.observed_state["provider_paused_needs_fresh_observation"])
+        self.assertEqual(self.runtime.graph_store.load(mission_id).nodes()[0].result[
+            "action_names"], ["browser_press"])
+        self.delegate.error = None
+        self.runtime.run("Continue using the observed state")
+        self.assertEqual(len(self.delegate.calls), 2)
+        self.assertFalse(self.saved(mission_id).observed_state["goal_verified"])
+
+    def test_provider_error_with_uncertain_mutation_still_blocks(self):
+        from jarvis_agent.agent_runtime import AgentRuntimeUnavailable
+        self.runtime.begin_mission("Potentially duplicate effect")
+        self.delegate._last_partial_actions = [
+            SimpleNamespace(name="browser_click", success=False,
+                            detail='{"outcome_unknown":true}')
+        ]
+        self.delegate.error = AgentRuntimeUnavailable("429 quota")
+        with self.assertRaises(AgentRuntimeUnavailable):
+            self.runtime.run("Try once")
+        self.assertEqual(self.saved(self.runtime.active_mission_id).status,
+                         MissionStatus.BLOCKED)
+
     def test_exception_fails_closed_and_never_retries_delegate(self):
         mission_id = self.runtime.begin_mission("send once")
         self.delegate.error = TimeoutError("tool outcome unknown")

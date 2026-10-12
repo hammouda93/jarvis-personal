@@ -532,6 +532,15 @@ class LiveMissionContinuityRuntime:
             "goal": state.user_goal[:650],
             "recent_turns": previous,
             "goal_proved": bool(state.observed_state.get("goal_verified")),
+            "provider_pause": bool(state.observed_state.get(
+                "provider_paused_needs_fresh_observation"
+            )),
+            "resume_policy": (
+                "Observe current state first. Do not replay previous external actions. "
+                "Retain original user goal and all prohibitions."
+                if state.observed_state.get("provider_paused_needs_fresh_observation")
+                else ""
+            ),
             "semantic_plan": [
                 {"id": str(step.get("step_id", ""))[:80],
                  "intent": str(step.get("intent", ""))[:180],
@@ -822,24 +831,61 @@ class LiveMissionContinuityRuntime:
                     # do not implement run_with_context.
                     result = self.delegate.run(user_text, log=log, phase=phase)
             except Exception as exc:
-                # The delegate might have executed an external side effect.
-                # Fail closed, including on a quota error or storage timeout.
+                # A provider failure occurs at a synchronous model boundary:
+                # no browser/Windows tool is in flight. Preserve tool receipts
+                # already returned earlier in the turn, and allow the NEXT
+                # user turn to re-observe the real state rather than requiring
+                # a manual side-effect review for a quota/budget error.
+                # Any unknown mutating tool effect still fails closed.
+                from .agent_runtime import AgentRuntimeUnavailable
+                from .mission_outcome_policy import failure_requires_review
                 state, _ = self.context_store.load(mission_id)
+                partial = tuple(getattr(self.delegate, "_last_partial_actions", ()) or ())
+                uncertain = getattr(getattr(self.delegate, "tools", None),
+                                    "uncertain_scopes", None)
+                provider_pause = (
+                    isinstance(exc, AgentRuntimeUnavailable)
+                    and not failure_requires_review(partial)
+                    and not bool(uncertain)
+                )
                 node.status = TaskStatus.WAITING_EXTERNAL
                 node.error = type(exc).__name__[:100]
-                state.status = MissionStatus.BLOCKED
-                state.pending_action = {
-                    "reason": "delegate_exception_outcome_unknown",
-                    "manual_review_required": True,
+                node.result = {
+                    "action_count": len(partial),
+                    "action_names": [str(getattr(a, "name", ""))[:100]
+                                     for a in partial],
+                    "provider_paused": provider_pause,
                 }
+                state.status = (
+                    MissionStatus.WAITING_EXTERNAL if provider_pause
+                    else MissionStatus.BLOCKED
+                )
+                state.pending_action = (
+                    {} if provider_pause else {
+                        "reason": "delegate_exception_outcome_unknown",
+                        "manual_review_required": True,
+                    }
+                )
                 state.observed_state["last_exception_type"] = type(exc).__name__[:100]
+                state.observed_state["provider_paused_needs_fresh_observation"] = provider_pause
+                state.current_step_id = None
+                state.current_step = ""
                 self.graph_store.save(graph)
                 self.context_store.save(state)
                 self._audit(
-                    mission_id, "mission.uncertain_outcome",
-                    {"task_id": task_id, "error_type": type(exc).__name__[:100]},
+                    mission_id,
+                    "mission.provider_paused" if provider_pause else "mission.uncertain_outcome",
+                    {
+                        "task_id": task_id,
+                        "error_type": type(exc).__name__[:100],
+                        "action_names": node.result["action_names"],
+                        "no_automatic_action_replay": True,
+                        "fresh_read_required": provider_pause,
+                    },
                 )
-                self._set_audit_status(mission_id, MissionStatus.BLOCKED)
+                self._set_audit_status(mission_id, state.status)
+                if log and provider_pause:
+                    log("[MISSION] provider_paused=1 resume=read_current_state_without_replay")
                 if implicit:
                     self.detach_mission()
                 raise
