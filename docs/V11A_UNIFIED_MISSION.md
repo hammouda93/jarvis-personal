@@ -7,7 +7,7 @@ Base: V10K `4136996`. No merge or protected checkpoint rewritten.
 - Desktop assistant explicitly builds the existing live runtime with mission continuity enabled, without enabling an additional executor or granting tools new permissions. Existing Memory V5, Browser Bridge, computer use, Cerebras/Groq/extra brain cascade, MCP registry, and action ledgers remain in their original order.
 - Generic multi-step goals and deep-research requests are admitted to a persistent mission without requiring a manual "Create mission" button. Simple requests retain the proven direct, inexpensive path.
 - Optional **one** model-generated abstract plan is stored automatically for nontrivial admitted missions. It is NOT executed or approved by planning. The existing conversational executor still performs the work; no safe verifier, approval or proof mechanism is bypassed.
-- The operator screen defaults to read-only mission status, bounded live mission log, **visible MCP control panel**, and tool receipts; manual plan editing and active supervisor controls are hidden behind optional technical diagnostics. Skills/Learning panels are not displayed and the existing settings remain unchanged.
+- The operator screen defaults to read-only mission status, bounded live mission log, **existing separate MCP Services tab**, and tool receipts; manual plan editing and active supervisor controls are hidden behind optional technical diagnostics. Skills/Learning panels are not displayed and the existing settings remain unchanged.
 - Live structured logs contain objective and step hints, tool names and received evidence levels. Raw tool argument bodies are *not* copied into the new console journal.
 
 ## Important unfinished work
@@ -26,3 +26,7 @@ Optional model-authored `research_web.subqueries` (up to 3) now triggers a bound
 ## Normal-profile Chrome regression guard (V11A hotfix)
 
 A compound command with comma-separated browser stages, e.g. `Ouvre YouTube, recherche Messi, ouvre la première vidéo`, must allow the **initial** `open_url` and continue to require a fresh observed DOM reference for selecting the video. The existing Native Browser Bridge drives the user's **same normal Chrome profile**; no Playwright profile, copy, CDP switch, or manual browser startup is introduced. Also distinguish an `open_url` refusal made **before dispatch** from an unknown external effect: only that exact local guard refusal can continue on the next turn; real tool failures and uncertain effects remain BLOCKED. Regression tests protect both cases.
+
+## MCP navigation note
+
+MCP's existing dedicated Services tab is authoritative. Do not reparent the MCP widget into the operator console: it was found to break the Services tab and cause horizontal overflow on the 1024px Qt layout. The mission console stays a read-only view; account connection/permissions remain in Services.

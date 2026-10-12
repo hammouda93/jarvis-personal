@@ -296,7 +296,9 @@ class OperatorConsole(QFrame):
         self.advanced_toggle.setCheckable(True)
         self.advanced_toggle.setChecked(False)
         self.advanced_toggle.toggled.connect(controls_box.setVisible)
-        event_list.addWidget(self.mcp_panel)
+        # MCP has its own dedicated tab in JarvisWindow. Do not reparent
+        # its QWidget into this diagnostic scroll area: that breaks the
+        # Services tab and can create horizontal overflow on small screens.
         event_list.addWidget(self.advanced_toggle)
         event_list.addWidget(controls_box)
         controls_box.setVisible(False)
