@@ -603,7 +603,7 @@ def _clause_action_capabilities(text: str) -> set[str]:
         required.add("site_search")
 
     close_requested = re.search(
-        r"\b(?:ferme|fermer|close|fermez)\b",
+        r"\b(?:ferme|fermes|fermer|close|fermez)\b",
         normalized,
     )
     explicit_tab = re.search(

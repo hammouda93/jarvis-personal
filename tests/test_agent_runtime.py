@@ -4460,6 +4460,16 @@ class AgentRuntimeTests(unittest.TestCase):
                     )
                 )
 
+    def test_french_inflected_tab_close_is_not_missed(self):
+        for sentence in (
+            "fermes cet onglet uniquement",
+            "fermes cet onglet aussi",
+            "ferme cet onglet",
+            "fermez cet onglet",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertIn("close_tab", _requested_action_capabilities(sentence))
+
     def test_verified_browser_capability_finishes_without_extra_model_round(self):
         class VerifiedBrowserTools(FakeTools):
             def ollama_tools(self):
