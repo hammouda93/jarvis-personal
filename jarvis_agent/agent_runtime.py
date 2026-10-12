@@ -177,7 +177,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   Utilise-le quand une information actuelle/externe est nécessaire, lorsque
   les preuves locales ne suffisent pas, ou pour rechercher une solution après
   un échec récupérable. Préfère les sources officielles et recoupe les points
-  importants avant de modifier la stratégie;
+  importants avant de modifier la stratégie. Pour une étude multi-axes,
+  utilise jusqu'à trois subqueries pertinentes dans le même appel research_web,
+  mais n'en ajoute pas à une question simple. Les extraits du fournisseur ne
+  prouvent pas une lecture intégrale du document d'origine;
 - open_web_search ouvre volontairement une page visible dans le navigateur.
   Ne l'utilise que si l'utilisateur demande explicitement d'ouvrir, voir ou
   afficher la recherche dans son navigateur;

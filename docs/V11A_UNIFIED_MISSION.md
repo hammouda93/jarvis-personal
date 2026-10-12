@@ -18,3 +18,7 @@ Base: V10K `4136996`. No merge or protected checkpoint rewritten.
 4. The new visibility and automatic admission require Windows + Qt + real-provider live acceptance. V10K inherited three Windows artifact verification CI failures. No claim that end-to-end desktop tests have passed.
 5. MCP servers/accounts still require explicit connection and tool-by-tool permissions. Do not assert Gmail/Calendar are connected. MS Football bridge is preserved; business-agent semantics are a subsequent task after inspecting the app code.
 6. Skills/Learning remain OFF by default; no new training or skill dependencies.
+
+## Bounded multi-query web research
+
+Optional model-authored `research_web.subqueries` (up to 3) now triggers a bounded sequence of Groq server-side browser searches. Jarvis aggregates per-query answers, URL-deduplicates source receipts, notes the executed queries, and aborts further queries on reported quota/auth/billing failures. Quick single-query search remains the default. This is a first multi-search increment; it does **not** independently download and verify page/PDF bodies, and each provider call may consume a quota or incur charges. Deep Research source reading, cross-provider fallback and explicit monetary limits remain outstanding.

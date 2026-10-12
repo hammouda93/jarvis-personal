@@ -17,6 +17,7 @@ class ResearchResult:
     answer: str = ""
     evidence: tuple[dict[str, Any], ...] = ()
     error: str = ""
+    queries_executed: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -26,6 +27,7 @@ class ResearchResult:
             "answer": self.answer,
             "evidence": [dict(item) for item in self.evidence],
             "error": self.error,
+            "queries_executed": list(self.queries_executed),
             "visible_browser_opened": False,
         }
 
@@ -42,27 +44,73 @@ class BackgroundWebResearch:
     def __init__(self) -> None:
         self.timeout_s = max(3.0, min(float(settings.ai_request_timeout_s), 90.0))
 
-    def research(self, query: str) -> ResearchResult:
+    def research(self, query: str, *, subqueries: object = None) -> ResearchResult:
+        """One quick search or up to four bounded provider-side searches.
+
+        Subquestions are authored by the existing model as data; no automatic
+        browser window, desktop mutation or unsupported source claim is made.
+        """
         query = str(query or "").strip()
-        if len(query) < 2:
+        if not 2 <= len(query) <= 500:
+            return ResearchResult(False, "none", query, error="invalid_query")
+        if subqueries is None:
+            subqueries = []
+        if not isinstance(subqueries, (list, tuple)) or len(subqueries) > 3:
+            return ResearchResult(False, "none", query, error="invalid_subqueries")
+        questions = [query]
+        seen = {query.casefold()}
+        for raw in subqueries:
+            if not isinstance(raw, str) or not 2 <= len(raw.strip()) <= 240:
+                return ResearchResult(False, "none", query, error="invalid_subquery")
+            item = raw.strip()
+            if item.casefold() not in seen:
+                questions.append(item)
+                seen.add(item.casefold())
+        if not settings.groq_browser_search or not settings.groq_api_key:
+            return ResearchResult(False, "none", query,
+                                  error="no_background_research_provider_configured")
+        if len(questions) == 1:
+            result = self._groq_browser_search(query)
             return ResearchResult(
-                success=False,
-                provider="none",
-                query=query,
-                error="empty_query",
+                success=result.success, provider=result.provider, query=query,
+                answer=result.answer, evidence=result.evidence, error=result.error,
+                queries_executed=(query,),
             )
 
-        if settings.groq_browser_search and settings.groq_api_key:
-            result = self._groq_browser_search(query)
+        answers: list[str] = []
+        evidence: list[dict[str, Any]] = []
+        urls: set[str] = set()
+        executed: list[str] = []
+        failures: list[str] = []
+        for question in questions:
+            result = self._groq_browser_search(question)
+            executed.append(question)
             if result.success:
-                return result
-            return result
-
+                answers.append("Question: " + question + "\n" + result.answer[:3500])
+                for record in result.evidence:
+                    link = str(record.get("url") or "")
+                    if link and link in urls:
+                        continue
+                    if link:
+                        urls.add(link)
+                    evidence.append({**record, "research_query": question})
+                    if len(evidence) >= 24:
+                        break
+            else:
+                failures.append(result.error.split(":", 1)[0][:64])
+                # Stop rather than spending more on a blocked account.
+                if result.error.startswith(("http_402", "http_429", "http_401", "http_403")):
+                    break
+        if not answers:
+            return ResearchResult(False, "groq_browser_search", query,
+                                  error=failures[0] if failures else "research_failed",
+                                  queries_executed=tuple(executed))
         return ResearchResult(
-            success=False,
-            provider="none",
-            query=query,
-            error="no_background_research_provider_configured",
+            success=True, provider="groq_browser_search", query=query,
+            answer="\n\n---\n\n".join(answers)[:16000],
+            evidence=tuple(evidence[:24]),
+            error=("partial_research:" + ",".join(failures)) if failures else "",
+            queries_executed=tuple(executed),
         )
 
     def _groq_browser_search(self, query: str) -> ResearchResult:

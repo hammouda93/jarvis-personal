@@ -76,6 +76,32 @@ class BackgroundWebResearchTests(unittest.TestCase):
         )
         self.assertEqual(payload["tool_choice"], "required")
 
+    def test_multi_search_bounded_deduplicated_evidence(self):
+        research = BackgroundWebResearch()
+        def fake(question):
+            from jarvis_agent.background_web_research import ResearchResult
+            return ResearchResult(True, "groq_browser_search", question,
+                                  answer="Résumé " + question,
+                                  evidence=({"url": "https://example.org/source",
+                                             "title": "Source test"},))
+        with patch("jarvis_agent.background_web_research.settings",
+                   replace(real_settings, groq_api_key="test-key",
+                           groq_browser_search=True)), \
+             patch.object(research, "_groq_browser_search", side_effect=fake) as call:
+            result = research.research("Question générale", subqueries=[
+                "Sous-question A", "Sous-question B", "Sous-question A"])
+        self.assertTrue(result.success)
+        self.assertEqual(call.call_count, 3)
+        self.assertEqual(len(result.evidence), 1)
+        self.assertEqual(len(result.queries_executed), 3)
+        self.assertIn("Sous-question B", result.answer)
+
+    def test_reject_invalid_subquestions_without_network(self):
+        self.assertFalse(BackgroundWebResearch().research(
+            "Question générale", subqueries=["x", "Question valide"]).success)
+        self.assertFalse(BackgroundWebResearch().research(
+            "Question générale", subqueries=["A", "B", "C", "D"]).success)
+
     @patch(
         "jarvis_agent.background_web_research.settings",
         replace(
