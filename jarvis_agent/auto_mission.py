@@ -39,14 +39,16 @@ def decide(text: str) -> Admission:
         r"\b(?:recherche approfondie|etude approfondie|analyse comparative|"
         r"compare les sources|recoupe les sources|deep research|"
         r"research thoroughly|business plan|etude de marche)\b", value))
-    action = bool(re.search(
+    action_words = re.findall(
         r"\b(?:cherche|recherche|retrouve|ouvre|inspecte|analyse|compare|"
         r"verifie|prepare|redige|cree|fais|fait|effectue|lance|organise|"
-        r"telecharge|enregistre|search|find|open|inspect|create|write|"
-        r"check|research|analyze|compare|prepare|download)\b", value))
+        r"telecharge|enregistre|etudie|search|find|open|inspect|create|write|"
+        r"check|research|analyze|compare|prepare|download)\b", value)
+    compound = len(action_words) >= 2 and bool(
+        re.search(r"[,;]|\b(?:et|and)\b", value))
     if research:
         return Admission(True, True, "research_goal")
-    if action and (numbered or sequence):
+    if action_words and (numbered or sequence or compound):
         return Admission(True, True, "multi_step_goal")
     if numbered:
         return Admission(True, True, "numbered_goal")

@@ -14,6 +14,7 @@ class AutomaticMissionTests(unittest.TestCase):
         self.assertTrue(decide("Retrouve un document puis inspecte son contenu.").track)
         self.assertTrue(decide("Fais une recherche approfondie des sources officielles.").plan)
         self.assertTrue(decide("1. Observe la fenêtre\n2. Vérifie le résultat").track)
+        self.assertTrue(decide("Retrouve le fichier, ouvre-le et inspecte la fenêtre.").track)
 
     def test_normal_conversation_needs_no_upfront_plan(self):
         self.assertFalse(decide("Pourquoi les applications consomment de la RAM ?").track)
