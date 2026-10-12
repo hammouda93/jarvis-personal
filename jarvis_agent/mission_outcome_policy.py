@@ -49,6 +49,13 @@ def failure_requires_review(actions: tuple | list) -> bool:
             return True
         if name in READ_ONLY_TOOLS:
             continue
+        # Legacy agent-level guard: its rejection is constructed BEFORE any
+        # tool registry/Chrome dispatch. Preserve that known safe receipt
+        # until all runtime guards emit structured dispatched:false metadata.
+        # This is a *guard contract*, not a website/application rule.
+        if (name == "open_url" and getattr(action, "detail", "") ==
+                "open_url_blocked_for_existing_browser_context"):
+            continue
         # Rejected locally before the tool was dispatched. No external effect.
         if detail.get("dispatched") is False and detail.get("outcome_unknown") is False:
             continue
