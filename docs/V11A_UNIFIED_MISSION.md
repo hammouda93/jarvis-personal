@@ -22,3 +22,7 @@ Base: V10K `4136996`. No merge or protected checkpoint rewritten.
 ## Bounded multi-query web research
 
 Optional model-authored `research_web.subqueries` (up to 3) now triggers a bounded sequence of Groq server-side browser searches. Jarvis aggregates per-query answers, URL-deduplicates source receipts, notes the executed queries, and aborts further queries on reported quota/auth/billing failures. Quick single-query search remains the default. This is a first multi-search increment; it does **not** independently download and verify page/PDF bodies, and each provider call may consume a quota or incur charges. Deep Research source reading, cross-provider fallback and explicit monetary limits remain outstanding.
+
+## Normal-profile Chrome regression guard (V11A hotfix)
+
+A compound command with comma-separated browser stages, e.g. `Ouvre YouTube, recherche Messi, ouvre la première vidéo`, must allow the **initial** `open_url` and continue to require a fresh observed DOM reference for selecting the video. The existing Native Browser Bridge drives the user's **same normal Chrome profile**; no Playwright profile, copy, CDP switch, or manual browser startup is introduced. Also distinguish an `open_url` refusal made **before dispatch** from an unknown external effect: only that exact local guard refusal can continue on the next turn; real tool failures and uncertain effects remain BLOCKED. Regression tests protect both cases.

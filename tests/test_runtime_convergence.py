@@ -97,6 +97,37 @@ class LiveMissionContinuityTests(unittest.TestCase):
         item = self.runtime.context_store.list_resumable()[0]
         self.assertEqual(self.saved(item["mission_id"]).status, MissionStatus.BLOCKED)
 
+    def test_local_open_url_guard_does_not_freeze_explicit_mission(self):
+        # A pre-dispatch safety refusal did NOT change the browser, so the
+        # next user turn may correct the route without a manual recovery.
+        mission_id = self.runtime.begin_mission("Ouvre un site puis cherche")
+        self.delegate.result = SimpleNamespace(
+            text="Navigation refusée localement",
+            actions=(SimpleNamespace(name="open_url", success=False,
+                 detail="open_url_blocked_for_existing_browser_context"),),
+        )
+        self.runtime.run("Ouvre le site")
+        state = self.saved(mission_id)
+        self.assertEqual(state.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(state.pending_action.get("manual_review_required"))
+        self.delegate.result = SimpleNamespace(text="suite", actions=())
+        self.runtime.run("Continue la mission sans recharger les étapes déjà faites")
+        self.assertEqual(len(self.delegate.calls), 2)
+        self.assertEqual(self.saved(mission_id).status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(self.saved(mission_id).observed_state["goal_verified"])
+
+    def test_other_failures_still_block_and_do_not_replay(self):
+        mission_id = self.runtime.begin_mission("Action sensible")
+        self.delegate.result = SimpleNamespace(
+            text="inconnue", actions=(SimpleNamespace(
+                name="browser_click", success=False, detail="outcome_unknown"),),
+        )
+        self.runtime.run("Action")
+        self.assertEqual(self.saved(mission_id).status, MissionStatus.BLOCKED)
+        with self.assertRaises(RuntimeError):
+            self.runtime.run("Retente")
+        self.assertEqual(len(self.delegate.calls), 1)
+
     def test_explicit_multiturn_and_proof_gate(self):
         mission_id = self.runtime.begin_mission("chercher puis préparer un rapport")
         self.assertRaises(RuntimeError, self.runtime.begin_mission, "another mission")

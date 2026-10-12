@@ -3623,6 +3623,15 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertFalse(_preselection_navigation_pending(mixed, [opened]))
         self.assertFalse(_preselection_navigation_pending(
             "Ouvre le premier résultat.", [opened]))
+        # Actual regression: commas were not treated as stage boundaries;
+        # initial YouTube navigation was refused before reaching the user's
+        # already working normal-profile Chrome Bridge.
+        french = ("Ouvre YouTube, recherche Messi, ouvre la première vidéo, "
+                  "puis reviens aux résultats.")
+        self.assertTrue(_preselection_navigation_pending(french, []))
+        self.assertFalse(_preselection_navigation_pending(french, [opened]))
+        self.assertFalse(_preselection_navigation_pending(
+            "Ouvre la première vidéo.", []))
 
     def test_v10g_compound_browser_dispatch_keeps_grounded_click(self):
         class BrowserTools(FakeTools):

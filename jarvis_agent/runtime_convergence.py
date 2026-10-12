@@ -848,6 +848,17 @@ class LiveMissionContinuityRuntime:
             state, _ = self.context_store.load(mission_id)
             actions = tuple(getattr(result, "actions", ()) or ())
             failed = sum(not bool(getattr(action, "success", False)) for action in actions)
+            # Exactly one known local guard refusal: dispatch never reached
+            # Chrome. This is NOT an uncertain external effect. Keep the
+            # mission pending for a corrected user turn rather than locking
+            # it into manual recovery. All other failures still fail closed.
+            locally_refused_open = (
+                len(actions) == 1
+                and getattr(actions[0], "name", "") == "open_url"
+                and getattr(actions[0], "success", None) is False
+                and getattr(actions[0], "detail", "")
+                    == "open_url_blocked_for_existing_browser_context"
+            )
             node.status = TaskStatus.FAILED if failed else TaskStatus.COMPLETED
             action_names = [
                 str(getattr(action, "name", "") or "")[:100]
@@ -870,12 +881,20 @@ class LiveMissionContinuityRuntime:
             # A successful click/write does not prove the intended recipient,
             # target, or overall mission. Explicit missions always await proof.
             state.status = (
-                MissionStatus.BLOCKED if failed
+                MissionStatus.WAITING_EXTERNAL if locally_refused_open
+                else MissionStatus.BLOCKED if failed
                 else MissionStatus.WAITING_EXTERNAL
                 if actions or self._explicit
                 else MissionStatus.COMPLETED
             )
-            if failed:
+            if locally_refused_open:
+                state.pending_action = {}
+                state.observed_state["last_local_guard_refusal"] = "open_url"
+                self._audit(mission_id, "mission.local_guard_no_dispatch", {
+                    "task_id": task_id, "tool": "open_url",
+                    "continuation": "allowed_without_replaying_action",
+                })
+            elif failed:
                 state.pending_action = {
                     "reason": "tool_reported_failure",
                     "manual_review_required": True,

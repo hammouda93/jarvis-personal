@@ -781,7 +781,21 @@ def _preselection_navigation_pending(
     """
     from .instruction_clauses import positive_instruction_clauses
 
-    clauses = positive_instruction_clauses(user_text)
+    # The clause parser deliberately preserves most commas to avoid
+    # reinterpreting constraints. Here, however, a comma followed by a
+    # *new imperative* is a genuine stage boundary: "Ouvre YouTube,
+    # recherche Messi, ouvre la première vidéo". Without splitting it,
+    # the last ordinal selection incorrectly blocks the initial open_url.
+    clauses = [
+        stage.strip()
+        for clause in positive_instruction_clauses(user_text)
+        for stage in re.split(
+            r",\s*(?=(?:ouvre|ouvres|ouvrez|ouvrir|open|"
+            r"cherche|recherche|search|clique|selectionne)\b)",
+            clause,
+        )
+        if stage.strip()
+    ]
     selection = next((
         i for i, clause in enumerate(clauses)
         if _clause_result_selection(clause)
