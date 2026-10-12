@@ -881,13 +881,18 @@ class AgentRuntimeTests(unittest.TestCase):
         available = names()
         for essential in (
             "browser_observe_dom", "browser_find", "browser_click",
-            "browser_verify", "msf_count_records", "request_tool_capabilities",
+            "browser_verify", "request_tool_capabilities",
         ):
             self.assertIn(essential, available)
-        # Changing the selection must not turn the surface into a DB-only pack.
-        context.select_tools({"names": ["browser_find", "browser_click"]})
-        self.assertIn("browser_click", names())
+        # The compact first pack need not contain DB schemas for a browser UI
+        # interaction; the model can request them through the local catalog.
+        self.assertIn("msf_count_records", context.available)
         self.assertIn("msf_query_records", context.available)
+        context.select_tools({"names": [
+            "browser_find", "browser_click", "msf_count_records",
+        ]})
+        self.assertIn("browser_click", names())
+        self.assertIn("msf_count_records", names())
 
         # Feedback does not grant fresh browser mutations.
         agent._feedback_only_turn = True
