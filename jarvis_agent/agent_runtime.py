@@ -4541,6 +4541,34 @@ class GroqResponsesAgent:
                         "réelle de la page, donc je ne vais pas les inventer."
                     )
 
+                # For a simple verified tab closure, use the actual Chrome
+                # close receipt as the source of truth for the now-active tab.
+                # The model must not call an unrelated tab the previous page.
+                if _requested_action_capabilities(user_text) == {"close_tab"}:
+                    closure = next((
+                        a for a in reversed(actions)
+                        if a.name == "browser_close_tab" and a.success
+                    ), None)
+                    if closure is not None:
+                        receipt = _action_detail_dict(closure)
+                        if (receipt.get("verified") is True
+                                and receipt.get("postcondition") == "tab_absent"
+                                and isinstance(receipt.get("tabs"), list)):
+                            active_tabs = [
+                                tab for tab in receipt["tabs"]
+                                if isinstance(tab, dict) and tab.get("active") is True
+                            ]
+                            text = "L’onglet demandé a été fermé."
+                            if len(active_tabs) == 1:
+                                title = str(active_tabs[0].get("title") or "").strip()
+                                if not title:
+                                    title = str(active_tabs[0].get("url") or "").strip()
+                                if title:
+                                    title = title.replace("\n", " ").replace("\r", " ")[:100]
+                                    text += f" L’onglet actif est « {title} »."
+                            if log:
+                                log("[AGENT_EVIDENCE] tab_close_reply=verified_active_tab")
+
                 if self._messages and self._messages[-1].get("role") == "assistant":
                     self._messages[-1]["content"] = text
                 if learning_enabled(settings):
