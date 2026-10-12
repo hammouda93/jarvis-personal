@@ -253,10 +253,30 @@ function interactionProof(beforeTab, beforeObservation, target, postObservation,
   }
   return {...navigation, target_after:compactTarget(targetAfter)};
 }
+function pendingObservation(tab, reason) {
+  // A freshly opened tab may not yet have a valid document URL. This is a
+  // read-only sensor readiness state, not a failed user action.
+  return {observation_id:crypto.randomUUID(),tab:cleanTab(tab),sensor:"dom",
+    ready:false,reason,controls:[],visible_text:"",truncated:false,
+    tree_complete:false,frames_seen:0,frames_observed:0,frames_skipped:0};
+}
 async function observe(tabId) {
-  await injected(tabId);
-  clearRefs(tabId);
-  const frames = await domCall(tabId,"observe");
+  const before = await tabOf(tabId);
+  if (before.status === "loading" && !before.url)
+    return pendingObservation(before,"document_loading");
+  let frames;
+  try {
+    await injected(tabId);
+    clearRefs(tabId);
+    frames = await domCall(tabId,"observe");
+  } catch (error) {
+    // Navigation can replace a document between the two read operations.
+    // A retry may only repeat observation, never a click or navigation.
+    const current = await tabOf(tabId);
+    if (current.status === "loading")
+      return pendingObservation(current,"document_loading");
+    throw error;
+  }
   const validFrames = (frames || []).filter(frame =>
     frame?.result && Array.isArray(frame.result.controls)
   );
@@ -275,7 +295,7 @@ async function observe(tabId) {
     }
   }
   const tab = await tabOf(tabId);
-  const observation = {observation_id:crypto.randomUUID(), tab:cleanTab(tab), sensor:"dom", controls,
+  const observation = {observation_id:crypto.randomUUID(), tab:cleanTab(tab), sensor:"dom", ready:true, controls,
     visible_text:validFrames.map(f=>String(f.result.visible_text || "")).join("\n").slice(0,20000),
     truncated:(frames || []).length>12 || controls.length>=400 ||
       validFrames.some(f=>f.result.truncated),

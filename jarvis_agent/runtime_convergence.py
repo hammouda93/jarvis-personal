@@ -848,18 +848,12 @@ class LiveMissionContinuityRuntime:
             state, _ = self.context_store.load(mission_id)
             actions = tuple(getattr(result, "actions", ()) or ())
             failed = sum(not bool(getattr(action, "success", False)) for action in actions)
-            # Exactly one known local guard refusal: dispatch never reached
-            # Chrome. This is NOT an uncertain external effect. Keep the
-            # mission pending for a corrected user turn rather than locking
-            # it into manual recovery. All other failures still fail closed.
-            locally_refused_open = (
-                len(actions) == 1
-                and getattr(actions[0], "name", "") == "open_url"
-                and getattr(actions[0], "success", None) is False
-                and getattr(actions[0], "detail", "")
-                    == "open_url_blocked_for_existing_browser_context"
-            )
-            node.status = TaskStatus.FAILED if failed else TaskStatus.COMPLETED
+            # A failed read-only observation is not a failed side-effect.
+            # Preserve genuine uncertain/mutating failures as BLOCKED.
+            from .mission_outcome_policy import failure_requires_review
+            recoverable_failure = bool(failed) and not failure_requires_review(actions)
+            node.status = (TaskStatus.WAITING_EXTERNAL if recoverable_failure
+                           else TaskStatus.FAILED if failed else TaskStatus.COMPLETED)
             action_names = [
                 str(getattr(action, "name", "") or "")[:100]
                 for action in actions
@@ -881,18 +875,20 @@ class LiveMissionContinuityRuntime:
             # A successful click/write does not prove the intended recipient,
             # target, or overall mission. Explicit missions always await proof.
             state.status = (
-                MissionStatus.WAITING_EXTERNAL if locally_refused_open
+                MissionStatus.WAITING_EXTERNAL if recoverable_failure
                 else MissionStatus.BLOCKED if failed
                 else MissionStatus.WAITING_EXTERNAL
                 if actions or self._explicit
                 else MissionStatus.COMPLETED
             )
-            if locally_refused_open:
+            if recoverable_failure:
                 state.pending_action = {}
-                state.observed_state["last_local_guard_refusal"] = "open_url"
-                self._audit(mission_id, "mission.local_guard_no_dispatch", {
-                    "task_id": task_id, "tool": "open_url",
-                    "continuation": "allowed_without_replaying_action",
+                state.observed_state["recoverable_read_only_failure"] = True
+                self._audit(mission_id, "mission.observation_recoverable", {
+                    "task_id": task_id,
+                    "failed_tools": [str(getattr(a, "name", ""))[:100]
+                                     for a in actions if not a.success],
+                    "next": "observe_fresh_state_without_replaying_mutations",
                 })
             elif failed:
                 state.pending_action = {

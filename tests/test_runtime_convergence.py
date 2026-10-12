@@ -116,6 +116,32 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertEqual(self.saved(mission_id).status, MissionStatus.WAITING_EXTERNAL)
         self.assertFalse(self.saved(mission_id).observed_state["goal_verified"])
 
+    def test_read_only_sensor_failure_allows_context_continuation(self):
+        mission_id = self.runtime.begin_mission("Read then continue")
+        self.delegate.result = SimpleNamespace(text="Not yet ready", actions=(
+            SimpleNamespace(name="browser_observe_dom", success=False,
+                            detail='RuntimeError: Document still loading'),))
+        self.runtime.run("Observe current app")
+        context = self.saved(mission_id)
+        self.assertEqual(context.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(context.pending_action.get("manual_review_required"))
+        self.delegate.result = SimpleNamespace(text="Ready", actions=())
+        self.runtime.run("continue")
+        self.assertEqual(len(self.delegate.calls), 2)
+        self.assertFalse(self.saved(mission_id).observed_state["goal_verified"])
+
+    def test_mixed_dispatched_navigation_and_failed_observation_is_recoverable(self):
+        mission_id = self.runtime.begin_mission("Open and inspect the web")
+        self.delegate.result = SimpleNamespace(text="Loading", actions=(
+            SimpleNamespace(name="open_url", success=True,
+                            detail='{"dispatched":true,"verified":false}'),
+            SimpleNamespace(name="browser_observe_dom", success=False,
+                            detail='RuntimeError: Invalid URL'),))
+        self.runtime.run("Open then observe")
+        self.assertEqual(self.saved(mission_id).status, MissionStatus.WAITING_EXTERNAL)
+        self.assertEqual(len(self.delegate.calls), 1)
+        self.assertFalse(self.saved(mission_id).observed_state["goal_verified"])
+
     def test_other_failures_still_block_and_do_not_replay(self):
         mission_id = self.runtime.begin_mission("Action sensible")
         self.delegate.result = SimpleNamespace(

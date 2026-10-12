@@ -475,7 +475,13 @@ class FoundationToolAdapter:
                 payload = self.browser.activate_tab(active["tab_id"])
                 self.browser_mode = True
             elif name.startswith("browser_") and self.browser:
-                payload = self.browser.call(name[8:], **args)
+                if name == "browser_observe_dom":
+                    from .observation_readiness import bounded_observation
+                    payload = bounded_observation(
+                        lambda: self.browser.call(name[8:], **args)
+                    )
+                else:
+                    payload = self.browser.call(name[8:], **args)
                 self.browser_mode = True
 
                 # A replace write is idempotent, so an unknown outcome can be

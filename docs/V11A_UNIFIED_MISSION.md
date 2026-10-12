@@ -30,3 +30,7 @@ A compound command with comma-separated browser stages, e.g. `Ouvre YouTube, rec
 ## MCP navigation note
 
 MCP's existing dedicated Services tab is authoritative. Do not reparent the MCP widget into the operator console: it was found to break the Services tab and cause horizontal overflow on the 1024px Qt layout. The mission console stays a read-only view; account connection/permissions remain in Services.
+
+## Mission context recovery — general rule
+
+Do not special-case YouTube or any application. A failed read-only sensor call is not evidence of an external mutation; preserve the original goal and permit the next turn to observe current state. A definitely refused pre-dispatch call is similarly non-mutating. Unknown/possibly executed mutations remain BLOCKED for independent review. Chrome DOM observation now reports `ready:false` during initial navigation rather than throwing on the still-empty tab URL; the adapter performs a small bounded number of read-only observations. A fresh user continuation can use the persisted mission and the existing browser grounding. Full unattended rescheduling and semantic goal verification remain future work.
