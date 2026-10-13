@@ -37,6 +37,16 @@ SERVICE_CARDS: tuple[ServiceCard, ...] = (
     _workspace("google_drive", "Google Drive", "drivemcp", "https://www.googleapis.com/auth/drive.readonly"),
     _workspace("google_docs", "Google Docs", "docsmcp", "https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/drive.readonly"),
     _workspace("google_sheets", "Google Sheets", "sheetsmcp", "https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.readonly"),
+    _workspace("google_slides", "Google Slides", "slidesmcp", "https://www.googleapis.com/auth/presentations.readonly https://www.googleapis.com/auth/drive.readonly"),
+    _workspace("google_contacts", "Google Contacts / People", "people", "https://www.googleapis.com/auth/contacts.readonly"),
+    ServiceCard(
+        "cloudflare", "Cloudflare", "Déploiement",
+        "Compte Cloudflare et autorisation OAuth avec permissions restreintes.",
+        "Une configuration MCP n'atteste pas une connexion réelle; tester la découverte des outils.",
+        "https://mcp.cloudflare.com/mcp",
+        "https://developers.cloudflare.com/changelog/post/2026-10-13-cloudflare-mcp-events/",
+        "oauth",
+    ),
     ServiceCard(
         "google_maps", "Google Maps", "Cartographie",
         "Maps Grounding Lite active, cle API restreinte dans X-Goog-Api-Key.",
