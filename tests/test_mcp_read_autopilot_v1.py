@@ -116,14 +116,14 @@ class OneClickReadAccessTests(unittest.TestCase):
         self.registry.set_auto_readonly("fixture", True)
         self.registry.discover("fixture", [
             tool("get_file_contents", revision={"type": "string"}),
-            tool("list_commits"), tool("new_read_items"),
+            tool("list_commits"), tool("list_new_items"),
         ])
         self.assertFalse(self.registry.is_allowed("fixture", "get_file_contents"))
         self.assertTrue(self.registry.is_allowed("fixture", "list_commits"))
-        self.assertFalse(self.registry.is_allowed("fixture", "new_read_items"))
+        self.assertFalse(self.registry.is_allowed("fixture", "list_new_items"))
         self.registry.set_auto_readonly("fixture", True)
         self.assertTrue(self.registry.is_allowed("fixture", "get_file_contents"))
-        self.assertTrue(self.registry.is_allowed("fixture", "new_read_items"))
+        self.assertTrue(self.registry.is_allowed("fixture", "list_new_items"))
 
     def test_explicit_denial_overrides_bulk_grant_and_survives_discovery(self):
         self.discovered()
