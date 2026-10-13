@@ -62,3 +62,28 @@ def unresolved_argument_paths(arguments: Any) -> tuple[str, ...]:
     if isinstance(arguments, dict):
         check(arguments, "", 0)
     return tuple(unresolved)
+
+
+
+def missing_required_arguments(arguments: Any, schema: Any) -> tuple[str, ...]:
+    """Validate only *declared* top-level required keys, without guessing values.
+
+    Advanced server JSON schemas still belong to the actual MCP server.
+    A clear local omission should not spend an API call or become an uncertain
+    remote mutation. No defaults and no new authority are inferred.
+    """
+    if not isinstance(schema, dict) or not isinstance(arguments, dict):
+        return ()
+    required = schema.get("required")
+    if not isinstance(required, list):
+        return ()
+    missing = []
+    for key in required[:120]:
+        if not isinstance(key, str):
+            continue
+        if (key not in arguments or arguments[key] is None or
+                isinstance(arguments[key], str) and not arguments[key].strip()):
+            missing.append(key[:75])
+        if len(missing) >= 15:
+            break
+    return tuple(missing)
