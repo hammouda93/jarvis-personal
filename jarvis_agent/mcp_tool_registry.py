@@ -145,11 +145,27 @@ class MCPToolRegistry:
         # a write to reach a remote server. Only paths, not argument values,
         # may enter the journal / model-facing refusal.
         from .mcp_argument_grounding import (
+            MCPArgumentSchemaUnavailable, invalid_schema_argument_paths,
             unresolved_argument_paths, missing_required_arguments,
         )
         unresolved = unresolved_argument_paths(arguments)
         missing = missing_required_arguments(arguments, tool.get("input_schema"))
-        if unresolved or missing:
+        try:
+            invalid_paths = invalid_schema_argument_paths(
+                arguments, tool.get("input_schema") or {}
+            )
+        except MCPArgumentSchemaUnavailable:
+            return AgentActionResult(
+                name=name, success=False,
+                message="Schéma MCP non validable localement. Aucun appel externe envoyé.",
+                detail=json.dumps({
+                    "guard": "mcp_schema_validation_unavailable",
+                    "dispatched": False, "outcome_unknown": False,
+                    "verified": False, "recoverable": False,
+                    "permissions_changed": False,
+                }),
+            )
+        if unresolved or missing or invalid_paths:
             return AgentActionResult(
                 name=name, success=False,
                 message=(
@@ -159,9 +175,10 @@ class MCPToolRegistry:
                     "précision manquante sans inventer de valeur."
                 ),
                 detail=json.dumps({
-                    "guard": ("unresolved_argument_template"
-                              if unresolved else "missing_required_arguments"),
-                    "argument_paths": list(unresolved or missing),
+                    "guard": ("unresolved_argument_template" if unresolved else
+                              "missing_required_arguments" if missing else
+                              "invalid_argument_schema"),
+                    "argument_paths": list(unresolved or missing or invalid_paths),
                     "dispatched": False, "outcome_unknown": False,
                     "verified": False, "recoverable": True,
                     "permissions_changed": False,
@@ -223,11 +240,19 @@ class MCPToolRegistry:
                                                   "attempt_id": attempt,
                                                   "trust": "external_unverified"}}),
             )
-        successful, unknown = transport_outcome(result)
+        # Only an operator's fingerprint-pinned read grant allows an
+        # explicit server tool error to count as a known, non-mutating failure.
+        known_read = self.registry.is_auto_read_allowed(server_id, native_name)
+        successful, unknown = transport_outcome(
+            result, confirmed_read_only=known_read
+        )
         source = {"server_id": server_id, "tool_name": native_name,
                   "attempt_id": attempt, "trust": "external_unverified"}
         try:
-            activity.finish(attempt, "unknown" if unknown else "success")
+            activity.finish(
+                attempt, "unknown" if unknown else
+                "success" if successful else "failed"
+            )
         except Exception:
             return AgentActionResult(name=name, success=False,
                 message="Appel termine mais journalisation MCP indisponible. Verification manuelle requise.",
@@ -243,6 +268,18 @@ class MCPToolRegistry:
                 detail=json.dumps({"verified": False, "dispatched": True,
                                    "outcome_unknown": True,
                                    "source": source}, ensure_ascii=False))
+        if not successful:
+            return AgentActionResult(
+                name=name, success=False,
+                message="Le serveur MCP a renvoyé une erreur de lecture ; "
+                        "corriger les paramètres ou choisir une autre lecture autorisée.",
+                detail=json.dumps({
+                    "verified": False, "dispatched": True,
+                    "outcome_unknown": False, "recoverable": True,
+                    "safe_read_failure": True, "source": source,
+                    "mcp_output": str(result.get("message") or "")[:1500],
+                }, ensure_ascii=False),
+            )
         structured = result.get("data")
         if not isinstance(structured, dict):
             structured = None

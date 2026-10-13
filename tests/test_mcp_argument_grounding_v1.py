@@ -115,7 +115,11 @@ class MCPArgumentDispatchTests(unittest.TestCase):
         self.assertEqual(self.registry.activity().summary("fixture")["calls_used"], 1)
 
     def test_unknown_external_outcome_stays_locked(self):
-        self.transport.call_tool.return_value = {"success": False, "message": "error"}
+        # A dispatched read with an explicit uncertain transport outcome
+        # remains protected; ordinary MCP isError responses are handled
+        # separately by the gateway's known-read regression tests.
+        self.transport.call_tool.return_value = {
+            "success": False, "outcome_unknown": True, "message": "error"}
         first = self.adapter.execute("mcp__fixture__list_records", {
             "tenant": "org", "resource": "item"})
         self.assertTrue(failure_requires_review([first]))
