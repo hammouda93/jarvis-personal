@@ -301,7 +301,7 @@ class MCPConnectionsPanel(QFrame):
             "Les autres outils exigent toujours une autorisation séparée."
         )
         layout.addWidget(self.auto_read_button)
-        self.auto_read_button.clicked.connect(self._grant_auto_read)
+        self.auto_read_button.clicked.connect(self._toggle_auto_read)
         self.tool_description = QLabel()
         self.tool_description.setTextFormat(Qt.PlainText)
         self.tool_description.setWordWrap(True)
@@ -511,6 +511,14 @@ class MCPConnectionsPanel(QFrame):
     def _for_server(self, operation: str) -> None:
         self._send(operation, str(self.server_picker.currentData() or ""), "")
 
+    def _toggle_auto_read(self) -> None:
+        server = str(self.server_picker.currentData() or "")
+        entry = next((e for e in self._servers if e.get("id") == server), None)
+        if entry and entry.get("auto_read_enabled") is True:
+            self._send("revoke_auto_read", server, "")
+            return
+        self._grant_auto_read()
+
     def _grant_auto_read(self) -> None:
         server = str(self.server_picker.currentData() or "")
         if not server:
@@ -591,7 +599,7 @@ class MCPConnectionsPanel(QFrame):
             self.auto_read_button.setEnabled(
                 bool(entry.get("enabled") and entry.get("last_discovery_success_utc")))
             self.auto_read_button.setText(
-                "Lectures autonomes : actives"
+                "Désactiver les lectures autonomes"
                 if entry.get("auto_read_enabled") else
                 "Autoriser les lectures (1 clic)"
             )
@@ -655,10 +663,10 @@ class MCPConnectionsPanel(QFrame):
         self.server_picker.setEnabled(not busy)
         for button in (self.add_button, self.hermes_button, self.enable_button, self.disable_button,
                        self.connect_button, self.disconnect_button, self.discover_button,
-                       self.allow_button, self.deny_button, self.revoke_button, self.remove_button,
-                       self.auto_read_button):
+                       self.allow_button, self.deny_button, self.revoke_button, self.remove_button):
             button.setEnabled(not busy and (bool(server_id) or button in (self.add_button, self.hermes_button)))
         if busy:
+            self.auto_read_button.setEnabled(False)
             self.oauth_registered.setEnabled(False)
             self.oauth_scope.setEnabled(False)
             for button in (self.store_credential_button, self.forget_credential_button, self.oauth_button, self.save_quotas_button):
