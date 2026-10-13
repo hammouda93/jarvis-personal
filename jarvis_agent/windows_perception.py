@@ -2625,13 +2625,13 @@ def write_ui_element(
                 "Champ ambigu. Précisez la cible.",
                 _json(alternatives),
             )
-        return UIActionResult(False, f"Champ introuvable: {target}.")
+        return UIActionResult(False, f"Champ introuvable: {target}.", _json({"target_not_found": True, "dispatched": False, "outcome_unknown": False}))
 
     if precondition_value is not None:
         current_value = None if isinstance(wrapper, CuaElement) else _strict_control_value(wrapper)
         if not isinstance(precondition_value, str) or current_value is None or current_value != precondition_value:
             return UIActionResult(False, "La precondition de contenu n'est pas prouvee; aucune ecriture.",
-                _json({"precondition_failed": True, "value_unknown": current_value is None, "dispatched": False}))
+                _json({"precondition_failed": True, "value_unknown": current_value is None, "dispatched": False, "outcome_unknown": False}))
 
     if isinstance(wrapper, CuaElement):
         if not wrapper.writable:
@@ -2871,6 +2871,7 @@ _ALLOWED_KEYS = {
     "end": "{END}",
     "altleft": "%{LEFT}",
     "altright": "%{RIGHT}",
+    "ctrln": "^n",
     "ctrls": "^s",
     "ctrlshifts": "^+s",
     "ctrlf": "^f",
