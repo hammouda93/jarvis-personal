@@ -953,6 +953,7 @@ def _find_named_file(
     query: str,
     *,
     within: str | None = None,
+    kind: str = "any",
 ) -> tuple[Path | None, list[Path]]:
     wanted = _normalize_path_name(query)
     # Task words in a natural-language filename query are not part of the
@@ -963,7 +964,7 @@ def _find_named_file(
               "downloaded", "de", "du", "des", "le", "la", "les", "the",
               "a", "an", "un", "une", "application", "programme", "program"}
     words = wanted.split()
-    installer_intent = any(token in {
+    installer_intent = kind == "installer" or any(token in {
         "installateur", "installer", "installation", "setup",
         "msi", "msix", "exe"
     } for token in words)
@@ -1354,7 +1355,11 @@ def execute(intent: ToolIntent) -> ToolResult:
     if intent.name == "file.open_named":
         query = str(intent.args.get("query", "")).strip()
         within = str(intent.args.get("within", "")).strip() or None
-        path, matches = _find_named_file(query, within=within)
+        kind = str(intent.args.get("kind", "any") or "any").strip().lower()
+        path, matches = _find_named_file(
+            query, within=within,
+            kind="installer" if kind == "installer" else "any",
+        )
         if path is not None:
             try:
                 os.startfile(str(path))
