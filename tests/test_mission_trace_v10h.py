@@ -157,6 +157,32 @@ class MissionTraceV10HTests(unittest.TestCase):
         ])
         self.assertNotIn("EVIDENCE_CORRELATED", "\n".join(events))
 
+    def test_only_trusted_runtime_completion_event_certifies_trace(self):
+        events = []
+        trace = ConversationMissionTrace(
+            "Ouvre une page puis vérifie son état", events.append,
+            trace_id="certified",
+        )
+        trace.start()
+        trace.ingest("[AGENT_TOOL] call=browser_click args={}")
+        trace.ingest("[MISSION] independent_goal_proof=browser_navigation")
+        trace.finish([result("browser_click", detail='{"verified":true}')])
+        self.assertIn("goal_verification=not_certified", "\n".join(events))
+        fresh = []
+        certified = ConversationMissionTrace(
+            "Ouvre une page puis vérifie son état", fresh.append,
+            trace_id="trusted",
+        )
+        certified.start()
+        certified.ingest(
+            "[MISSION] state=COMPLETED evidence=independent_browser_navigation"
+        )
+        certified.finish([result("browser_get_active_tab")])
+        logs = "\n".join(fresh)
+        self.assertIn("state=GOAL_CERTIFIED", logs)
+        self.assertIn("state=COMPLETED", logs)
+        self.assertIn("goal_verification=certified", logs)
+
     def test_click_success_never_proves_installation(self):
         events = []
         trace = ConversationMissionTrace(

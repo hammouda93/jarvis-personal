@@ -261,6 +261,7 @@ class ConversationMissionTrace:
     _tool_call_refs: list[str] = field(default_factory=list)
     _step_tools: dict[int, list[str]] = field(default_factory=dict)
     _finished: bool = False
+    _goal_proof_logged: bool = False
 
     def __post_init__(self):
         self.steps = requested_steps(self.user_request) or (self.user_request.strip(),)
@@ -333,6 +334,14 @@ class ConversationMissionTrace:
                 f"tool={match.group(1)} success={match.group(2).lower()} "
                 f"goal_completed=not_established"
             )
+        elif line == "[MISSION] state=COMPLETED evidence=independent_browser_navigation":
+            # Only the trusted convergence runtime announces this state.
+            # Tool successes and conversational hints cannot certify goals.
+            self._goal_proof_logged = True
+            self._log(
+                f"[MISSION_TRACE] id={self.trace_id} "
+                "state=GOAL_CERTIFIED proof_source=independent_browser_navigation"
+            )
         elif line.startswith("[MISSION] proof_repair="):
             self._log(
                 f"[MISSION_TRACE] id={self.trace_id} state=RECOVERING "
@@ -390,11 +399,12 @@ class ConversationMissionTrace:
                 f"[MISSION_STEP] id={self.trace_id} step={idx}/{len(self.steps)} "
                 f"state={state} goal_verified=not_established"
             )
-        result = ("INTERRUPTED" if error else
+        certified = self._goal_proof_logged and not error
+        result = ("INTERRUPTED" if error else "COMPLETED" if certified else
                   "NO_TOOLS" if not actions else "RESULTS_RECORDED_GOAL_UNVERIFIED")
         self._log(
             f"[MISSION_TRACE] id={self.trace_id} state={result} "
             f"tool_calls={len(self.tool_calls)} results={len(actions)} "
-            f"goal_verification=not_certified "
+            f"goal_verification={'certified' if certified else 'not_certified'} "
             f"error_type={error or 'none'}"
         )
