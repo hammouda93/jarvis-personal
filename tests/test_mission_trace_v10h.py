@@ -114,6 +114,49 @@ class MissionTraceV10HTests(unittest.TestCase):
         }))])
         self.assertNotIn("ACTIVITY_CORRELATED", "\n".join(events))
 
+    def test_exact_clicked_ref_correlates_verified_redirect_without_guessing(self):
+        events = []
+        trace = ConversationMissionTrace(
+            "Ouvre une page, puis clique sur Joueurs et vérifie le résultat.",
+            events.append, trace_id="ref-matched",
+        )
+        trace.start()
+        trace.ingest("[AGENT_TOOL] call=browser_find args={'tab_id': 7, 'text': 'Joueurs'}")
+        trace.ingest("[AGENT_TOOL] call=browser_click args={'tab_id': 7, 'ref': 'observed-ref'}")
+        trace.finish([
+            result("browser_find", detail=json.dumps({
+                "matches": [{"name": "Joueurs", "ref": "observed-ref",
+                             "href": "https://example.test/intermediate"}],
+                "unique": True,
+            })),
+            result("browser_click", detail=json.dumps({
+                "verified": True, "postcondition": "navigation_observed",
+                "post_observation": {"tab": {
+                    "url": "https://example.test/redirected"}}
+            })),
+        ])
+        self.assertIn("state=EVIDENCE_CORRELATED", "\n".join(events))
+        self.assertIn("goal_verification=not_certified", "\n".join(events))
+
+    def test_wrong_clicked_ref_cannot_correlate_even_with_same_href(self):
+        events = []
+        trace = ConversationMissionTrace(
+            "Clique sur Joueurs", events.append, trace_id="ref-different",
+        )
+        trace.start()
+        trace.ingest("[AGENT_TOOL] call=browser_find args={}")
+        trace.ingest("[AGENT_TOOL] call=browser_click args={'ref':'different-ref'}")
+        trace.finish([
+            result("browser_find", detail=json.dumps({"matches": [
+                {"name": "Joueurs", "ref": "good-ref",
+                 "href": "https://example.test/players/"}]})),
+            result("browser_click", detail=json.dumps({
+                "verified": True, "postcondition": "navigation_observed",
+                "post_observation": {"tab": {
+                    "url": "https://example.test/players/"}}})),
+        ])
+        self.assertNotIn("EVIDENCE_CORRELATED", "\n".join(events))
+
     def test_click_success_never_proves_installation(self):
         events = []
         trace = ConversationMissionTrace(

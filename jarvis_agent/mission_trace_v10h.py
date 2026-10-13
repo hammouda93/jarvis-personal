@@ -7,6 +7,7 @@ come from runtime tool results; a successful tool is not goal completion.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import ast
 import json
 import re
 import unicodedata
@@ -129,7 +130,7 @@ def _tool_step_hint(tool: str, steps: tuple[str, ...]) -> int | None:
     return matches[0] if len(matches) == 1 else None
 
 
-def _target_evidence_hint(result, steps, earlier):
+def _target_evidence_hint(result, steps, earlier, *, clicked_ref=""):
     """Correlate a verified UI transition with an observed link label.
 
     A model-generated URL or a tool name alone is NEVER evidence. This uses
@@ -167,7 +168,15 @@ def _target_evidence_hint(result, steps, earlier):
         if not isinstance(matches, list) or len(matches) != 1:
             continue
         match = matches[0]
-        if not isinstance(match, dict) or str(match.get("href") or "") != url:
+        if not isinstance(match, dict):
+            continue
+        observed_ref = str(match.get("ref") or "")
+        if clicked_ref and observed_ref:
+            # Directly linked tool call ref is stronger than an href: the
+            # page may redirect after clicking a genuinely observed target.
+            if observed_ref != clicked_ref:
+                continue
+        elif str(match.get("href") or "") != url:
             continue
         label = _normalized(match.get("name") or match.get("text") or "")
         if len(label) >= 4:
@@ -249,6 +258,7 @@ class ConversationMissionTrace:
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
     steps: tuple[str, ...] = field(init=False)
     tool_calls: list[str] = field(default_factory=list)
+    _tool_call_refs: list[str] = field(default_factory=list)
     _step_tools: dict[int, list[str]] = field(default_factory=dict)
     _finished: bool = False
 
@@ -287,6 +297,20 @@ class ConversationMissionTrace:
         if match:
             name = match.group(1)
             self.tool_calls.append(name)
+            # Capture only the opaque observed target ref from the agent's
+            # own tool dispatch log, not the full arguments or UI content.
+            clicked_ref = ""
+            raw = line.split(" args=", 1)
+            if len(raw) == 2 and len(raw[1]) < 3000:
+                try:
+                    call_args = ast.literal_eval(raw[1])
+                    if isinstance(call_args, dict):
+                        candidate = call_args.get("ref")
+                        if isinstance(candidate, str) and len(candidate) < 300:
+                            clicked_ref = candidate
+                except (SyntaxError, ValueError, TypeError, MemoryError):
+                    pass
+            self._tool_call_refs.append(clicked_ref)
             hint = _tool_step_hint(name, self.steps)
             phase = ("VERIFYING" if name in _VERIFIERS else
                      "OBSERVING" if name in _OBSERVERS else "ACTING")
@@ -321,10 +345,19 @@ class ConversationMissionTrace:
         self._finished = True
         actions = tuple(actions)
         earlier = []
-        for result in actions:
+        call_sequence_aligned = (
+            len(actions) == len(self.tool_calls)
+            and all(str(getattr(action, "name", "")) == call
+                    for action, call in zip(actions, self.tool_calls))
+        )
+        for action_index, result in enumerate(actions):
             name = str(getattr(result, "name", ""))
             hint = _tool_step_hint(name, self.steps)
-            provenance_hint = _target_evidence_hint(result, self.steps, earlier)
+            clicked_ref = (self._tool_call_refs[action_index]
+                           if call_sequence_aligned else "")
+            provenance_hint = _target_evidence_hint(
+                result, self.steps, earlier, clicked_ref=clicked_ref
+            )
             activity_hint = _anaphoric_ui_activity_hint(result, self.steps)
             evidence = _evidence_level(result)
             if hint is not None:
