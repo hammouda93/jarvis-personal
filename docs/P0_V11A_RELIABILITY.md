@@ -68,7 +68,7 @@ Les gardes de reprise refusent un nouveau `open_url` déjà envoyé, un clic dé
 
 `assistant_v3.py` et `mission_trace_v10h.py` gardent l'objectif et les indices d'étapes de la mission sur plusieurs tours. Les indices de dispatch restent distincts d'une preuve d'objectif. La trace mémoire accepte le certificat indépendant SQLite. `operator_console.py` affiche en vert « OBJECTIF CERTIFIÉ » seulement pour un objectif vérifié ; un tour terminé sans preuve porte un badge ambre distinct. `operator_telemetry.py` expose la portée du certificat.
 
-Autres fichiers : `scripts/run_final_regression.py` isole aussi le registre de cerveaux et imprime chaque skip ; `project_roadmap.py` documente la priorité P0 ; `scripts/run_p0_acceptance.ps1` rassemble le profil de recette dans un seul lancement. Les fichiers `tests/test_p0_live_reliability.py`, `tests/test_browser_goal_proof_v11b.py`, `tests/browser_bridge_replay.mjs` et `tests/test_live_regressions_v10d.py` portent les régressions.
+Autres fichiers : `scripts/run_final_regression.py` isole aussi le registre de cerveaux et imprime chaque skip ; `project_roadmap.py` documente la priorité P0 ; `scripts/run_p0_acceptance.ps1` et `scripts/p0_acceptance.py` rassemblent le profil de recette dans un seul lancement. Les fichiers `tests/test_p0_live_reliability.py`, `tests/test_browser_goal_proof_v11b.py`, `tests/browser_bridge_replay.mjs`, `tests/test_live_regressions_v10d.py` et `tests/test_p0_launcher.py` portent les régressions.
 
 ## 4. Validation automatique
 
@@ -77,10 +77,11 @@ Les deux reproductions initiales échouaient : accusé mémoire négatif malgré
 | Vérification locale, Python 3.12.10 sur Windows | Résultat |
 |---|---|
 | Nouvelles régressions P0 | 24 exécutées, 24 réussies. |
-| `python scripts/run_final_regression.py` | 1175 exécutées, 1174 réussies, 0 échec, 0 erreur, 1 skip explicite. |
+| Régressions du lanceur Windows PowerShell 5.1 | 2 exécutées, 2 réussies. |
+| `python scripts/run_final_regression.py` | 1177 exécutées, 1176 réussies, 0 échec, 0 erreur, 1 skip explicite. |
 | `node --test tests/browser_bridge_replay.mjs` | 46 exécutées, 46 réussies, 0 skip. |
 | Imports SDK officiel MCP | Réussis. Pas de serveur personnel sollicité. |
-| Lanceur `run_p0_acceptance.ps1 -CheckOnly` | Réussi. Imports Qt, audio, dotenv, OpenAI-compatible et Windows COM. Aucun modèle ni interface démarré. |
+| Lanceur `run_p0_acceptance.ps1 -CheckOnly` | Réussi sous PowerShell 7 et Windows PowerShell 5.1. Imports Qt, audio, dotenv, OpenAI-compatible et Windows COM. Aucun modèle ni interface démarré. |
 
 Skip local : `test_file_artifact_v10e.FileArtifactTests.test_symbolic_link_is_not_accepted_as_independent_file_proof`, motif « File symlinks are not available for this test account ». Le contrat de symlink n'est donc pas validé par ce compte local ; son état CI doit être lu séparément.
 
@@ -89,6 +90,10 @@ La première régression complète a exposé une erreur d'isolation : un test de
 Les tests P0 couvrent notamment le commit mémoire suivi d'une exception, les reçus mal formés, le redémarrage de processus, les permissions, les contradictions de lecture, le menu non prouvé, les références périmées, la reprise sans nouveau dispatch et la transition simulée Cerebras primaire 429 → secondaire dans la même boucle. Les appels simulés ne démontrent ni le quota réel ni le coût réel du fournisseur.
 
 La CI de la nouvelle PR est déclenchée après publication. Son résultat sur le SHA final est communiqué dans le rapport de livraison ; la CI V11A citée plus haut constitue seulement l'état de départ.
+
+### Correctif de lancement Windows PowerShell 5.1
+
+Le premier lancement réel signalé par l'utilisateur a échoué avant l'interface : Windows PowerShell 5.1 supprimait des guillemets du bootstrap passé à Python avec `-c`. Le contrôle initial utilisait PowerShell 7 et ne couvrait pas cette frontière. Le bootstrap est maintenant un fichier Python, lancé avec des arguments ordinaires. Deux régressions exécutées avec le vrai `powershell.exe` reproduisaient le défaut et passent après correction : `-CheckOnly` avec chemins contenant des espaces et chemin de lancement journalisé avec configuration de bridge absente. Aucun de ces tests ne démarre une interface ou un appel modèle. La commande exacte avec la configuration existante passe aussi en `-CheckOnly` sous Windows PowerShell 5.1. L'appairage de l'extension reste valable.
 
 ## 5. Interface
 

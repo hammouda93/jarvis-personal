@@ -22,46 +22,11 @@ if (-not $BrowserBridgeConfig) {
 }
 $p0Bridge = [IO.Path]::GetFullPath($BrowserBridgeConfig)
 
-$p0Bootstrap = @'
-import os, runpy, sys
-from pathlib import Path
-from dotenv import load_dotenv
-root, env_file, bridge, check_only = sys.argv[1:]
-os.chdir(root)
-sys.path.insert(0, root)
-load_dotenv(env_file, override=False)
-# This explicit acceptance profile applies only to this child process.
-os.environ.update({
-    "JARVIS_MEMORY_CORE_ENABLED": "1",
-    "JARVIS_SEMANTIC_MEMORY_V5_ENABLED": "1",
-    "JARVIS_MEMORY_AGENT_TOOLS_ENABLED": "1",
-    "JARVIS_MEMORY_DIRECT_AGENT_ENABLED": "1",
-    "JARVIS_MEMORY_SCOPE_GUARD_ENABLED": "1",
-    "JARVIS_RUNTIME_CONVERGENCE_ENABLED": "1",
-    "JARVIS_BROWSER_CORE_ENABLED": "1",
-    "JARVIS_BROWSER_ENABLED": "0",
-    "JARVIS_BROWSER_BRIDGE_CONFIG": bridge,
-    "PYTHONIOENCODING": "utf-8",
-    "PYTHONUTF8": "1",
-})
-sys.argv = ["runtime_preflight"]
-from jarvis_agent.runtime_preflight import main as preflight
-if preflight():
-    raise SystemExit("Runtime dependencies need repair; see runtime_preflight output.")
-print("P0 profile: direct SQLite memory, durable missions, normal-profile Chrome bridge.")
-print("Existing data/provider preferences retained. No keys printed or configuration copied.")
-if check_only == "1":
-    print("CHECK ONLY: launcher dependencies validated; UI, browser connection and models not started.")
-    raise SystemExit(0)
-if not Path(bridge).is_file():
-    raise SystemExit("Browser bridge configuration missing; follow docs/P0_WINDOWS_ACCEPTANCE.md.")
-from jarvis_agent.browser_bridge_doctor import main as bridge_doctor
-sys.argv = ["browser_bridge_doctor", "--config", bridge]
-if bridge_doctor():
-    raise SystemExit("Connect the P0 extension in normal Chrome before launching Jarvis.")
-sys.argv = ["run_jarvis.py"]
-runpy.run_path(str(Path(root) / "run_jarvis.py"), run_name="__main__")
-'@
+# Pass a file and ordinary arguments. Windows PowerShell 5.1 strips quotes
+# from embedded Python source supplied to -c through its native argv boundary.
+$p0Bootstrap = Join-Path $p0Root 'scripts\p0_acceptance.py'
+$p0Arguments = @('-u', $p0Bootstrap, '--env-path', $p0EnvFile, '--bridge-config', $p0Bridge)
+if ($CheckOnly) { $p0Arguments += '--check-only' }
 
 $p0PreviousPath = $env:PYTHONPATH
 $p0PreviousHome = $env:PYTHONHOME
@@ -76,16 +41,15 @@ try {
     $p0Utf8 = New-Object System.Text.UTF8Encoding($false)
     [Console]::OutputEncoding = $p0Utf8
     $OutputEncoding = $p0Utf8
-    $p0Check = $(if ($CheckOnly) { '1' } else { '0' })
     if ($CheckOnly) {
-        & $p0Python -u -c $p0Bootstrap $p0Root $p0EnvFile $p0Bridge $p0Check
+        & $p0Python @p0Arguments
     } else {
         New-Item -ItemType Directory -Path (Join-Path $p0Root '.cache') -Force | Out-Null
         $p0Log = Join-Path $p0Root ('.cache\p0_live_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.log')
         Write-Host "P0 live log: $p0Log"
         # Native stderr is diagnostic output, not a PowerShell terminating error.
         $ErrorActionPreference = 'Continue'
-        & $p0Python -u -c $p0Bootstrap $p0Root $p0EnvFile $p0Bridge $p0Check 2>&1 | Tee-Object -FilePath $p0Log
+        & $p0Python @p0Arguments 2>&1 | Tee-Object -FilePath $p0Log
         $ErrorActionPreference = 'Stop'
     }
     $p0ExitCode = $LASTEXITCODE

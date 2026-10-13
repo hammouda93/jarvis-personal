@@ -24,6 +24,8 @@ Le script utilise `C:\jv312\Scripts\python.exe`, contrôle les dépendances et l
 
 Le journal est dans `.cache\p0_live_YYYYMMDD_HHMMSS.log`. Options utiles si l'installation diffère : `-PythonExe 'chemin\python.exe'`, `-EnvPath 'chemin\.env'`, `-BrowserBridgeConfig 'chemin\bridge.json'`. `-CheckOnly` valide les dépendances du lanceur sans ouvrir Jarvis, solliciter Chrome ou appeler un modèle ; il ne valide pas la recette LIVE.
 
+Le lanceur appelle `scripts/p0_acceptance.py` comme fichier Python pour fonctionner aussi avec Windows PowerShell 5.1. Il ne transmet plus de source Python via `-c` : cette méthode perdait des guillemets et provoquait `SyntaxError: '(' was never closed`. La correction du lanceur ne nécessite pas de réinstaller l'extension ni de réactiver un environnement virtuel.
+
 ## A. Écriture mémoire et redémarrage
 
 Donner cette demande naturelle une seule fois :
