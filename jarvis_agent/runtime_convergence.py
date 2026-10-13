@@ -888,6 +888,29 @@ class LiveMissionContinuityRuntime:
                     original = {"reason": detail, "dispatched": False, "outcome_unknown": False}
             if isinstance(original, dict):
                 data = {k: v for k, v in original.items() if k in fields}
+                if str(getattr(action, "name", "")).startswith("mcp__"):
+                    # A remote MCP tool's output is untrusted. Even the
+                    # transport envelope can change; preserve only locally
+                    # meaningful identifiers, never arbitrary source fields.
+                    origin = data.get("source")
+                    if isinstance(origin, dict):
+                        server, tool, attempt = (
+                            origin.get("server_id"), origin.get("tool_name"),
+                            origin.get("attempt_id"),
+                        )
+                        if (isinstance(server, str) and len(server) <= 36
+                                and isinstance(tool, str) and len(tool) <= 100
+                                and type(attempt) is int and attempt > 0
+                                and origin.get("trust") == "external_unverified"):
+                            data["source"] = {
+                                "server_id": server, "tool_name": tool,
+                                "attempt_id": attempt,
+                                "trust": "external_unverified",
+                            }
+                        else:
+                            data.pop("source", None)
+                    else:
+                        data.pop("source", None)
                 data.update(tab(original))
                 for key in ("tab", "independent_readback"):
                     if key in original:
