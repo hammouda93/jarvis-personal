@@ -32,25 +32,36 @@ class GenericMCPMissionRoutingTests(unittest.TestCase):
             registry = MCPRegistry(Path(temp) / "servers.json")
             registry.add_http("fixture", "https://fixture.example/mcp")
             registry.set_enabled("fixture", True)
-            registry.discover("fixture", [{"name": "read",
+            registry.discover("fixture", [{"name": "read_items",
                 "description": "Read fixture", "input_schema": {"type": "object"}}])
             delegate = Mock()
             delegate.ollama_tools.return_value = [schema("open_url")]
             tools = MCPToolRegistry(delegate, registry=registry,
                                     runtime_gate=registry.runtime_enabled)
             registry.set_runtime_enabled(True)
-            self.assertNotIn("mcp__fixture__read", names(
+            self.assertNotIn("mcp__fixture__read_items", names(
                 RequestContext(enabled=True).prepare_tools(tools.ollama_tools())))
-            registry.allow_tool("fixture", "read", True)
-            self.assertIn("mcp__fixture__read", names(
+            registry.allow_tool("fixture", "read_items", True)
+            self.assertIn("mcp__fixture__read_items", names(
                 RequestContext(enabled=True).prepare_tools(tools.ollama_tools())))
             registry.set_runtime_enabled(False)
-            self.assertNotIn("mcp__fixture__read", names(
+            self.assertNotIn("mcp__fixture__read_items", names(
                 RequestContext(enabled=True).prepare_tools(tools.ollama_tools())))
             registry.set_runtime_enabled(True)
             registry.set_enabled("fixture", False)
-            self.assertNotIn("mcp__fixture__read", names(
+            self.assertNotIn("mcp__fixture__read_items", names(
                 RequestContext(enabled=True).prepare_tools(tools.ollama_tools())))
+
+    def test_user_goal_ranks_commit_and_pull_request_reads_before_unrelated_tools(self):
+        context = RequestContext(enabled=True)
+        context.begin_turn("Inspecte les commits et pull requests de mon dépôt")
+        unrelated = [schema(f"mcp__fixture__get_issue_{i}") for i in range(14)]
+        related = [schema("mcp__fixture__list_commits"),
+                   schema("mcp__fixture__pull_request_read")]
+        chosen = context.prepare_tools(unrelated + related, browser_mode=True)
+        self.assertIn("mcp__fixture__list_commits", names(chosen))
+        self.assertIn("mcp__fixture__pull_request_read", names(chosen))
+        self.assertLessEqual(len(names(chosen) & names(unrelated + related)), 6)
 
     def test_already_authorized_mcp_visible_on_first_mission_turn(self):
         context = RequestContext(enabled=True)
