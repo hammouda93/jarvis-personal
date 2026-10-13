@@ -2236,16 +2236,51 @@ def close_window(title: str | None = None) -> UIActionResult:
         still_open = True
 
     if still_open:
+        # The close request was dispatched, but the SAME top-level window is
+        # independently still present. This is not evidence of successful
+        # closure and does not justify dispatching the close command again.
+        # Collect fresh, read-only UI refs for an observed Save/Discard dialog.
+        # The model may use them only within the original user's permissions.
+        observed = {}
+        try:
+            readback = inspect_active_window()
+            if readback.success:
+                payload = json.loads(readback.detail or "{}")
+                if isinstance(payload, dict):
+                    controls = list(payload.get("controls") or [])[:30]
+                    observed = {
+                        "observation_id": payload.get("observation_id"),
+                        "window": payload.get("window"),
+                        "controls": [
+                            {k: item.get(k) for k in ("ref", "type", "name", "enabled")
+                             if k in item}
+                            for item in controls if isinstance(item, dict)
+                        ],
+                    }
+        except (OSError, ValueError, TypeError, RuntimeError):
+            observed = {}
         return UIActionResult(
             False,
-            f"{label} est encore ouverte.",
-            "Une boîte de dialogue ou un état non enregistré peut bloquer la fermeture.",
+            f"{label} est encore ouverte. Observer la confirmation avant toute action.",
+            _json({
+                "dispatched": True, "verified": False,
+                "postcondition": "window_present",
+                "outcome_unknown": False,
+                "observed_handle": handle or None,
+                "post_observation": observed,
+                "next_step": "Inspecter les boutons observes et agir seulement selon l'autorisation utilisateur, sans relancer la fermeture.",
+            }),
         )
 
     return UIActionResult(
         True,
         f"Fenêtre fermée: {label}.",
-        "Fermeture vérifiée.",
+        _json({
+            "dispatched": True, "verified": True,
+            "postcondition": "window_absent",
+            "outcome_unknown": False,
+            "window": label,
+        }),
     )
 
 
