@@ -399,7 +399,11 @@ class AssistantWorker(QObject):
         value = (text or "").strip()
         if not value:
             return
-        value = re.sub(r"[*_#]+", "", value).replace("`", "").strip()
+        # Never remove punctuation globally: underscores, hash fragments,
+        # asterisks and backticks can be part of exact browser URLs, file
+        # paths, code symbols and verification evidence. Render plain text
+        # verbatim; presentation layers may style Markdown separately.
+        value = value.strip()
         source = self._reply_source
         self.conversation_message.emit("assistant", value, source)
         if source == "text":

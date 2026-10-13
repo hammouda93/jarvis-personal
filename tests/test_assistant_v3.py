@@ -25,6 +25,40 @@ class TextTurnInboxTests(unittest.TestCase):
         self.assertFalse(inbox.pending())
 
 
+class AssistantReplyIntegrityTests(unittest.TestCase):
+    def test_verified_url_and_file_names_survive_text_and_voice_delivery(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        reply = ("Navigation vérifiée : "
+                 "https://example.test/gestion_joueurs/players/?ref=a_b#result "
+                 "et rapport_2026.txt")
+        worker = SimpleNamespace(
+            conversation_message=SimpleNamespace(emit=Mock()),
+            log_line=SimpleNamespace(emit=Mock()),
+            status_changed=SimpleNamespace(emit=Mock()),
+            _reply_source="text",
+            _reply_with_voice=True,
+            _speak=Mock(),
+        )
+        AssistantWorker._deliver_reply(worker, reply)
+        worker.conversation_message.emit.assert_called_once_with(
+            "assistant", reply, "text"
+        )
+        worker.log_line.emit.assert_called_once_with(
+            "[TEXT_REPLY] " + reply
+        )
+        worker._speak.assert_called_once_with(reply)
+
+    def test_empty_reply_stays_silent(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        worker = SimpleNamespace(
+            conversation_message=SimpleNamespace(emit=Mock())
+        )
+        AssistantWorker._deliver_reply(worker, "  ")
+        worker.conversation_message.emit.assert_not_called()
+
+
 class AssistantV3FastPathTests(unittest.TestCase):
     def test_simple_youtube_open_uses_direct_path(self):
         self.assertTrue(
