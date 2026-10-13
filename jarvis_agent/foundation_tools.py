@@ -621,9 +621,17 @@ class FoundationToolAdapter:
                 # No duplicate write even if semantic projection later fails.
                 writer = (self.projection_worker.queue if tool_mode and self.projection_worker is not None
                           else self.memory)
-                item = writer.remember(
-                    raw, tags=str(args.get("tags", "")),
-                )
+                # Resolve relative date expressions ONLY as source
+                # metadata at the moment of the authorized write. Preserve
+                # the user's exact original words in content. A later query
+                # must not reinterpret "demain" relative to a new day.
+                tags = str(args.get("tags", ""))
+                if tool_mode:
+                    from .memory_temporal import raw_temporal_tag
+                    anchor = raw_temporal_tag(raw)
+                    if anchor:
+                        tags = (tags + " " + anchor).strip()
+                item = writer.remember(raw, tags=tags)
                 if tool_mode:
                     self._durable_memory_written_this_turn = True
                     status = ("raw_saved direct_agent_no_projection"

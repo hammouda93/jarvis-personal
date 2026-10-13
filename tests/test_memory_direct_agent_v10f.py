@@ -104,6 +104,44 @@ class DirectMemoryV10FTests(unittest.TestCase):
             self.assertTrue(any("Salah" in x for x in raw))
             self.assertTrue(any("Mhedhebi" in x for x in raw))
 
+    def test_raw_relative_date_anchor_survives_restart_without_projection(self):
+        from datetime import date
+        from jarvis_agent.memory_temporal import (
+            raw_temporal_tag, raw_temporal_date_from_tags, events_in_range,
+        )
+        self.assertEqual(
+            raw_temporal_tag("Retiens que demain j'ai un cours de padel",
+                             reference_date=date(2026, 10, 13)),
+            "jarvis_event_date=2026-10-14",
+        )
+        self.assertEqual(
+            raw_temporal_tag("Retiens que après-demain j'ai un cours de padel",
+                             reference_date=date(2026, 10, 13)),
+            "jarvis_event_date=2026-10-15",
+        )
+        self.assertEqual(
+            raw_temporal_tag("Retiens que demain ou après-demain, peut-être",
+                             reference_date=date(2026, 10, 13)), "",
+        )
+        with patch.dict(os.environ, DIRECT):
+            adapter = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            note = "retiens que demain j'ai un cours de padel"
+            adapter.begin_turn(note)
+            with patch("jarvis_agent.memory_temporal.date") as calendar:
+                calendar.today.return_value = date(2026, 10, 13)
+                # date.today and timedelta are the only non-persisted source.
+                calendar.side_effect = date
+                write = adapter.execute("remember_information", {"content": "invented"})
+            self.assertTrue(write.success, write.message)
+            stored = self.memory.recent_memories(limit=3)[0]
+            self.assertEqual(stored.content, note)
+            self.assertEqual(raw_temporal_date_from_tags(stored.tags), "2026-10-14")
+            again = MemoryCoreStore(self.memory.db_path)
+            got = events_in_range(again, "2026-10-14", "2026-10-14")
+            self.assertEqual(got["status"], "resolved")
+            self.assertEqual(got["hits"][0]["raw"], note)
+            self.assertTrue(got["hits"][0]["date_mention_only"])
+
     def test_direct_write_read_and_restart_without_projection(self):
         with patch.dict(os.environ, DIRECT):
             tools = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
