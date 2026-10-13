@@ -102,9 +102,23 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
         pending = state.get("pending_action") or {}
         if not isinstance(pending, dict):
             pending = {}
+        expected = state.get("expected_state") or {}
+        control = expected.get("goal_control") or {} if isinstance(expected, dict) else {}
+        if not isinstance(control, dict):
+            control = {}
         missions.append({
             "id": str(row["mission_id"])[:70],
             "goal": str(row["goal_summary"])[:150],
+            "current_goal": str(state.get("user_goal") or row["goal_summary"])[:4000],
+            "initial_goal": str(control.get("initial_goal") or state.get("user_goal") or "")[:2000],
+            "goal_revision": control.get("revision", 1),
+            "goal_history": [{"revision": h.get("revision"), "kind": str(h.get("kind") or "")[:40],
+                              "human_source": str(h.get("human_source") or "")[:2000]}
+                             for h in list(control.get("history") or [])[-8:] if isinstance(h, dict)],
+            "known_fact_count": len(observed.get("evidence_ledger") or []),
+            "permission_count": len(control.get("permissions") or []),
+            "execution_usage": dict(observed.get("execution_usage") or {}),
+            "suspension_reason": str(pending.get("reason") or observed.get("last_pause_reason") or "")[:120],
             "status": str(row["status"])[:35],
             "verified": observed.get("goal_verified") is True,
             "proof_scope": str(observed.get("proof_scope") or "")[:80],
@@ -202,6 +216,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
             "goal_verified": missions[0]["verified"],
             "manual_review_required": missions[0]["needs_review"],
             "semantic_plan": expected.get("semantic_contract"),
+            "open_questions": list((expected.get("goal_control") or {}).get("unresolved") or []),
             # Only requirement keys reach the UI; never the private proof refs.
             "plan_evidence": {
                 str(key): "recorded"

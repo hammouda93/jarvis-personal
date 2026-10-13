@@ -13,6 +13,7 @@ from .request_compaction import _READS
 _OBSERVATIONS = _READS | {"computer_observe", "computer_find"}
 _CONTEXT_TOOLS = {"request_tool_capabilities", "read_observation_evidence"}
 _ROOTS = {"find_file", "open_file", "open_folder", "open_application", "list_windows",
+          "list_applications",
           "browser_list_tabs", "browser_get_active_tab", "get_current_time",
           "mission_checkpoint", "return_to_standby", "reset_conversation_context"}
 # Essential read/verify tools and the generic Windows close primitive must not
@@ -24,6 +25,12 @@ _CROSS_DOMAIN = {
     "semantic_memory_search", "semantic_memory_inspect",
     "recall_information", "computer_verify", "computer_observe",
     "browser_observe_dom", "browser_verify",
+}
+_DESKTOP_PRIMARY = {
+    "close_tab",
+    "activate_window", "click_ui_element", "write_ui_element", "press_key",
+    "computer_find", "computer_click", "computer_write", "computer_press",
+    "computer_shortcut", "get_current_time",
 }
 
 EFFICIENT_SYSTEM_POLICY = """Tu es Jarvis, assistant personnel generaliste Windows. Reponds en francais, naturellement et brievement; ne revele pas le raisonnement interne. Converse sans outil si aucune action/preuve externe n'est necessaire.
@@ -95,7 +102,7 @@ class RequestContext:
                     return True
                 if browser_mode:
                     return name.startswith("browser_") or name == "open_url"
-                return not name.startswith(("browser_", "mcp__", "msf_", "semantic_memory_"))
+                return name in _DESKTOP_PRIMARY
             selected = {name for name in available if relevant(name)}
             # A memory-only policy must not become an empty tool pack.
             if not selected:

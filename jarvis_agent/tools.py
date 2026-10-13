@@ -1051,7 +1051,8 @@ def _find_named_file(
         except OSError:
             continue
 
-    scored.sort(key=lambda item: (-item[0], -item[1], len(str(item[2]))))
+    scored.sort(key=lambda item: (-item[0], -item[1], len(str(item[2])),
+                                 str(item[2]).casefold()))
     matches = [path for _score, _modified, path in scored[:8]]
     if not scored:
         return None, []

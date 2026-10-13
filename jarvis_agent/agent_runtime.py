@@ -3048,6 +3048,8 @@ class GroqResponsesAgent:
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
+        if getattr(self, "_mission_decision_messages", None) is not None:
+            return []
         tools = _filter_optional_ollama_tools(self.tools.ollama_tools())
         if not learning_enabled(settings):
             tools = [
@@ -3216,9 +3218,9 @@ class GroqResponsesAgent:
                 browser_mode=bool(getattr(self.tools, "browser_mode", False)),
                 conversational_only=social_only,
                 preserve_required=(
-                    ("remember_information",)
-                    if self._memory_write_allowed and not social_only
-                    else ()
+                    tuple({"remember_information"} if self._memory_write_allowed and not social_only else ())
+                    + tuple((t.get("function") or {}).get("name") for t in tools
+                            if ms_football_only and str((t.get("function") or {}).get("name") or "").startswith("msf_"))
                 ),
             )
         return tools
@@ -3233,6 +3235,8 @@ class GroqResponsesAgent:
         )
 
     def _messages_for_request(self) -> list[dict[str, Any]]:
+        if getattr(self, "_mission_decision_messages", None) is not None:
+            return self._mission_decision_messages
         context = getattr(self, "request_context", None)
         if context is not None and context.enabled:
             return self._messages
@@ -3953,6 +3957,7 @@ class GroqResponsesAgent:
         browser_result_selection_repair_attempted = False
         browser_submit_repair_attempted = False
         navigation_checkpoints = set()
+        local_refusal_checkpoints = set()
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -3997,6 +4002,33 @@ class GroqResponsesAgent:
 
             if not calls:
                 raw_text = str(getattr(message, "content", "") or "")
+                last = actions[-1] if actions else None
+                local = _action_detail_dict(last) if last else {}
+                observation = local.get("post_observation")
+                local_checkpoint = str((observation or {}).get("observation_id") or "") if isinstance(observation, dict) else ""
+                if (last is not None and not last.success
+                        and local.get("stale_ref") is True
+                        and local.get("dispatched") is False
+                        and local.get("outcome_unknown") is False
+                        and local.get("reason") != "fresh_target_ambiguous_or_absent"
+                        and local_checkpoint and local_checkpoint not in local_refusal_checkpoints
+                        and len(local_refusal_checkpoints) < 2
+                        and round_index < settings.agent_max_tool_rounds
+                        and self._pending_function_approval is None
+                        and not getattr(self.tools, "uncertain_scopes", None)):
+                    self._messages[-1]["content"] = ""
+                    self._messages.append({"role": "user", "content": (
+                        "LOCAL_REFUSAL_RECOVERY: The expired-reference call was NOT dispatched. "
+                        "Use the fresh observation already returned to find a unique semantic target. "
+                        "Continue only the still-authorized action with a fresh ref, preserving the "
+                        "current goal and all constraints. Read-only inspection requires no extra "
+                        "user confirmation. If absent, ambiguous or sensitive permission is missing, "
+                        "stop with that precise reason. Never replay an uncertain effect."
+                    )})
+                    local_refusal_checkpoints.add(local_checkpoint)
+                    if log:
+                        log("[MISSION] recovery=local_refusal_fresh_observation")
+                    continue
                 from .browser_goal_proof import navigation_continuation_checkpoint
                 from .active_mission_supervisor import execution_scope_active
                 checkpoint = navigation_continuation_checkpoint(user_text, actions)

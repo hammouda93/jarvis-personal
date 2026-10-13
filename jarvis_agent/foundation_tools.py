@@ -407,6 +407,10 @@ class FoundationToolAdapter:
             legacy = {"list_browser_pages", "inspect_browser_page", "activate_browser_page",
                       "write_browser_element", "click_browser_element", "press_browser_element",
                       "scroll_browser_element", "open_web_search", "close_tab"}
+            if not self.browser_mode:
+                # Native application tabs remain a Windows capability.
+                # Browser-scoped dispatch still refuses this OS primitive.
+                legacy.discard("close_tab")
             # Tool visibility is not an execution permission. Keep desktop
             # schemas available to reason across mixed browser/Windows goals;
             # execute() still rejects OS mutations while browser scoped.
@@ -456,6 +460,15 @@ class FoundationToolAdapter:
     def execute(self, name, arguments, *, approved=False):
         from .native_tools import AgentActionResult
         args = dict(arguments or {})
+        if name in _OS_MUTATIONS and any(s[0] == "native_windows" for s in self.uncertain_scopes):
+            from .windows_perception import ui_ref_descriptor
+            descriptor = ui_ref_descriptor(str(args.get("ref") or "")) or {}
+            identity = descriptor.get("window_identity") or {}
+            scope_id = identity.get("handle") or identity.get("window_id") or descriptor.get("window_title")
+            if not scope_id or ("native_windows", None) in self.uncertain_scopes or ("native_windows", scope_id) in self.uncertain_scopes:
+                return AgentActionResult(name, False, "Effet Windows incertain : vérification indépendante requise.",
+                    json.dumps({"dispatched": False, "outcome_unknown": True,
+                                "reason": "prior_native_effect_unknown"}))
         from .browser_goal_proof import navigation_dispatch_guard
         resume_guard = navigation_dispatch_guard(name, args)
         if resume_guard:
@@ -976,6 +989,17 @@ class FoundationToolAdapter:
                     )
                     if not browser_objective:
                         self.browser_mode = False
+                try:
+                    native_detail = json.loads(result.detail or "{}")
+                except (ValueError, TypeError):
+                    native_detail = {}
+                if (name in _OS_MUTATIONS and isinstance(native_detail, dict)
+                        and native_detail.get("outcome_unknown") is True):
+                    raw_scope = native_detail.get("scope")
+                    scope = (tuple(raw_scope) if isinstance(raw_scope, list) and len(raw_scope) == 2
+                             and raw_scope[0] == "native_windows" else ("native_windows", None))
+                    self.pending_verification.add(scope)
+                    self.uncertain_scopes.add(scope)
                 return result
             browser_mutating_names = {
                 "open_url", "browser_navigate", "browser_click", "browser_write",
@@ -1090,6 +1114,9 @@ class FoundationToolAdapter:
                         detail=json.dumps(
                             {
                                 "reason": "stale_or_cross_tab_browser_ref",
+                                "stale_ref": True,
+                                "dispatched": False,
+                                "outcome_unknown": False,
                                 "reobserve_required": True,
                                 "post_observation": observation,
                                 "scope": ("browser", args["tab_id"]),
@@ -1097,6 +1124,20 @@ class FoundationToolAdapter:
                             ensure_ascii=False,
                         ),
                     )
+                # Failed reinspection does not change the local zero-dispatch
+                # outcome into a possibly executed browser action.
+                return AgentActionResult(name, False, "Référence navigateur expirée avant exécution.",
+                    json.dumps({"reason": "stale_or_cross_tab_browser_ref",
+                                "stale_ref": True, "dispatched": False,
+                                "outcome_unknown": False,
+                                "scope": ("browser", args["tab_id"])}))
+            if self.computer and name.startswith("computer_") and error_text in {
+                "stale_grounding_ref", "grounding_ref_expired",
+            }:
+                return AgentActionResult(name, False, "Référence Windows expirée avant exécution.",
+                    json.dumps({"stale_ref": True, "dispatched": False,
+                                "outcome_unknown": False, "reason": error_text,
+                                "ref": args.get("ref"), "reobserve_required": True}))
             if self.browser and ("outcome_unknown" in error_text or isinstance(exc, TimeoutError)):
                 scope = ("browser", args.get("tab_id"))
                 self.pending_verification.add(scope)

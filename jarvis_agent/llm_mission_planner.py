@@ -25,7 +25,12 @@ _SYSTEM = (
     "observations futures et indépendantes, jamais à un clic ou au texte "
     "du modèle. N'invente aucun destinataire, consentement, outil, compte "
     "connecté ou capacité externe. Si une ambiguïté subsiste, liste-la dans "
-    "unresolved. Ne déclare aucun objectif accompli."
+    "unresolved. Champs facultatifs : preconditions=[{\"question\":\"question exacte dans unresolved\","
+    "\"fact\":\"file_path|filename|directory|operating_system|window_title\"}] et "
+    "fact_bindings=[{\"requirement\":\"critère exact dans required_evidence\","
+    "\"fact\":\"même enum\"}]. Utilise ces bindings seulement pour des faits "
+    "locaux observables, jamais pour permission, installation terminée, message "
+    "envoyé ou objectif global. Ne déclare aucun objectif accompli."
 )
 _IDENT = re.compile(r"^[a-z][a-z0-9_]{1,47}$")
 _JSON_FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.I)
@@ -48,7 +53,8 @@ def parse_model_plan(
         parsed = json.loads(text)
     except (TypeError, ValueError) as exc:
         raise MissionPlanError("model_plan_not_json") from exc
-    if not isinstance(parsed, dict) or set(parsed) != {"steps", "unresolved"}:
+    if (not isinstance(parsed, dict) or not {"steps", "unresolved"} <= set(parsed)
+            or set(parsed) - {"steps", "unresolved", "preconditions", "fact_bindings"}):
         raise MissionPlanError("model_plan_fields_invalid")
     input_steps = parsed["steps"]
     unresolved = parsed["unresolved"]
@@ -111,6 +117,18 @@ def parse_model_plan(
             "automatic_execution": False,
         },
     )
+    roles = {"file_path", "filename", "directory", "operating_system", "window_title"}
+    requirements = set(contract.completion_requirements())
+    for key, label, known in (("preconditions", "question", set(unresolved)),
+                              ("fact_bindings", "requirement", requirements)):
+        bindings = parsed.get(key, [])
+        if (not isinstance(bindings, list) or len(bindings) > 18
+                or any(not isinstance(b, dict) or set(b) != {label, "fact"}
+                       or not isinstance(b[label], str) or b[label] not in known
+                       or not isinstance(b["fact"], str) or b["fact"] not in roles
+                       for b in bindings)):
+            raise MissionPlanError("model_plan_fact_binding_invalid")
+        contract.metadata[key] = bindings
     contract.validate()
     return contract
 

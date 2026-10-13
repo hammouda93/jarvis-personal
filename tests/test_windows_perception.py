@@ -161,6 +161,7 @@ class _FakeTab:
 
 
 class _FakeTabWindow:
+    handle = 4242
     element_info = SimpleNamespace(
         name="Google Chrome",
         control_type="Window",
@@ -175,6 +176,9 @@ class _FakeTabWindow:
 
     def descendants(self):
         return list(self.tabs)
+
+    def set_focus(self):
+        pass
 
     def rectangle(self):
         return SimpleNamespace(left=0, top=0, right=1200, bottom=900)
@@ -373,11 +377,13 @@ class WindowsPerceptionTests(unittest.TestCase):
     @patch("jarvis_agent.windows_perception.time.sleep")
     @patch("jarvis_agent.windows_perception._send_keys")
     @patch("jarvis_agent.windows_perception._active_window")
+    @patch("jarvis_agent.windows_perception._foreground_window_handle", return_value=4242)
     def test_close_tab_ignores_page_internal_tabitems(
         self,
         active_window_mock,
         send_keys_mock,
         sleep_mock,
+        foreground_mock,
     ):
         browser_tab = _FakeTab("(5) YouTube - Utilisation mémoire", top=4)
         shorts_filter = _FakeTab("Shorts", top=236)
@@ -398,12 +404,14 @@ class WindowsPerceptionTests(unittest.TestCase):
     @patch("jarvis_agent.windows_perception._send_keys")
     @patch("jarvis_agent.windows_perception._window_by_title")
     @patch("jarvis_agent.windows_perception._active_window")
+    @patch("jarvis_agent.windows_perception._foreground_window_handle", return_value=4242)
     def test_close_named_tab_recovers_browser_when_jarvis_is_foreground(
         self,
         active_window_mock,
         window_by_title_mock,
         send_keys_mock,
         sleep_mock,
+        foreground_mock,
     ):
         jarvis = _FakeTabWindow([])
         youtube = _FakeTab("(5) YouTube - Google Chrome")
@@ -422,11 +430,13 @@ class WindowsPerceptionTests(unittest.TestCase):
     @patch("jarvis_agent.windows_perception.time.sleep")
     @patch("jarvis_agent.windows_perception._send_keys")
     @patch("jarvis_agent.windows_perception._active_window")
+    @patch("jarvis_agent.windows_perception._foreground_window_handle", return_value=4242)
     def test_close_named_tab_does_not_use_close_window(
         self,
         active_window_mock,
         send_keys_mock,
         sleep_mock,
+        foreground_mock,
     ):
         youtube = _FakeTab("(5) YouTube - Utilisation mémoire")
         pointer = _FakeTab("Pointer GitHub puis tester")

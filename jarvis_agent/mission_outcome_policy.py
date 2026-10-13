@@ -51,8 +51,8 @@ def failure_requires_review(actions: tuple | list) -> bool:
             # dialog observation is safe; re-dispatching the same close is NOT.
             # This exception requires the actual readback contract, not the
             # model's claim that a close probably failed.
-            if (name == "close_window"
-                    and detail.get("postcondition") == "window_present"
+            if (name in {"close_window", "close_tab"}
+                    and detail.get("postcondition") == ("window_present" if name == "close_window" else "tab_present")
                     and detail.get("outcome_unknown") is False
                     and isinstance(detail.get("post_observation"), dict)
                     and detail["post_observation"].get("observation_id")):

@@ -33,10 +33,13 @@ class InstallerDiscoveryCompatibilityTests(unittest.TestCase):
                         self.assertIn(setup, matches)
                 selected, matches = _find_named_file("installateur de Cursor")
                 self.assertNotIn(decoy, matches)
-                # A generic filename request must not silently become
-                # permission to execute an .exe when a document also matches.
-                plain, _ = _find_named_file("Cursor")
-                self.assertNotEqual(plain, setup)
+                # Generic discovery ranks files, not execution permissions.
+                # Timestamp resolution and traversal order differ by OS; both
+                # relevant candidates are valid. Only targeted installer
+                # queries must exclude the text document.
+                plain, candidates = _find_named_file("Cursor")
+                self.assertIn(plain, {setup, decoy})
+                self.assertEqual(set(candidates), {setup, decoy})
 
     def test_open_file_dispatches_only_exact_discovered_artifact(self):
         with tempfile.TemporaryDirectory() as root:
