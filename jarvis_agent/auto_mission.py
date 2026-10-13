@@ -84,11 +84,11 @@ def prepare(agent: Any, user_text: str, *, log: Callable[[str], None] | None = N
         } and not snapshot.get("active_supervisor"):
             incoming = _plain(user_text).strip()
             previous = _plain(str(snapshot.get("user_goal") or ""))
-            urls = re.findall(r"https?://[^\\s,;]+", incoming)
-            earlier_urls = set(re.findall(r"https?://[^\\s,;]+", previous))
-            explicit_new = bool(re.match(r"^(?:nouvelle mission|new mission)\\s*:", incoming))
+            urls = re.findall(r"https?://[^\s,;]+", incoming)
+            earlier_urls = set(re.findall(r"https?://[^\s,;]+", previous))
+            explicit_new = bool(re.match(r"^(?:nouvelle mission|new mission)\s*:", incoming))
             different_destination = (
-                bool(re.match(r"^(?:ouvre|ouvrir|open|navigate|va sur)\\b", incoming))
+                bool(re.match(r"^(?:ouvre|ouvrir|open|navigate|va sur)\b", incoming))
                 and any(url.rstrip(".,;)") not in earlier_urls for url in urls)
             )
             if (explicit_new or different_destination) and incoming != previous:
