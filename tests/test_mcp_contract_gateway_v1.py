@@ -77,6 +77,30 @@ class JsonSchemaContractTests(unittest.TestCase):
         self.assertEqual(invalid_schema_argument_paths(
             ["wrong"], schema()), ("arguments",))
 
+    def test_external_schema_refs_cannot_trigger_network(self):
+        for key in ("$ref", "$dynamicRef", "$recursiveRef"):
+            with self.subTest(key=key):
+                with self.assertRaises(MCPArgumentSchemaUnavailable):
+                    invalid_schema_argument_paths(
+                        {"owner": "real-user"}, {
+                            "type": "object",
+                            "properties": {"owner": {
+                                key: "https://schema.example/schema.json",
+                            }},
+                        },
+                    )
+
+    def test_local_schema_ref_remains_supported(self):
+        local = {
+            "type": "object",
+            "properties": {"owner": {"$ref": "#/$defs/identifier"}},
+            "$defs": {"identifier": {"type": "string", "minLength": 3}},
+        }
+        self.assertEqual(invalid_schema_argument_paths(
+            {"owner": "user123"}, local), ())
+        self.assertEqual(invalid_schema_argument_paths(
+            {"owner": "x"}, local), ("arguments.owner",))
+
 
 class MCPContractGatewayTests(unittest.TestCase):
     def setUp(self):
