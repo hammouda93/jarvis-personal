@@ -167,6 +167,57 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.runtime.run(GOAL)
         self.assertFalse(self.saved(mid).observed_state["goal_verified"])
 
+    def test_independent_sqlite_memory_proof_completes_persistent_mission(self):
+        from jarvis_agent.memory_core_store import MemoryCoreStore
+        from jarvis_agent.native_tools import AgentActionResult
+        from hashlib import sha256
+        import json
+        goal = "retiens que demain j'ai un cours de padel"
+        store = MemoryCoreStore(self.root / "memory.sqlite3")
+        item = store.remember(goal)
+        payload = json.dumps({
+            "memory_id": item.id, "verified": True,
+            "source": "sqlite_exact_raw_readback",
+            "raw_sha256": sha256(goal.encode()).hexdigest(),
+        })
+        # The fixture binds the real disk store to the existing adapter.
+        self.delegate.tools = SimpleNamespace(memory=store)
+        self.delegate.result = SimpleNamespace(
+            text="Souvenir sauvegardé", actions=(
+                AgentActionResult("remember_information", True, "saved", payload),
+            ),
+        )
+        mid = self.runtime.begin_mission(goal)
+        self.runtime.run(goal)
+        saved = self.saved(mid)
+        self.assertEqual(saved.status, MissionStatus.COMPLETED)
+        self.assertEqual(saved.observed_state["verified_memory_id"], item.id)
+        self.assertTrue(saved.observed_state["goal_verified"])
+        self.assertEqual(saved.observed_state["proof_scope"], "durable_user_memory")
+        self.assertIsNone(self.runtime.active_mission_id)
+
+    def test_memory_tool_success_alone_cannot_complete_goal(self):
+        from jarvis_agent.memory_core_store import MemoryCoreStore
+        from jarvis_agent.native_tools import AgentActionResult
+        import json
+        goal = "retiens que demain j'ai un cours de padel"
+        store = MemoryCoreStore(self.root / "memory.sqlite3")
+        item = store.remember("Different source")
+        self.delegate.tools = SimpleNamespace(memory=store)
+        self.delegate.result = SimpleNamespace(
+            text="saved", actions=(
+                AgentActionResult("remember_information", True, "saved",
+                    json.dumps({"memory_id": item.id, "verified": True,
+                        "source": "sqlite_exact_raw_readback",
+                        "raw_sha256": "wrong"})),
+            ),
+        )
+        mid = self.runtime.begin_mission(goal)
+        self.runtime.run(goal)
+        saved = self.saved(mid)
+        self.assertEqual(saved.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(saved.observed_state["goal_verified"])
+
     def test_failed_action_blocks_mission_without_rewriting_reply(self):
         self.delegate.result = SimpleNamespace(
             text="erreur", actions=(action(success=False),)
