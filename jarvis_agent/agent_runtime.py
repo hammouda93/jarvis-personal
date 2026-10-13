@@ -4677,7 +4677,7 @@ class GroqResponsesAgent:
                 from .instruction_clauses import (
                     has_installer_file_target, authorized_installer_open,
                 )
-                if name == "open_file" and has_installer_file_target(user_text):
+                if name in {"find_file", "open_file"} and has_installer_file_target(user_text):
                     arguments["kind"] = "installer"
                 if (name == "open_application"
                         and authorized_installer_open(user_text)
@@ -4856,6 +4856,22 @@ class GroqResponsesAgent:
                             "Je ne réécris pas le champ avant l'envoi."
                         ),
                         detail="browser_write_blocked_for_submit_only_request",
+                    )
+                elif (
+                    name in {"open_file", "open_application"}
+                    and has_installer_file_target(user_text)
+                    and not authorized_installer_open(user_text)
+                ):
+                    result = AgentActionResult(
+                        name=name, success=False,
+                        message=("La demande ne m'autorise pas à lancer "
+                                 "l'installateur. Utiliser find_file pour "
+                                 "le retrouver sans l'exécuter."),
+                        detail=json.dumps({
+                            "guard": "installer_launch_not_authorized",
+                            "dispatched": False, "outcome_unknown": False,
+                            "next_tool": "find_file",
+                        }),
                     )
                 elif (
                     name == "press_key"
