@@ -50,7 +50,7 @@ def _navigation_intent(goal):
     initial = urls[0].rstrip(".,;")
     if not _http(initial):
         return None
-    text = _plain(raw.replace(urls[0], " URL "))
+    text = _plain(raw.replace(urls[0], " url "))
     # No other externally consequential objective may be silently ignored.
     forbidden = (
         r"\b(?:envoi\w*|send|supprim\w*|delet\w*|effac\w*|"
@@ -61,7 +61,7 @@ def _navigation_intent(goal):
     )
     if re.search(forbidden, text):
         return None
-    if not re.search(r"\b(?:ouvre|ouvrir|open)\s+URL\b", text):
+    if not re.search(r"\b(?:ouvre|ouvrir|open)\s+url\b", text):
         return None
     if not re.search(r"\b(?:verifie|verifier|verify|check|confirme)\b", text):
         return None
