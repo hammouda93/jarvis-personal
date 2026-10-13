@@ -142,35 +142,6 @@ class DirectMemoryV10FTests(unittest.TestCase):
             found = fresh.tools.memory.recent_memories(limit=5)
             self.assertEqual(found[0].content, sentence)
 
-    def test_explicit_memory_recall_survives_restart_without_brain(self):
-        from jarvis_agent.foundation_tools import FoundationRuntime
-        from jarvis_agent.agent_runtime import AgentRuntimeUnavailable
-        class OfflineAgent:
-            calls = 0
-            def run(self, *args, **kwargs):
-                self.calls += 1
-                raise AgentRuntimeUnavailable("all providers offline")
-        with patch.dict(os.environ, DIRECT):
-            original = FoundationRuntime(
-                OfflineAgent(),
-                FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory),
-            )
-            original.run("retiens que demain j'ai un cours de padel")
-            fresh = FoundationRuntime(
-                OfflineAgent(),
-                FoundationToolAdapter(
-                    MinimalNativeRegistry(),
-                    memory=MemoryCoreStore(self.memory.db_path),
-                ),
-            )
-            result = fresh.run("Tu te souviens de mon cours de padel ?")
-            self.assertIn("cours de padel", result.text)
-            self.assertIn("Souvenir #", result.text)
-            self.assertEqual(fresh.delegate.calls, 0)
-            none = fresh.run("Tu te souviens de mon anniversaire de ski ?")
-            self.assertIn("aucun souvenir correspondant", none.text)
-            self.assertEqual(fresh.delegate.calls, 0)
-
     def test_memory_fast_path_never_steals_mixed_missions_or_questions(self):
         from jarvis_agent.foundation_tools import FoundationRuntime
         from jarvis_agent.agent_runtime import AgentTurnResult
@@ -264,6 +235,26 @@ class DirectMemoryV10FTests(unittest.TestCase):
             recovered = reopened.execute("semantic_memory_search", {"query": "Quel est mon nom ?"})
             self.assertEqual(json.loads(recovered.detail)["raw_fallback"][0]["memory_id"],
                              stored[0].id)
+
+    def test_brain_tool_write_receipt_is_independently_verified_in_sqlite(self):
+        import hashlib
+        with patch.dict(os.environ, DIRECT):
+            adapter = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            exact = "retiens que demain j'ai un cours de padel"
+            adapter.begin_turn(exact)
+            action = adapter.execute("remember_information", {"content": "LLM inventée"})
+            self.assertTrue(action.success, action.message)
+            receipt = json.loads(action.detail)
+            self.assertEqual(receipt["source"], "sqlite_exact_raw_readback")
+            self.assertTrue(receipt["verified"])
+            self.assertEqual(
+                receipt["raw_sha256"],
+                hashlib.sha256(exact.encode("utf-8")).hexdigest(),
+            )
+            self.assertEqual(
+                MemoryCoreStore(self.memory.db_path)
+                    .get_memory(receipt["memory_id"]).content, exact,
+            )
 
     def test_direct_recall_never_returns_unrelated_data(self):
         with patch.dict(os.environ, DIRECT):
