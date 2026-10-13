@@ -15,7 +15,7 @@ READ_ONLY_TOOLS = frozenset({
     "browser_find", "browser_verify", "computer_observe", "computer_find",
     "computer_verify", "computer_list_windows", "computer_get_active_window",
     "list_windows", "inspect_active_window", "inspect_interface",
-    "observe_screen", "verify_file_artifact",
+    "observe_screen", "verify_file_artifact", "find_file",
     "semantic_memory_inspect", "semantic_memory_search",
     "semantic_memory_events_on_date", "semantic_memory_events_in_range",
     "msf_describe_schema", "msf_count_records", "msf_query_records",
