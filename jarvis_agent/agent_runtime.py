@@ -4682,7 +4682,7 @@ class GroqResponsesAgent:
                 if (name == "open_application"
                         and authorized_installer_open(user_text)
                         and not re.search(
-                            r"\\b(?:ouvre|open)\\s+(?:l[' ]|the )?application\\b",
+                            r"\b(?:ouvre|open)\s+(?:l[' ]|the )?application\b",
                             normalize(user_text),
                         )):
                     filename = str(arguments.get("name") or "").strip()
