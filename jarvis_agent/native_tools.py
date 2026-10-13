@@ -929,6 +929,9 @@ class NativeToolRegistry:
         approved: bool = False,
     ) -> AgentActionResult:
         args = dict(arguments or {})
+        if approved and self.requires_confirmation(name):
+            from .runtime_convergence import note_live_tool_approval
+            note_live_tool_approval(name, args)
         if name in {"save_verified_skill", "save_feedback_lesson"} and not learning_enabled(settings):
             return self._error(name, "operational_learning_disabled")
         if name == "search_agent_knowledge" and not skills_enabled(settings):
@@ -1420,6 +1423,11 @@ class NativeToolRegistry:
                     args.get("delivery_mode", "background")
                 ).strip() or "background",
             )
+            if not result.success and ref:
+                result = self._recover_stale_click(
+                    result, ref=ref, target=target, control_type=control_type,
+                    delivery_mode=str(args.get("delivery_mode", "background")),
+                )
             action = AgentActionResult(
                 name=name,
                 success=result.success,
@@ -1831,6 +1839,72 @@ class NativeToolRegistry:
             )
         except Exception:
             pass
+
+    def _recover_stale_click(self, result, *, ref, target, control_type, delivery_mode):
+        """One read/rebind after proven zero dispatch, never after uncertainty.
+
+        Match a unique enabled semantic control in the SAME observed window.
+        Missing descriptors, renamed windows or ambiguous matches fail closed.
+        No index, coordinates, fuzzy label or inferred permission is used.
+        """
+        try:
+            refusal = json.loads(result.detail or "{}")
+        except (ValueError, TypeError):
+            return result
+        if (refusal.get("stale_ref") is not True
+                or refusal.get("dispatched") is not False
+                or refusal.get("outcome_unknown") is not False):
+            return result
+        attempted = getattr(self, "_stale_click_recoveries", set())
+        if ref in attempted or len(attempted) >= 120:
+            return result
+        attempted.add(ref)
+        self._stale_click_recoveries = attempted
+        descriptor = ui_ref_descriptor(ref)
+        if not descriptor or not descriptor.get("window_title"):
+            return result
+        identity = descriptor.get("window_identity") or {}
+        if not identity.get("pid") or not (identity.get("handle") or identity.get("window_id")):
+            return result
+        observed = inspect_active_window(title=descriptor["window_title"])
+        if not observed.success:
+            return result
+        try:
+            snapshot = json.loads(observed.detail)
+        except (ValueError, TypeError):
+            return result
+        if (not isinstance(snapshot, dict) or not snapshot.get("observation_id")
+                or (snapshot.get("window") or {}).get("title") != descriptor["window_title"]
+                or any((snapshot.get("window") or {}).get(k) != v for k, v in identity.items())):
+            return result
+        self._record_inspected_app(observed)
+        candidates = []
+        identity_keys = ("type", "id", "name", "label")
+        has_identity = bool(descriptor.get("id") or descriptor.get("name") or descriptor.get("label"))
+        for control in snapshot.get("controls") or []:
+            if (not isinstance(control, dict) or not has_identity
+                    or control.get("enabled") is not True
+                    or not str(control.get("ref") or "").startswith(snapshot["observation_id"] + ":")):
+                continue
+            if all(not descriptor.get(k) or control.get(k) == descriptor[k] for k in identity_keys):
+                candidates.append(control)
+        refusal.update({"recovery_attempted": True,
+                        "post_observation": self._compact_observation(snapshot),
+                        "reason": "fresh_target_ambiguous_or_absent"})
+        if len(candidates) != 1:
+            return type(result)(False, "Référence expirée : nouvelle observation obtenue, cible absente ou ambiguë.",
+                                json.dumps(refusal, ensure_ascii=False))
+        fresh_ref = candidates[0]["ref"]
+        fresh = click_ui_element(target, ref=fresh_ref, control_type=control_type,
+                                 delivery_mode=delivery_mode)
+        try:
+            data = json.loads(fresh.detail or "{}")
+        except (ValueError, TypeError):
+            # Do not relabel an actually attempted click as a local refusal.
+            data = {"dispatched": True, "outcome_unknown": not fresh.success}
+        data.update({"recovered_from_stale_ref": ref, "recovered_ref": fresh_ref,
+                     "recovery_attempted": True, "local_refusal": refusal})
+        return type(fresh)(fresh.success, fresh.message, json.dumps(data, ensure_ascii=False))
 
     def _recover_stale_write(
         self,

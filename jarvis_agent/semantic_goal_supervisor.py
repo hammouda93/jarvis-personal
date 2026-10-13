@@ -58,11 +58,14 @@ def evaluate_mission(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     )
 
     if not isinstance(contract, dict):
+        questions = [str(q)[:200] for q in (snapshot.get("open_questions") or [])[:20]]
         state = ("manual_review" if blocked else
                  "goal_verified" if actual_goal_verified else
+                 "clarification_required" if questions else
                  "plan_needed")
         next_action = ("independent_review" if blocked else
                        "none" if actual_goal_verified else
+                       "clarify_entities" if questions else
                        "register_plan")
         return {
             "mission_id": str(snapshot.get("mission_id") or "")[:70],
@@ -74,7 +77,7 @@ def evaluate_mission(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             "action_count": action_count,
             "failed_or_uncertain_turns": task_failures,
             "steps": [],
-            "unresolved": [],
+            "unresolved": questions,
             "required_evidence": [],
             "recorded_evidence": [],
             "missing_evidence": [],

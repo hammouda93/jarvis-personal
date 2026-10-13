@@ -26,6 +26,11 @@ def _send_keys(sequence: str) -> None:
     keyboard.send_keys(sequence, pause=0.03)
 
 
+def _foreground_window_handle() -> int:
+    import ctypes
+    return int(ctypes.windll.user32.GetForegroundWindow())
+
+
 _INTERACTIVE_TYPES = {
     "Button",
     "CheckBox",
@@ -84,6 +89,7 @@ def _remember_ref_descriptor(
     compact: dict[str, Any],
     *,
     window_title: str,
+    window_identity: dict | None = None,
 ) -> None:
     """Keep a bounded non-actionable fingerprint for stale-ref recovery."""
     key = str(ref or "").strip().lower()
@@ -92,6 +98,7 @@ def _remember_ref_descriptor(
     _REF_DESCRIPTORS[key] = {
         "ref": ref,
         "window_title": str(window_title or "")[:300],
+        "window_identity": dict(window_identity or {}),
         "type": str(compact.get("type") or "")[:80],
         "name": str(compact.get("name") or "")[:200],
         "id": str(compact.get("id") or "")[:160],
@@ -430,11 +437,18 @@ def _active_window():
 
 
 def _compact_window(wrapper: Any) -> dict[str, Any]:
-    return {
+    result = {
         "title": _element_name(wrapper),
         "type": _control_type(wrapper) or "Window",
         "bounds": list(_rect_tuple(wrapper)),
     }
+    handle = getattr(wrapper, "handle", None)
+    pid = getattr(getattr(wrapper, "element_info", None), "process_id", None)
+    if type(handle) is int and handle > 0:
+        result["handle"] = handle
+    if type(pid) is int and pid > 0:
+        result["pid"] = pid
+    return result
 
 
 def _strict_control_value(wrapper: Any) -> str | None:
@@ -1450,6 +1464,7 @@ def _cua_snapshot_payload(
             ref,
             compact,
             window_title=_SNAPSHOT_WINDOW_TITLE,
+            window_identity={"window_id": snapshot.window_id, "pid": snapshot.pid},
         )
         controls.append(compact)
 
@@ -1836,6 +1851,7 @@ def inspect_active_window(
     controls: list[dict[str, Any]] = []
     writable_refs: list[dict[str, str]] = []
     actionable_refs: list[dict[str, str]] = []
+    window_identity = {k: v for k, v in _compact_window(window).items() if k in {"handle", "pid"}}
     for index, wrapper in enumerate(selected, start=1):
         ref = _snapshot_ref(index)
         _SNAPSHOT_ELEMENTS[ref] = wrapper
@@ -1883,6 +1899,7 @@ def inspect_active_window(
             ref,
             compact,
             window_title=_SNAPSHOT_WINDOW_TITLE,
+            window_identity=window_identity,
         )
         controls.append(compact)
 
@@ -2092,6 +2109,9 @@ def click_ui_element(
                         "ref": ref,
                         "current_observation_id": _SNAPSHOT_ID or None,
                         "stale_ref": True,
+                        "dispatched": False,
+                        "outcome_unknown": False,
+                        "reason": "stale_reference_before_dispatch",
                     }
                 ),
             )
@@ -2116,6 +2136,11 @@ def click_ui_element(
                 )
             return UIActionResult(False, f"Élément introuvable: {target}.")
 
+    if not _is_enabled(wrapper):
+        return UIActionResult(False, "Le contrôle observé est désactivé.",
+                             _json({"dispatched": False, "outcome_unknown": False,
+                                    "reason": "control_disabled", "ref": ref}))
+
     if isinstance(wrapper, CuaElement):
         source_observation_id = _SNAPSHOT_ID
         outcome = CUA_DRIVER.click_element(
@@ -2139,10 +2164,24 @@ def click_ui_element(
     label = _element_name(wrapper) or _automation_id(wrapper) or ref or name
     try:
         wrapper.set_focus()
-        try:
-            wrapper.invoke()
-        except Exception:
+        invoke = getattr(wrapper, "invoke", None)
+        if not callable(invoke):
             wrapper.click_input()
+        else:
+            try:
+                invoke()
+            except Exception as exc:
+                if type(exc).__name__ == "NoPatternInterfaceError":
+                    wrapper.click_input()
+                else:
+                    descriptor = ui_ref_descriptor(ref) or {}
+                    identity = descriptor.get("window_identity") or {}
+                    scope_id = identity.get("handle") or identity.get("window_id") or descriptor.get("window_title")
+                    invalidate_ui_snapshot()
+                    return UIActionResult(False, f"Activation de {label} : résultat incertain.",
+                        _json({"dispatched": True, "outcome_unknown": True,
+                               "ref": ref, "scope": ["native_windows", scope_id],
+                               "reason": "invocation_outcome_unknown"}))
     except Exception as exc:
         return UIActionResult(False, f"Impossible d'activer {label}.", str(exc))
 
@@ -2307,12 +2346,14 @@ def close_tab(name: str = "") -> UIActionResult:
     """Close one browser/app tab without assuming Jarvis itself is foreground."""
     target = (name or "").strip()
 
-    def visible_top_tabs(candidate: Any) -> list[Any]:
+    def visible_top_tabs(candidate: Any, *, strict=False) -> list[Any]:
         if candidate is None:
             return []
         try:
             descendants = candidate.descendants()
         except Exception:
+            if strict:
+                raise
             return []
         bounds = _rect_tuple(candidate)
         top_limit = bounds[1] + 120
@@ -2385,8 +2426,6 @@ def close_tab(name: str = "") -> UIActionResult:
             if (
                 len(ranked) == 1
                 or ranked[0][0] - ranked[1][0] >= 0.035
-                or normalize(_element_name(ranked[0][1]))
-                == normalize(_element_name(ranked[1][1]))
             ):
                 chosen = ranked[0][1]
     else:
@@ -2413,6 +2452,12 @@ def close_tab(name: str = "") -> UIActionResult:
         )
 
     label = _element_name(chosen) or target or "onglet actif"
+    original_handle = getattr(window, "handle", None)
+    if type(original_handle) is not int or original_handle <= 0:
+        return UIActionResult(False, "Identité de fenêtre non vérifiée; aucun raccourci envoyé.",
+                             _json({"dispatched": False, "outcome_unknown": False,
+                                    "reason": "window_identity_missing"}))
+    witness_names = [_element_name(tab) for tab in tabs if tab is not chosen]
 
     if target:
         try:
@@ -2429,6 +2474,11 @@ def close_tab(name: str = "") -> UIActionResult:
                 )
 
     try:
+        window.set_focus()
+        if _foreground_window_handle() != original_handle:
+            return UIActionResult(False, "La fenêtre cible n'a pas le focus; aucun raccourci envoyé.",
+                                 _json({"dispatched": False, "outcome_unknown": False,
+                                        "reason": "target_focus_not_verified"}))
         _send_keys("^w")
     except Exception as exc:
         return UIActionResult(
@@ -2442,6 +2492,17 @@ def close_tab(name: str = "") -> UIActionResult:
 
     try:
         current = _active_window()
+        if current is None or getattr(current, "handle", None) != original_handle:
+            # A save dialog or another app becoming foreground is not proof
+            # the target document closed. Read the ORIGINAL window by handle.
+            windows = _desktop().windows()
+            matching = [w for w in windows if getattr(w, "handle", None) == original_handle]
+            if matching:
+                current = matching[0]
+            elif len(tabs) != 1:
+                raise RuntimeError("window_disappeared_with_other_tabs")
+            else:
+                current = None
         if current is None:
             return UIActionResult(
                 True,
@@ -2450,27 +2511,20 @@ def close_tab(name: str = "") -> UIActionResult:
                     {
                         "target": label,
                         "verified": True,
+                        "dispatched": True,
+                        "outcome_unknown": False,
+                        "postcondition": "tab_absent",
                         "window_closed_as_last_tab": True,
                     }
                 ),
             )
-        current_bounds = _rect_tuple(current)
-        current_top_limit = current_bounds[1] + 120
-        remaining = [
-            wrapper
-            for wrapper in current.descendants()
-            if (
-                _control_type(wrapper) == "TabItem"
-                and _is_visible(wrapper)
-                and _rect_tuple(wrapper)[1] <= current_top_limit
-            )
-        ]
-        if target:
+        remaining = visible_top_tabs(current, strict=True)
+        if target or label:
             still_present = any(
                 max(
-                    _score_name(target, _element_name(wrapper)),
+                    _score_name(label, _element_name(wrapper)),
                     _window_identity_score(
-                        target,
+                        label,
                         _element_name(wrapper),
                     ),
                 )
@@ -2478,6 +2532,11 @@ def close_tab(name: str = "") -> UIActionResult:
                 for wrapper in remaining
             )
             if still_present:
+                observed = inspect_active_window(title=None)
+                try:
+                    post = json.loads(observed.detail) if observed.success else {}
+                except (ValueError, TypeError):
+                    post = {}
                 return UIActionResult(
                     False,
                     f"L'onglet {label} semble encore ouvert.",
@@ -2485,6 +2544,10 @@ def close_tab(name: str = "") -> UIActionResult:
                         {
                             "target": label,
                             "verified": False,
+                            "dispatched": True,
+                            "outcome_unknown": False if post.get("observation_id") else True,
+                            "postcondition": "tab_present",
+                            "post_observation": post,
                             "visible_tabs": [
                                 _element_name(wrapper)
                                 for wrapper in remaining[:8]
@@ -2492,14 +2555,20 @@ def close_tab(name: str = "") -> UIActionResult:
                         }
                     ),
                 )
+        from collections import Counter
+        current_names = Counter(_element_name(tab) for tab in remaining)
+        if len(remaining) != len(tabs) - 1 or Counter(witness_names) - current_names:
+            raise RuntimeError("target_absence_or_sibling_preservation_not_proven")
     except Exception:
         return UIActionResult(
-            True,
-            f"Onglet fermé: {label}.",
+            False,
+            f"Fermeture de {label} envoyée; résultat non confirmé.",
             _json(
                 {
                     "target": label,
                     "verified": False,
+                    "dispatched": True,
+                    "outcome_unknown": True,
                     "note": "Fermeture envoyée; vérification UIA indisponible.",
                 }
             ),
@@ -2508,7 +2577,9 @@ def close_tab(name: str = "") -> UIActionResult:
     return UIActionResult(
         True,
         f"Onglet fermé: {label}.",
-        _json({"target": label, "verified": True}),
+        _json({"target": label, "verified": True, "dispatched": True,
+               "outcome_unknown": False, "postcondition": "tab_absent",
+               "sibling_tabs_preserved": True}),
     )
 
 

@@ -34,7 +34,7 @@ _STATUS = {
 
 
 def _escape(value: object, max_chars: int = 160) -> str:
-    return html.escape(str(value or "")[:max_chars], quote=True)
+    return html.escape(str("" if value is None else value)[:max_chars], quote=True)
 
 
 def _badge(value: object) -> str:
@@ -66,6 +66,18 @@ def render_snapshot(data: dict) -> tuple[str, str, str]:
         mission_html = "".join(
             '<p style="margin-bottom:9px">'
             f'{_mission_badge(x)}<br><b>{_escape(x.get("goal"), 120)}</b><br>'
+            + (f'<span style="color:#8ddbcf">Objectif courant · révision {_escape(x.get("goal_revision"), 8)}</span>'
+               f'<br>{_escape(x.get("current_goal"), 4000)}'
+               f'<br><span style="color:#91b4c7">Objectif initial : {_escape(x.get("initial_goal"), 2000)}</span>'
+               f'<br>Faits observés : {_escape(x.get("known_fact_count"), 8)} · '
+               f'Autorisations enregistrées : {_escape(x.get("permission_count"), 8)}<br>'
+               + "".join(f'<br>v{_escape(h.get("revision"), 8)} · {_escape(h.get("kind"), 40)} : '
+                         f'{_escape(h.get("human_source"), 2000)}'
+                         for h in x.get("goal_history", []) if h.get("human_source"))
+               + (f'<br>Suspension : {_escape(x.get("suspension_reason"), 120)}'
+                  if x.get("suspension_reason") else "")
+               + "<br>" if x.get("goal_revision") else "")
+            +
             f'<span style="color:#789fb4">{_escape(x.get("id"), 54)}</span> · '
             + ('<span style="color:#65ddb0">objectif prouvé</span>' if x.get("verified") is True
                else '<span style="color:#eec28c">objectif non prouvé</span>')

@@ -144,6 +144,8 @@ def reserve_model_request() -> None:
     scope = _SCOPE.get()
     if scope is not None:
         scope.reserve(model_calls=1, network_calls=1)
+    from .runtime_convergence import note_live_model_request
+    note_live_model_request()
 
 
 def record_model_usage(usage: Any, provider: str) -> None:
@@ -156,6 +158,8 @@ def record_model_usage(usage: Any, provider: str) -> None:
             # Do not send the same model request again because persistence failed.
             # Pause before the next action/request instead.
             scope.model_usage_recording_failed = True
+    from .runtime_convergence import note_live_model_usage
+    note_live_model_usage(usage, provider)
 
 
 def execution_scope_active() -> bool:

@@ -9,6 +9,8 @@ import json
 import os
 import threading
 import uuid
+import hashlib
+from contextvars import ContextVar
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,35 @@ from .mission_orchestrator import MissionOrchestrator
 from .mission_semantics import MissionContract
 from .task_graph import MissionTaskGraph, TaskNode, TaskStatus
 from .task_graph_store import TaskGraphStore
+
+_LIVE_USAGE = ContextVar("jarvis_live_mission_usage", default=None)
+
+
+@contextmanager
+def live_mission_usage_scope(runtime, mission_id):
+    token = _LIVE_USAGE.set((runtime, mission_id))
+    try:
+        yield
+    finally:
+        _LIVE_USAGE.reset(token)
+
+
+def note_live_model_request():
+    scope = _LIVE_USAGE.get()
+    if scope is not None:
+        scope[0]._note_execution_usage(scope[1], request=True)
+
+
+def note_live_model_usage(usage, provider):
+    scope = _LIVE_USAGE.get()
+    if scope is not None:
+        scope[0]._note_execution_usage(scope[1], usage=usage, provider=provider)
+
+
+def note_live_tool_approval(name, arguments):
+    scope = _LIVE_USAGE.get()
+    if scope is not None:
+        scope[0]._record_tool_approval(scope[1], name, arguments)
 
 
 def _default_dir() -> Path:
@@ -104,6 +135,8 @@ class LiveMissionContinuityRuntime:
         self._explicit = False
         self._lock = threading.RLock()
         self.active_supervisor = None
+        self._prepared_turn = None
+        self._control_reply = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
@@ -133,6 +166,15 @@ class LiveMissionContinuityRuntime:
                 },
                 tags=["runtime-convergence", "non-authoritative"],
             )
+            self._initialize_goal_control(context)
+            import platform
+            context.observed_state["evidence_ledger"] = [{
+                "id": "environment_os", "source": "runtime_environment",
+                "kind": "environment", "identity": platform.system(),
+                "observed": {"operating_system": platform.system()},
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "reliability": "observed", "scope": "mission_only", "goal_proof": False,
+            }]
             self.orchestrator.register(context, MissionTaskGraph(mission_id))
             self.journal.create_mission(
                 mission_id=mission_id,
@@ -143,6 +185,235 @@ class LiveMissionContinuityRuntime:
             self._active_mission_id = mission_id
             self._explicit = True
             return mission_id
+
+    @staticmethod
+    def _initialize_goal_control(state):
+        # Additive JSON migration: old checkpoints remain readable.
+        state.expected_state.setdefault("goal_control", {
+            "version": 2, "initial_goal": state.user_goal, "revision": 1,
+            "history": [{"revision": 1, "goal": state.user_goal, "kind": "initial"}],
+            "permissions": [], "instruction_history": [],
+            "unresolved": [],
+        })
+
+    def prepare_mission_turn(self, user_text, *, log=None):
+        """Interpret a new human turn before trace/planning/execution.
+
+        No tools may execute in this phase. A failed interpretation conserves
+        the prior objective rather than quietly executing a contradictory goal.
+        """
+        mid = self._active_mission_id
+        self._prepared_turn = (mid, str(user_text))
+        self._control_reply = None
+        if not mid or self._mission_information_requested(user_text):
+            return
+        with self._lock:
+            state, version = self.context_store.load(mid)
+            if state.user_id != self.owner_user_id:
+                raise PermissionError("mission_owner_mismatch")
+            self._initialize_goal_control(state)
+            goal_control = state.expected_state["goal_control"]
+            if state.observed_state.get("active_supervisor"):
+                # This separate, explicitly approved mode already has a
+                # bounded disposition/approval protocol. Do not consume its
+                # provider response or replace its reviewed plan.
+                return
+            text = str(user_text or "").strip()
+            if (text == state.user_goal.strip()
+                    or text.casefold().strip(" .!?") in {
+                        "continue", "continue la mission", "poursuis", "oui", "yes",
+                        "ok", "okay", "go on", "continue the mission", "تابع",
+                    }):
+                # Exact continuation doesn't revoke any original prohibition.
+                return
+            from .mission_turn_contract import request_decision, MissionTurnDecision
+            facts = list(state.observed_state.get("evidence_ledger") or [])
+            payload = {
+                "current_goal": state.user_goal, "goal_revision": goal_control["revision"],
+                "human_message": text, "status": state.status.value,
+                "pending_confirmation": state.pending_confirmation,
+                "constraints": list((state.expected_state.get("semantic_contract") or {}).get("constraints") or []),
+                "unresolved": list((state.expected_state.get("semantic_contract") or {}).get("unresolved") or []),
+                "facts": [f for f in facts if f.get("kind") != "expired_reference"][-12:],
+                "permissions_are_not_granted_by_interpretation": True,
+            }
+            try:
+                with live_mission_usage_scope(self, mid):
+                    raw = request_decision(self.delegate, payload)
+                if raw is None:
+                    return
+                decision = MissionTurnDecision.parse(raw, human_text=text, current_goal=state.user_goal)
+            except Exception as exc:
+                # Model/API failure has no external effect and cannot weaken
+                # an existing constraint or unblock an unknown action.
+                if log:
+                    log("[MISSION_CONTROL] decision=unavailable error_type=" + type(exc).__name__)
+                self._control_reply = "Je n'ai pas pu vérifier le changement de mission. L'objectif et les permissions précédents sont conservés."
+                return
+            if decision.kind == "new":
+                self.detach_mission()
+                self._audit(mid, "mission.detached_for_new_goal", {"checkpoint_preserved": True})
+                self._prepared_turn = (None, text)
+                return
+            if decision.kind == "status":
+                self._control_reply = self._mission_status_text(mid)
+                return
+            if decision.kind in {"cancel", "pause"}:
+                if decision.kind == "cancel":
+                    state.status = MissionStatus.FAILED
+                    state.observed_state["cancelled_by_user"] = True
+                elif state.status != MissionStatus.BLOCKED:
+                    state.status = MissionStatus.WAITING_USER
+                self.context_store.save(state, expected_version=version)
+                self._audit(mid, "mission." + decision.kind, {"goal_revision": goal_control["revision"]})
+                self._control_reply = ("Mission annulée. Les preuves et les effets incertains restent conservés."
+                                       if decision.kind == "cancel" else "Mission suspendue.")
+                if decision.kind == "cancel":
+                    self.detach_mission()
+                return
+            if decision.kind in {"revise", "correct", "clarify", "authorize", "constrain"}:
+                if len(goal_control["history"]) >= 32:
+                    self._control_reply = "La limite de révisions de cette mission est atteinte."
+                    return
+                # Keep the source verbatim; the model cannot introduce an
+                # invented destination, path, instruction or permission.
+                revised = state.user_goal
+                for span in decision.superseded:
+                    revised = revised.replace(span, "", 1)
+                revised = revised.strip() + "\n" + text
+                if len(revised) > 4000:
+                    self._control_reply = "La révision dépasse le budget de contexte de la mission."
+                    return
+                old_plan = state.expected_state.get("semantic_contract")
+                goal_control["unresolved"] = list((old_plan or {}).get("unresolved")
+                                                  or goal_control.get("unresolved") or [])
+                if state.observed_state.get("active_supervisor"):
+                    # An approved semantic plan/digest cannot silently change.
+                    self._control_reply = "Ce plan supervisé doit être révisé et approuvé avant de changer l'objectif."
+                    return
+                revision = int(goal_control["revision"]) + 1
+                goal_control["history"].append({
+                    "revision": revision, "kind": decision.kind, "goal": revised,
+                    "human_source": text, "superseded": list(decision.superseded),
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                })
+                goal_control["instruction_history"].append(text)
+                goal_control["revision"] = revision
+                state.user_goal = revised
+                # Reusing old tool facts is useful, reusing a goal certificate
+                # for a changed objective is forbidden.
+                state.observed_state["goal_verified"] = False
+                state.observed_state["proof_scope"] = ""
+                if old_plan:
+                    state.expected_state.setdefault("semantic_plan_history", []).append(old_plan)
+                if decision.plan is not None:
+                    decision.plan["source_text"] = revised
+                    decision.plan["objective"] = revised
+                    decision.plan["metadata"]["goal_revision"] = revision
+                    state.expected_state["semantic_contract"] = decision.plan
+                    goal_control["unresolved"] = list(decision.plan.get("unresolved") or [])
+                else:
+                    # An obsolete abstract plan must not keep directing tools.
+                    state.expected_state.pop("semantic_contract", None)
+                state.observed_state["plan_evidence_history"] = {
+                    **state.observed_state.get("plan_evidence_history", {}),
+                    str(revision - 1): dict(state.observed_state.get("plan_evidence") or {}),
+                }
+                state.observed_state["plan_evidence"] = {}
+            plan = state.expected_state.get("semantic_contract") or {}
+            known = {f["id"]: f for f in facts if isinstance(f, dict) and f.get("id")}
+            unresolved = list(plan.get("unresolved") or goal_control.get("unresolved") or [])
+            resolutions = state.observed_state.setdefault("resolved_preconditions", [])
+            for resolution in decision.resolved:
+                fact = known.get(resolution["fact_id"])
+                if (resolution["question"] in unresolved and fact
+                        and fact.get("kind") != "expired_reference"):
+                    unresolved.remove(resolution["question"])
+                    resolutions.append(dict(resolution))
+            if plan:
+                plan["unresolved"] = unresolved
+            goal_control["unresolved"] = unresolved
+            state.expected_state["goal_control"] = goal_control
+            # A provider callback may have recorded usage while interpreting.
+            # Preserve its counters using the latest optimistic version.
+            latest, current_version = self.context_store.load(mid)
+            for key in ("model_usage", "model_calls", "api_usage", "execution_usage"):
+                if key in latest.observed_state:
+                    state.observed_state[key] = latest.observed_state[key]
+            self.context_store.save(state, expected_version=current_version)
+            self._audit(mid, "mission.turn_interpreted", {
+                "kind": decision.kind, "goal_revision": goal_control["revision"],
+                "permissions_granted": False,
+            })
+            if log:
+                log("[MISSION_CONTROL] kind=" + decision.kind + " goal_revision=" + str(goal_control["revision"]))
+
+    def _mission_status_text(self, mid):
+        snap = self.mission_snapshot(mid)
+        return ("Objectif actuel : " + snap["user_goal"] + "\n"
+                + "Révision : " + str(snap["goal_revision"]) + "\n"
+                + "État réel : " + snap["status"] + "\n"
+                + "Objectif vérifié : " + ("oui" if snap["goal_verified"] else "non"))
+
+    def _consume_turn_control(self, user_text, *, log=None):
+        from .active_mission_supervisor import execution_scope_active
+        if execution_scope_active():
+            # Internal step text is not a new human turn. The approved plan
+            # and its existing supervisor remain authoritative.
+            return None
+        if self._prepared_turn is None or self._prepared_turn[1] != str(user_text):
+            self.prepare_mission_turn(user_text, log=log)
+        self._prepared_turn = None
+        text, self._control_reply = self._control_reply, None
+        if text:
+            from .agent_runtime import AgentTurnResult
+            return AgentTurnResult(text=text, actions=())
+        return None
+
+    def _note_execution_usage(self, mid, *, request=False, usage=None, provider=""):
+        """Actual API attempt/counter telemetry, never invented pricing."""
+        state, version = self.context_store.load(mid)
+        stats = state.observed_state.setdefault("execution_usage", {
+            "model_requests": 0, "usage_responses": 0, "missing_usage_responses": 0,
+            "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+            "estimated_cost": None, "providers": [],
+        })
+        if request:
+            stats["model_requests"] += 1
+        else:
+            if usage is None:
+                stats["missing_usage_responses"] += 1
+            else:
+                stats["usage_responses"] += 1
+                for target, source in (("input_tokens", "prompt_tokens"),
+                                       ("output_tokens", "completion_tokens"),
+                                       ("total_tokens", "total_tokens")):
+                    value = getattr(usage, source, None)
+                    if type(value) is int and value >= 0:
+                        stats[target] += value
+            if provider and provider not in stats["providers"]:
+                stats["providers"].append(str(provider)[:60])
+        self.context_store.save(state, expected_version=version)
+
+    def _record_tool_approval(self, mid, name, arguments):
+        """Record an existing executor approval; never grant/reuse a token."""
+        state, version = self.context_store.load(mid)
+        self._initialize_goal_control(state)
+        control = state.expected_state["goal_control"]
+        digest = hashlib.sha256(json.dumps(
+            {"tool": name, "arguments": arguments}, sort_keys=True,
+            ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+        if any(p.get("arguments_digest") == digest and p.get("goal_revision") == control["revision"]
+               for p in control["permissions"]):
+            return
+        control["permissions"].append({
+            "tool": name, "arguments_digest": digest,
+            "goal_revision": control["revision"], "source": "existing_runtime_explicit_approval",
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "reusable": False,
+        })
+        control["permissions"] = control["permissions"][-32:]
+        self.context_store.save(state, expected_version=version)
 
     def resume_mission(self, mission_id: str) -> MissionContext:
         """Attach an existing mission; any in-flight action needs manual review."""
@@ -214,6 +485,8 @@ class LiveMissionContinuityRuntime:
                 raise RuntimeError("mission_plan_already_registered")
             state.expected_state["semantic_contract"] = contract.as_dict()
             state.observed_state["plan_evidence"] = {}
+            from .mission_evidence import reconcile_preconditions
+            reconcile_preconditions(state)
             self.context_store.save(state, expected_version=version)
             self._audit(
                 state.mission_id, EventKind.INTENT_RESOLVED,
@@ -340,6 +613,8 @@ class LiveMissionContinuityRuntime:
             if loaded is None:
                 raise KeyError("mission_checkpoint_not_found")
             state, version = loaded
+            if state.user_id != self.owner_user_id:
+                raise PermissionError("mission_owner_mismatch")
             if state.status == MissionStatus.BLOCKED:
                 raise RuntimeError("mission_recovery_requires_review")
             plan = state.expected_state.get("semantic_contract")
@@ -532,6 +807,11 @@ class LiveMissionContinuityRuntime:
         summary = {
             "mission_id": state.mission_id,
             "goal": state.user_goal,
+            "initial_goal": (state.expected_state.get("goal_control") or {}).get("initial_goal", state.user_goal),
+            "goal_revision": (state.expected_state.get("goal_control") or {}).get("revision", 1),
+            "known_facts": list(state.observed_state.get("evidence_ledger") or [])[-12:],
+            "permissions": list((state.expected_state.get("goal_control") or {}).get("permissions") or [])[-8:],
+            "facts_policy": "Historical references are not executable. Reinspect targets; do not ask for facts already observed. A goal revision is not tool approval.",
             "recent_turns": previous,
             "goal_proved": bool(state.observed_state.get("goal_verified")),
             "provider_pause": bool(state.observed_state.get(
@@ -576,11 +856,16 @@ class LiveMissionContinuityRuntime:
             return {"observation_id": item.get("observation_id"),
                     "sensor": item.get("sensor"), "ready": item.get("ready"),
                     "timestamp": item.get("timestamp"), "tab": tab(item.get("tab")),
+                    "window": {k: v for k, v in (item.get("window") or {}).items()
+                               if k in {"title", "type", "app", "pid", "window_id", "handle"}},
                     "controls": controls(item.get("controls"))}
         fields = {"scope", "dispatched", "verified", "outcome_unknown", "postcondition",
                   "source_ref", "source_observation_id", "source_document_id", "source_window_id",
                   "observation_id", "unique", "ready", "sensor", "timestamp", "authorization",
                   "memory_id", "raw_sha256", "db_recorded_at", "receipt_version", "source", "status"}
+        fields |= {"path", "selected_path", "read_only", "opened", "stale_ref", "ref",
+                   "current_observation_id", "recovered_from_stale_ref", "recovered_ref",
+                   "recovery_attempted", "local_refusal", "reason", "guard", "precondition_failed"}
         receipts = []
         for index, action in enumerate(actions):
             detail = str(getattr(action, "detail", "") or "")
@@ -588,6 +873,13 @@ class LiveMissionContinuityRuntime:
                 original = json.loads(detail)
             except (ValueError, TypeError):
                 original = None
+            if (original is None and getattr(action, "success", False)
+                    and action.name in {"open_file", "open_folder"}):
+                # Legacy local launcher returns its actual selected path.
+                from pathlib import PureWindowsPath, PurePosixPath
+                if PureWindowsPath(detail).is_absolute() or PurePosixPath(detail).is_absolute():
+                    original = {"path": detail, "dispatched": True, "opened": True,
+                                "outcome_unknown": False, "verified": False}
             if not isinstance(original, dict) and not getattr(action, "success", False):
                 from .mission_outcome_policy import READ_ONLY_TOOLS, failure_requires_review
                 if action.name in READ_ONLY_TOOLS and not failure_requires_review((action,)):
@@ -605,6 +897,8 @@ class LiveMissionContinuityRuntime:
                         data[key] = observation(original[key])
                 if "controls" in original:
                     data["controls"] = controls(original["controls"])
+                if "window" in original:
+                    data["window"] = observation(original)["window"]
                 for key in ("matches", "available_controls"):
                     if key in original:
                         data[key] = controls(original[key])
@@ -648,6 +942,9 @@ class LiveMissionContinuityRuntime:
 
     @staticmethod
     def _certificate_allowed(state):
+        control = state.expected_state.get("goal_control") or {}
+        if control.get("unresolved"):
+            return False
         contract = state.expected_state.get("semantic_contract")
         if not isinstance(contract, dict):
             return True
@@ -703,9 +1000,19 @@ class LiveMissionContinuityRuntime:
         state, version = loaded
         if state.user_id != self.owner_user_id:
             raise PermissionError("mission_owner_mismatch")
+        self._initialize_goal_control(state)
+        control = state.expected_state["goal_control"]
         result = {
             "mission_id": state.mission_id,
             "user_goal": state.user_goal,
+            "initial_goal": control["initial_goal"],
+            "goal_revision": control["revision"],
+            "goal_history": list(control["history"]),
+            "permissions": list(control["permissions"]),
+            "evidence_ledger": list(state.observed_state.get("evidence_ledger") or []),
+            "execution_usage": dict(state.observed_state.get("execution_usage") or {}),
+            "open_questions": list(control.get("unresolved") or []),
+            "suspension_reason": str(state.pending_action.get("reason") or state.observed_state.get("last_pause_reason") or ""),
             "status": state.status.value,
             "version": version,
             "goal_verified": bool(state.observed_state.get("goal_verified")),
@@ -825,6 +1132,9 @@ class LiveMissionContinuityRuntime:
         return AgentTurnResult(text="\n".join(lines), actions=())
 
     def run(self, user_text: str, *, log=None, phase=None):
+        controlled = self._consume_turn_control(user_text, log=log)
+        if controlled is not None:
+            return controlled
         info = self._mission_information_reply(user_text)
         if info is not None:
             return info
@@ -834,6 +1144,9 @@ class LiveMissionContinuityRuntime:
         return self._run(user_text, log=log, phase=phase)
 
     def run_with_context(self, user_text: str, context: str, *, log=None, phase=None):
+        controlled = self._consume_turn_control(user_text, log=log)
+        if controlled is not None:
+            return controlled
         info = self._mission_information_reply(user_text)
         if info is not None:
             return info
@@ -879,6 +1192,8 @@ class LiveMissionContinuityRuntime:
             if state.status in (MissionStatus.COMPLETED, MissionStatus.FAILED):
                 raise RuntimeError("mission_terminal")
             index = len(graph.nodes()) + 1
+            if state.user_id != self.owner_user_id:
+                raise PermissionError("mission_owner_mismatch")
             previous_actions, previous_complete = self._proof_actions(graph)
             task_id = f"turn_{index:05d}"
             continuity_context = (
@@ -925,7 +1240,7 @@ class LiveMissionContinuityRuntime:
                 )
                 method = getattr(self.delegate, "run_with_context", None)
                 from .browser_goal_proof import navigation_goal_scope
-                with navigation_goal_scope(
+                with live_mission_usage_scope(self, mission_id), navigation_goal_scope(
                     state.user_goal, previous_actions,
                     certificate_allowed=previous_complete and self._certificate_allowed(state),
                 ) as turn_evidence:
@@ -965,6 +1280,14 @@ class LiveMissionContinuityRuntime:
                     "provider_paused": provider_pause,
                     "action_receipts": self._action_receipts(partial),
                 }
+                from .mission_evidence import ledger_facts, merge_facts
+                state.observed_state["evidence_ledger"] = merge_facts(
+                    state.observed_state.get("evidence_ledger") or [],
+                    ledger_facts(node.result["action_receipts"], task_id=task_id,
+                                 goal_revision=(state.expected_state.get("goal_control") or {}).get("revision", 1)),
+                )
+                from .mission_evidence import reconcile_preconditions
+                reconcile_preconditions(state)
                 state.status = (
                     MissionStatus.WAITING_EXTERNAL if provider_pause
                     else MissionStatus.BLOCKED
@@ -1025,6 +1348,14 @@ class LiveMissionContinuityRuntime:
                 "evidence_counts": evidence_counts,
                 "action_receipts": self._action_receipts(actions),
             }
+            from .mission_evidence import ledger_facts, merge_facts
+            state.observed_state["evidence_ledger"] = merge_facts(
+                state.observed_state.get("evidence_ledger") or [],
+                ledger_facts(node.result["action_receipts"], task_id=task_id,
+                             goal_revision=(state.expected_state.get("goal_control") or {}).get("revision", 1)),
+            )
+            from .mission_evidence import reconcile_preconditions
+            reconcile_preconditions(state)
             state.observed_state["completed_turns"] = index
             state.observed_state["last_action_count"] = len(actions)
             state.observed_state["last_failed_action_count"] = failed

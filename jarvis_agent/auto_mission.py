@@ -64,6 +64,9 @@ def prepare(agent: Any, user_text: str, *, log: Callable[[str], None] | None = N
     normal agent turn; the error class is logged without secret-bearing bodies.
     """
     decision = decide(user_text)
+    controller = getattr(type(agent), "prepare_mission_turn", None)
+    if callable(controller):
+        controller(agent, user_text, log=log)
     active = getattr(agent, "active_mission_id", None)
     if active:
         # A paused/blocked mission must not capture an unmistakably NEW user
