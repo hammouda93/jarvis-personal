@@ -4304,9 +4304,13 @@ class GroqResponsesAgent:
                                 "boutons avant de décider. Si la confirmation "
                                 "correspond directement à la fermeture demandée et "
                                 "n'implique pas de perte de données non demandée, "
-                                "poursuis. Si elle demande d'abandonner des données "
-                                "non enregistrées ou une autre action irréversible "
-                                "ambiguë, demande confirmation à l'utilisateur."
+                                "poursuis. Si l'utilisateur a explicitement dit "
+                                "'sans enregistrer', tu peux choisir le bouton "
+                                "de refus d'enregistrement SEULEMENT pour le "
+                                "document cible identifié dans l'observation. "
+                                "Ne ferme jamais des documents supplémentaires "
+                                "modifiés sans autorisation. Si l'effet reste "
+                                "ambigu, conserve la mission et demande confirmation."
                             ),
                         }
                     )
