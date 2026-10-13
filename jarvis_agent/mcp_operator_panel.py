@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from PySide6.QtCore import Qt, Signal
 from .mcp_service_catalog import SERVICE_CARDS, find_card
+from .mcp_personal_workspace import CONNECTIONS, get_connection, connection_state, workspace_summary
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
     QPushButton, QSpinBox, QStyle, QTabWidget, QVBoxLayout, QMessageBox,
@@ -38,10 +39,40 @@ class MCPConnectionsPanel(QFrame):
         self.runtime_switch.toggled.connect(self._set_runtime)
         root.addWidget(self.runtime_switch)
         self.tabs = QTabWidget()
+        self.workspace_page = QFrame()
         self.services_page, self.catalog_page, self.add_page = QFrame(), QFrame(), QFrame()
-        for page, label in ((self.services_page, "Services"), (self.catalog_page, "Catalogue"), (self.add_page, "Ajouter")):
+        for page, label in ((self.workspace_page, "Mon espace"),
+                            (self.services_page, "Services"), (self.catalog_page, "Catalogue"),
+                            (self.add_page, "Ajouter")):
             self.tabs.addTab(page, label)
         root.addWidget(self.tabs)
+
+        # Read-only personal connection planner. It never connects, enables,
+        # discovers, or authorizes a remote tool without an operator action.
+        workspace_layout = QVBoxLayout(self.workspace_page)
+        self.workspace_picker = QComboBox()
+        self.workspace_picker.addItem("Choisir un service à préparer…", "")
+        for entry in CONNECTIONS:
+            self.workspace_picker.addItem(entry.label + " · " + entry.area, entry.identifier)
+        workspace_layout.addWidget(self.workspace_picker)
+        self.workspace_status = QLabel("Sélectionne un service pour voir les prérequis.")
+        self.workspace_status.setTextFormat(Qt.PlainText)
+        self.workspace_status.setWordWrap(True)
+        workspace_layout.addWidget(self.workspace_status)
+        self.workspace_prepare_button = QPushButton("Préparer la configuration")
+        self.workspace_prepare_button.setToolTip(
+            "Préremplir un serveur documenté, sans ajout, connexion ni autorisation."
+        )
+        workspace_layout.addWidget(self.workspace_prepare_button)
+        self.workspace_summary = QPlainTextEdit()
+        self.workspace_summary.setReadOnly(True)
+        self.workspace_summary.setMinimumHeight(185)
+        self.workspace_summary.setPlainText(workspace_summary(()))
+        workspace_layout.addWidget(self.workspace_summary)
+        self.workspace_picker.currentIndexChanged.connect(self._select_workspace_connection)
+        self.workspace_prepare_button.clicked.connect(self._prepare_workspace_connection)
+        self._select_workspace_connection(0)
+
         services_layout = QVBoxLayout(self.services_page)
         layout = QVBoxLayout(self.catalog_page)
         self.catalog_picker = QComboBox()
@@ -393,6 +424,41 @@ class MCPConnectionsPanel(QFrame):
             return
         self._send("add_stdio", self.server_name.text(), json.dumps(packet))
 
+    def _select_workspace_connection(self, index: int) -> None:
+        entry = get_connection(str(self.workspace_picker.currentData() or ""))
+        if entry is None:
+            self.workspace_status.setText(
+                "Configuration par service · accès et autorisation jamais automatiques."
+            )
+            self.workspace_prepare_button.setEnabled(False)
+            return
+        current = connection_state(entry, self._servers)
+        extra = (" " + entry.note) if entry.note else ""
+        self.workspace_status.setText(
+            entry.label + " · " + current + "\n"
+            + entry.purpose + extra
+        )
+        card = find_card(entry.catalog_id) if entry.catalog_id else None
+        self.workspace_prepare_button.setEnabled(
+            entry.integration == "remote_mcp" and card is not None
+            and bool(card.endpoint)
+        )
+
+    def _prepare_workspace_connection(self):
+        entry = get_connection(str(self.workspace_picker.currentData() or ""))
+        card = find_card(entry.catalog_id) if entry is not None and entry.catalog_id else None
+        if entry is None or entry.integration != "remote_mcp" or card is None or not card.endpoint:
+            self.feedback.setText(
+                "Pas de serveur MCP direct vérifié : adaptateur ou fonctionnalité native requis."
+            )
+            return
+        index = self.catalog_picker.findData(card.identifier)
+        if index < 0:
+            self.feedback.setText("Service non disponible dans le catalogue local.")
+            return
+        self.catalog_picker.setCurrentIndex(index)
+        self._prepare_catalog_service()
+
     def _select_catalog_service(self, index: int) -> None:
         card = find_card(str(self.catalog_picker.currentData() or ""))
         if card is None:
@@ -574,6 +640,8 @@ class MCPConnectionsPanel(QFrame):
             f" · serveurs {len(servers)} · outils autorisés {count}"
         )
         self._servers = servers
+        self.workspace_summary.setPlainText(workspace_summary(servers))
+        self._select_workspace_connection(self.workspace_picker.currentIndex())
         old_id = str(self.server_picker.currentData() or "")
         old_tool = str(self.tool_picker.currentData() or "")
         choices = [(row["id"], row.get("enabled"), row.get("discovered")) for row in servers]
