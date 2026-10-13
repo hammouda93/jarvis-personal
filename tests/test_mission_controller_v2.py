@@ -205,6 +205,54 @@ class GoalEvolutionTests(unittest.TestCase):
         self.delegate.run_with_context.assert_called_once()
         self.assertEqual(self.runtime.mission_snapshot(mid)["goal_revision"], 2)
 
+    def test_invalid_decision_json_keeps_neutral_owner_repo_answer(self):
+        goal = ("Consult the repository, inspect commits and pull requests, "
+                "summarize tested changes. Do not modify files.")
+        mid = self.runtime.begin_mission(goal)
+        state, version = self.runtime.context_store.load(mid)
+        state.status = MissionStatus.WAITING_EXTERNAL
+        self.runtime.context_store.save(state, expected_version=version)
+        self.delegate.resolve_mission_turn.return_value = "not valid JSON"
+        followup = "hammouda93 Jarvis-personal"
+        self.runtime.run(followup)
+        snap = self.runtime.mission_snapshot(mid)
+        self.assertEqual(snap["goal_revision"], 2)
+        self.assertEqual(snap["initial_goal"], goal)
+        self.assertIn(followup, snap["user_goal"])
+        self.assertIn("Do not modify files.", snap["user_goal"])
+        self.assertEqual(snap["permissions"], [])
+        self.assertFalse(snap["goal_verified"])
+        self.delegate.run_with_context.assert_called_once()
+
+    def test_invalid_decision_never_treats_a_command_as_clarification(self):
+        goal = "Inspect the installer. Do not install."
+        for followup in ("delete-repository", "install now", "approve payment"):
+            with self.subTest(text=followup):
+                mid = self.runtime.begin_mission(goal)
+                state, version = self.runtime.context_store.load(mid)
+                state.status = MissionStatus.WAITING_EXTERNAL
+                self.runtime.context_store.save(state, expected_version=version)
+                self.delegate.resolve_mission_turn.return_value = "NOT JSON"
+                self.delegate.run_with_context.reset_mock()
+                result = self.runtime.run(followup)
+                self.assertEqual(result.actions, ())
+                self.assertEqual(self.runtime.mission_snapshot(mid)["goal_revision"], 1)
+                self.assertEqual(self.runtime.mission_snapshot(mid)["permissions"], [])
+                self.delegate.run_with_context.assert_not_called()
+                self.runtime.detach_mission()
+
+    def test_identifier_does_not_bypass_external_effect_manual_review(self):
+        mid = self.runtime.begin_mission("Inspect account status.")
+        state, version = self.runtime.context_store.load(mid)
+        state.status = MissionStatus.BLOCKED
+        state.pending_action = {"manual_review_required": True}
+        self.runtime.context_store.save(state, expected_version=version)
+        self.delegate.resolve_mission_turn.return_value = "NOT JSON"
+        result = self.runtime.run("owner123 repo-1")
+        self.assertEqual(result.actions, ())
+        self.assertEqual(self.runtime.mission_snapshot(mid)["goal_revision"], 1)
+        self.delegate.run_with_context.assert_not_called()
+
     def test_plain_yes_cannot_revoke_existing_prohibition(self):
         mid = self.runtime.begin_mission("Inspect the installer. Do not install.")
         self.runtime.run("oui")
