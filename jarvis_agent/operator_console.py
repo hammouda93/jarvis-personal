@@ -43,6 +43,14 @@ def _badge(value: object) -> str:
     return f'<span style="color:{color};font-weight:650">{_escape(title)}</span>'
 
 
+def _mission_badge(mission):
+    if mission.get("status") == "completed":
+        if mission.get("verified") is True:
+            return '<span style="color:#70dbbe;font-weight:650">OBJECTIF CERTIFIÉ</span>'
+        return '<span style="color:#f7c679;font-weight:650">TOUR TERMINÉ · OBJECTIF NON CERTIFIÉ</span>'
+    return _badge(mission.get("status"))
+
+
 def render_snapshot(data: dict) -> tuple[str, str, str]:
     """Return bounded, HTML-escaped mission, action and task views."""
     missions = data.get("missions") or []
@@ -57,10 +65,14 @@ def render_snapshot(data: dict) -> tuple[str, str, str]:
     else:
         mission_html = "".join(
             '<p style="margin-bottom:9px">'
-            f'{_badge(x.get("status"))}<br><b>{_escape(x.get("goal"), 120)}</b><br>'
+            f'{_mission_badge(x)}<br><b>{_escape(x.get("goal"), 120)}</b><br>'
             f'<span style="color:#789fb4">{_escape(x.get("id"), 54)}</span> · '
-            + ('<span style="color:#65ddb0">objectif prouvé</span>' if x.get("verified")
+            + ('<span style="color:#65ddb0">objectif prouvé</span>' if x.get("verified") is True
                else '<span style="color:#eec28c">objectif non prouvé</span>')
+            + (' · certificat : ' + _escape({"durable_user_memory": "SQLite · mémoire durable",
+                "browser_navigation_goal": "navigation · lecture indépendante"}.get(x.get("proof_scope"), ""))
+                if x.get("verified") is True and x.get("proof_scope") in {
+                    "durable_user_memory", "browser_navigation_goal"} else "")
             + (' · <span style="color:#f7a1a1">révision exigée</span>' if x.get("needs_review") else "")
             + '</p>'
             for x in missions

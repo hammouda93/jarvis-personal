@@ -51,7 +51,8 @@ _QUOTED = re.compile(r"""(?:"[^"\n]*"|«[^»\n]*»|“[^”\n]*”)""")
 _NEGATIVE_START = re.compile(r"^\s*(?:ne\b|n['’]|never\b|do not\b|don't\b)", re.I)
 _OPTIONAL_START = re.compile(r"^\s*(?:si\b|if\b|unless\b|facultativement\b)", re.I)
 
-_RESUME = frozenset({"oui", "ok", "continue", "poursuis", "vas y", "vas-y", "go", "d'accord"})
+_RESUME = frozenset({"oui", "ok", "continue", "continue la mission", "poursuis",
+                     "poursuis la mission", "vas y", "vas-y", "go", "d'accord"})
 _OBSERVERS = frozenset({
     "list_windows", "inspect_active_window", "inspect_interface", "observe_screen",
     "computer_observe", "computer_find", "computer_list_windows",
@@ -257,12 +258,15 @@ class ConversationMissionTrace:
     previous: "ConversationMissionTrace | None" = None
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
     planned_steps: tuple[str, ...] = ()
+    original_goal: str = ""
     steps: tuple[str, ...] = field(init=False)
     tool_calls: list[str] = field(default_factory=list)
     _tool_call_refs: list[str] = field(default_factory=list)
     _step_tools: dict[int, list[str]] = field(default_factory=dict)
     _finished: bool = False
     _goal_proof_logged: bool = False
+    _observed_actions: tuple = ()
+    _prior_step_tools: dict[int, list[str]] = field(default_factory=dict)
 
     def __post_init__(self):
         # A durable semantic contract, when present, is the ONE step list.
@@ -274,8 +278,18 @@ class ConversationMissionTrace:
         )
         self.steps = (
             prepared if prepared else
-            requested_steps(self.user_request) or (self.user_request.strip(),)
+            requested_steps(self.original_goal or self.user_request)
+            or ((self.original_goal or self.user_request).strip(),)
         )
+        previous = self.previous
+        if previous and self.mission_id and previous.mission_id == self.mission_id and previous._finished:
+            if not prepared and not self.original_goal and _normalized(self.user_request).strip(" .!?") in _RESUME:
+                self.steps = previous.steps
+                self.original_goal = previous.original_goal or previous.user_request
+            if self.steps == previous.steps:
+                self._prior_step_tools = {i: list(items) for i, items in previous._step_tools.items()}
+                self._step_tools = {i: list(items) for i, items in self._prior_step_tools.items()}
+                self._observed_actions = previous._observed_actions
 
     def _log(self, line: str):
         self.emit(line)
@@ -292,7 +306,7 @@ class ConversationMissionTrace:
             )
         self._log(
             f"[MISSION_TRACE] id={self.trace_id} state=RECEIVED "
-            f"mission_id={self.mission_id or 'none'} objective={_safe(self.user_request)} "
+            f"mission_id={self.mission_id or 'none'} objective={_safe(self.original_goal or self.user_request)} "
             f"outline_source={'semantic_contract_draft' if self.planned_steps else 'user_clauses_provisional'} steps={len(self.steps)}"
         )
         for idx, step in enumerate(self.steps, 1):
@@ -345,13 +359,16 @@ class ConversationMissionTrace:
                 f"tool={match.group(1)} success={match.group(2).lower()} "
                 f"goal_completed=not_established"
             )
-        elif line == "[MISSION] state=COMPLETED evidence=independent_browser_navigation":
+        elif line in {
+            "[MISSION] state=COMPLETED evidence=independent_browser_navigation",
+            "[MISSION] state=COMPLETED evidence=independent_sqlite_memory",
+        }:
             # Only the trusted convergence runtime announces this state.
             # Tool successes and conversational hints cannot certify goals.
             self._goal_proof_logged = True
             self._log(
                 f"[MISSION_TRACE] id={self.trace_id} "
-                "state=GOAL_CERTIFIED proof_source=independent_browser_navigation"
+                "state=GOAL_CERTIFIED proof_source=" + line.rsplit("=", 1)[-1]
             )
         elif line.startswith("[MISSION] proof_repair="):
             self._log(
@@ -364,7 +381,7 @@ class ConversationMissionTrace:
             return
         self._finished = True
         actions = tuple(actions)
-        earlier = []
+        earlier = list(self._observed_actions)
         call_sequence_aligned = (
             len(actions) == len(self.tool_calls)
             and all(str(getattr(action, "name", "")) == call
@@ -403,6 +420,7 @@ class ConversationMissionTrace:
                 f"effect={evidence} goal_proof=not_inferred"
             )
             earlier.append(result)
+        self._observed_actions = tuple(earlier[-96:])
         certified = self._goal_proof_logged and not error
         for idx, step in enumerate(self.steps, 1):
             evidences = self._step_tools.get(idx, [])
@@ -426,7 +444,8 @@ class ConversationMissionTrace:
                          if evidences else "NO_ASSIGNED_TOOL_EVIDENCE")
                 self._log(
                     f"[MISSION_STEP] id={self.trace_id} step={idx}/{len(self.steps)} "
-                    f"state={state} goal_verified=not_established"
+                    f"state={state} goal_verified=not_established "
+                    f"prior_turn_evidence={'recorded' if idx in self._prior_step_tools else 'none'}"
                 )
         result = ("INTERRUPTED" if error else "COMPLETED" if certified else
                   "NO_TOOLS" if not actions else "RESULTS_RECORDED_GOAL_UNVERIFIED")

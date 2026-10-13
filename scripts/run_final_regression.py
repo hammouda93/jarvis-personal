@@ -36,7 +36,8 @@ def regression_environment(data_dir: Path) -> dict[str, str]:
         "OPENAI_API_KEY", "ELEVENLABS_API_KEY",
     )})
     env.update(QT_QPA_PLATFORM="offscreen", JARVIS_DATA_DIR=str(data_dir),
-               JARVIS_MCP_CONFIG_PATH=str(data_dir / "mcp_servers.json"))
+               JARVIS_MCP_CONFIG_PATH=str(data_dir / "mcp_servers.json"),
+               JARVIS_BRAIN_CONFIG_PATH=str(data_dir / "brains.json"))
     return env
 
 
@@ -69,6 +70,8 @@ def main() -> int:
         os.environ.update(regression_environment(Path(isolated)))
         suite = unittest.defaultTestLoader.discover("tests", pattern=args.pattern)
         result = unittest.TextTestRunner(verbosity=1).run(platform_suite(suite))
+        for test, reason in result.skipped:
+            print(f"Explicit skip: {test.id()}: {reason}")
         gc.collect()
     faulthandler.cancel_dump_traceback_later()
     print(f"Automated regression: {result.testsRun} tests, "

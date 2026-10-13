@@ -3945,6 +3945,7 @@ class GroqResponsesAgent:
         structured_inspection_seen = False
         browser_result_selection_repair_attempted = False
         browser_submit_repair_attempted = False
+        navigation_checkpoints = set()
 
         for round_index in range(1, settings.agent_max_tool_rounds + 1):
             if phase:
@@ -3989,6 +3990,30 @@ class GroqResponsesAgent:
 
             if not calls:
                 raw_text = str(getattr(message, "content", "") or "")
+                from .browser_goal_proof import navigation_continuation_checkpoint
+                from .active_mission_supervisor import execution_scope_active
+                checkpoint = navigation_continuation_checkpoint(user_text, actions)
+                if (checkpoint and checkpoint not in navigation_checkpoints
+                        and len(navigation_checkpoints) < 2
+                        and round_index < settings.agent_max_tool_rounds
+                        and not execution_scope_active()
+                        and self._pending_function_approval is None
+                        and not self._feedback_only_turn
+                        and not getattr(self.tools, "uncertain_scopes", None)):
+                    self._messages[-1]["content"] = ""
+                    self._messages.append({"role": "user", "content": (
+                        "AUTHORIZED_NAVIGATION_PENDING: The original navigation goal "
+                        "still has missing evidence. Continue ordinary already-authorized "
+                        "steps using the fresh DOM references already returned. Preserve "
+                        "all original constraints. Do not reopen the page, repeat a click, "
+                        "submit a form or grant new permission. If a real authorization "
+                        "or blocker is encountered, stop and report it. This checkpoint "
+                        "uses the existing round budget; it is not proof of completion."
+                    )})
+                    navigation_checkpoints.add(checkpoint)
+                    if log:
+                        log("[MISSION] recovery=ordinary_navigation_continuation")
+                    continue
 
                 if (
                     _looks_like_pseudo_tool_syntax(raw_text)
@@ -5168,8 +5193,8 @@ class GroqResponsesAgent:
                 # navigation and an independent readback. Do not spend another
                 # model round asking an AI to paraphrase an already proven
                 # result. Other goals remain handled by the normal planner.
-                from .browser_goal_proof import verify_browser_navigation_goal
-                navigation_proof = verify_browser_navigation_goal(user_text, actions)
+                from .browser_goal_proof import verify_browser_navigation_turn
+                navigation_proof = verify_browser_navigation_turn(user_text, actions)
                 if navigation_proof is not None and not execution_scope_active():
                     text = (
                         f"Mission vérifiée : lien « {navigation_proof.target} » "

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 
 
@@ -14,6 +15,69 @@ from dataclasses import dataclass
 class MemoryWriteProof:
     memory_id: int
     proof_ref: str
+
+
+@dataclass(frozen=True)
+class MemoryWriteReceipt:
+    """Versioned local write receipt; parsing never dispatches another write."""
+    memory_id: int
+    raw_sha256: str
+    db_recorded_at: str
+    receipt_version: int = 1
+    source: str = "sqlite_exact_raw_readback"
+    verified: bool = True
+    dispatched: bool = True
+    status: str = "raw_saved"
+
+    def as_json(self):
+        from dataclasses import asdict
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+
+def parse_memory_write_receipt(detail):
+    """Accept V1 and pre-V1 JSON; reject malformed IDs, hashes and versions."""
+    try:
+        data = json.loads(detail) if isinstance(detail, str) else detail
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    version = data.get("receipt_version", 0)
+    memory_id = data.get("memory_id")
+    digest = data.get("raw_sha256")
+    recorded = data.get("db_recorded_at", "")
+    if (type(version) is not int or version not in (0, 1)
+            or type(memory_id) is not int or memory_id <= 0
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or not isinstance(recorded, str) or len(recorded) > 100
+            or data.get("source") != "sqlite_exact_raw_readback"
+            or data.get("outcome_unknown") is True or data.get("dispatched") is False
+            or data.get("verified") is not True
+            or (version == 1 and (not recorded or data.get("dispatched") is not True))):
+        return None
+    return MemoryWriteReceipt(memory_id, digest, recorded, version,
+                              status=str(data.get("status", "raw_saved"))[:120])
+
+
+def readback_memory_write(raw, detail, store):
+    """Independently check literal content, digest, identity and creation time."""
+    receipt = parse_memory_write_receipt(detail)
+    if receipt is None or store is None:
+        return None
+    digest = hashlib.sha256(str(raw or "").strip().encode("utf-8")).hexdigest()
+    if receipt.raw_sha256 != digest:
+        return None
+    try:
+        stored = store.get_memory(receipt.memory_id)
+    except Exception:
+        return None
+    if (stored is None or stored.id != receipt.memory_id
+            or stored.content != str(raw or "").strip()
+            or hashlib.sha256(stored.content.encode("utf-8")).hexdigest() != digest
+            or (receipt.db_recorded_at and receipt.db_recorded_at != stored.created_at)):
+        return None
+    return stored
 
 
 def foundation_memory_store(runtime):
@@ -60,27 +124,12 @@ def verify_explicit_memory_write(goal, actions, store):
     if (getattr(action, "name", "") != "remember_information"
             or not getattr(action, "success", False)):
         return None
-    try:
-        data = json.loads(str(getattr(action, "detail", "") or ""))
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    memory_id = data.get("memory_id")
-    if (type(memory_id) is not int or memory_id <= 0
-            or data.get("verified") is not True
-            or data.get("source") != "sqlite_exact_raw_readback"):
-        return None
     raw = str(goal or "").strip()
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    if data.get("raw_sha256") != digest:
+    stored = readback_memory_write(raw, getattr(action, "detail", ""), store)
+    if stored is None:
         return None
-    try:
-        stored = store.get_memory(memory_id)
-    except Exception:
-        return None
-    if stored is None or stored.content != raw:
-        return None
+    memory_id = stored.id
     identity = hashlib.sha256(
         (str(memory_id) + "\0" + digest + "\0"
          + str(stored.created_at)).encode("utf-8")

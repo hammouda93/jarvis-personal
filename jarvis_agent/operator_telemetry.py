@@ -107,6 +107,7 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
             "goal": str(row["goal_summary"])[:150],
             "status": str(row["status"])[:35],
             "verified": observed.get("goal_verified") is True,
+            "proof_scope": str(observed.get("proof_scope") or "")[:80],
             "needs_review": pending.get("manual_review_required") is True,
             "updated_at": float(row["updated_at"]),
         })

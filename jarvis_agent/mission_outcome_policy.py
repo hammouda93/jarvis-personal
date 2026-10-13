@@ -39,12 +39,12 @@ def failure_requires_review(actions: tuple | list) -> bool:
     as non-mutating; it is never safe to infer the mission goal was proven.
     """
     for action in actions:
-        if bool(getattr(action, "success", False)):
-            continue
         name = str(getattr(action, "name", "") or "")
         detail = _detail(getattr(action, "detail", ""))
         if detail.get("outcome_unknown") is True:
             return True
+        if bool(getattr(action, "success", False)):
+            continue
         if detail.get("dispatched") is True:
             return True
         if name in READ_ONLY_TOOLS:
