@@ -22,6 +22,36 @@ def names(definitions):
 
 
 class GenericMCPMissionRoutingTests(unittest.TestCase):
+    def test_real_registry_policy_is_the_only_source_of_mcp_schemas(self):
+        from pathlib import Path
+        import tempfile
+        from jarvis_agent.mcp_server_registry import MCPRegistry
+        from jarvis_agent.mcp_tool_registry import MCPToolRegistry
+
+        with tempfile.TemporaryDirectory() as temp:
+            registry = MCPRegistry(Path(temp) / "servers.json")
+            registry.add_http("fixture", "https://fixture.example/mcp")
+            registry.set_enabled("fixture", True)
+            registry.discover("fixture", [{"name": "read",
+                "description": "Read fixture", "input_schema": {"type": "object"}}])
+            delegate = Mock()
+            delegate.ollama_tools.return_value = [schema("open_url")]
+            tools = MCPToolRegistry(delegate, registry=registry,
+                                    runtime_gate=registry.runtime_enabled)
+            registry.set_runtime_enabled(True)
+            self.assertNotIn("mcp__fixture__read", names(
+                RequestContext(enabled=True).prepare_tools(tools.ollama_tools())))
+            registry.allow_tool("fixture", "read", True)
+            self.assertIn("mcp__fixture__read", names(
+                RequestContext(enabled=True).prepare_tools(tools.ollama_tools())))
+            registry.set_runtime_enabled(False)
+            self.assertNotIn("mcp__fixture__read", names(
+                RequestContext(enabled=True).prepare_tools(tools.ollama_tools())))
+            registry.set_runtime_enabled(True)
+            registry.set_enabled("fixture", False)
+            self.assertNotIn("mcp__fixture__read", names(
+                RequestContext(enabled=True).prepare_tools(tools.ollama_tools())))
+
     def test_already_authorized_mcp_visible_on_first_mission_turn(self):
         context = RequestContext(enabled=True)
         definitions = [schema("browser_list_tabs"), schema("open_url"),
