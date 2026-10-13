@@ -170,6 +170,28 @@ class EfficientContextTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             context.select_tools({"names": ["nonexistent"]})
 
+    def test_current_explicit_memory_write_survives_browser_context_shaping(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "remember_information", "open_url", "browser_find",
+            "computer_write", "semantic_memory_search",
+        )]
+        selected = context.prepare_tools(
+            schemas, browser_mode=True,
+            preserve_required=("remember_information",),
+        )
+        names = {s["function"]["name"] for s in selected}
+        self.assertIn("remember_information", names)
+        self.assertNotIn("computer_write", names)
+        self.assertIn("semantic_memory_search", names)
+        # Cannot introduce a tool omitted by the executor's base policy.
+        another = RequestContext(enabled=True)
+        names = {s["function"]["name"] for s in another.prepare_tools(
+            [t for t in schemas if t["function"]["name"] != "remember_information"],
+            browser_mode=True, preserve_required=("remember_information",),
+        )}
+        self.assertNotIn("remember_information", names)
+
     def test_previous_selection_cannot_reintroduce_a_current_policy_denied_tool(self):
         context = RequestContext(enabled=True)
         schemas = [tool("computer_write"), tool("open_file")]

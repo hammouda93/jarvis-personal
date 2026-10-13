@@ -78,7 +78,8 @@ class RequestContext:
         self.selected = None
         self.available = set()
 
-    def prepare_tools(self, schemas, *, browser_mode=False, conversational_only=False):
+    def prepare_tools(self, schemas, *, browser_mode=False, conversational_only=False,
+                      preserve_required=()):
         if not self.enabled:
             return schemas
         available = {s.get("function", {}).get("name") for s in schemas} - _CONTEXT_TOOLS - {None}
@@ -101,6 +102,12 @@ class RequestContext:
                 selected = available
         else:
             selected = (self.selected | _ROOTS | _CROSS_DOMAIN) & available
+        # A safe default tool subset may not hide the CURRENT explicit
+        # memory-write capability merely because Chrome was previously used.
+        # This is schema exposure only, NEVER new authorization. The calling
+        # runtime already checked the user-authored request, and the executor
+        # independently enforces that exact original request again.
+        selected.update(set(preserve_required) & available)
         result = [s for s in schemas if s.get("function", {}).get("name") in selected or s.get("type") != "function"]
         result.append(_schema("request_tool_capabilities",
             "Local read-only tool selection, NOT an authorization or action. Choose needed names from the available enum to expose their original schemas on the next request, including another domain. Hidden tools are not missing capabilities. Existing execution guards still apply.",

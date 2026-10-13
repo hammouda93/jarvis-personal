@@ -3209,6 +3209,11 @@ class GroqResponsesAgent:
                 tools,
                 browser_mode=bool(getattr(self.tools, "browser_mode", False)),
                 conversational_only=social_only,
+                preserve_required=(
+                    ("remember_information",)
+                    if self._memory_write_allowed and not social_only
+                    else ()
+                ),
             )
         return tools
 
