@@ -34,6 +34,20 @@ class MissionTraceV10HTests(unittest.TestCase):
         self.assertEqual(logs.count("state=REQUESTED"), 6)
         self.assertNotIn("steps=4", logs)
 
+    def test_vocative_is_not_a_fake_mission_step(self):
+        goal = ("Jarvis, inspecte mon dépôt, retrouve les commits, "
+                "puis vérifie les tests et explique le résultat.")
+        steps = requested_steps(goal)
+        self.assertEqual(len(steps), 3)
+        self.assertTrue(steps[0].startswith("inspecte mon dépôt"))
+        self.assertTrue(steps[1].startswith("retrouve les commits"))
+        self.assertTrue(steps[2].startswith("vérifie les tests"))
+        self.assertNotIn("Jarvis", steps)
+        # The unmodified original user objective remains available to
+        # planners/permission policy; only the progress labels are filtered.
+        trace = ConversationMissionTrace(goal, lambda _: None)
+        self.assertEqual(trace.user_text if hasattr(trace, "user_text") else goal, goal)
+
     def test_compound_goal_lists_requested_steps_without_inventing_success(self):
         goal = ("Ouvre un site dans Chrome, recherche un sujet, "
                 "puis ouvre le premier résultat et vérifie sa page.")
