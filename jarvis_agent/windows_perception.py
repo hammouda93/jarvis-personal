@@ -2892,6 +2892,14 @@ def press_key(key: str) -> UIActionResult:
             False,
             "Cette touche n'est pas autorisée par le contrôle Windows de Jarvis.",
         )
+    if normalized == "ctrln" and (
+        not _SNAPSHOT_ID or not _SNAPSHOT_WINDOW_TITLE
+        or normalize(_SNAPSHOT_WINDOW_TITLE) == "jarvis personal"
+    ):
+        return UIActionResult(
+            False, "Inspectez la fenêtre cible avant de créer un nouveau document.",
+            _json({"guard": "fresh_window_required", "dispatched": False, "outcome_unknown": False}),
+        )
     try:
         if (
             _SNAPSHOT_WINDOW_TITLE
@@ -2899,6 +2907,11 @@ def press_key(key: str) -> UIActionResult:
         ):
             try:
                 target_window = _window_by_title(_SNAPSHOT_WINDOW_TITLE)
+                if target_window is None and normalized == "ctrln":
+                    return UIActionResult(
+                        False, "Fenêtre précédemment observée introuvable.",
+                        _json({"guard": "target_window_missing", "dispatched": False, "outcome_unknown": False}),
+                    )
                 if target_window is not None:
                     try:
                         target_window.restore()
@@ -2906,10 +2919,15 @@ def press_key(key: str) -> UIActionResult:
                         pass
                     target_window.set_focus()
             except Exception:
-                pass
+                if normalized == "ctrln":
+                    return UIActionResult(
+                        False, "Impossible de cibler la fenêtre observée.",
+                        _json({"guard": "target_window_focus_failed", "dispatched": False, "outcome_unknown": False}),
+                    )
         _send_keys(sequence)
     except Exception as exc:
-        return UIActionResult(False, f"Impossible d'envoyer la touche {key}.", str(exc))
+        return UIActionResult(False, f"Impossible d'envoyer la touche {key}.",
+            _json({"outcome_unknown": True, "error_type": type(exc).__name__}))
     source_observation_id = _SNAPSHOT_ID
     invalidate_ui_snapshot()
     return UIActionResult(
