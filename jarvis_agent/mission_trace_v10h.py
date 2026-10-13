@@ -177,7 +177,7 @@ def _target_evidence_hint(result, steps, earlier):
     label = next(iter(labels))
     indices = [idx for idx, step in enumerate(steps, 1)
                if label in _normalized(step) and
-               re.search(r"\\b(?:clique|cliquer|click|ouvre|ouvrir|open)\\b",
+               re.search(r"\b(?:clique|cliquer|click|ouvre|ouvrir|open)\b",
                          _normalized(step))]
     return indices[0] if len(indices) == 1 else None
 
