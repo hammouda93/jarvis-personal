@@ -68,6 +68,24 @@ class InstallerDiscoveryCompatibilityTests(unittest.TestCase):
             "Ouvre l'application Cursor."
         ))
 
+    def test_find_file_is_read_only_even_for_setup_executable(self):
+        from jarvis_agent.native_tools import NativeToolRegistry
+        with tempfile.TemporaryDirectory() as root:
+            setup = Path(root) / "CursorUserSetup-x64-3.22.12.exe"
+            setup.write_bytes(b"")
+            with (patch("jarvis_agent.tools._file_search_roots",
+                        return_value=[Path(root)]),
+                  patch("jarvis_agent.tools.os.startfile", create=True) as opener):
+                result = NativeToolRegistry().execute(
+                    "find_file", {"name": "Cursor", "kind": "installer"}
+                )
+            self.assertTrue(result.success)
+            payload = json.loads(result.detail)
+            self.assertEqual(payload["selected_path"], str(setup))
+            self.assertTrue(payload["read_only"])
+            self.assertFalse(payload["opened"])
+            opener.assert_not_called()
+
     def test_search_does_not_launch_unrelated_executable(self):
         with tempfile.TemporaryDirectory() as root:
             folder = Path(root)
