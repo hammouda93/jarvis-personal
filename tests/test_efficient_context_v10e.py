@@ -33,6 +33,58 @@ class EfficientContextTests(unittest.TestCase):
         self.assertEqual(receipt["tool_call_id"], "0")
         self.assertGreater(saved, 20000)
 
+    def test_superseded_browser_observation_is_archived_after_verified_change(self):
+        context = RequestContext(enabled=True)
+        old = json.dumps({"success": True, "detail": {
+            "tab": {"tab_id": 7, "url": "https://example.test/old"},
+            "controls": [{"ref": "obsolete"}] * 170,
+        }})
+        mutation = json.dumps({"success": True, "detail": {
+            "verified": True, "dispatched": True,
+            "postcondition": "navigation_observed",
+            "post_observation": {"tab": {"tab_id": 7,
+                "url": "https://example.test/new"}, "controls": []},
+        }})
+        fresh = json.dumps({"success": True, "detail": {
+            "tab": {"tab_id": 7, "url": "https://example.test/new"},
+            "controls": [{"ref": "current"}],
+        }})
+        messages = [
+            {"role": "tool", "name": "browser_observe_dom",
+             "tool_call_id": "old", "content": old},
+            {"role": "tool", "name": "browser_click",
+             "tool_call_id": "mutate", "content": mutation},
+            {"role": "tool", "name": "browser_observe_dom",
+             "tool_call_id": "new", "content": fresh},
+        ]
+        result, saved = context.compact(messages)
+        self.assertGreater(saved, 1000)
+        old_receipt = json.loads(result[0]["content"])
+        self.assertTrue(old_receipt["request_archived"])
+        self.assertEqual(result[1], messages[1])
+        self.assertEqual(result[2], messages[2])
+        self.assertEqual(
+            context.read_evidence({"evidence_id": old_receipt["evidence_id"]})["content"],
+            old[:3000],
+        )
+        self.assertEqual(messages[0]["content"], old)
+
+    def test_unverified_and_other_tab_changes_do_not_archive_observations(self):
+        for mutation in ({"verified": False, "post_observation": {"tab": {"tab_id": 7}}},
+                         {"verified": True, "post_observation": {"tab": {"tab_id": 8}}},
+                         {"verified": True, "outcome_unknown": True,
+                          "post_observation": {"tab": {"tab_id": 7}}}):
+            context = RequestContext(enabled=True)
+            messages = [
+                {"role": "tool", "name": "browser_find", "tool_call_id": "before",
+                 "content": json.dumps({"success": True, "detail": {
+                    "scope": ["browser", 7], "matches": [{"name": "safe"}] * 220,
+                }})},
+                {"role": "tool", "name": "browser_click", "tool_call_id": "act",
+                 "content": json.dumps({"success": True, "detail": mutation})},
+            ]
+            self.assertEqual(context.compact(messages), (messages, 0))
+
     def test_unknown_mutations_failures_and_approval_records_are_never_compressed(self):
         context = RequestContext(enabled=True)
         for name, payload in (("browser_write", {"success": True}),

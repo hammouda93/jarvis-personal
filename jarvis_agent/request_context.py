@@ -104,14 +104,32 @@ class RequestContext:
         self.selected = set(names)
         return {"selected": sorted(self.selected), "permissions_changed": False, "verified": False}
 
+    @staticmethod
+    def _browser_tab_id(name, payload):
+        """Only explicit tab identity may classify an observation as stale."""
+        if not str(name or "").startswith("browser_"):
+            return None
+        detail = payload.get("detail") or {}
+        if not isinstance(detail, dict):
+            return None
+        tab = detail.get("tab") or (detail.get("post_observation") or {}).get("tab")
+        if isinstance(tab, dict) and type(tab.get("tab_id")) is int:
+            return tab["tab_id"]
+        scope = detail.get("scope")
+        if (isinstance(scope, list) and len(scope) == 2
+                and scope[0] == "browser" and type(scope[1]) is int):
+            return scope[1]
+        return None
+
     def compact(self, messages, *, retain_latest=2, preview_chars=400):
         if not self.enabled:
             return messages, 0
         result, seen, retained, saved = list(messages), {}, set(), 0
+        changed_tabs = set()
         for index in range(len(messages) - 1, -1, -1):
             item = messages[index]
             name, content, call_id = item.get("name"), item.get("content"), item.get("tool_call_id")
-            if item.get("role") != "tool" or name not in _OBSERVATIONS or not call_id or not isinstance(content, str):
+            if item.get("role") != "tool" or not call_id or not isinstance(content, str):
                 continue
             try:
                 payload = json.loads(content)
@@ -119,10 +137,26 @@ class RequestContext:
                     continue
             except (ValueError, TypeError, RecursionError):
                 continue
+            tab_id = self._browser_tab_id(name, payload)
+            detail = payload.get("detail") or {}
+            if not isinstance(detail, dict):
+                detail = {}
+            if name not in _OBSERVATIONS:
+                # A *verified* later Browser action with fresh post-observation
+                # invalidates earlier reads for the same tab. Preserve the full
+                # action receipt and proof; only historical reads get archived.
+                if (tab_id is not None and str(name).startswith("browser_")
+                        and detail.get("verified") is True
+                        and isinstance(detail.get("post_observation"), dict)
+                        and not detail.get("outcome_unknown")):
+                    changed_tabs.add(tab_id)
+                continue
             identity = hashlib.sha256((name + "\0" + str(call_id) + "\0" + content).encode()).hexdigest()
             retained.add(identity)
             seen[name] = seen.get(name, 0) + 1
-            if seen[name] <= retain_latest or len(content) < 2400:
+            superseded = tab_id is not None and tab_id in changed_tabs
+            if ((not superseded and seen[name] <= retain_latest)
+                    or len(content) < 2400):
                 continue
             marker = json.dumps({"tool": name, "success": True, "historical_observation": True,
                 "request_archived": True, "evidence_id": identity, "source_tool_call_id": call_id,

@@ -129,6 +129,59 @@ def _tool_step_hint(tool: str, steps: tuple[str, ...]) -> int | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _target_evidence_hint(result, steps, earlier):
+    """Correlate a verified UI transition with an observed link label.
+
+    A model-generated URL or a tool name alone is NEVER evidence. This uses
+    the observed href/label of a unique DOM find and the verified destination
+    in the later click's post-observation. It only enriches the trace; no
+    step or overall goal is certified here.
+    """
+    if (getattr(result, "name", None) != "browser_click"
+            or not getattr(result, "success", False)):
+        return None
+    try:
+        detail = json.loads(getattr(result, "detail", "") or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(detail, dict) or detail.get("verified") is not True:
+        return None
+    if detail.get("postcondition") != "navigation_observed":
+        return None
+    current = detail.get("post_observation") or {}
+    tab = current.get("tab") if isinstance(current, dict) else None
+    url = str(tab.get("url") or "") if isinstance(tab, dict) else ""
+    if not url.startswith(("https://", "http://")):
+        return None
+    labels = set()
+    for prior in earlier:
+        if getattr(prior, "name", None) != "browser_find" or not getattr(prior, "success", False):
+            continue
+        try:
+            parsed = json.loads(getattr(prior, "detail", "") or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        matches = parsed.get("matches")
+        if not isinstance(matches, list) or len(matches) != 1:
+            continue
+        match = matches[0]
+        if not isinstance(match, dict) or str(match.get("href") or "") != url:
+            continue
+        label = _normalized(match.get("name") or match.get("text") or "")
+        if len(label) >= 4:
+            labels.add(label)
+    if len(labels) != 1:
+        return None
+    label = next(iter(labels))
+    indices = [idx for idx, step in enumerate(steps, 1)
+               if label in _normalized(step) and
+               re.search(r"\\b(?:clique|cliquer|click|ouvre|ouvrir|open)\\b",
+                         _normalized(step))]
+    return indices[0] if len(indices) == 1 else None
+
+
 def _evidence_level(result) -> str:
     if not bool(getattr(result, "success", False)):
         return "FAILED"
@@ -227,16 +280,27 @@ class ConversationMissionTrace:
             return
         self._finished = True
         actions = tuple(actions)
+        earlier = []
         for result in actions:
             name = str(getattr(result, "name", ""))
             hint = _tool_step_hint(name, self.steps)
+            provenance_hint = _target_evidence_hint(result, self.steps, earlier)
             evidence = _evidence_level(result)
             if hint is not None:
                 self._step_tools.setdefault(hint, []).append(evidence)
+            if provenance_hint is not None:
+                self._step_tools.setdefault(provenance_hint, []).append(evidence)
+                self._log(
+                    f"[MISSION_STEP] id={self.trace_id} "
+                    f"step={provenance_hint}/{len(self.steps)} "
+                    "state=EVIDENCE_CORRELATED source=observed_href_and_verified_navigation "
+                    "authoritative_assignment=false goal_verified=not_established"
+                )
             self._log(
                 f"[MISSION_EVIDENCE] id={self.trace_id} tool={name} "
                 f"effect={evidence} goal_proof=not_inferred"
             )
+            earlier.append(result)
         for idx, step in enumerate(self.steps, 1):
             evidences = self._step_tools.get(idx, [])
             state = "TOOL_ACTIVITY_RECORDED" if evidences else "NO_ASSIGNED_TOOL_EVIDENCE"

@@ -52,3 +52,7 @@ safety gate. Zero-result DOM finds additionally return a short **fresh observed
 control inventory** without a click, instead of misleading Jarvis that a
 capability is missing. This does not solve API quota or deliver autonomous
 multi-turn scheduling by itself.
+
+## Evidence-linked trace and bounded stale DOM reads
+
+Trace projection can correlate a **verified browser navigation** to the label of a unique DOM link previously returned by `browser_find`, provided the exact observed link href equals the actual verified destination and the positive user step contains the label. It logs `EVIDENCE_CORRELATED` but never certifies a task, an optional action, or an entire mission. No browser call or model request is added. With efficient context enabled, an older successful browser DOM observation on a tab may be archived when a later **verified** browser action supplies a fresh post-observation for that same tab. It remains recoverable by evidence ID; mutation receipts, unknown effects, current snapshots and permissions are not compressed.
