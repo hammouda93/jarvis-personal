@@ -392,14 +392,31 @@ class ConversationMissionTrace:
                 f"effect={evidence} goal_proof=not_inferred"
             )
             earlier.append(result)
+        certified = self._goal_proof_logged and not error
         for idx, step in enumerate(self.steps, 1):
             evidences = self._step_tools.get(idx, [])
-            state = "TOOL_ACTIVITY_RECORDED" if evidences else "NO_ASSIGNED_TOOL_EVIDENCE"
-            self._log(
-                f"[MISSION_STEP] id={self.trace_id} step={idx}/{len(self.steps)} "
-                f"state={state} goal_verified=not_established"
-            )
-        certified = self._goal_proof_logged and not error
+            if certified:
+                # This outline is a non-authoritative split of the original
+                # user request; its steps have no independent evidence gate.
+                # Once the trusted runtime has certified the ENTIRE original
+                # goal, reporting NO_ASSIGNED_TOOL_EVIDENCE for an outlined
+                # clause contradicts the goal outcome. Distinguish the goal
+                # certificate from an independently verified step, without
+                # inventing a per-step proof or retroactively assigning tools.
+                self._log(
+                    f"[MISSION_STEP] id={self.trace_id} step={idx}/{len(self.steps)} "
+                    "state=COVERED_BY_GOAL_CERTIFICATE "
+                    "goal_verified=certified step_verified=not_independently_assessed "
+                    f"tool_evidence={'correlated' if evidences else 'not_assigned'} "
+                    "source=trusted_runtime"
+                )
+            else:
+                state = ("TOOL_ACTIVITY_RECORDED"
+                         if evidences else "NO_ASSIGNED_TOOL_EVIDENCE")
+                self._log(
+                    f"[MISSION_STEP] id={self.trace_id} step={idx}/{len(self.steps)} "
+                    f"state={state} goal_verified=not_established"
+                )
         result = ("INTERRUPTED" if error else "COMPLETED" if certified else
                   "NO_TOOLS" if not actions else "RESULTS_RECORDED_GOAL_UNVERIFIED")
         self._log(

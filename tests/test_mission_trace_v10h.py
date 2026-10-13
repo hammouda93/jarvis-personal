@@ -183,6 +183,38 @@ class MissionTraceV10HTests(unittest.TestCase):
         self.assertIn("state=COMPLETED", logs)
         self.assertIn("goal_verification=certified", logs)
 
+    def test_certified_goal_marks_outline_as_covered_not_individual_step_proof(self):
+        goal = ("Ouvre https://example.test/overview/, inspecte le menu latéral, "
+                "ouvre-le si nécessaire, puis clique sur Joueurs. "
+                "Vérifie la page affichée et donne-moi son URL exacte.")
+        events = []
+        trace = ConversationMissionTrace(goal, events.append, trace_id="coverage")
+        trace.start()
+        self.assertEqual(len(trace.steps), 4)
+        trace.ingest(
+            "[MISSION] state=COMPLETED evidence=independent_browser_navigation"
+        )
+        trace.finish([result("browser_click", detail='{"verified":true}')])
+        joined = "\\n".join(events)
+        self.assertEqual(joined.count("state=COVERED_BY_GOAL_CERTIFICATE"), 4)
+        self.assertIn("goal_verification=certified", joined)
+        self.assertIn("step_verified=not_independently_assessed", joined)
+        self.assertIn("tool_evidence=not_assigned", joined)
+        self.assertNotIn("state=NO_ASSIGNED_TOOL_EVIDENCE", joined)
+
+    def test_untrusted_goal_claim_never_covers_outline_steps(self):
+        events = []
+        trace = ConversationMissionTrace(
+            "Ouvre un site puis clique sur Joueurs et vérifie la page",
+            events.append, trace_id="not-covered"
+        )
+        trace.start()
+        trace.ingest("[MISSION] independent_goal_proof=browser_navigation")
+        trace.finish([result("browser_click", detail='{"verified":true}')])
+        joined = "\\n".join(events)
+        self.assertIn("goal_verification=not_certified", joined)
+        self.assertNotIn("state=COVERED_BY_GOAL_CERTIFICATE", joined)
+
     def test_click_success_never_proves_installation(self):
         events = []
         trace = ConversationMissionTrace(
