@@ -56,3 +56,7 @@ multi-turn scheduling by itself.
 ## Evidence-linked trace and bounded stale DOM reads
 
 Trace projection can correlate a **verified browser navigation** to the label of a unique DOM link previously returned by `browser_find`, provided the exact observed link href equals the actual verified destination and the positive user step contains the label. It logs `EVIDENCE_CORRELATED` but never certifies a task, an optional action, or an entire mission. No browser call or model request is added. With efficient context enabled, an older successful browser DOM observation on a tab may be archived when a later **verified** browser action supplies a fresh post-observation for that same tab. It remains recoverable by evidence ID; mutation receipts, unknown effects, current snapshots and permissions are not compressed.
+
+## Exact browser navigation evidence in user replies
+
+When the user explicitly asks Jarvis to verify or explain the resulting page, the agent may add a short, exact destination receipt from a successful browser mutation with `verified=true`, `postcondition=navigation_observed` and a real post-observation HTTP(S) URL. This is evidence of the **navigation only**, not proof the entire mission is completed. If the model already includes the exact URL, no duplicate receipt is added. No website-specific paths or selectors.

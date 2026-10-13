@@ -4569,6 +4569,16 @@ class GroqResponsesAgent:
                             if log:
                                 log("[AGENT_EVIDENCE] tab_close_reply=verified_active_tab")
 
+                # Exact navigation attestation is rendered from the real
+                # tool receipt, not the model's paraphrased/abbreviated URL.
+                # This certifies ONLY the navigation, never the entire goal.
+                from .browser_outcome_summary import verified_navigation_note
+                proof_note = verified_navigation_note(user_text, actions, text)
+                if proof_note:
+                    text += "\n" + proof_note
+                    if log:
+                        log("[AGENT_EVIDENCE] navigation_receipt=rendered")
+
                 if self._messages and self._messages[-1].get("role") == "assistant":
                     self._messages[-1]["content"] = text
                 if learning_enabled(settings):
