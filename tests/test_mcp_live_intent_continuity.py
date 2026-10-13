@@ -101,12 +101,7 @@ class ConnectedMCPIntentTests(unittest.TestCase):
         for value in ("oui", "continue", "delete repo", "approve payment",
                       "owner:secret", "https://example.org", "send-message now",
                       "please do this", "ghp_secrettoken123"):
-            # Strings that look like credentials are not human clarifications.
-            # A quoted ghp_ token would be sensitive even though it matches
-            # the generic identifier grammar; avoid asserting its rejection
-            # unless the parser explicitly implements secret detection.
-            if value.startswith("ghp_"):
-                continue
+            # A token-looking string must never enter a durable goal.
             with self.subTest(value=value):
                 self.assertFalse(is_neutral_identifier_clarification(
                     value, status="waiting_external"))
