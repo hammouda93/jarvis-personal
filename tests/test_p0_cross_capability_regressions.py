@@ -28,11 +28,15 @@ class InstallerDiscoveryCompatibilityTests(unittest.TestCase):
                 for query in ("Cursor", "Cursor Setup", "installateur de Cursor",
                               "Cursor installer", "installation Cursor"):
                     with self.subTest(query=query):
-                        selected, matches = _find_named_file(query)
+                        selected, matches = _find_named_file(query, kind="installer")
                         self.assertEqual(selected, setup)
                         self.assertIn(setup, matches)
                 selected, matches = _find_named_file("installateur de Cursor")
                 self.assertNotIn(decoy, matches)
+                # A generic filename request must not silently become
+                # permission to execute an .exe when a document also matches.
+                plain, _ = _find_named_file("Cursor")
+                self.assertNotEqual(plain, setup)
 
     def test_open_file_dispatches_only_exact_discovered_artifact(self):
         with tempfile.TemporaryDirectory() as root:
@@ -48,6 +52,21 @@ class InstallerDiscoveryCompatibilityTests(unittest.TestCase):
             self.assertTrue(outcome.success)
             opener.assert_called_once_with(str(setup))
             self.assertIn(str(setup), outcome.detail)
+
+    def test_explicit_installer_intent_requires_file_open_permission(self):
+        from jarvis_agent.instruction_clauses import (
+            has_installer_file_target, authorized_installer_open,
+        )
+        self.assertTrue(has_installer_file_target(
+            "Retrouve l'installateur Cursor dans Téléchargements."))
+        self.assertFalse(authorized_installer_open(
+            "Retrouve l'installateur Cursor dans Téléchargements, ne l'ouvre pas."))
+        self.assertTrue(authorized_installer_open(
+            "Retrouve l'installateur Cursor, ouvre ce fichier, inspecte ses options."
+        ))
+        self.assertFalse(has_installer_file_target(
+            "Ouvre l'application Cursor."
+        ))
 
     def test_search_does_not_launch_unrelated_executable(self):
         with tempfile.TemporaryDirectory() as root:
