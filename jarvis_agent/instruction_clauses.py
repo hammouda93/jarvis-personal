@@ -80,11 +80,11 @@ def has_installer_file_target(text):
 
     Never infer file execution permission from this classification.
     """
-    return any(
-        re.search(r"\b(?:installateur|setup|fichier d'installation|"
-                  r"installer telecharge|downloaded installer)\b", clause)
-        for clause in positive_instruction_clauses(text)
-    )
+    return bool(re.search(
+        r"\b(?:installateur|setup|fichier d'installation|"
+        r"installer telecharge|downloaded installer)\b",
+        _normalized(str(text or "")),
+    ))
 
 
 def authorized_installer_open(text):
