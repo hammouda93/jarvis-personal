@@ -116,6 +116,14 @@ class RequestContext:
                 name = str((schema.get("function") or {}).get("name") or "")
                 if not name.startswith("mcp__") or name not in available:
                     continue
+                from .mcp_read_policy import is_conservative_read_tool
+                # First-turn default may expose only observational tool
+                # names, never e.g. mcp__calendar_create. Other authorized
+                # capabilities remain selectable via the read-only catalog.
+                tool_name = name.split("__", 2)[-1]
+                if not is_conservative_read_tool(
+                        tool_name, (schema.get("function") or {}).get("parameters")):
+                    continue
                 size = len(json.dumps(schema, ensure_ascii=False, default=str))
                 if size > mcp_budget_chars:
                     continue
