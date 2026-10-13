@@ -140,6 +140,29 @@ class MCPToolRegistry:
                 name=name, success=False, message="MCP non autorisé.",
                 detail='{"verified":false,"guard":"permission_changed","dispatched":false,"outcome_unknown":false}',
             )
+        # An LLM placeholder is NOT a grounded service identifier.
+        # Validate BEFORE reserving quotas, starting a session or allowing
+        # a write to reach a remote server. Only paths, not argument values,
+        # may enter the journal / model-facing refusal.
+        from .mcp_argument_grounding import unresolved_argument_paths
+        unresolved = unresolved_argument_paths(arguments)
+        if unresolved:
+            return AgentActionResult(
+                name=name, success=False,
+                message=(
+                    "Paramètres MCP non résolus. Aucune requête externe envoyée. "
+                    "Retrouve d'abord les identifiants dans les observations ou "
+                    "outils de lecture déjà autorisés, sinon demande la "
+                    "précision manquante sans inventer de valeur."
+                ),
+                detail=json.dumps({
+                    "guard": "unresolved_argument_template",
+                    "argument_paths": list(unresolved),
+                    "dispatched": False, "outcome_unknown": False,
+                    "verified": False, "recoverable": True,
+                    "permissions_changed": False,
+                }, ensure_ascii=False),
+            )
         # Never trust the model's ability to pick a tool name or remote
         # description to authorize a previously hidden capability.
         activity = self.registry.activity()
