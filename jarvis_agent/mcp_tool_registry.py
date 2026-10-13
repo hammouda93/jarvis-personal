@@ -195,7 +195,8 @@ class MCPToolRegistry:
         if unknown:
             return AgentActionResult(name=name, success=False,
                 message="Resultat MCP incomplet ou en erreur : verifier les effets avant toute reprise.",
-                detail=json.dumps({"verified": False, "outcome_unknown": True,
+                detail=json.dumps({"verified": False, "dispatched": True,
+                                   "outcome_unknown": True,
                                    "source": source}, ensure_ascii=False))
         structured = result.get("data")
         if not isinstance(structured, dict):
@@ -205,6 +206,7 @@ class MCPToolRegistry:
         # Always keep valid JSON. Never mark remote content as verification.
         safe_detail = json.dumps({
             "verified": False,
+            "dispatched": True,
             "outcome_unknown": False,
             "source": source,
             "mcp_output": str(result.get("message") or "")[:2200],
