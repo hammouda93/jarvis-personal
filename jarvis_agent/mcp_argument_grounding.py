@@ -101,3 +101,48 @@ def missing_required_arguments(arguments: Any, schema: Any) -> tuple[str, ...]:
         if len(missing) >= 15:
             break
     return tuple(missing)
+
+
+class MCPArgumentSchemaUnavailable(RuntimeError):
+    """The local validator cannot safely interpret the advertised input schema."""
+
+
+def invalid_schema_argument_paths(arguments: Any, schema: Any) -> tuple[str, ...]:
+    """Validate actual MCP JSON Schema before dispatch, with path-only diagnostics.
+
+    Never coerce values, apply defaults, log tool argument values or trust an
+    invalid server schema. The server is still authoritative for validation.
+    """
+    if not isinstance(arguments, dict):
+        return ("arguments",)
+    if not isinstance(schema, dict):
+        raise MCPArgumentSchemaUnavailable("invalid_input_schema")
+    try:
+        from jsonschema import validators
+        from jsonschema.exceptions import SchemaError
+    except ImportError as exc:
+        raise MCPArgumentSchemaUnavailable("jsonschema_not_installed") from exc
+    try:
+        validator_class = validators.validator_for(schema)
+        validator_class.check_schema(schema)
+        violations = validator_class(schema).iter_errors(arguments)
+        paths = []
+        for issue in violations:
+            # A nested JSON Schema error must not leak actual argument values.
+            # Use a safe key path, not issue.message, which includes values.
+            parts = ["arguments"]
+            for part in issue.absolute_path:
+                if isinstance(part, int):
+                    parts.append(f"[{part}]")
+                elif isinstance(part, str):
+                    parts.append("." + part[:75])
+            key_path = "".join(parts)
+            if key_path not in paths:
+                paths.append(key_path)
+            if len(paths) >= 15:
+                break
+        return tuple(paths)
+    except SchemaError as exc:
+        raise MCPArgumentSchemaUnavailable("invalid_input_schema") from exc
+    except (ValueError, TypeError, OverflowError, RecursionError) as exc:
+        raise MCPArgumentSchemaUnavailable("schema_evaluation_failed") from exc
