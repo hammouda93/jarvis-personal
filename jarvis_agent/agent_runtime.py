@@ -5458,6 +5458,32 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     request_messages, pressure_tools,
                     completion_tokens=getattr(settings, "groq_completion_tokens", 512),
                 )
+                if not pressure_ok:
+                    # Tight budget: archive ONLY previews of superseded,
+                    # successful read observations. Keep the latest live DOM
+                    # observation, full tool-call/result chain, mission
+                    # constraints, all write/approval/unknown-effect receipts
+                    # and local evidence_id lookups unchanged.
+                    lean_messages, extra_saved = context.compact(
+                        self._messages_for_request(),
+                        retain_latest=1, preview_chars=0,
+                    )
+                    lean_ok, lean_estimate, lean_budget = groq_fallback_preflight(
+                        lean_messages, pressure_tools,
+                        completion_tokens=getattr(
+                            settings, "groq_completion_tokens", 512),
+                    )
+                    if lean_ok:
+                        request_messages = lean_messages
+                    pressure_ok, pressure_estimate, pressure_budget = (
+                        lean_ok, lean_estimate, lean_budget
+                    )
+                    print(
+                        "[AGENT_CONTEXT] provider=groq_fallback "
+                        "mode=metadata_only_historical_observations "
+                        f"archived_chars={extra_saved} "
+                        f"estimated_tokens={lean_estimate}"
+                    )
                 if pressure_ok:
                     request_tools = pressure_tools
                 allowed, estimate, budget = (

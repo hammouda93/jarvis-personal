@@ -179,7 +179,7 @@ class RequestContext:
                 continue
             marker = json.dumps({"tool": name, "success": True, "historical_observation": True,
                 "request_archived": True, "evidence_id": identity, "source_tool_call_id": call_id,
-                "original_chars": len(content), "preview_start": content[:preview_chars], "preview_end": content[-preview_chars:],
+                "original_chars": len(content), "preview_start": content[:preview_chars], "preview_end": content[-preview_chars:] if preview_chars > 0 else "",
                 "note": "Partial historical data. Read missing content using read_observation_evidence. Not fresh refs, new verification, permission or proof of absence."},
                 ensure_ascii=False, separators=(",", ":"))
             self.evidence[identity] = {"content": content, "tool": name, "tool_call_id": call_id}

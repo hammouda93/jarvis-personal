@@ -33,6 +33,41 @@ class EfficientContextTests(unittest.TestCase):
         self.assertEqual(receipt["tool_call_id"], "0")
         self.assertGreater(saved, 20000)
 
+    def test_zero_preview_receipt_never_includes_original_data_and_is_recoverable(self):
+        context = RequestContext(enabled=True)
+        secret = "sensitive_observation_fixture_" + "Z" * 3000
+        messages = [{"role": "user", "content": "Keep explicit permission restrictions"}]
+        for index in range(3):
+            messages.extend([
+                {"role": "assistant", "tool_calls": [{
+                    "id": str(index), "type": "function",
+                    "function": {"name": "browser_observe_dom", "arguments": "{}"},
+                }]},
+                {"role": "tool", "tool_call_id": str(index),
+                 "name": "browser_observe_dom",
+                 "content": json.dumps({"success": True, "detail": {
+                     "tab": {"tab_id": 7}, "text": secret + str(index),
+                 }})},
+            ])
+        original = copy.deepcopy(messages)
+        compacted, saved = context.compact(
+            messages, retain_latest=1, preview_chars=0,
+        )
+        self.assertGreater(saved, 2000)
+        archived = json.loads(compacted[2]["content"])
+        self.assertEqual(archived["preview_start"], "")
+        self.assertEqual(archived["preview_end"], "")
+        self.assertNotIn(secret, compacted[2]["content"])
+        self.assertEqual(compacted[-1], original[-1])
+        self.assertEqual(messages, original)
+        self.assertEqual(
+            context.read_evidence({
+                "evidence_id": archived["evidence_id"],
+                "offset": 0, "limit": 4000,
+            })["content"],
+            original[2]["content"][:4000],
+        )
+
     def test_superseded_browser_observation_is_archived_after_verified_change(self):
         context = RequestContext(enabled=True)
         old = json.dumps({"success": True, "detail": {
