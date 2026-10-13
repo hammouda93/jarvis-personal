@@ -524,6 +524,7 @@ class LiveMissionContinuityRuntime:
                 "step": node.task_id,
                 "state": node.status.value,
                 "action_names": list(node.result.get("action_names", []))[:6],
+                "evidence_counts": dict(node.result.get("evidence_counts") or {}),
             }
             for node in graph.nodes()[-5:]
         ]
@@ -905,15 +906,21 @@ class LiveMissionContinuityRuntime:
                 for action in actions
             ]
             routes = self._observe_routes(action_names, state.user_goal)
+            from .mission_progress import action_evidence_counts
+            evidence_counts = action_evidence_counts(actions)
             node.result = {
                 "action_count": len(actions),
                 "failed_action_count": failed,
                 "action_names": action_names,
                 "agent_routes": routes,
+                "evidence_counts": evidence_counts,
             }
             state.observed_state["completed_turns"] = index
             state.observed_state["last_action_count"] = len(actions)
             state.observed_state["last_failed_action_count"] = failed
+            state.observed_state["last_evidence_counts"] = evidence_counts
+            state.observed_state["last_pause_reason"] = str(
+                getattr(result, "pause_reason", "") or "")[:80]
             state.observed_state["last_routing_needs_review"] = any(
                 route["needs_review"] for route in routes
             )

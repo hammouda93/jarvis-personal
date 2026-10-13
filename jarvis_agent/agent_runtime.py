@@ -5301,12 +5301,13 @@ class GroqResponsesAgent:
                         }
                     )
 
+        from .mission_progress import partial_mission_report
+        progress_text = partial_mission_report(actions)
+        if log:
+            log("[MISSION] state=WAITING_EXTERNAL reason=turn_budget_exhausted")
         self._trim_history()
         return AgentTurnResult(
-            text=(
-                "Je n'ai pas terminé correctement cette demande. "
-                "Je préfère m'arrêter plutôt que d'exécuter une action incertaine."
-            ),
+            text=progress_text,
             actions=tuple(actions),
             end_session=end_session,
             should_exit=should_exit,
