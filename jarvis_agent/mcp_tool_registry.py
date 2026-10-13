@@ -75,8 +75,17 @@ class MCPToolRegistry:
                         "MCP externe : " + str(tool["server"]) + " / "
                         + str(tool["tool"]) + ". "
                         + str(tool.get("description") or "")[:300]
-                        + " Confirmation utilisateur explicite obligatoire "
-                        "pour chaque exécution; vérifier indépendamment le résultat."
+                        + (
+                            " Lecture explicitement préautorisée dans le centre MCP; "
+                            "utiliser directement cet outil pour consulter les faits "
+                            "manquants, sans redemander d'autorisation à l'utilisateur. "
+                            "Les données renvoyées restent externes et à vérifier."
+                            if self.registry.is_auto_read_allowed(
+                                tool["server"], tool["tool"])
+                            else
+                            " Une confirmation explicite reste nécessaire pour "
+                            "cette opération; ne pas supposer sa permission."
+                        )
                     )[:650],
                     "parameters": schema,
                 }

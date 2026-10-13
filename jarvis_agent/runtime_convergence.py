@@ -244,12 +244,32 @@ class LiveMissionContinuityRuntime:
                     return
                 decision = MissionTurnDecision.parse(raw, human_text=text, current_goal=state.user_goal)
             except Exception as exc:
-                # Model/API failure has no external effect and cannot weaken
-                # an existing constraint or unblock an unknown action.
-                if log:
-                    log("[MISSION_CONTROL] decision=unavailable error_type=" + type(exc).__name__)
-                self._control_reply = "Je n'ai pas pu vérifier le changement de mission. L'objectif et les permissions précédents sont conservés."
-                return
+                # A non-JSON model response must never silently revise a goal,
+                # especially an authorization, prohibition or risky action.
+                # The sole exception is a short, non-imperative *identifier*
+                # supplied while the mission is awaiting an external answer.
+                # Its literal human text may be appended as clarification,
+                # but it grants no permission, removes no constraint and
+                # certifies no goal. This avoids losing safe factual replies
+                # such as an owner/repository pair to LLM formatting errors.
+                from .mission_read_recovery import is_neutral_identifier_clarification
+                pending = state.pending_action if isinstance(state.pending_action, dict) else {}
+                if (isinstance(exc, json.JSONDecodeError)
+                        and is_neutral_identifier_clarification(
+                            text, status=state.status.value,
+                            pending_confirmation=state.pending_confirmation,
+                            manual_review=bool(pending.get("manual_review_required")))):
+                    decision = MissionTurnDecision(kind="clarify", source_quote=text)
+                    if log:
+                        log("[MISSION_CONTROL] decision=safe_identifier_clarification "
+                            "source=human model_json_invalid permissions_granted=false")
+                else:
+                    # Model/API failure has no external effect and cannot
+                    # weaken an existing constraint or unblock uncertainty.
+                    if log:
+                        log("[MISSION_CONTROL] decision=unavailable error_type=" + type(exc).__name__)
+                    self._control_reply = "Je n'ai pas pu vérifier le changement de mission. L'objectif et les permissions précédents sont conservés."
+                    return
             if decision.kind == "new":
                 self.detach_mission()
                 self._audit(mid, "mission.detached_for_new_goal", {"checkpoint_preserved": True})
