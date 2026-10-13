@@ -6,8 +6,32 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 
 MAX_ARTIFACT_BYTES = 4 * 1024 * 1024
+
+
+def _long_lexical_path(path):
+    absolute = str(path.absolute())
+    if os.name != "nt":
+        return absolute
+    import ctypes
+    from ctypes import wintypes
+    expand = ctypes.WinDLL("kernel32", use_last_error=True).GetLongPathNameW
+    expand.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    expand.restype = wintypes.DWORD
+    size = expand(absolute, None, 0)
+    if not size:
+        raise ctypes.WinError(ctypes.get_last_error())
+    if size > 32768:
+        raise ValueError("artifact_path_exceeds_budget")
+    buffer = ctypes.create_unicode_buffer(size)
+    copied = expand(absolute, buffer, size)
+    if not copied:
+        raise ctypes.WinError(ctypes.get_last_error())
+    if copied >= size:
+        raise ValueError("artifact_path_changed_during_expansion")
+    return buffer.value
 
 
 def verify_file_artifact(arguments):
@@ -21,8 +45,15 @@ def verify_file_artifact(arguments):
         path = Path(raw)
         if not path.is_absolute() or raw.startswith(("\\\\", "//")):
             raise ValueError("local_absolute_path_required")
+        # Check root-to-leaf without following a redirected ancestor.
+        for component in reversed((path, *path.parents)):
+            metadata = component.lstat()
+            if (stat.S_ISLNK(metadata.st_mode) or getattr(metadata, "st_file_attributes", 0)
+                    & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)):
+                raise ValueError("redirected_artifact_path_refused")
         resolved = path.resolve(strict=True)
-        if str(resolved).startswith(("\\\\", "//")) or os.path.normcase(str(resolved)) != os.path.normcase(str(path.absolute())):
+        # Expand Windows 8.3 names, but do not resolve links in the lexical path.
+        if str(resolved).startswith(("\\\\", "//")) or os.path.normcase(str(resolved)) != os.path.normcase(_long_lexical_path(path)):
             raise ValueError("redirected_artifact_path_refused")
         if resolved.name != name or not resolved.is_file():
             raise ValueError("artifact_filename_mismatch")
