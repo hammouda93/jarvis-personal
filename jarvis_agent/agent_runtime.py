@@ -4670,6 +4670,32 @@ class GroqResponsesAgent:
                     # model and inspect the real foreground window instead.
                     arguments = {}
 
+                # A downloaded setup file is not the installed application.
+                # For an explicitly authorized installer-open goal, resolve
+                # the actual executable by observed file identity rather than
+                # launching an unrelated installed app with the same name.
+                from .instruction_clauses import (
+                    has_installer_file_target, authorized_installer_open,
+                )
+                if name == "open_file" and has_installer_file_target(user_text):
+                    arguments["kind"] = "installer"
+                if (name == "open_application"
+                        and authorized_installer_open(user_text)
+                        and not re.search(
+                            r"\\b(?:ouvre|open)\\s+(?:l[' ]|the )?application\\b",
+                            normalize(user_text),
+                        )):
+                    filename = str(arguments.get("name") or "").strip()
+                    if filename:
+                        name = "open_file"
+                        arguments = {"name": filename, "kind": "installer"}
+                        if any(word in normalize(user_text) for word in (
+                            "telechargement", "download",
+                        )):
+                            arguments["within"] = "Téléchargements"
+                        if log:
+                            log("[AGENT_ROUTING] downloaded_installer_file=1 "
+                                "not_installed_application=1")
                 # A model suggestion of "new_instance=true" does not create
                 # user authorization to duplicate an application. Preserve
                 # the default reuse contract unless the request was explicit.
