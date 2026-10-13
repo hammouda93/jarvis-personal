@@ -393,12 +393,23 @@ class MCPConnectionsPanel(QFrame):
             self._send("oauth_authorize", server, json.dumps(options))
 
     def _store_bearer(self):
+        server = str(self.server_picker.currentData() or "")
+        if not server:
+            self.feedback.setText("Sélectionne d'abord un serveur MCP dans Services.")
+            return
         value = self.bearer.text().strip()
-        if value:
-            kind = self.credential_kind.currentData()
-            self._send("store_bearer" if kind == "bearer" else "store_api_key",
-                str(self.server_picker.currentData() or ""), value if kind == "bearer" else json.dumps({"header": kind, "key": value}))
-            self.bearer.clear()
+        if not value:
+            self.feedback.setText(
+                "Champ Credential HTTP vide : colle un token ou une clé API "
+                "dans Accès avant de cliquer sur Coffre."
+            )
+            self.bearer.setFocus()
+            return
+        kind = self.credential_kind.currentData()
+        self._send("store_bearer" if kind == "bearer" else "store_api_key",
+            server, value if kind == "bearer" else json.dumps({"header": kind, "key": value}))
+        # The credential value is never echoed back in GUI feedback.
+        self.bearer.clear()
 
     def _select_transport(self):
         local = self.transport_picker.currentData() == "stdio"
