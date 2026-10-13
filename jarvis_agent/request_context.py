@@ -201,6 +201,16 @@ class RequestContext:
             if len(recent) >= 2:
                 break
         keep = _CONTEXT_TOOLS | set(recent[:2]) | {"mission_checkpoint"}
+        # Under model-token pressure, do not strip the NEXT capability needed
+        # on the current browser surface. Strict providers reject undeclared
+        # tool calls with HTTP 400; preserving only open_url/get_active_tab
+        # strands an otherwise healthy Chrome mission before DOM inspection.
+        # These are generic schemas, never pre-authorization to execute.
+        if any(name == "open_url" or name.startswith("browser_") for name in recent):
+            keep.update({
+                "browser_get_active_tab", "browser_observe_dom",
+                "browser_find", "browser_click",
+            })
         # Selection remains reversible through the catalog; execution guards
         # and the unchanged provider preflight remain authoritative.
         return [s for s in schemas if s.get("function", {}).get("name") in keep or s.get("type") != "function"]

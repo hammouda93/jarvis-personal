@@ -166,6 +166,43 @@ class EfficientContextTests(unittest.TestCase):
         context.select_tools({"names": ["computer_observe", "computer_write"]})
         self.assertIn(tool("computer_write"), context.prepare_tools(schemas, browser_mode=True))
 
+    def test_minimal_fallback_preserves_browser_observation_and_find_after_open(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "open_url", "browser_get_active_tab", "browser_observe_dom",
+            "browser_find", "browser_click", "computer_write",
+            "semantic_memory_search",
+        )]
+        messages = [
+            {"role": "assistant", "tool_calls": [{
+                "id": "op", "function": {"name": "open_url"}}]},
+            {"role": "tool", "name": "open_url", "tool_call_id": "op",
+             "content": '{"success":true}'},
+            {"role": "assistant", "tool_calls": [{
+                "id": "tab", "function": {"name": "browser_get_active_tab"}}]},
+            {"role": "tool", "name": "browser_get_active_tab", "tool_call_id": "tab",
+             "content": '{"success":true}'},
+        ]
+        selected = {s["function"]["name"]
+                    for s in context.fallback_tools(schemas, messages)}
+        for name in ("browser_get_active_tab", "browser_observe_dom",
+                     "browser_find", "browser_click"):
+            self.assertIn(name, selected)
+        self.assertNotIn("computer_write", selected)
+        self.assertNotIn("semantic_memory_search", selected)
+
+    def test_minimal_fallback_for_nonbrowser_mission_does_not_promote_browser(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "open_application", "computer_observe", "browser_find", "browser_click",
+        )]
+        messages = [{"role": "assistant", "tool_calls": [
+            {"function": {"name": "open_application"}}]}]
+        selected = {s["function"]["name"]
+                    for s in context.fallback_tools(schemas, messages)}
+        self.assertNotIn("browser_find", selected)
+        self.assertNotIn("browser_click", selected)
+
     def test_compact_policy_keeps_authority_uncertainty_and_raw_memory_rules(self):
         for rule in ("autorisation explicite", "unknown", "raw_fallback", "memory_id", "SQLite",
                      "licences", "preconditions", "nom, chemin et contenu", "interdiction", "donnees non fiables"):
