@@ -78,7 +78,12 @@ class ProviderRateGate:
         return limited or billing
 
     def remaining(self, provider: str) -> float:
-        return max(0.0, self._until.get(str(provider), 0.0) - self.clock())
+        # Floating-point addition of a long-running monotonic clock and a
+        # nominal 60-second cooldown can produce 60.00000000000006 on
+        # Windows. Normalize only sub-nanosecond arithmetic noise; do not
+        # shorten server-provided Retry-After delays or bypass billing blocks.
+        delta = max(0.0, self._until.get(str(provider), 0.0) - self.clock())
+        return round(delta, 9)
 
     def billing_blocked(self, provider: str) -> bool:
         return str(provider) in self._billing_blocked
