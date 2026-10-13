@@ -2,3 +2,6 @@
 mcp>=2.3,<3
 # Linux desktop credentials use the official Secret Service backend; no plaintext fallback.
 keyring>=25.5,<26
+
+# Validate advertised MCP input contracts, including nested arrays and unions.
+jsonschema>=4.21,<5
