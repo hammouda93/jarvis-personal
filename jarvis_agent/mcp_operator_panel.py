@@ -7,7 +7,7 @@ from .mcp_service_catalog import SERVICE_CARDS, find_card
 from .mcp_personal_workspace import CONNECTIONS, get_connection, connection_state, workspace_summary
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-    QPushButton, QSpinBox, QStyle, QTabWidget, QVBoxLayout, QMessageBox,
+    QPushButton, QSpinBox, QStyle, QTabWidget, QVBoxLayout, QMessageBox, QSizePolicy,
 )
 
 
@@ -40,6 +40,7 @@ class MCPConnectionsPanel(QFrame):
         self.runtime_switch.toggled.connect(self._set_runtime)
         root.addWidget(self.runtime_switch)
         self.tabs = QTabWidget()
+        self.tabs.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.workspace_page = QFrame()
         self.services_page, self.catalog_page, self.add_page = QFrame(), QFrame(), QFrame()
         for page, label in ((self.workspace_page, "Mon espace"),
@@ -181,6 +182,7 @@ class MCPConnectionsPanel(QFrame):
             switches.addWidget(button)
         layout.addLayout(switches)
         self.service_tabs = QTabWidget()
+        self.service_tabs.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         tools_page, credentials_page, activity_page = QFrame(), QFrame(), QFrame()
         for page, label in ((tools_page, "Capacites"), (credentials_page, "Acces"), (activity_page, "Journal")):
             self.service_tabs.addTab(page, label)
@@ -295,7 +297,8 @@ class MCPConnectionsPanel(QFrame):
         # No need to scroll through dozens of tools merely to permit reads.
         # This button grants only conservative read APIs from one explicitly
         # chosen, successfully discovered server; all mutations stay gated.
-        self.auto_read_button = QPushButton("Autoriser les lectures (1 clic)")
+        self.auto_read_button = QPushButton("Lectures auto : autoriser")
+        self.auto_read_button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.auto_read_button.setToolTip(
             "Autoriser uniquement les outils de lecture déjà découverts. "
             "Les autres outils exigent toujours une autorisation séparée."
@@ -367,6 +370,9 @@ class MCPConnectionsPanel(QFrame):
             json.dumps({"sessions_per_hour": self.session_quota.value(), "calls_per_hour": self.call_quota.value()})))
         for picker in self.findChildren(QComboBox):
             picker.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            # An unusually long discovered name must not force the entire
+            # MCP dock wider than the user's compact Windows workspace.
+            picker.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             picker.setMinimumContentsLength(12)
         self._select_server(0)
         self.setStyleSheet("""
@@ -599,9 +605,9 @@ class MCPConnectionsPanel(QFrame):
             self.auto_read_button.setEnabled(
                 bool(entry.get("enabled") and entry.get("last_discovery_success_utc")))
             self.auto_read_button.setText(
-                "Désactiver les lectures autonomes"
+                "Lectures auto : désactiver"
                 if entry.get("auto_read_enabled") else
-                "Autoriser les lectures (1 clic)"
+                "Lectures auto : autoriser"
             )
             limits = entry.get("quotas") or {}
             if not self._quota_dirty:
