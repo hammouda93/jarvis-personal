@@ -177,11 +177,22 @@ class RequestContext:
         if not self.enabled or set(args) != {"names"}:
             raise ValueError("invalid_capability_selection")
         names = args["names"]
+        # Tool-calling models occasionally pass a lone string for a schema
+        # requiring a string array. A single existing capability has exactly
+        # one unambiguous representation; normalize it locally. This does NOT
+        # add capabilities, dispatch anything or grant any execution rights.
+        normalized_scalar = isinstance(names, str)
+        if normalized_scalar:
+            names = [names]
         if (not isinstance(names, list) or not 1 <= len(names) <= 50
-                or any(not isinstance(name, str) or name not in self.available for name in names)):
+                or any(not isinstance(name, str) or name not in self.available for name in names)
+                or len(set(names)) != len(names)):
             raise ValueError("capability_not_currently_available")
         self.selected = set(names)
-        return {"selected": sorted(self.selected), "permissions_changed": False, "verified": False}
+        return {"selected": sorted(self.selected), "permissions_changed": False,
+                "verified": False, "dispatched": False,
+                "outcome_unknown": False,
+                "normalized_singleton": normalized_scalar}
 
     @staticmethod
     def _browser_tab_id(name, payload):
@@ -339,4 +350,13 @@ class ContextToolRegistry:
             payload = method(dict(arguments))
             return AgentActionResult(name, True, "Contexte local consulte, aucune action externe.", json.dumps(payload, ensure_ascii=False))
         except (TypeError, ValueError) as exc:
-            return AgentActionResult(name, False, "Requete de contexte invalide.", str(exc))
+            # The local catalogue is NOT a mutating effect. Return a typed
+            # pre-dispatch receipt so the mission outcome controller cannot
+            # mistake a malformed model argument for an uncertain external
+            # action requiring manual review.
+            return AgentActionResult(name, False, "Requete de contexte invalide.",
+                json.dumps({"guard": "invalid_local_context_request",
+                            "reason": str(exc)[:110],
+                            "dispatched": False, "outcome_unknown": False,
+                            "verified": False, "permissions_changed": False,
+                            "recoverable": True}, ensure_ascii=False))
