@@ -2602,12 +2602,15 @@ def write_ui_element(
                         "ref": ref,
                         "current_observation_id": _SNAPSHOT_ID or None,
                         "stale_ref": True,
+                        "dispatched": False,
+                        "outcome_unknown": False,
                     }
                 ),
             )
     else:
         if len(normalize(target)) < 2:
-            return UIActionResult(False, "Le nom du champ est trop vague.")
+            return UIActionResult(False, "Le nom du champ est trop vague.",
+                _json({"guard": "target_too_vague", "dispatched": False, "outcome_unknown": False}))
         try:
             wrapper, alternatives = _find_active_element(
                 target,
@@ -2616,7 +2619,9 @@ def write_ui_element(
             if wrapper is None:
                 wrapper, alternatives = _find_active_element(target)
         except Exception as exc:
-            return UIActionResult(False, "Impossible de rechercher ce champ.", str(exc))
+            return UIActionResult(False, "Impossible de rechercher ce champ.",
+                _json({"guard": "lookup_failed", "dispatched": False, "outcome_unknown": False,
+                       "error_type": type(exc).__name__}))
 
     if wrapper is None:
         if alternatives:
@@ -2625,13 +2630,13 @@ def write_ui_element(
                 "Champ ambigu. Précisez la cible.",
                 _json(alternatives),
             )
-        return UIActionResult(False, f"Champ introuvable: {target}.")
+        return UIActionResult(False, f"Champ introuvable: {target}.", _json({"target_not_found": True, "dispatched": False, "outcome_unknown": False}))
 
     if precondition_value is not None:
         current_value = None if isinstance(wrapper, CuaElement) else _strict_control_value(wrapper)
         if not isinstance(precondition_value, str) or current_value is None or current_value != precondition_value:
             return UIActionResult(False, "La precondition de contenu n'est pas prouvee; aucune ecriture.",
-                _json({"precondition_failed": True, "value_unknown": current_value is None, "dispatched": False}))
+                _json({"precondition_failed": True, "value_unknown": current_value is None, "dispatched": False, "outcome_unknown": False}))
 
     if isinstance(wrapper, CuaElement):
         if not wrapper.writable:
@@ -2871,6 +2876,7 @@ _ALLOWED_KEYS = {
     "end": "{END}",
     "altleft": "%{LEFT}",
     "altright": "%{RIGHT}",
+    "ctrln": "^n",
     "ctrls": "^s",
     "ctrlshifts": "^+s",
     "ctrlf": "^f",
@@ -2891,6 +2897,14 @@ def press_key(key: str) -> UIActionResult:
             False,
             "Cette touche n'est pas autorisée par le contrôle Windows de Jarvis.",
         )
+    if normalized == "ctrln" and (
+        not _SNAPSHOT_ID or not _SNAPSHOT_WINDOW_TITLE
+        or normalize(_SNAPSHOT_WINDOW_TITLE) == "jarvis personal"
+    ):
+        return UIActionResult(
+            False, "Inspectez la fenêtre cible avant de créer un nouveau document.",
+            _json({"guard": "fresh_window_required", "dispatched": False, "outcome_unknown": False}),
+        )
     try:
         if (
             _SNAPSHOT_WINDOW_TITLE
@@ -2898,6 +2912,11 @@ def press_key(key: str) -> UIActionResult:
         ):
             try:
                 target_window = _window_by_title(_SNAPSHOT_WINDOW_TITLE)
+                if target_window is None and normalized == "ctrln":
+                    return UIActionResult(
+                        False, "Fenêtre précédemment observée introuvable.",
+                        _json({"guard": "target_window_missing", "dispatched": False, "outcome_unknown": False}),
+                    )
                 if target_window is not None:
                     try:
                         target_window.restore()
@@ -2905,10 +2924,15 @@ def press_key(key: str) -> UIActionResult:
                         pass
                     target_window.set_focus()
             except Exception:
-                pass
+                if normalized == "ctrln":
+                    return UIActionResult(
+                        False, "Impossible de cibler la fenêtre observée.",
+                        _json({"guard": "target_window_focus_failed", "dispatched": False, "outcome_unknown": False}),
+                    )
         _send_keys(sequence)
     except Exception as exc:
-        return UIActionResult(False, f"Impossible d'envoyer la touche {key}.", str(exc))
+        return UIActionResult(False, f"Impossible d'envoyer la touche {key}.",
+            _json({"outcome_unknown": True, "error_type": type(exc).__name__}))
     source_observation_id = _SNAPSHOT_ID
     invalidate_ui_snapshot()
     return UIActionResult(

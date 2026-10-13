@@ -64,9 +64,45 @@ def prepare(agent: Any, user_text: str, *, log: Callable[[str], None] | None = N
     normal agent turn; the error class is logged without secret-bearing bodies.
     """
     decision = decide(user_text)
+    active = getattr(agent, "active_mission_id", None)
+    if active:
+        # A paused/blocked mission must not capture an unmistakably NEW user
+        # destination. Detach tracking only: never reset/resolve the previous
+        # checkpoint, replay its tools, or call it successfully completed.
+        # Conversational follow-ups without a distinct destination stay on
+        # the same mission. No domain- or application-specific route.
+        reader = getattr(agent, "mission_snapshot", None)
+        detach = getattr(agent, "detach_mission", None)
+        snapshot = None
+        if callable(reader) and callable(detach):
+            try:
+                snapshot = reader(active)
+            except (OSError, ValueError, RuntimeError, KeyError, PermissionError):
+                snapshot = None
+        if isinstance(snapshot, dict) and snapshot.get("status") in {
+            "blocked", "waiting_external",
+        } and not snapshot.get("active_supervisor"):
+            incoming = _plain(user_text).strip()
+            previous = _plain(str(snapshot.get("user_goal") or ""))
+            urls = re.findall(r"https?://[^\s,;]+", incoming)
+            earlier_urls = set(re.findall(r"https?://[^\s,;]+", previous))
+            explicit_new = bool(re.match(r"^(?:nouvelle mission|new mission)\s*:", incoming))
+            different_destination = (
+                bool(re.match(r"^(?:ouvre|ouvrir|open|navigate|va sur)\b", incoming))
+                and any(url.rstrip(".,;)") not in earlier_urls for url in urls)
+            )
+            if (explicit_new or different_destination) and incoming != previous:
+                try:
+                    detach()
+                    if log:
+                        log("[MISSION_AUTO] state=PREVIOUS_DETACHED "
+                            "reason=independent_new_goal previous_checkpoint=preserved")
+                    active = None
+                except (OSError, ValueError, RuntimeError, PermissionError):
+                    pass
     if not decision.track:
         return decision
-    if getattr(agent, "active_mission_id", None):
+    if active:
         return Admission(False, False, "existing_mission")
     start = getattr(agent, "begin_mission", None)
     if not callable(start):
