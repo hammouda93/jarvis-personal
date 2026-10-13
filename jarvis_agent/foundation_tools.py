@@ -931,6 +931,9 @@ class FoundationToolAdapter:
             if name in browser_mutating_names and not isinstance(payload, dict):
                 raise RuntimeError("browser_mutation_missing_result")
             if isinstance(payload,dict):
+                # The post-action ref can differ from the clicked observed ref.
+                if name == "browser_click" and isinstance(args.get("ref"), str):
+                    payload["source_ref"] = args["ref"]
                 if name.startswith("semantic_memory_") and self.semantic_memory_engine is not None:
                     payload.update(self.memory.projection_coverage(self.semantic_memory_engine.parser_version))
                     if self.projection_worker is not None:
