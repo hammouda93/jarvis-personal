@@ -178,7 +178,7 @@ class EfficientContextTests(unittest.TestCase):
         from jarvis_agent.provider_rate_budget import groq_fallback_preflight
         from jarvis_agent.config import settings
         from dataclasses import replace
-        from test_provider_continuity_v10d import response
+        from types import SimpleNamespace
         context = RequestContext(enabled=True)
         foundation = FoundationToolAdapter(NATIVE_TOOLS, browser=object(), computer=object())
         foundation.browser_mode = True
@@ -194,7 +194,20 @@ class EfficientContextTests(unittest.TestCase):
                  "content": json.dumps({"success": True, "detail": {"tab": {"tab_id": 7}, "text": str(index) * 4500}})}])
         original = copy.deepcopy(agent._messages)
         sdk = Mock()
-        sdk.chat.completions.create.return_value = response(text="Read-only recovery")
+        # Self-contained fixture: do not depend on sys.path-dependent imports
+        # from other test modules. Works with both discover -s tests and
+        # python -m unittest tests.test_efficient_context_v10e.
+        sdk.chat.completions.create.return_value = SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=31, completion_tokens=7, total_tokens=38
+            ),
+            choices=[SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(
+                    content="Read-only recovery", tool_calls=[]
+                ),
+            )],
+        )
         config = replace(settings, cerebras_fallback_to_groq=True, groq_api_key="fixture")
         with patch("openai.OpenAI", return_value=sdk), patch("jarvis_agent.agent_runtime.settings", config), \
                 patch.dict(os.environ, {"JARVIS_GROQ_FALLBACK_ESTIMATED_TPM_BUDGET": "7000"}):
