@@ -649,7 +649,12 @@ class SemanticMemoryEngine:
 
 
 def _memory_id_from_detail(detail: str) -> int | None:
-    match = re.search(r"\bmemory_id=(\d+)\b", str(detail or ""))
+    from .memory_goal_proof import parse_memory_write_receipt
+    receipt = parse_memory_write_receipt(detail)
+    if receipt is not None:
+        return receipt.memory_id
+    # Legacy V10A projection identity only; never a SQLite goal certificate.
+    match = re.fullmatch(r"memory_id=([1-9]\d*)", str(detail or "").strip())
     return int(match.group(1)) if match else None
 
 

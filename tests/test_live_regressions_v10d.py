@@ -116,4 +116,5 @@ class RegressionEnvironmentTests(unittest.TestCase):
                 self.assertEqual(os.environ[name], "1")
             self.assertEqual(env["CEREBRAS_API_KEY"], "")
             self.assertEqual(env["JARVIS_DATA_DIR"], "fixture")
+            self.assertEqual(env["JARVIS_BRAIN_CONFIG_PATH"], str(Path("fixture") / "brains.json"))
 

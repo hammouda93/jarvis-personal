@@ -889,10 +889,12 @@ class AssistantWorker(QObject):
         # authority is introduced here.
         mission_id = str(getattr(self._agent, "active_mission_id", "") or "")
         planned_steps = ()
+        original_goal = ""
         snapshot_reader = getattr(self._agent, "mission_snapshot", None)
         if mission_id and callable(snapshot_reader):
             try:
                 snapshot = snapshot_reader(mission_id)
+                original_goal = str(snapshot.get("user_goal") or "")
                 plan = snapshot.get("semantic_plan") or {}
                 planned_steps = tuple(
                     str(step.get("intent") or "")
@@ -907,6 +909,7 @@ class AssistantWorker(QObject):
             mission_id=mission_id,
             previous=getattr(self, "_previous_conversation_trace", None),
             planned_steps=planned_steps,
+            original_goal=original_goal,
         )
         trace.start()
 
@@ -925,7 +928,8 @@ class AssistantWorker(QObject):
                     phase=self._agent_phase,
                 )
         except AgentRuntimeUnavailable as exc:
-            trace.finish((), error=type(exc).__name__)
+            trace.finish(tuple(getattr(self._agent, "_last_partial_actions", ()) or ()),
+                         error=type(exc).__name__)
             self._previous_conversation_trace = trace
             self._emit_operator_model()
             self.log_line.emit(f"[AGENT] unavailable: {exc}")

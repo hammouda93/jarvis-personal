@@ -187,6 +187,10 @@ class FoundationToolAdapter:
                     )
                 )
             observation = self.browser.observe_dom(tab_id)
+            from .browser_goal_proof import note_navigation_observation
+            note_navigation_observation(observation)
+            from .browser_goal_proof import note_navigation_grounding
+            note_navigation_grounding(active, observation)
             # A fresh read-only observation establishes the current browser
             # state for this new user turn. Old unverified dispatches must not
             # poison the next mission once the actual current state is seen.
@@ -452,6 +456,12 @@ class FoundationToolAdapter:
     def execute(self, name, arguments, *, approved=False):
         from .native_tools import AgentActionResult
         args = dict(arguments or {})
+        from .browser_goal_proof import navigation_dispatch_guard
+        resume_guard = navigation_dispatch_guard(name, args)
+        if resume_guard:
+            from .native_tools import AgentActionResult
+            return AgentActionResult(name, False, "Reprise : observation fraîche requise, aucun effet rejoué.",
+                json.dumps({"reason": resume_guard, "dispatched": False, "outcome_unknown": False}))
         try:
             if name == "browser_navigate" and not isinstance(args.get("tab_id"), int):
                 raise RuntimeError("browser_navigate_requires_observed_tab_id")
@@ -513,6 +523,8 @@ class FoundationToolAdapter:
                         payload = {
                             **payload,
                             "observation_id": fresh.get("observation_id"),
+                            "tab": fresh.get("tab"),
+                            "sensor": fresh.get("sensor"),
                             "available_controls": candidates,
                             "no_match_guidance": (
                                 "No exact match in the previous snapshot. "
@@ -631,7 +643,21 @@ class FoundationToolAdapter:
                     anchor = raw_temporal_tag(raw)
                     if anchor:
                         tags = (tags + " " + anchor).strip()
-                item = writer.remember(raw, tags=tags)
+                # Reserve BEFORE dispatch: commit can succeed before a writer
+                # raises. A failed receipt must never trigger a second write.
+                if tool_mode:
+                    self._durable_memory_written_this_turn = True
+                try:
+                    item = writer.remember(raw, tags=tags)
+                except Exception as exc:
+                    return AgentActionResult(
+                        name=name, success=False,
+                        message="Écriture envoyée ; état SQLite incertain, aucun nouvel essai automatique.",
+                        detail=json.dumps({"receipt_version": 1, "dispatched": True,
+                            "verified": False, "outcome_unknown": True,
+                            "reason": "memory_write_outcome_unknown",
+                            "error_type": type(exc).__name__}),
+                    )
                 if tool_mode:
                     self._durable_memory_written_this_turn = True
                     status = ("raw_saved direct_agent_no_projection"
@@ -655,22 +681,28 @@ class FoundationToolAdapter:
                     # Verify persistence by reading the exact user-authored
                     # row back from SQLite. The brain may choose this tool,
                     # but may never forge or paraphrase the stored fact.
-                    recorded = self.memory.get_memory(item.id)
+                    try:
+                        recorded = self.memory.get_memory(item.id)
+                    except Exception:
+                        recorded = None
                     if recorded is None or recorded.content != raw:
-                        raise RuntimeError("persistent_memory_sqlite_readback_failed")
+                        return AgentActionResult(
+                            name=name, success=False,
+                            message="Écriture envoyée ; relecture SQLite non confirmée.",
+                            detail=json.dumps({"receipt_version": 1, "memory_id": item.id,
+                                "dispatched": True, "verified": False, "outcome_unknown": True,
+                                "reason": "persistent_memory_sqlite_readback_failed"}),
+                        )
                     from hashlib import sha256
+                    from .memory_goal_proof import MemoryWriteReceipt
                     return AgentActionResult(
                         name=name,
                         success=True,
                         message="Information mémorisée et relue dans SQLite.",
-                        detail=json.dumps({
-                            "memory_id": item.id,
-                            "status": status,
-                            "verified": True,
-                            "source": "sqlite_exact_raw_readback",
-                            "raw_sha256": sha256(recorded.content.encode("utf-8")).hexdigest(),
-                            "db_recorded_at": recorded.created_at,
-                        }, ensure_ascii=False),
+                        detail=MemoryWriteReceipt(
+                            item.id, sha256(recorded.content.encode("utf-8")).hexdigest(),
+                            recorded.created_at, status=status,
+                        ).as_json(),
                     )
                 return AgentActionResult(
                     name=name,
@@ -953,6 +985,10 @@ class FoundationToolAdapter:
             if name in browser_mutating_names and not isinstance(payload, dict):
                 raise RuntimeError("browser_mutation_missing_result")
             if isinstance(payload,dict):
+                from .browser_goal_proof import note_navigation_observation
+                if name == "browser_observe_dom":
+                    note_navigation_observation(payload)
+                note_navigation_observation(payload.get("post_observation"))
                 # The post-action ref can differ from the clicked observed ref.
                 if name == "browser_click" and isinstance(args.get("ref"), str):
                     payload["source_ref"] = args["ref"]
@@ -975,6 +1011,7 @@ class FoundationToolAdapter:
                             "tab_id": active.get("tab_id"),
                             "url": active.get("url"),
                             "status": active.get("status"),
+                            "window_id": active.get("window_id"),
                         }
                 if name.startswith("semantic_memory_") and self.semantic_memory_engine is not None:
                     payload.update(self.memory.projection_coverage(self.semantic_memory_engine.parser_version))
@@ -1170,35 +1207,33 @@ class FoundationRuntime:
             )
         # A tool success alone is not enough. Read back the exact raw row
         # from SQLite before asserting persistence or returning its receipt.
-        import re
-        match = re.search(r"\bmemory_id=(\d+)\b", str(result.detail or ""))
-        record = (
-            self.tools.memory.get_memory(int(match.group(1)))
-            if match is not None else None
-        )
-        if record is None or record.content != str(user_text or "").strip():
+        from .memory_goal_proof import readback_memory_write
+        record = readback_memory_write(user_text, result.detail, self.tools.memory)
+        if record is None:
             from .agent_runtime import AgentTurnResult
+            from dataclasses import replace
             if log:
                 log("[MEMORY] state=UNVERIFIED_WRITE source=user_explicit")
             return AgentTurnResult(
                 text="L'écriture a été envoyée, mais la relecture SQLite "
                      "ne confirme pas le contenu exact.",
-                actions=(result,),
+                actions=(replace(result, success=False, detail=json.dumps({
+                    "receipt_version": 1, "dispatched": True,
+                    "verified": False, "outcome_unknown": True,
+                    "reason": "memory_receipt_or_readback_unverified",
+                })),),
             )
         from .native_tools import AgentActionResult
         from .agent_runtime import AgentTurnResult
         from hashlib import sha256
-        import json
-        proof = {
-            "verified": True, "memory_id": record.id,
-            "source": "sqlite_exact_raw_readback",
-            "raw_sha256": sha256(record.content.encode("utf-8")).hexdigest(),
-            "db_recorded_at": record.created_at,
-        }
+        from .memory_goal_proof import MemoryWriteReceipt
+        proof = MemoryWriteReceipt(
+            record.id, sha256(record.content.encode("utf-8")).hexdigest(), record.created_at,
+        )
         receipt = AgentActionResult(
             name="remember_information", success=True,
             message="Souvenir enregistré et relu dans SQLite.",
-            detail=json.dumps(proof, ensure_ascii=False),
+            detail=proof.as_json(),
         )
         if log:
             log(f"[MEMORY] state=PERSISTED_VERIFIED memory_id={record.id} "
@@ -1208,6 +1243,15 @@ class FoundationRuntime:
             actions=(receipt,),
         )
 
+    def _browser_turn_context(self, was_browser_mode):
+        from .browser_goal_proof import navigation_resume_required
+        from .instruction_clauses import has_windows_objective
+        resume = navigation_resume_required() and not has_windows_objective(self.tools.current_user_text)
+        if resume and self.tools.browser is not None:
+            self.tools.browser_mode = True
+        return (self.tools.browser_grounding_context()
+                if (was_browser_mode or resume) and self.tools.browser_mode else "")
+
     def run(self, user_text, *, log=None, phase=None):
         was_browser_mode = self.tools.browser_mode
         self.tools.begin_turn(user_text)
@@ -1216,11 +1260,7 @@ class FoundationRuntime:
         )
         if immediate is not None:
             return immediate
-        browser_context = (
-            self.tools.browser_grounding_context()
-            if was_browser_mode and self.tools.browser_mode
-            else ""
-        )
+        browser_context = self._browser_turn_context(was_browser_mode)
         method = getattr(self.delegate, "run_with_context", None)
         if browser_context and method is not None:
             result = method(
@@ -1244,11 +1284,7 @@ class FoundationRuntime:
         )
         if immediate is not None:
             return immediate
-        browser_context = (
-            self.tools.browser_grounding_context()
-            if was_browser_mode and self.tools.browser_mode
-            else ""
-        )
+        browser_context = self._browser_turn_context(was_browser_mode)
         combined_context = "\n\n".join(
             part for part in (str(context or "").strip(), browser_context) if part
         )

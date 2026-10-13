@@ -191,10 +191,15 @@ function structuralTransitionProof(beforeObservation, postObservation) {
   };
 }
 function interactionProof(beforeTab, beforeObservation, target, postObservation, fallbackPostcondition) {
+  const source = {
+    source_observation_id:beforeObservation?.observation_id || "",
+    source_document_id:target?.documentId || "",
+    source_window_id:beforeTab?.window_id,
+  };
   const navigation = navigationProof(beforeTab, postObservation, fallbackPostcondition);
   const targetAfter = successorControl(target, postObservation);
   if (navigation.verified) {
-    return {...navigation, target_after:compactTarget(targetAfter)};
+    return {...source, ...navigation, target_after:compactTarget(targetAfter)};
   }
   const before = target?.control || {};
   if (
@@ -206,6 +211,7 @@ function interactionProof(beforeTab, beforeObservation, target, postObservation,
     return {
       verified:true,
       postcondition:"editable_value_cleared",
+      ...source,
       target_after:compactTarget(targetAfter),
     };
   }
@@ -218,6 +224,7 @@ function interactionProof(beforeTab, beforeObservation, target, postObservation,
     return {
       verified:true,
       postcondition:"target_state_changed",
+      ...source,
       target_after:compactTarget(targetAfter),
     };
   }
@@ -236,6 +243,7 @@ function interactionProof(beforeTab, beforeObservation, target, postObservation,
       return {
         verified:true,
         postcondition:"focused_editable_value_cleared",
+        ...source,
         target_after:compactTarget(targetAfter),
         submitted_field_after:compactTarget(after),
       };
@@ -248,10 +256,11 @@ function interactionProof(beforeTab, beforeObservation, target, postObservation,
   if (structural.verified) {
     return {
       ...structural,
+      ...source,
       target_after:compactTarget(targetAfter),
     };
   }
-  return {...navigation, target_after:compactTarget(targetAfter)};
+  return {...source, ...navigation, target_after:compactTarget(targetAfter)};
 }
 function pendingObservation(tab, reason) {
   // A freshly opened tab may not yet have a valid document URL. This is a
@@ -311,6 +320,7 @@ async function navigateObservedHref(tab, target) {
   if (!href) return null;
   const url = httpURL(href);
   const beforeTab = cleanTab(tab);
+  const sourceObservation = snapshots.get(tab.id);
   const updated = await chrome.tabs.update(tab.id,{url});
   invalidateSnapshot(tab.id);
   const postObservation = await bestEffortPostObservation(tab.id);
@@ -324,6 +334,9 @@ async function navigateObservedHref(tab, target) {
     dispatched:true,
     trusted:false,
     dispatch_method:"observed_href_navigation",
+    source_observation_id:sourceObservation?.observation_id || "",
+    source_document_id:target?.documentId || "",
+    source_window_id:beforeTab.window_id,
     ...proof,
     ...(postObservation ? {post_observation:postObservation} : {}),
   };

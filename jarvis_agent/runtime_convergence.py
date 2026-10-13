@@ -12,6 +12,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from datetime import datetime, timezone
 
 from .agent_router import AgentRoutingContext, CapabilityAgentRouter
 from .capability_registry import DEFAULT_CAPABILITY_REGISTRY
@@ -530,7 +531,7 @@ class LiveMissionContinuityRuntime:
         ]
         summary = {
             "mission_id": state.mission_id,
-            "goal": state.user_goal[:650],
+            "goal": state.user_goal,
             "recent_turns": previous,
             "goal_proved": bool(state.observed_state.get("goal_verified")),
             "provider_pause": bool(state.observed_state.get(
@@ -556,6 +557,102 @@ class LiveMissionContinuityRuntime:
             + json.dumps(summary, ensure_ascii=False)
             + "\n[END MISSION CHECKPOINT]"
         )
+
+    @staticmethod
+    def _action_receipts(actions):
+        """Persist bounded proof fields, never raw tool arguments or input values."""
+        tab_fields = {"tab_id", "window_id", "url", "status", "active"}
+        control_fields = {"ref", "type", "name", "href", "document_id", "frame_id",
+                          "expanded", "aria_expanded", "actionable", "enabled"}
+        def control(item):
+            return {k: v for k, v in item.items() if k in control_fields} if isinstance(item, dict) else {}
+        def tab(item):
+            return {k: v for k, v in item.items() if k in tab_fields} if isinstance(item, dict) else {}
+        def controls(items):
+            return [control(c) for c in items[:64]] if isinstance(items, list) else []
+        def observation(item):
+            if not isinstance(item, dict):
+                return {}
+            return {"observation_id": item.get("observation_id"),
+                    "sensor": item.get("sensor"), "ready": item.get("ready"),
+                    "timestamp": item.get("timestamp"), "tab": tab(item.get("tab")),
+                    "controls": controls(item.get("controls"))}
+        fields = {"scope", "dispatched", "verified", "outcome_unknown", "postcondition",
+                  "source_ref", "source_observation_id", "source_document_id", "source_window_id",
+                  "observation_id", "unique", "ready", "sensor", "timestamp", "authorization",
+                  "memory_id", "raw_sha256", "db_recorded_at", "receipt_version", "source", "status"}
+        receipts = []
+        for index, action in enumerate(actions):
+            detail = str(getattr(action, "detail", "") or "")
+            try:
+                original = json.loads(detail)
+            except (ValueError, TypeError):
+                original = None
+            if not isinstance(original, dict) and not getattr(action, "success", False):
+                from .mission_outcome_policy import READ_ONLY_TOOLS, failure_requires_review
+                if action.name in READ_ONLY_TOOLS and not failure_requires_review((action,)):
+                    original = {"reason": "read_only_sensor_failed"}
+                elif action.name == "open_url" and detail == "open_url_blocked_for_existing_browser_context":
+                    original = {"reason": detail, "dispatched": False, "outcome_unknown": False}
+            if isinstance(original, dict):
+                data = {k: v for k, v in original.items() if k in fields}
+                data.update(tab(original))
+                for key in ("tab", "independent_readback"):
+                    if key in original:
+                        data[key] = tab(original[key])
+                for key in ("post_observation", "observation"):
+                    if key in original:
+                        data[key] = observation(original[key])
+                if "controls" in original:
+                    data["controls"] = controls(original["controls"])
+                for key in ("matches", "available_controls"):
+                    if key in original:
+                        data[key] = controls(original[key])
+                detail = json.dumps(data, ensure_ascii=False)
+            # Oversized/unstructured evidence cannot become a certificate.
+            usable = len(detail) <= 48000 and index < 128 and isinstance(original, dict)
+            receipts.append({"schema_version": 1, "sequence": index,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "name": str(getattr(action, "name", "")),
+                "success": bool(getattr(action, "success", False)),
+                "usable": usable, "detail": detail if usable else ""})
+        return receipts
+
+    @staticmethod
+    def _proof_actions(graph):
+        """Recover ordered receipts; incomplete legacy checkpoints fail closed."""
+        from .native_tools import AgentActionResult
+        actions = []
+        for node in graph.nodes():
+            count = node.result.get("action_count", 0)
+            if type(count) is not int or count < 0:
+                return (), False
+            if not count:
+                continue
+            receipts = node.result.get("action_receipts")
+            if (not isinstance(receipts, list) or len(receipts) != count
+                    or len(actions) + count > 128):
+                return (), False
+            for index, item in enumerate(receipts):
+                if (not isinstance(item, dict) or item.get("schema_version") != 1
+                        or type(item.get("schema_version")) is not int
+                        or type(item.get("sequence")) is not int
+                        or item.get("sequence") != index or item.get("usable") is not True
+                        or type(item.get("success")) is not bool
+                        or not isinstance(item.get("detail"), str)
+                        or not isinstance(item.get("name"), str)):
+                    return (), False
+                actions.append(AgentActionResult(item["name"], item["success"],
+                                                "Persisted local tool receipt", item["detail"]))
+        return tuple(actions), True
+
+    @staticmethod
+    def _certificate_allowed(state):
+        contract = state.expected_state.get("semantic_contract")
+        if not isinstance(contract, dict):
+            return True
+        return ((contract.get("metadata") or {}).get("origin") == "same_provider_no_tools_draft"
+                and not contract.get("unresolved"))
 
     def _observe_routes(self, action_names: list[str], goal: str) -> list[dict]:
         """Compare real tools with registered agents; no authority to dispatch."""
@@ -612,6 +709,8 @@ class LiveMissionContinuityRuntime:
             "status": state.status.value,
             "version": version,
             "goal_verified": bool(state.observed_state.get("goal_verified")),
+            "proof_scope": str(state.observed_state.get("proof_scope") or ""),
+            "proof_receipt_count": int(state.observed_state.get("proof_receipt_count") or 0),
             "semantic_plan": state.expected_state.get("semantic_contract"),
             "plan_evidence": dict(state.observed_state.get("plan_evidence") or {}),
             "active_supervisor": dict(state.observed_state.get("active_supervisor") or {}),
@@ -780,6 +879,7 @@ class LiveMissionContinuityRuntime:
             if state.status in (MissionStatus.COMPLETED, MissionStatus.FAILED):
                 raise RuntimeError("mission_terminal")
             index = len(graph.nodes()) + 1
+            previous_actions, previous_complete = self._proof_actions(graph)
             task_id = f"turn_{index:05d}"
             continuity_context = (
                 self._context_for_turn(state, graph)
@@ -817,20 +917,26 @@ class LiveMissionContinuityRuntime:
                 {"task_id": task_id, "text_length": len(str(user_text))},
             )
 
+            turn_evidence = {"grounding": []}
             try:
                 extra_context = "\n\n".join(
                     item for item in (str(context or "").strip(), continuity_context)
                     if item
                 )
                 method = getattr(self.delegate, "run_with_context", None)
-                if extra_context and callable(method):
-                    result = method(
-                        user_text, extra_context, log=log, phase=phase
-                    )
-                else:
-                    # Preserve the older execution path for runtimes that
-                    # do not implement run_with_context.
-                    result = self.delegate.run(user_text, log=log, phase=phase)
+                from .browser_goal_proof import navigation_goal_scope
+                with navigation_goal_scope(
+                    state.user_goal, previous_actions,
+                    certificate_allowed=previous_complete and self._certificate_allowed(state),
+                ) as turn_evidence:
+                    if extra_context and callable(method):
+                        result = method(user_text, extra_context, log=log, phase=phase)
+                    else:
+                        result = self.delegate.run(user_text, log=log, phase=phase)
+                from .agent_runtime import AgentTurnResult
+                if turn_evidence["grounding"] and isinstance(result, AgentTurnResult):
+                    from dataclasses import replace
+                    result = replace(result, actions=tuple(turn_evidence["grounding"]) + tuple(result.actions))
             except Exception as exc:
                 # A provider failure occurs at a synchronous model boundary:
                 # no browser/Windows tool is in flight. Preserve tool receipts
@@ -842,6 +948,7 @@ class LiveMissionContinuityRuntime:
                 from .mission_outcome_policy import failure_requires_review
                 state, _ = self.context_store.load(mission_id)
                 partial = tuple(getattr(self.delegate, "_last_partial_actions", ()) or ())
+                partial = tuple(turn_evidence["grounding"]) + partial
                 uncertain = getattr(getattr(self.delegate, "tools", None),
                                     "uncertain_scopes", None)
                 provider_pause = (
@@ -856,6 +963,7 @@ class LiveMissionContinuityRuntime:
                     "action_names": [str(getattr(a, "name", ""))[:100]
                                      for a in partial],
                     "provider_paused": provider_pause,
+                    "action_receipts": self._action_receipts(partial),
                 }
                 state.status = (
                     MissionStatus.WAITING_EXTERNAL if provider_pause
@@ -898,8 +1006,9 @@ class LiveMissionContinuityRuntime:
             # A failed read-only observation is not a failed side-effect.
             # Preserve genuine uncertain/mutating failures as BLOCKED.
             from .mission_outcome_policy import failure_requires_review
-            recoverable_failure = bool(failed) and not failure_requires_review(actions)
-            node.status = (TaskStatus.WAITING_EXTERNAL if recoverable_failure
+            needs_review = failure_requires_review(actions)
+            recoverable_failure = bool(failed) and not needs_review
+            node.status = (TaskStatus.WAITING_EXTERNAL if recoverable_failure or needs_review
                            else TaskStatus.FAILED if failed else TaskStatus.COMPLETED)
             action_names = [
                 str(getattr(action, "name", "") or "")[:100]
@@ -914,6 +1023,7 @@ class LiveMissionContinuityRuntime:
                 "action_names": action_names,
                 "agent_routes": routes,
                 "evidence_counts": evidence_counts,
+                "action_receipts": self._action_receipts(actions),
             }
             state.observed_state["completed_turns"] = index
             state.observed_state["last_action_count"] = len(actions)
@@ -924,19 +1034,28 @@ class LiveMissionContinuityRuntime:
             state.observed_state["last_routing_needs_review"] = any(
                 route["needs_review"] for route in routes
             )
-            from .browser_goal_proof import verify_browser_navigation_goal
+            from .browser_goal_proof import verify_browser_navigation_goal, has_navigation_readback
             from .memory_goal_proof import (
                 foundation_memory_store,
                 verify_explicit_memory_write,
             )
-            ready_for_proof = not failed and not getattr(result, "pause_reason", "")
+            proof_actions, receipts_complete = self._proof_actions(graph)
+            state.observed_state["cumulative_evidence_counts"] = action_evidence_counts(proof_actions)
+            state.observed_state["proof_receipt_count"] = len(proof_actions)
+            ready_for_proof = (
+                receipts_complete and self._certificate_allowed(state)
+                and not failure_requires_review(proof_actions)
+                and getattr(result, "pause_reason", "") in ("", "turn_budget_exhausted")
+                and (not previous_actions or has_navigation_readback(actions)
+                     or any(a.name == "remember_information" for a in actions))
+            )
             verified_navigation = (
-                verify_browser_navigation_goal(state.user_goal, actions)
+                verify_browser_navigation_goal(state.user_goal, proof_actions)
                 if ready_for_proof else None
             )
             verified_memory = (
                 verify_explicit_memory_write(
-                    state.user_goal, actions,
+                    state.user_goal, proof_actions,
                     foundation_memory_store(self.delegate),
                 )
                 if ready_for_proof else None
@@ -969,7 +1088,7 @@ class LiveMissionContinuityRuntime:
             state.status = (
                 MissionStatus.COMPLETED if verified_goal is not None
                 else MissionStatus.WAITING_EXTERNAL if recoverable_failure
-                else MissionStatus.BLOCKED if failed
+                else MissionStatus.BLOCKED if failed or needs_review
                 else MissionStatus.WAITING_EXTERNAL
                 if actions or self._explicit
                 else MissionStatus.COMPLETED
@@ -983,7 +1102,7 @@ class LiveMissionContinuityRuntime:
                                      for a in actions if not a.success],
                     "next": "observe_fresh_state_without_replaying_mutations",
                 })
-            elif failed:
+            elif failed or needs_review:
                 state.pending_action = {
                     "reason": "tool_reported_failure",
                     "manual_review_required": True,
@@ -1033,6 +1152,16 @@ class LiveMissionContinuityRuntime:
                         else "independent_sqlite_memory"
                     )
                     log(f"[MISSION] state=COMPLETED evidence={evidence_type}")
+                # The independent certificate also controls the conversational
+                # outcome, even when the model yielded a partial reply.
+                from .agent_runtime import AgentTurnResult
+                if isinstance(result, AgentTurnResult):
+                    from dataclasses import replace
+                    text = (f"Mission vérifiée : lien « {verified_navigation.target} » ouvert. "
+                            f"URL finale : {verified_navigation.url}"
+                            if verified_navigation is not None else
+                            "C'est mémorisé durablement dans ma mémoire locale.")
+                    result = replace(result, text=text, pause_reason="")
             elif implicit:
                 self.detach_mission()
             return result

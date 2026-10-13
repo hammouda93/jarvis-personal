@@ -334,13 +334,18 @@ test('lost DOM click result is still verified when fresh navigation proves it',a
   invalidPointer=true;
   nullDomMutationResult=true;
   domFallbackNavigationUrl='https://one.example/dom-fallback-target';
-  const ref=(await request('observe_dom',{tab_id:1})).controls[1].ref;
+  const source=await request('observe_dom',{tab_id:1});
+  const ref=source.controls[1].ref;
   const result=await request('click',{tab_id:1,ref});
   assert.equal(result.dispatched,true);
   assert.equal(result.verified,true);
   assert.equal(result.postcondition,'navigation_observed');
   assert.equal(result.dispatch_method,'dom_click_fallback');
   assert.equal(result.post_observation.tab.url,domFallbackNavigationUrl);
+  assert.equal(result.source_observation_id,source.observation_id);
+  assert.equal(result.source_document_id,source.controls[1].document_id);
+  assert.equal(result.source_window_id,source.tab.window_id);
+  assert.notEqual(result.post_observation.observation_id,result.source_observation_id);
 });
 test('lost DOM click result stays explicit unknown when no effect can be proved',async()=>{
   invalidPointer=true;
