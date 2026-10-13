@@ -27,7 +27,8 @@ class MCPControlInbox:
         "add_http", "add_hermes", "discover", "enable", "disable",
         "allow_tool", "deny_tool", "add_stdio", "revoke_tools", "remove_server",
         "store_bearer", "store_api_key", "forget_credentials", "oauth_authorize", "cancel_oauth", "set_quotas",
-        "runtime_set", "connect", "reconnect", "disconnect", "review_outcome"
+        "runtime_set", "connect", "reconnect", "disconnect", "review_outcome",
+        "grant_auto_read", "revoke_auto_read"
     })
 
     def __init__(self):
@@ -265,6 +266,17 @@ def perform_mcp_command(
         registry.note_connection_state(sid, "disconnected")
         if op == "disconnect":
             registry.revoke_tools(sid)
+    elif op in {"grant_auto_read", "revoke_auto_read"}:
+        count = registry.set_auto_readonly(sid, op == "grant_auto_read")
+        return {
+            "success": True, "operation": op, "server_id": sid,
+            "message": (
+                f"Lecture autonome autorisée pour {count} outils déjà découverts. "
+                "Aucune écriture autorisée, aucune action externe exécutée."
+                if op == "grant_auto_read"
+                else "Lecture autonome révoquée; outils explicitement autorisés préservés."
+            ),
+        }
     elif op in {"allow_tool", "deny_tool"}:
         registry.allow_tool(sid, command.value, op == "allow_tool")
     elif op in {"discover", "connect", "reconnect"}:
