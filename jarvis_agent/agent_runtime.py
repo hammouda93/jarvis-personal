@@ -119,6 +119,12 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   son titre à inspect_active_window quand le nom est connu;
 - utilise click_ui_element seulement sur un élément que tu as identifié dans
   l'interface, puis observe à nouveau si l'action doit continuer;
+- si l'utilisateur demande un nouveau document vide, ouvrir un NOUVEAU DOCUMENT
+  dans l'application observée (menu Nouveau ou Ctrl+N seulement dans une fenêtre
+  fiable), puis inspecter le document vierge AVANT d'écrire. Réutiliser
+  l'application ne signifie pas réutiliser son document existant. Un refus
+  precondition_failed/dispatched=false impose de changer de stratégie et non
+  de réessayer la même écriture ou de cliquer sur le document ancien;
 - utilise write_ui_element uniquement sur un contrôle réellement éditable
   observé (Edit, Document ou ComboBox). Ne choisis jamais un Text, TabItem ou
   libellé statique comme cible d'écriture; utilise ref si le champ n'a pas de
@@ -3786,8 +3792,9 @@ class GroqResponsesAgent:
         end_session = False
         should_exit = False
         failed_results: dict[str, AgentActionResult] = {}
-        from .instruction_clauses import requires_empty_target
+        from .instruction_clauses import requires_empty_target, requires_new_document
         empty_precondition_pending = requires_empty_target(user_text)
+        new_document_requested = requires_new_document(user_text)
         self._memory_write_allowed = _is_explicit_memory_write_request(user_text)
         self._skill_write_allowed = False
         self._lesson_write_allowed = (
@@ -4822,6 +4829,18 @@ class GroqResponsesAgent:
                     )
                 elif (
                     name == "press_key"
+                    and normalize(str(arguments.get("key", ""))).replace(" ", "") == "ctrln"
+                    and not new_document_requested
+                ):
+                    result = AgentActionResult(
+                        name=name,
+                        success=False,
+                        message="Ctrl+N exige une demande explicite de nouveau document.",
+                        detail=json.dumps({"guard": "new_document_intent_required",
+                                           "dispatched": False, "outcome_unknown": False}),
+                    )
+                elif (
+                    name == "press_key"
                     and str(arguments.get("key", "")).strip().casefold()
                     in {"enter", "return"}
                     and _requests_result_selection(user_text)
@@ -5016,6 +5035,18 @@ class GroqResponsesAgent:
                     result = self.tools.execute(name, arguments)
                     if name in {"research_web", "search_web"}:
                         research_web_calls += 1
+                if (name == "write_ui_element" and not result.success
+                        and new_document_requested
+                        and _action_detail_dict(result).get("precondition_failed") is True):
+                    result = AgentActionResult(
+                        name=name, success=False,
+                        message=result.message + (
+                            " L'ancien document est protégé. Crée d'abord un "
+                            "nouveau document avec le menu observé ou Ctrl+N "
+                            "dans la fenêtre inspectée, puis observe sa valeur vide."
+                        ),
+                        detail=result.detail,
+                    )
                 actions.append(result)
                 if (name in {"write_ui_element", "computer_write"} and result.success
                         and _action_detail_dict(result).get("verified") is True):
