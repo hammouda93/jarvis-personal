@@ -1131,6 +1131,11 @@ class NativeToolRegistry:
 
         if name == "open_url":
             url = str(args.get("url", "")).strip()
+            from .navigation_url_guard import unresolved_url_template
+            if unresolved_url_template(url):
+                return AgentActionResult(name, False,
+                    "URL modèle non résolue : utiliser un lien observé ou identifier la véritable destination.",
+                    detail='{"guard":"unresolved_url_template","dispatched":false,"verified":false,"outcome_unknown":false}')
             if not url.startswith(("https://", "http://")):
                 return AgentActionResult(name, False,
                     "open_url accepte HTTP/HTTPS seulement. Pour une application Windows, utiliser list_applications puis open_application.",

@@ -104,6 +104,26 @@ class RequestContext:
                     return name.startswith("browser_") or name == "open_url"
                 return name in _DESKTOP_PRIMARY
             selected = {name for name in available if relevant(name)}
+            # Expose a SMALL set of MCP schemas already explicitly authorized
+            # by the operator. Discovery alone never reaches schemas. Without
+            # this, first-turn missions see only browser primitives and may
+            # invent URLs instead of asking the connected service.
+            # Remaining allowed MCP tools stay selectable through the local
+            # request_tool_capabilities catalog, which grants no permission.
+            mcp_budget_chars = 6500
+            mcp_count = 0
+            for schema in schemas:
+                name = str((schema.get("function") or {}).get("name") or "")
+                if not name.startswith("mcp__") or name not in available:
+                    continue
+                size = len(json.dumps(schema, ensure_ascii=False, default=str))
+                if size > mcp_budget_chars:
+                    continue
+                selected.add(name)
+                mcp_budget_chars -= size
+                mcp_count += 1
+                if mcp_count >= 6:
+                    break
             # A memory-only policy must not become an empty tool pack.
             if not selected:
                 selected = available
