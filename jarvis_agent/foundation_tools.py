@@ -460,6 +460,17 @@ class FoundationToolAdapter:
     def execute(self, name, arguments, *, approved=False):
         from .native_tools import AgentActionResult
         args = dict(arguments or {})
+        if name in {"open_url", "browser_navigate", "browser_download"}:
+            from .navigation_url_guard import unresolved_url_template
+            if unresolved_url_template(str(args.get("url") or "")):
+                return AgentActionResult(
+                    name, False,
+                    "URL modèle non résolue : retrouver l'adresse exacte depuis une source observée ou demander l'identifiant manquant.",
+                    json.dumps({"guard": "unresolved_url_template",
+                                "dispatched": False, "verified": False,
+                                "outcome_unknown": False,
+                                "next_capability": "request_tool_capabilities"}),
+                )
         if name in _OS_MUTATIONS and any(s[0] == "native_windows" for s in self.uncertain_scopes):
             from .windows_perception import ui_ref_descriptor
             descriptor = ui_ref_descriptor(str(args.get("ref") or "")) or {}
