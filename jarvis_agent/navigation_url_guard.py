@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlsplit
 
 _PLACEHOLDER_PART = re.compile(
     r"(?i)(?:^|[/])"
-    r"(?:your|insert|replace|example)[-_]"
+    r"(?:your|insert|replace)[-_]"
     r"(?:username|user|org|organization|owner|repository|repo|account|"
     r"project|project[-_]id|token|api[-_]?key)"
     r"(?=$|[/;?#])"
