@@ -107,6 +107,42 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertIsNone(self.runtime.active_mission_id)
         self.assertTrue(any("state=COMPLETED" in event for event in events))
 
+    def test_loading_origin_and_action_boundary_readback_finish_mission(self):
+        # Replay the actual failing shape: the first tab read still loads,
+        # but the DOM is grounded, and the final navigation was independently
+        # read back within the click receipt. No eighth model round needed.
+        import json
+        from tests.test_browser_goal_proof_v11b import GOAL, DEST, journey
+        from tests.test_browser_goal_proof_v11b import action as receipt
+        actions = journey()[:-1]
+        first = json.loads(actions[1].detail)
+        first.update(url="", status="loading")
+        actions[1] = receipt("browser_get_active_tab", first)
+        dom = json.loads(actions[2].detail)
+        dom.update(
+            observation_id="read-dom-1", sensor="dom",
+            tab={"tab_id": 7, "url": "https://example.test/dashboard/",
+                 "status": "loading"},
+            controls=[{"name": "Dashboard", "type": "heading"}],
+        )
+        actions[2] = receipt("browser_observe_dom", dom)
+        click = json.loads(actions[-1].detail)
+        click["independent_readback"] = {
+            "tab_id": 7, "url": DEST, "status": "complete",
+        }
+        actions[-1] = receipt("browser_click", click)
+        mission_id = self.runtime.begin_mission(GOAL)
+        self.delegate.result = SimpleNamespace(
+            text="Mission vérifiée : " + DEST, actions=tuple(actions),
+        )
+        self.runtime.run(GOAL)
+        saved = self.saved(mission_id)
+        self.assertEqual(saved.status, MissionStatus.COMPLETED)
+        self.assertTrue(saved.observed_state["goal_verified"])
+        self.assertEqual(saved.observed_state["verified_navigation_url"], DEST)
+        self.assertEqual(len(self.delegate.calls), 1)
+        self.assertIsNone(self.runtime.active_mission_id)
+
     def test_navigation_goal_requires_all_requested_evidence(self):
         from tests.test_browser_goal_proof_v11b import GOAL, journey
         mid = self.runtime.begin_mission(GOAL)
