@@ -1117,9 +1117,91 @@ class FoundationRuntime:
             return True
         return bool(pending.intersection(scopes))
 
+    def _explicit_durable_memory_turn(self, user_text, *, log=None, phase=None):
+        """Provider-independent, permission-scoped SQLite write.
+
+        Only a standalone, explicit instruction in DIRECT V5 mode qualifies.
+        Mixed web/Windows tasks, questions and supervised/delegated work stay
+        with the ordinary reasoning runtime and its approval boundaries.
+        """
+        from .memory_tool_scope import memory_tool_scope_enabled
+        from .active_mission_supervisor import execution_scope_active
+        from .memory_router import MemoryRouter
+        if (
+            not enabled("JARVIS_MEMORY_CORE_ENABLED")
+            or not enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED")
+            or not enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")
+            or not enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED")
+            or execution_scope_active()
+            or self.tools.memory is None
+            or MemoryRouter().decide(user_text).kind != "write"
+        ):
+            return None
+        # The user's exact words, not a model-paraphrased argument, become
+        # the durable source. The normal adapter still enforces user-source
+        # authorization and one write per turn.
+        if phase:
+            phase("acting")
+        result = self.tools.execute(
+            "remember_information", {"content": user_text}
+        )
+        if not result.success:
+            from .agent_runtime import AgentTurnResult
+            if log:
+                log("[MEMORY] state=WRITE_FAILED source=user_explicit provider=not_required")
+            return AgentTurnResult(
+                text="La mémorisation persistante n'a pas pu être vérifiée : "
+                     + result.message,
+                actions=(result,),
+            )
+        # A tool success alone is not enough. Read back the exact raw row
+        # from SQLite before asserting persistence or returning its receipt.
+        import re
+        match = re.search(r"\bmemory_id=(\d+)\b", str(result.detail or ""))
+        record = (
+            self.tools.memory.get_memory(int(match.group(1)))
+            if match is not None else None
+        )
+        if record is None or record.content != str(user_text or "").strip():
+            from .agent_runtime import AgentTurnResult
+            if log:
+                log("[MEMORY] state=UNVERIFIED_WRITE source=user_explicit")
+            return AgentTurnResult(
+                text="L'écriture a été envoyée, mais la relecture SQLite "
+                     "ne confirme pas le contenu exact.",
+                actions=(result,),
+            )
+        from .native_tools import AgentActionResult
+        from .agent_runtime import AgentTurnResult
+        from hashlib import sha256
+        import json
+        proof = {
+            "verified": True, "memory_id": record.id,
+            "source": "sqlite_exact_raw_readback",
+            "raw_sha256": sha256(record.content.encode("utf-8")).hexdigest(),
+            "db_recorded_at": record.created_at,
+        }
+        receipt = AgentActionResult(
+            name="remember_information", success=True,
+            message="Souvenir enregistré et relu dans SQLite.",
+            detail=json.dumps(proof, ensure_ascii=False),
+        )
+        if log:
+            log(f"[MEMORY] state=PERSISTED_VERIFIED memory_id={record.id} "
+                "provider=not_required")
+        return AgentTurnResult(
+            text="C'est mémorisé durablement dans ma mémoire locale.",
+            actions=(receipt,),
+        )
+
     def run(self, user_text, *, log=None, phase=None):
         was_browser_mode = self.tools.browser_mode
         self.tools.begin_turn(user_text)
+        immediate = self._explicit_durable_memory_turn(
+            user_text, log=log, phase=phase,
+        )
+        if immediate is not None:
+            return immediate
         browser_context = (
             self.tools.browser_grounding_context()
             if was_browser_mode and self.tools.browser_mode
@@ -1143,6 +1225,11 @@ class FoundationRuntime:
     def run_with_context(self, user_text, context, *, log=None, phase=None):
         was_browser_mode = self.tools.browser_mode
         self.tools.begin_turn(user_text)
+        immediate = self._explicit_durable_memory_turn(
+            user_text, log=log, phase=phase,
+        )
+        if immediate is not None:
+            return immediate
         browser_context = (
             self.tools.browser_grounding_context()
             if was_browser_mode and self.tools.browser_mode

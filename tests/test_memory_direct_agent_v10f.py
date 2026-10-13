@@ -104,6 +104,68 @@ class DirectMemoryV10FTests(unittest.TestCase):
             self.assertTrue(any("Salah" in x for x in raw))
             self.assertTrue(any("Mhedhebi" in x for x in raw))
 
+    def test_explicit_write_is_model_independent_and_idempotent_per_turn(self):
+        from jarvis_agent.foundation_tools import FoundationRuntime
+        from jarvis_agent.agent_runtime import AgentRuntimeUnavailable
+        class BrokenModel:
+            calls = 0
+            def run(self, *args, **kwargs):
+                self.calls += 1
+                raise AgentRuntimeUnavailable("all brains offline")
+        with patch.dict(os.environ, DIRECT):
+            delegate = BrokenModel()
+            adapter = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            runtime = FoundationRuntime(delegate, adapter)
+            sentence = "retiens que demain j'ai un cours de padel"
+            result = runtime.run(sentence)
+            self.assertEqual(delegate.calls, 0)
+            self.assertEqual(result.actions[0].name, "remember_information")
+            self.assertTrue(result.actions[0].success)
+            import hashlib
+            payload = json.loads(result.actions[0].detail)
+            self.assertTrue(payload["verified"])
+            self.assertEqual(
+                payload["raw_sha256"], hashlib.sha256(sentence.encode()).hexdigest()
+            )
+            self.assertEqual(self.memory.recent_memories(limit=20)[0].content, sentence)
+            self.assertEqual(len(self.memory.all_memories()), 1)
+            # Adapter protection still rejects a second tool write in the same turn.
+            again = adapter.execute("remember_information", {"content": "retry"})
+            self.assertFalse(again.success)
+            self.assertEqual(len(self.memory.all_memories()), 1)
+            fresh = FoundationRuntime(
+                BrokenModel(),
+                FoundationToolAdapter(
+                    MinimalNativeRegistry(), memory=MemoryCoreStore(self.memory.db_path)
+                ),
+            )
+            found = fresh.tools.memory.recent_memories(limit=5)
+            self.assertEqual(found[0].content, sentence)
+
+    def test_memory_fast_path_never_steals_mixed_missions_or_questions(self):
+        from jarvis_agent.foundation_tools import FoundationRuntime
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        class Delegate:
+            calls = 0
+            def run(self, *args, **kwargs):
+                self.calls += 1
+                return AgentTurnResult("delegated")
+        with patch.dict(os.environ, DIRECT):
+            agent = Delegate()
+            runtime = FoundationRuntime(
+                agent, FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            )
+            for sentence in (
+                "retiens que mon cours est demain puis ouvre Chrome",
+                "rappelle-moi mon cours de padel",
+                "je retiens que tu es là",
+                "Pourquoi dois-tu retenir cela ?",
+            ):
+                result = runtime.run(sentence)
+                self.assertEqual(result.text, "delegated")
+            self.assertEqual(agent.calls, 4)
+            self.assertEqual(self.memory.all_memories(), [])
+
     def test_raw_relative_date_anchor_survives_restart_without_projection(self):
         from datetime import date
         from jarvis_agent.memory_temporal import (
