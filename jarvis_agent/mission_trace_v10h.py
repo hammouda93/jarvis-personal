@@ -95,8 +95,8 @@ def requested_steps(user_text: str) -> tuple[str, ...]:
         # is a vocative, not a requested mission step. Keep the original goal
         # verbatim; only the provisional progress outline omits that label.
         if (position == 0 and len(spans) > 1 and cleaned
-                and re.fullmatch(r"[^\\W\\d_][\\w.-]{1,31}", cleaned)
-                and not re.search(r"\\b(?:" + _ACTION + r")\\b", cleaned, re.I)
+                and re.fullmatch(r"[^\W\d_][\w.-]{1,31}", cleaned)
+                and not re.search(r"\b(?:" + _ACTION + r")\b", cleaned, re.I)
                 and masked[len(clause):len(clause)+1] == ","):
             continue
         if not cleaned or _NEGATIVE_START.match(cleaned) or _OPTIONAL_START.match(cleaned):
