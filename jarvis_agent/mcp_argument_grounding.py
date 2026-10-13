@@ -57,7 +57,7 @@ def unresolved_argument_paths(arguments: Any) -> tuple[str, ...]:
                     "html", "body", "head", "title", "div", "span",
                     "p", "a", "em", "strong", "b", "i", "h1", "h2", "h3",
                     "h4", "h5", "ul", "ol", "li", "pre", "code",
-                } and re.search(r"</" + opening_html_tag + r"\\s*>", candidate, re.I):
+                } and re.search(r"</" + opening_html_tag + r"\s*>", candidate, re.I):
                     return False  # actual markup, not an ID placeholder
                 return True
             if (candidate.lower() in _EXACT or
