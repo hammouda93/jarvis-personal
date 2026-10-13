@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
 
 from .request_compaction import _READS
 
@@ -80,10 +82,21 @@ class RequestContext:
         self.available = set()
         self.selected = None
         self.last_saved_chars = 0
+        self.user_goal = ""
 
-    def begin_turn(self):
+    def begin_turn(self, user_goal=""):
         self.selected = None
         self.available = set()
+        # Rank *visible* tool names, not permissions, from the current goal.
+        self.user_goal = str(user_goal or "")[:1600]
+
+    @staticmethod
+    def _name_terms(text):
+        value = unicodedata.normalize("NFKD", str(text).lower())
+        value = "".join(c for c in value if not unicodedata.combining(c))
+        tokens = re.findall(r"[a-z0-9]+", value)
+        return {v[:-1] if v.endswith("s") and len(v) > 4 else v
+                for v in tokens if len(v) >= 4}
 
     def prepare_tools(self, schemas, *, browser_mode=False, conversational_only=False,
                       preserve_required=()):
