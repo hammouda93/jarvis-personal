@@ -104,21 +104,23 @@ class MCPToolRegistry:
             return AgentActionResult(
                 name=name, success=False,
                 message="Confirmation utilisateur explicite requise.",
-                detail=json.dumps({"approval_required": True, "verified": False}),
+                detail=json.dumps({"approval_required": True, "verified": False,
+                                   "dispatched": False, "outcome_unknown": False}),
             )
         tool = self._available().get(str(name))
         if tool is None:
             return AgentActionResult(
                 name=name, success=False,
                 message="Outil MCP inconnu, désactivé ou ambigu.",
-                detail=json.dumps({"guard": "not_allowlisted", "verified": False}),
+                detail=json.dumps({"guard": "not_allowlisted", "verified": False,
+                                   "dispatched": False, "outcome_unknown": False}),
             )
         server_id, native_name = tool["server"], tool["tool"]
         entry = self.registry.get_server(server_id)
         if not entry or not self.registry.is_allowed(server_id, native_name):
             return AgentActionResult(
                 name=name, success=False, message="MCP non autorisé.",
-                detail='{"verified":false,"guard":"permission_changed"}',
+                detail='{"verified":false,"guard":"permission_changed","dispatched":false,"outcome_unknown":false}',
             )
         # Never trust the model's ability to pick a tool name or remote
         # description to authorize a previously hidden capability.
@@ -129,14 +131,14 @@ class MCPToolRegistry:
             if str(exc) == "mcp_unknown_requires_review":
                 return AgentActionResult(name=name, success=False,
                     message="Appel MCP precedent incertain : revue explicite requise dans le centre MCP.",
-                    detail='{"verified":false,"outcome_unknown":true,"guard":"mcp_unknown_requires_review"}')
+                    detail='{"verified":false,"dispatched":false,"outcome_unknown":true,"guard":"mcp_unknown_requires_review"}')
             return AgentActionResult(name=name, success=False,
                 message="Quota ou cooldown MCP atteint. Aucun nouvel appel effectue.",
-                detail='{"verified":false,"outcome_unknown":false,"guard":"mcp_budget_unavailable"}')
+                detail='{"verified":false,"dispatched":false,"outcome_unknown":false,"guard":"mcp_budget_unavailable"}')
         except Exception:
             return AgentActionResult(name=name, success=False,
                 message="Quota, cooldown ou journal MCP indisponible. Aucun appel effectue.",
-                detail='{"verified":false,"outcome_unknown":false,"guard":"mcp_budget_unavailable"}')
+                detail='{"verified":false,"dispatched":false,"outcome_unknown":false,"guard":"mcp_budget_unavailable"}')
         try:
             result = self.transport.call_tool(
                 {**entry, "id": server_id,
@@ -151,10 +153,15 @@ class MCPToolRegistry:
             if exc.outcome_unknown:
                 return AgentActionResult(name=name, success=False,
                     message="Resultat MCP incertain : verifier l'effet exterieur avant toute tentative.",
-                    detail='{"verified":false,"outcome_unknown":true}')
+                    detail=json.dumps({"verified": False, "dispatched": True,
+                                       "outcome_unknown": True,
+                                       "source": {"server_id": server_id,
+                                                  "tool_name": native_name,
+                                                  "attempt_id": attempt,
+                                                  "trust": "external_unverified"}}))
             return AgentActionResult(name=name, success=False,
                 message="Configuration ou credential MCP indisponible avant execution.",
-                detail='{"verified":false,"outcome_unknown":false,"guard":"transport_preflight_failed"}')
+                detail='{"verified":false,"dispatched":false,"outcome_unknown":false,"guard":"transport_preflight_failed"}')
         except Exception:
             try:
                 activity.finish(attempt, "unknown")
@@ -164,7 +171,12 @@ class MCPToolRegistry:
                 name=name, success=False,
                 message="Résultat de l'appel MCP incertain : vérifier l'effet "
                         "extérieur avant toute nouvelle tentative.",
-                detail='{"verified":false,"outcome_unknown":true}',
+                detail=json.dumps({"verified": False, "dispatched": True,
+                                       "outcome_unknown": True,
+                                       "source": {"server_id": server_id,
+                                                  "tool_name": native_name,
+                                                  "attempt_id": attempt,
+                                                  "trust": "external_unverified"}}),
             )
         successful, unknown = transport_outcome(result)
         source = {"server_id": server_id, "tool_name": native_name,
@@ -174,11 +186,17 @@ class MCPToolRegistry:
         except Exception:
             return AgentActionResult(name=name, success=False,
                 message="Appel termine mais journalisation MCP indisponible. Verification manuelle requise.",
-                detail='{"verified":false,"outcome_unknown":true}')
+                detail=json.dumps({"verified": False, "dispatched": True,
+                                       "outcome_unknown": True,
+                                       "source": {"server_id": server_id,
+                                                  "tool_name": native_name,
+                                                  "attempt_id": attempt,
+                                                  "trust": "external_unverified"}}))
         if unknown:
             return AgentActionResult(name=name, success=False,
                 message="Resultat MCP incomplet ou en erreur : verifier les effets avant toute reprise.",
-                detail=json.dumps({"verified": False, "outcome_unknown": True,
+                detail=json.dumps({"verified": False, "dispatched": True,
+                                   "outcome_unknown": True,
                                    "source": source}, ensure_ascii=False))
         structured = result.get("data")
         if not isinstance(structured, dict):
@@ -188,6 +206,7 @@ class MCPToolRegistry:
         # Always keep valid JSON. Never mark remote content as verification.
         safe_detail = json.dumps({
             "verified": False,
+            "dispatched": True,
             "outcome_unknown": False,
             "source": source,
             "mcp_output": str(result.get("message") or "")[:2200],

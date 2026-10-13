@@ -34,6 +34,28 @@ def ledger_facts(receipts, *, task_id, goal_revision):
                           "goal_proof": False})
         if data.get("stale_ref") is True and data.get("dispatched") is False:
             record("expired_reference", data.get("ref"), {"executable": False})
+        # MCP output is external data, NEVER proof of the user's overall goal.
+        # Only a small trusted local dispatch receipt enters durable memory.
+        # We intentionally discard the remote response body, structured data,
+        # credentials and tool arguments from the mission evidence ledger.
+        if source.startswith("mcp__") and data.get("dispatched") is True:
+            origin = data.get("source")
+            if isinstance(origin, dict):
+                server = origin.get("server_id")
+                tool = origin.get("tool_name")
+                attempt = origin.get("attempt_id")
+                if (isinstance(server, str) and isinstance(tool, str)
+                        and 0 < len(server) <= 36 and 0 < len(tool) <= 100
+                        and type(attempt) is int and attempt > 0
+                        and origin.get("trust") == "external_unverified"
+                        and source.startswith("mcp__" + server + "__")):
+                    record("mcp_invocation", f"{server}:{tool}:{attempt}", {
+                        "server_id": server, "tool_name": tool,
+                        "attempt_id": attempt,
+                        "reported_success": bool(receipt["success"]),
+                        "outcome_unknown": data.get("outcome_unknown") is True,
+                        "independently_verified": False,
+                    }, reliability="external_unverified")
         if not receipt["success"] or data.get("outcome_unknown") is True:
             continue
         path = data.get("selected_path") or data.get("path")
