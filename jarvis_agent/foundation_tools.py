@@ -934,6 +934,26 @@ class FoundationToolAdapter:
                 # The post-action ref can differ from the clicked observed ref.
                 if name == "browser_click" and isinstance(args.get("ref"), str):
                     payload["source_ref"] = args["ref"]
+                if (name == "browser_click"
+                        and payload.get("verified") is True
+                        and payload.get("postcondition") == "navigation_observed"):
+                    # Complete the verifier's read-only check immediately
+                    # after the observed navigation, rather than leaving it
+                    # to a discretionary extra LLM/tool round. Never retry a
+                    # click, alter the active tab or infer a successful goal.
+                    try:
+                        active = self.browser.get_active_tab()
+                    except Exception:
+                        active = None
+                    if isinstance(active, dict):
+                        # This is a separate transport observation. It is NOT
+                        # a copy of post_observation and must match downstream
+                        # before a mission certificate can be issued.
+                        payload["independent_readback"] = {
+                            "tab_id": active.get("tab_id"),
+                            "url": active.get("url"),
+                            "status": active.get("status"),
+                        }
                 if name.startswith("semantic_memory_") and self.semantic_memory_engine is not None:
                     payload.update(self.memory.projection_coverage(self.semantic_memory_engine.parser_version))
                     if self.projection_worker is not None:

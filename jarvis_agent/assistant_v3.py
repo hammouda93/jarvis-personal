@@ -185,7 +185,9 @@ class AssistantWorker(QObject):
         text = (text or "").strip()
         if not text:
             return
-        text = re.sub(r"[*_#]+", "", text).replace("`", "").strip()
+        # Do not strip underscores or URL fragments in the speech path:
+        # those characters may be part of the verified destination.
+        # Styling must not mutate the exact evidence being reported.
         self._state(AssistantState.SPEAKING, text)
         self.log_line.emit(f"[TTS] {text}")
         self._tts.speak(text, on_level=self._level)

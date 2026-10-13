@@ -683,6 +683,51 @@ class FoundationPromptTests(unittest.TestCase):
 
 
 class FoundationRuntimeTests(unittest.TestCase):
+    def test_verified_browser_navigation_collects_separate_readback(self):
+        class Browser:
+            def __init__(self):
+                self.reads = 0
+            def call(self, operation, **args):
+                self.assert_name = operation
+                return {
+                    "verified": True,
+                    "dispatched": True,
+                    "postcondition": "navigation_observed",
+                    "post_observation": {"tab": {
+                        "tab_id": 7, "url": "https://example.test/next",
+                        "status": "complete",
+                    }},
+                }
+            def get_active_tab(self):
+                self.reads += 1
+                return {"tab_id": 7, "url": "https://example.test/next",
+                        "status": "complete"}
+        browser = Browser()
+        adapter = FoundationToolAdapter(None, browser=browser)
+        result = adapter.execute("browser_click", {"tab_id": 7, "ref": "observed"})
+        self.assertTrue(result.success)
+        data = json.loads(result.detail)
+        self.assertEqual(data["source_ref"], "observed")
+        self.assertEqual(data["independent_readback"]["url"],
+                         "https://example.test/next")
+        self.assertEqual(browser.reads, 1)
+
+    def test_browser_navigation_readback_failure_does_not_forge_completion(self):
+        class Browser:
+            def call(self, operation, **kwargs):
+                return {"verified": True, "dispatched": True,
+                        "postcondition": "navigation_observed",
+                        "post_observation": {"tab": {
+                            "tab_id": 7, "url": "https://example.test/next",
+                            "status": "complete"}}}
+            def get_active_tab(self):
+                raise RuntimeError("browser disconnected")
+        adapter = FoundationToolAdapter(None, browser=Browser())
+        data = json.loads(adapter.execute(
+            "browser_click", {"tab_id": 7, "ref": "observed"}).detail)
+        self.assertNotIn("independent_readback", data)
+        self.assertEqual(data["source_ref"], "observed")
+
     def test_dispatch_is_successful_tool_but_final_requires_proof(self):
         class Browser:
             def call(self,operation,**args):

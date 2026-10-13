@@ -49,6 +49,48 @@ class BrowserGoalProofTests(unittest.TestCase):
         self.assertEqual(proof.target, "Joueurs")
         self.assertTrue(proof.proof_ref.startswith("browser_navigation_verified:"))
 
+    def test_loading_initial_tab_and_independent_click_readback_certify(self):
+        actions = journey()[:-1]
+        first = json.loads(actions[1].detail)
+        first.update(url="", status="loading")
+        actions[1] = action("browser_get_active_tab", first)
+        dom = json.loads(actions[2].detail)
+        dom.update(
+            observation_id="real-dom-1",
+            sensor="dom",
+            tab={"tab_id": 7, "url": SOURCE, "status": "loading"},
+            controls=[{"name": "Dashboard", "type": "heading"}],
+        )
+        actions[2] = action("browser_observe_dom", dom)
+        click = json.loads(actions[-1].detail)
+        click["independent_readback"] = {
+            "tab_id": 7, "url": DEST, "status": "complete",
+        }
+        actions[-1] = action("browser_click", click)
+        verified = verify_browser_navigation_goal(GOAL, actions)
+        self.assertIsNotNone(verified)
+        self.assertEqual(verified.url, DEST)
+
+    def test_independent_readback_mismatch_cannot_certify_navigation(self):
+        for field, value in (
+            ("tab_id", 8), ("url", "https://example.test/wrong"),
+            ("status", "loading"),
+        ):
+            actions = journey()[:-1]
+            click = json.loads(actions[-1].detail)
+            receipt = {"tab_id": 7, "url": DEST, "status": "complete"}
+            receipt[field] = value
+            click["independent_readback"] = receipt
+            actions[-1] = action("browser_click", click)
+            self.assertIsNone(verify_browser_navigation_goal(GOAL, actions))
+
+    def test_loading_initial_without_grounded_dom_stays_unverified(self):
+        actions = journey()
+        first = json.loads(actions[1].detail)
+        first.update(url="", status="loading")
+        actions[1] = action("browser_get_active_tab", first)
+        self.assertIsNone(verify_browser_navigation_goal(GOAL, actions))
+
     def test_missing_readback_never_proves_goal(self):
         self.assertIsNone(verify_browser_navigation_goal(GOAL, journey()[:-1]))
 

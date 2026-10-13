@@ -103,19 +103,33 @@ def verify_browser_navigation_goal(goal, actions):
             or scope[0] != "browser" or type(scope[1]) is not int):
         return None
     tab_id = scope[1]
-    if not any(
+    # The first get_active_tab may be 'loading' with a temporarily
+    # empty URL. A later independent DOM observation can confirm the
+    # requested origin once real controls become available, without
+    # requiring a second model round just to re-read the tab status.
+    initial_active = any(
         i > start_at and a.name == "browser_get_active_tab"
         and _receipt(a).get("tab_id") == tab_id
         and _receipt(a).get("url") == initial
         and _receipt(a).get("status") == "complete"
         for i, a in enumerate(actions)
-    ):
-        return None
-    if not any(
+    )
+    observed_dom = any(
         a.name == "browser_observe_dom"
         and (_receipt(a).get("tab") or {}).get("tab_id") == tab_id
         for a in actions
-    ):
+    )
+    grounded_initial_dom = any(
+        a.name == "browser_observe_dom"
+        and _receipt(a).get("sensor") == "dom"
+        and bool(_receipt(a).get("observation_id"))
+        and (_receipt(a).get("tab") or {}).get("tab_id") == tab_id
+        and (_receipt(a).get("tab") or {}).get("url") == initial
+        and isinstance(_receipt(a).get("controls"), list)
+        and bool(_receipt(a).get("controls"))
+        for a in actions
+    )
+    if not observed_dom or not (initial_active or grounded_initial_dom):
         return None
     menus = set()
     links = []
@@ -163,13 +177,26 @@ def verify_browser_navigation_goal(goal, actions):
                     or tab.get("url") != link["href"]
                     or tab.get("status") != "complete"):
                 continue
-            if not any(
+            # A separate read-only bridge query may already be attached
+            # to this verified click by the executor. Otherwise require
+            # a later explicit browser_get_active_tab action. Never reuse
+            # the click's post_observation as its own independent witness.
+            readback = click.get("independent_readback")
+            embedded_readback = (
+                isinstance(readback, dict)
+                and type(readback.get("tab_id")) is int
+                and readback["tab_id"] == tab_id
+                and readback.get("url") == link["href"]
+                and readback.get("status") == "complete"
+            )
+            later_readback = any(
                 read.name == "browser_get_active_tab"
                 and _receipt(read).get("tab_id") == tab_id
                 and _receipt(read).get("url") == link["href"]
                 and _receipt(read).get("status") == "complete"
                 for read in actions[click_at + 1:]
-            ):
+            )
+            if not (embedded_readback or later_readback):
                 continue
             witness = (initial + "\0" + link["ref"] + "\0"
                        + link["href"] + "\0" + str(tab_id))
