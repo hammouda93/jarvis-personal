@@ -46,6 +46,15 @@ def failure_requires_review(actions: tuple | list) -> bool:
         if bool(getattr(action, "success", False)):
             continue
         if detail.get("dispatched") is True:
+            # The MCP tool gateway locally attests that this was an
+            # operator-authorized observational read returning an explicit
+            # server error. This does not prove the goal was completed, and
+            # does not relax uncertain mutations or timeout safeguards.
+            if (name.startswith("mcp__")
+                    and detail.get("safe_read_failure") is True
+                    and detail.get("recoverable") is True
+                    and detail.get("outcome_unknown") is False):
+                continue
             # Independently observed window still present after a close
             # attempt. The requested close did not complete, so a fresh
             # dialog observation is safe; re-dispatching the same close is NOT.
