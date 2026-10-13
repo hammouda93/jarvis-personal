@@ -91,7 +91,20 @@ def prepare(agent: Any, user_text: str, *, log: Callable[[str], None] | None = N
                 bool(re.match(r"^(?:ouvre|ouvrir|open|navigate|va sur)\b", incoming))
                 and any(url.rstrip(".,;)") not in earlier_urls for url in urls)
             )
-            if (explicit_new or different_destination) and incoming != previous:
+            # A new top-level close request is not a continuation of a
+            # previous open/write goal. The user may pivot tasks while the
+            # earlier mission is awaiting verification, without erasing it.
+            # Conversely, "continue", "oui" or a repeated close step from
+            # the original goal must remain attached to the old checkpoint.
+            explicit_close = bool(re.match(
+                r"^(?:(?:ok|d'accord|okay)[, ]+)?"
+                r"(?:ferme|fermes|fermer|close|quit)\b", incoming
+            ))
+            already_requested_close = bool(re.search(
+                r"\b(?:ferme|fermes|fermer|close|quit)\b", previous
+            ))
+            new_close_goal = explicit_close and not already_requested_close
+            if (explicit_new or different_destination or new_close_goal) and incoming != previous:
                 try:
                     detach()
                     if log:

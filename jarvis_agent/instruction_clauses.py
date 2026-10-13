@@ -74,3 +74,23 @@ def requires_new_document(text):
         )
         for clause in positive_instruction_clauses(text)
     )
+
+def has_installer_file_target(text):
+    """True for a positively requested setup *file*, not an installed app.
+
+    Never infer file execution permission from this classification.
+    """
+    return bool(re.search(
+        r"\b(?:installateur|setup|fichier d'installation|"
+        r"installer telecharge|downloaded installer)\b",
+        _normalized(str(text or "")),
+    ))
+
+
+def authorized_installer_open(text):
+    """An explicit file-open action is needed before launching the installer."""
+    clauses = positive_instruction_clauses(text)
+    return has_installer_file_target(text) and any(
+        re.search(r"\b(?:ouvre|ouvrir|lance|lancer|open|run|execute)\b", clause)
+        for clause in clauses
+    )

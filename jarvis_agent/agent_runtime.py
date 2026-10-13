@@ -4304,9 +4304,13 @@ class GroqResponsesAgent:
                                 "boutons avant de décider. Si la confirmation "
                                 "correspond directement à la fermeture demandée et "
                                 "n'implique pas de perte de données non demandée, "
-                                "poursuis. Si elle demande d'abandonner des données "
-                                "non enregistrées ou une autre action irréversible "
-                                "ambiguë, demande confirmation à l'utilisateur."
+                                "poursuis. Si l'utilisateur a explicitement dit "
+                                "'sans enregistrer', tu peux choisir le bouton "
+                                "de refus d'enregistrement SEULEMENT pour le "
+                                "document cible identifié dans l'observation. "
+                                "Ne ferme jamais des documents supplémentaires "
+                                "modifiés sans autorisation. Si l'effet reste "
+                                "ambigu, conserve la mission et demande confirmation."
                             ),
                         }
                     )
@@ -4666,6 +4670,32 @@ class GroqResponsesAgent:
                     # model and inspect the real foreground window instead.
                     arguments = {}
 
+                # A downloaded setup file is not the installed application.
+                # For an explicitly authorized installer-open goal, resolve
+                # the actual executable by observed file identity rather than
+                # launching an unrelated installed app with the same name.
+                from .instruction_clauses import (
+                    has_installer_file_target, authorized_installer_open,
+                )
+                if name in {"find_file", "open_file"} and has_installer_file_target(user_text):
+                    arguments["kind"] = "installer"
+                if (name == "open_application"
+                        and authorized_installer_open(user_text)
+                        and not re.search(
+                            r"\b(?:ouvre|open)\s+(?:l[' ]|the )?application\b",
+                            normalize(user_text),
+                        )):
+                    filename = str(arguments.get("name") or "").strip()
+                    if filename:
+                        name = "open_file"
+                        arguments = {"name": filename, "kind": "installer"}
+                        if any(word in normalize(user_text) for word in (
+                            "telechargement", "download",
+                        )):
+                            arguments["within"] = "Téléchargements"
+                        if log:
+                            log("[AGENT_ROUTING] downloaded_installer_file=1 "
+                                "not_installed_application=1")
                 # A model suggestion of "new_instance=true" does not create
                 # user authorization to duplicate an application. Preserve
                 # the default reuse contract unless the request was explicit.
@@ -4826,6 +4856,22 @@ class GroqResponsesAgent:
                             "Je ne réécris pas le champ avant l'envoi."
                         ),
                         detail="browser_write_blocked_for_submit_only_request",
+                    )
+                elif (
+                    name in {"open_file", "open_application"}
+                    and has_installer_file_target(user_text)
+                    and not authorized_installer_open(user_text)
+                ):
+                    result = AgentActionResult(
+                        name=name, success=False,
+                        message=("La demande ne m'autorise pas à lancer "
+                                 "l'installateur. Utiliser find_file pour "
+                                 "le retrouver sans l'exécuter."),
+                        detail=json.dumps({
+                            "guard": "installer_launch_not_authorized",
+                            "dispatched": False, "outcome_unknown": False,
+                            "next_tool": "find_file",
+                        }),
                     )
                 elif (
                     name == "press_key"
