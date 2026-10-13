@@ -2217,6 +2217,7 @@ def close_window(title: str | None = None) -> UIActionResult:
 
     invalidate_ui_snapshot()
     time.sleep(0.25)
+    readback_confirmed = False
     try:
         remaining = _desktop().windows(
             visible_only=True,
@@ -2232,6 +2233,7 @@ def close_window(title: str | None = None) -> UIActionResult:
                 normalize(_element_name(item)) == normalize(label)
                 for item in remaining
             )
+        readback_confirmed = True
     except Exception:
         still_open = True
 
@@ -2264,8 +2266,9 @@ def close_window(title: str | None = None) -> UIActionResult:
             f"{label} est encore ouverte. Observer la confirmation avant toute action.",
             _json({
                 "dispatched": True, "verified": False,
-                "postcondition": "window_present",
-                "outcome_unknown": False,
+                "postcondition": ("window_present" if readback_confirmed
+                                  else "window_presence_unknown"),
+                "outcome_unknown": not readback_confirmed,
                 "observed_handle": handle or None,
                 "post_observation": observed,
                 "next_step": "Inspecter les boutons observes et agir seulement selon l'autorisation utilisateur, sans relancer la fermeture.",
