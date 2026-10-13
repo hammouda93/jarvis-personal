@@ -5436,6 +5436,37 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 completion_tokens=getattr(settings, "groq_completion_tokens", 512))
             print(f"[AGENT_CONTEXT] provider=groq_fallback mode=recoverable_minimal_tools "
                   f"tools={len(request_tools)} archived_chars={saved_chars}")
+            if not allowed:
+                pressure_tools = context.fallback_tools(
+                    self._tool_definitions(
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    ),
+                    request_messages,
+                    pressure_minimal=True,
+                )
+                if isinstance(tool_choice, dict):
+                    forced = (tool_choice.get("function") or {}).get("name")
+                    for definition in self._tool_definitions(
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    ):
+                        if ((definition.get("function") or {}).get("name") == forced
+                                and definition not in pressure_tools):
+                            pressure_tools.append(definition)
+                pressure_ok, pressure_estimate, pressure_budget = groq_fallback_preflight(
+                    request_messages, pressure_tools,
+                    completion_tokens=getattr(settings, "groq_completion_tokens", 512),
+                )
+                if pressure_ok:
+                    request_tools = pressure_tools
+                allowed, estimate, budget = (
+                    pressure_ok, pressure_estimate, pressure_budget
+                )
+                print(
+                    "[AGENT_CONTEXT] provider=groq_fallback mode=next_action_budget_tools "
+                    f"tools={len(pressure_tools)} estimated_tokens={estimate}"
+                )
         if not allowed:
             print(f"[AGENT_BUDGET] groq_fallback_skipped estimated_tokens={estimate} "
                   f"configured_limit={budget}; no_request_sent")

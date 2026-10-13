@@ -190,7 +190,7 @@ class RequestContext:
         self.last_saved_chars = saved
         return result, saved
 
-    def fallback_tools(self, schemas, messages):
+    def fallback_tools(self, schemas, messages, *, pressure_minimal=False):
         recent = []
         for item in reversed(messages):
             if item.get("role") == "assistant":
@@ -201,6 +201,26 @@ class RequestContext:
             if len(recent) >= 2:
                 break
         keep = _CONTEXT_TOOLS | set(recent[:2]) | {"mission_checkpoint"}
+        if pressure_minimal:
+            # Last-chance, schema-only pressure pack. Preserve the *next*
+            # generic browser operation while staying inside the original
+            # token cap. Tools that are absent remain selectable through the
+            # read-only capability catalog; their original execution and
+            # confirmation gates are unchanged.
+            last = recent[0] if recent else ""
+            keep = _CONTEXT_TOOLS | {"mission_checkpoint"}
+            if last == "browser_find":
+                keep.update({"browser_click", "browser_observe_dom"})
+            elif last == "browser_observe_dom":
+                keep.add("browser_find")
+            elif last == "browser_click":
+                keep.update({"browser_observe_dom", "browser_find"})
+            elif last == "browser_get_active_tab" or last == "open_url":
+                keep.update({"browser_observe_dom", "browser_find"})
+            elif last:
+                keep.add(last)
+            return [s for s in schemas if s.get("function", {}).get("name") in keep
+                    or s.get("type") != "function"]
         # Under model-token pressure, do not strip the NEXT capability needed
         # on the current browser surface. Strict providers reject undeclared
         # tool calls with HTTP 400; preserving only open_url/get_active_tab

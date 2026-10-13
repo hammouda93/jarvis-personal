@@ -191,6 +191,30 @@ class EfficientContextTests(unittest.TestCase):
         self.assertNotIn("computer_write", selected)
         self.assertNotIn("semantic_memory_search", selected)
 
+    def test_last_chance_pack_preserves_next_browser_action_without_broad_tools(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "request_tool_capabilities", "open_url",
+            "browser_get_active_tab", "browser_observe_dom", "browser_find",
+            "browser_click", "computer_write", "semantic_memory_search",
+        )]
+        for last, expected in (
+            ("browser_get_active_tab", "browser_observe_dom"),
+            ("browser_observe_dom", "browser_find"),
+            ("browser_find", "browser_click"),
+            ("browser_click", "browser_observe_dom"),
+        ):
+            messages = [{"role": "assistant", "tool_calls": [{
+                "function": {"name": last}
+            }]}]
+            names = {s["function"]["name"]
+                     for s in context.fallback_tools(
+                         schemas, messages, pressure_minimal=True)}
+            self.assertIn(expected, names)
+            self.assertIn("request_tool_capabilities", names)
+            self.assertNotIn("computer_write", names)
+            self.assertNotIn("semantic_memory_search", names)
+
     def test_minimal_fallback_for_nonbrowser_mission_does_not_promote_browser(self):
         context = RequestContext(enabled=True)
         schemas = [tool(name) for name in (
