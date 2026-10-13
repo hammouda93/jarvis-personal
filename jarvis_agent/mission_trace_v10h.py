@@ -182,6 +182,46 @@ def _target_evidence_hint(result, steps, earlier):
     return indices[0] if len(indices) == 1 else None
 
 
+def _anaphoric_ui_activity_hint(result, steps):
+    """Associate an actual UI click with a conditional anaphoric step.
+
+    Example shape: 'inspect the panel, then open it if needed', followed by
+    a click on an *observed* control named 'Open panel'. This is a tentative
+    tool-activity annotation, NOT a verified step or an authorization.
+    """
+    if (getattr(result, "name", None) not in {"browser_click", "click_ui_element"}
+            or not getattr(result, "success", False)):
+        return None
+    try:
+        detail = json.loads(getattr(result, "detail", "") or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(detail, dict):
+        return None
+    target = detail.get("target_after")
+    if not isinstance(target, dict):
+        return None
+    label = _normalized(target.get("name") or target.get("aria_label") or "")
+    if not re.search(r"\b(?:ouvrir|ouvre|open)\b", label):
+        return None
+    # Prefer significant tokens from the observed target label, not invented
+    # application-specific menu identifiers or untrusted DOM instructions.
+    words = set(re.findall(r"[a-z]{4,}", label)) - {
+        "ouvrir", "ouvre", "open", "ouvrirai", "openit", "button", "bouton",
+    }
+    if not words:
+        return None
+    candidates = []
+    for i, step in enumerate(steps):
+        current = _normalized(step)
+        if not re.search(r"\b(?:ouvre|ouvrir|open)[- ](?:le|la|les|it)\b", current):
+            continue
+        prior = " ".join(_normalized(value) for value in steps[:i])
+        if prior and any(re.search(r"\b" + re.escape(word) + r"\b", prior) for word in words):
+            candidates.append(i + 1)
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _evidence_level(result) -> str:
     if not bool(getattr(result, "success", False)):
         return "FAILED"
@@ -285,9 +325,18 @@ class ConversationMissionTrace:
             name = str(getattr(result, "name", ""))
             hint = _tool_step_hint(name, self.steps)
             provenance_hint = _target_evidence_hint(result, self.steps, earlier)
+            activity_hint = _anaphoric_ui_activity_hint(result, self.steps)
             evidence = _evidence_level(result)
             if hint is not None:
                 self._step_tools.setdefault(hint, []).append(evidence)
+            if activity_hint is not None:
+                self._step_tools.setdefault(activity_hint, []).append(evidence)
+                self._log(
+                    f"[MISSION_STEP] id={self.trace_id} "
+                    f"step={activity_hint}/{len(self.steps)} "
+                    "state=ACTIVITY_CORRELATED source=observed_ui_target "
+                    "authoritative_assignment=false goal_verified=not_established"
+                )
             if provenance_hint is not None:
                 self._step_tools.setdefault(provenance_hint, []).append(evidence)
                 self._log(

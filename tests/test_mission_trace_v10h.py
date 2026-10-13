@@ -86,6 +86,34 @@ class MissionTraceV10HTests(unittest.TestCase):
             ])
             self.assertNotIn("EVIDENCE_CORRELATED", "\n".join(events))
 
+    def test_anaphoric_conditional_step_correlates_observed_open_control(self):
+        events = []
+        trace = ConversationMissionTrace(
+            "Ouvre un site, inspecte le panneau latéral, puis ouvre-le si nécessaire.",
+            events.append, trace_id="conditional",
+        )
+        trace.start()
+        trace.finish([result("browser_click", detail=json.dumps({
+            "dispatched": True, "verified": False,
+            "target_after": {"name": "Ouvrir le panneau"},
+        }))])
+        joined = "\n".join(events)
+        self.assertIn("state=ACTIVITY_CORRELATED", joined)
+        self.assertIn("goal_verification=not_certified", joined)
+        self.assertNotIn("goal_verified=true", joined)
+
+    def test_anaphoric_activity_does_not_guess_wrong_target(self):
+        events = []
+        trace = ConversationMissionTrace(
+            "Inspecte la fenêtre, puis ouvre-le si nécessaire.",
+            events.append, trace_id="not-guessed",
+        )
+        trace.start()
+        trace.finish([result("browser_click", detail=json.dumps({
+            "dispatched": True, "target_after": {"name": "Ouvrir les paramètres"},
+        }))])
+        self.assertNotIn("ACTIVITY_CORRELATED", "\n".join(events))
+
     def test_click_success_never_proves_installation(self):
         events = []
         trace = ConversationMissionTrace(
