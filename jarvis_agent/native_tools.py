@@ -223,6 +223,10 @@ class NativeToolRegistry:
                         "type": "string",
                         "description": "Dossier optionnel dans lequel chercher, par ex. Téléchargements.",
                     },
+                    "kind": {
+                        "type": "string", "enum": ["any", "installer"],
+                        "description": "installer uniquement si l'utilisateur vise un fichier d'installation exécutable ; exclut les documents similaires.",
+                    },
                 },
                 ["name"],
             ),
@@ -1061,6 +1065,8 @@ class NativeToolRegistry:
             payload: dict[str, Any] = {"query": target}
             if within and self._safe_target(within):
                 payload["within"] = within
+            if str(args.get("kind", "")).lower() == "installer":
+                payload["kind"] = "installer"
             converted = self._convert(
                 name,
                 execute(ToolIntent("file.open_named", payload)),
