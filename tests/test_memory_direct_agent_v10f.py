@@ -142,6 +142,35 @@ class DirectMemoryV10FTests(unittest.TestCase):
             found = fresh.tools.memory.recent_memories(limit=5)
             self.assertEqual(found[0].content, sentence)
 
+    def test_explicit_memory_recall_survives_restart_without_brain(self):
+        from jarvis_agent.foundation_tools import FoundationRuntime
+        from jarvis_agent.agent_runtime import AgentRuntimeUnavailable
+        class OfflineAgent:
+            calls = 0
+            def run(self, *args, **kwargs):
+                self.calls += 1
+                raise AgentRuntimeUnavailable("all providers offline")
+        with patch.dict(os.environ, DIRECT):
+            original = FoundationRuntime(
+                OfflineAgent(),
+                FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory),
+            )
+            original.run("retiens que demain j'ai un cours de padel")
+            fresh = FoundationRuntime(
+                OfflineAgent(),
+                FoundationToolAdapter(
+                    MinimalNativeRegistry(),
+                    memory=MemoryCoreStore(self.memory.db_path),
+                ),
+            )
+            result = fresh.run("Tu te souviens de mon cours de padel ?")
+            self.assertIn("cours de padel", result.text)
+            self.assertIn("Souvenir #", result.text)
+            self.assertEqual(fresh.delegate.calls, 0)
+            none = fresh.run("Tu te souviens de mon anniversaire de ski ?")
+            self.assertIn("aucun souvenir correspondant", none.text)
+            self.assertEqual(fresh.delegate.calls, 0)
+
     def test_memory_fast_path_never_steals_mixed_missions_or_questions(self):
         from jarvis_agent.foundation_tools import FoundationRuntime
         from jarvis_agent.agent_runtime import AgentTurnResult

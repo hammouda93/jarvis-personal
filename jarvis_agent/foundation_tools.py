@@ -1194,6 +1194,89 @@ class FoundationRuntime:
             actions=(receipt,),
         )
 
+    def _explicit_durable_memory_recall(self, user_text, *, log=None, phase=None):
+        """Return grounded SQLite source for standalone explicit memory recall.
+
+        Broad calendar/service questions and mixed missions stay with the
+        model so a memory-only answer cannot mask connected data sources.
+        """
+        from .memory_tool_scope import memory_only_request
+        from .active_mission_supervisor import execution_scope_active
+        from .memory_router import MemoryRouter
+        if (
+            not enabled("JARVIS_MEMORY_CORE_ENABLED")
+            or not enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED")
+            or not enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")
+            or not enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED")
+            or execution_scope_active()
+            or self.tools.memory is None
+            or not memory_only_request(user_text)
+            or MemoryRouter().decide(user_text).kind != "recall"
+        ):
+            return None
+        from .agent_runtime import AgentTurnResult
+        # Invoke the EXISTING read-only memory tool; never infer personal
+        # details from language-model prose or return unrelated recent rows.
+        if phase:
+            phase("observing")
+        result = self.tools.execute(
+            "semantic_memory_search", {"query": user_text},
+        )
+        if not result.success:
+            if log:
+                log("[MEMORY] state=READ_FAILED provider=not_required")
+            return AgentTurnResult(
+                text="La lecture de la mémoire locale n'a pas réussi : "
+                     + result.message,
+                actions=(result,),
+            )
+        import json
+        try:
+            response = json.loads(result.detail or "{}")
+        except (ValueError, TypeError):
+            response = {}
+        found = (
+            response.get("raw_fallback")
+            if isinstance(response, dict) else None
+        )
+        if not isinstance(found, list):
+            found = []
+        # Relative dates in a question refer to TODAY, not the day on which
+        # an older raw note originally said "demain".
+        from .memory_temporal import (
+            raw_temporal_tag, raw_temporal_date_from_tags,
+        )
+        current_tag = raw_temporal_tag(user_text)
+        if current_tag:
+            indexed = {
+                row.id: raw_temporal_date_from_tags(row.tags)
+                for row in self.tools.memory.all_memories()
+            }
+            day = current_tag.split("=", 1)[1]
+            found = [
+                row for row in found
+                if isinstance(row, dict)
+                and indexed.get(row.get("memory_id")) == day
+            ]
+        records = [
+            (row.get("memory_id"), str(row.get("raw") or ""))
+            for row in found[:5] if isinstance(row, dict)
+            and type(row.get("memory_id")) is int
+            and str(row.get("raw") or "").strip()
+        ]
+        if records:
+            lines = [
+                f"Souvenir #{identity} : {raw}"
+                for identity, raw in records
+            ]
+            text = "Dans ma mémoire locale, j'ai retrouvé : " + " ; ".join(lines)
+        else:
+            text = ("Je n'ai trouvé aucun souvenir correspondant dans SQLite. "
+                    "Cela ne prouve pas qu'il n'existe aucune autre information.")
+        if log:
+            log(f"[MEMORY] state=RAW_READ hits={len(records)} provider=not_required")
+        return AgentTurnResult(text=text, actions=(result,))
+
     def run(self, user_text, *, log=None, phase=None):
         was_browser_mode = self.tools.browser_mode
         self.tools.begin_turn(user_text)
@@ -1202,6 +1285,11 @@ class FoundationRuntime:
         )
         if immediate is not None:
             return immediate
+        recalled = self._explicit_durable_memory_recall(
+            user_text, log=log, phase=phase,
+        )
+        if recalled is not None:
+            return recalled
         browser_context = (
             self.tools.browser_grounding_context()
             if was_browser_mode and self.tools.browser_mode
@@ -1230,6 +1318,11 @@ class FoundationRuntime:
         )
         if immediate is not None:
             return immediate
+        recalled = self._explicit_durable_memory_recall(
+            user_text, log=log, phase=phase,
+        )
+        if recalled is not None:
+            return recalled
         browser_context = (
             self.tools.browser_grounding_context()
             if was_browser_mode and self.tools.browser_mode

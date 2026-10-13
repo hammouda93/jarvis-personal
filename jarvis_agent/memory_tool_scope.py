@@ -56,7 +56,7 @@ def memory_only_request(
 
     durable = (
         r"\b(?:memoire|memorise|memorisee|memorises|memoriser|"
-        r"souvenir|souvenirs|retiens|retient)\b"
+        r"souvenir|souvenirs|souviens|retiens|retient)\b"
     )
     # A mixed mission may name the other target only by a pronoun:
     # "Vérifie qu'elle est ouverte, puis retrouve mon code en mémoire."
