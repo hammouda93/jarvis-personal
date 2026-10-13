@@ -103,7 +103,8 @@ class LocalCapabilityContractTests(unittest.TestCase):
             self.assertEqual(snap["status"], "waiting_external")
             self.assertFalse(snap["manual_review_required"])
             self.assertFalse(snap["goal_verified"])
-            self.assertEqual(snap["last_failed_action_count"], 1)
+            state, _ = runtime.context_store.load(mid)
+            self.assertEqual(state.observed_state["last_failed_action_count"], 1)
             # A restart cannot promote local failure to an unknown mutation.
             restarted = LiveMissionContinuityRuntime(agent, base_dir=Path(root))
             restored = restarted.mission_snapshot(mid)
