@@ -58,6 +58,10 @@ def is_neutral_identifier_clarification(text: str, *, status: str,
         return False
     if _COMMAND.search(value):
         return False
+    # Never fold credential-looking material into durable mission objectives.
+    if re.search(r"(?i)(?:gh[pousr]_|github_pat_|sk-[a-z0-9]|AIza|"
+                 r"token|secret|password|credential|api[_-]?key|bearer)", value):
+        return False
     words = value.split()
     if not 1 <= len(words) <= 4:
         return False
