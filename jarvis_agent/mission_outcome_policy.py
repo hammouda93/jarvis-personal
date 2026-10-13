@@ -46,6 +46,17 @@ def failure_requires_review(actions: tuple | list) -> bool:
         if bool(getattr(action, "success", False)):
             continue
         if detail.get("dispatched") is True:
+            # Independently observed window still present after a close
+            # attempt. The requested close did not complete, so a fresh
+            # dialog observation is safe; re-dispatching the same close is NOT.
+            # This exception requires the actual readback contract, not the
+            # model's claim that a close probably failed.
+            if (name == "close_window"
+                    and detail.get("postcondition") == "window_present"
+                    and detail.get("outcome_unknown") is False
+                    and isinstance(detail.get("post_observation"), dict)
+                    and detail["post_observation"].get("observation_id")):
+                continue
             return True
         if name in READ_ONLY_TOOLS:
             continue
