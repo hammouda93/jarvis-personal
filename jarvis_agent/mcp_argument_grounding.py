@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import unquote
 
 # Whole-token documentation placeholders, not arbitrary user prose.
 _TEMPLATE_TOKEN = re.compile(
@@ -46,9 +47,22 @@ def unresolved_argument_paths(arguments: Any) -> tuple[str, ...]:
             return
         if isinstance(value, str):
             word = value.strip()
-            if (word.lower() in _EXACT or
-                    _DELIMITED.search(word) is not None or
-                    _TEMPLATE_TOKEN.search(word) is not None):
+            # URL template fields may be percent-encoded. Decode for local
+            # analysis only; never mutate the actual tool argument.
+            candidate = unquote(word) if "%" in word else word
+            matches = list(_DELIMITED.finditer(candidate))
+            def is_field(match):
+                opening_html_tag = (match.group(1) or "").lower()
+                if opening_html_tag in {
+                    "html", "body", "head", "title", "div", "span",
+                    "p", "a", "em", "strong", "b", "i", "h1", "h2", "h3",
+                    "h4", "h5", "ul", "ol", "li", "pre", "code",
+                } and re.search(r"</" + opening_html_tag + r"\\s*>", candidate, re.I):
+                    return False  # actual markup, not an ID placeholder
+                return True
+            if (candidate.lower() in _EXACT or
+                    _TEMPLATE_TOKEN.search(candidate) is not None or
+                    any(is_field(match) for match in matches)):
                 unresolved.append(path)
         elif isinstance(value, dict):
             for key, item in list(value.items())[:120]:
