@@ -18,7 +18,7 @@ _DENIED_WORDS = frozenset({
     "post", "send", "set", "save", "publish", "grant", "revoke", "invite",
     "approve", "close", "archive", "dispatch", "execute", "run", "rerun",
     "retry", "trigger", "cancel", "reset", "stop", "lock", "unlock", "deploy",
-    "fork", "mark", "reopen", "request", "assign", "label", "comment",
+    "fork", "mark", "reopen", "assign", "label", "comment",
     "workflowdispatch", "workflow_dispatch", "credential", "credentials",
     "secret", "secrets", "token", "tokens", "password", "passwords",
     "key", "keys", "privatekey", "private", "billing", "payment",
