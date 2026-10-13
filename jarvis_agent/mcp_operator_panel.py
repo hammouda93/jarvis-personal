@@ -674,6 +674,11 @@ class MCPConnectionsPanel(QFrame):
         for widget in self._oauth_client_widgets:
             widget.setEnabled(not busy and self.oauth_registered.isEnabled())
         self._select_tool()
+        # A direct operator selection must also update the rendered snapshot
+        # baseline; otherwise the next background poll rebuilds the picker.
+        current = next((row for row in self._servers if row.get("id") == server_id), None)
+        self._rendered_server_state = json.dumps(
+            current, ensure_ascii=False, sort_keys=True, default=str)
 
     def _select_tool(self, index=0):
         name = self.tool_picker.currentData()
@@ -753,6 +758,9 @@ class MCPConnectionsPanel(QFrame):
             self._select_server(self.server_picker.currentIndex())
         if result.get("operation") == "set_quotas" and result.get("success"):
             self._quota_dirty = False
+            # The saved quota can differ from the optimistic spinbox value.
+            # Force one authoritative redraw from the next worker snapshot.
+            self._rendered_server_state = ""
         if result.get("success"):
             self.feedback.setText(
                 str(result.get("message") or "Configuration MCP modifiée.")[:160]
