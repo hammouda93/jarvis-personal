@@ -22,8 +22,18 @@ def verify_file_artifact(arguments):
         if not path.is_absolute() or raw.startswith(("\\\\", "//")):
             raise ValueError("local_absolute_path_required")
         resolved = path.resolve(strict=True)
-        if str(resolved).startswith(("\\\\", "//")) or os.path.normcase(str(resolved)) != os.path.normcase(str(path.absolute())):
+        if str(resolved).startswith(("\\\\", "//")):
             raise ValueError("redirected_artifact_path_refused")
+        # Path.absolute() may preserve Windows 8.3 aliases, while
+        # resolve(strict=True) canonicalizes them to long names. Comparing
+        # those strings rejects legitimate files on Windows CI. Inspect each
+        # actual component instead and refuse symlinks/junctions, without
+        # falsely treating an ordinary Windows path alias as redirection.
+        for component in (path, *path.parents):
+            is_junction = getattr(component, "is_junction", None)
+            if (component.is_symlink()
+                    or (callable(is_junction) and is_junction())):
+                raise ValueError("redirected_artifact_path_refused")
         if resolved.name != name or not resolved.is_file():
             raise ValueError("artifact_filename_mismatch")
         text, digest = arguments.get("expected_text"), arguments.get("expected_sha256")

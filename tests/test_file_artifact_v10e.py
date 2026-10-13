@@ -37,6 +37,19 @@ class FileArtifactTests(unittest.TestCase):
                      {**self.args, "path": "fixture.txt"}):
             self.assertFalse(verify_file_artifact(args)["verified"])
 
+    def test_symbolic_link_is_not_accepted_as_independent_file_proof(self):
+        link = self.path.with_name("redirected.txt")
+        try:
+            link.symlink_to(self.path)
+        except (OSError, NotImplementedError):
+            self.skipTest("File symlinks are not available for this test account")
+        result = verify_file_artifact({
+            "path": str(link), "expected_name": link.name,
+            "expected_text": "Texte francais 67890\n",
+        })
+        self.assertFalse(result["verified"])
+        self.assertEqual(result["error"], "redirected_artifact_path_refused")
+
     def test_binary_hash_verification_and_size_bound(self):
         self.path.write_bytes(b"\x00\xffBinary fixture")
         digest = hashlib.sha256(self.path.read_bytes()).hexdigest()

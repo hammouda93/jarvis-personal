@@ -8,7 +8,7 @@ from collections import deque
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextBrowser,
-    QStyle, QTextEdit, QVBoxLayout, QWidget,
+    QStyle, QTextEdit, QVBoxLayout, QWidget, QSizePolicy,
 )
 
 from .operator_telemetry import snapshot
@@ -284,6 +284,11 @@ class OperatorConsole(QFrame):
         scroll.setFrameShape(QFrame.NoFrame)
         content = QWidget()
         content.setObjectName("operatorScrollContent")
+        # Qt may otherwise retain the oversized minimumSizeHint of a hidden
+        # diagnostic child and create an unnecessary horizontal scrollbar.
+        # Vertical scrolling remains available; visible metrics word-wrap.
+        content.setMinimumWidth(0)
+        content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         event_list = QVBoxLayout(content)
         event_list.setContentsMargins(0, 0, 0, 0)
         event_list.setSpacing(7)
