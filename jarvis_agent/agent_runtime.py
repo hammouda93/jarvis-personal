@@ -5584,6 +5584,46 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     f"tools={len(pressure_tools)} estimated_tokens={estimate}"
                 )
         if not allowed:
+            # A verbose *static* Cerebras instruction preamble must not
+            # strand a bounded Groq fallback. Switch only that exact prefix
+            # to our existing compact, safety-reviewed policy. Preserve the
+            # entire mission-specific suffix, messages, receipts, tool schemas,
+            # user approvals and unknown-effect evidence byte-for-byte.
+            # No network call or extra permission is introduced by this pass.
+            from .active_mission_supervisor import execution_scope_active
+            if not execution_scope_active():
+                from .request_context import EFFICIENT_SYSTEM_POLICY
+                compacted = []
+                replaced = False
+                for message in request_messages:
+                    raw = str(message.get("content") or "")
+                    if (not replaced and message.get("role") == "system"
+                            and raw.startswith(_SYSTEM_INSTRUCTIONS)):
+                        compacted.append({
+                            **message,
+                            "content": EFFICIENT_SYSTEM_POLICY
+                                       + raw[len(_SYSTEM_INSTRUCTIONS):],
+                        })
+                        replaced = True
+                    else:
+                        compacted.append(message)
+                if replaced:
+                    compact_ok, compact_estimate, compact_budget = (
+                        groq_fallback_preflight(
+                            compacted, request_tools,
+                            completion_tokens=getattr(
+                                settings, "groq_completion_tokens", 512),
+                        )
+                    )
+                    if compact_ok:
+                        request_messages = compacted
+                        allowed, estimate, budget = (
+                            compact_ok, compact_estimate, compact_budget
+                        )
+                        print("[AGENT_CONTEXT] provider=groq_fallback "
+                              "mode=trusted_compact_system_policy "
+                              f"estimated_tokens={estimate}")
+        if not allowed:
             print(f"[AGENT_BUDGET] groq_fallback_skipped estimated_tokens={estimate} "
                   f"configured_limit={budget}; no_request_sent")
             raise AgentRuntimeUnavailable(
