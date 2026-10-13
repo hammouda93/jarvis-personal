@@ -884,11 +884,29 @@ class AssistantWorker(QObject):
         )
 
         from .mission_trace_v10h import ConversationMissionTrace
+        # Use the SAME persisted semantic mission plan for the user-visible
+        # trace. No second clause parser, model call, step generation or
+        # authority is introduced here.
+        mission_id = str(getattr(self._agent, "active_mission_id", "") or "")
+        planned_steps = ()
+        snapshot_reader = getattr(self._agent, "mission_snapshot", None)
+        if mission_id and callable(snapshot_reader):
+            try:
+                snapshot = snapshot_reader(mission_id)
+                plan = snapshot.get("semantic_plan") or {}
+                planned_steps = tuple(
+                    str(step.get("intent") or "")
+                    for step in (plan.get("steps") or [])
+                    if isinstance(step, dict)
+                )
+            except (RuntimeError, ValueError, KeyError, TypeError):
+                planned_steps = ()
         trace = ConversationMissionTrace(
             user_request=user_text,
             emit=self.log_line.emit,
-            mission_id=str(getattr(self._agent, "active_mission_id", "") or ""),
+            mission_id=mission_id,
             previous=getattr(self, "_previous_conversation_trace", None),
+            planned_steps=planned_steps,
         )
         trace.start()
 

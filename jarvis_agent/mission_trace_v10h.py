@@ -256,6 +256,7 @@ class ConversationMissionTrace:
     mission_id: str = ""
     previous: "ConversationMissionTrace | None" = None
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
+    planned_steps: tuple[str, ...] = ()
     steps: tuple[str, ...] = field(init=False)
     tool_calls: list[str] = field(default_factory=list)
     _tool_call_refs: list[str] = field(default_factory=list)
@@ -264,7 +265,17 @@ class ConversationMissionTrace:
     _goal_proof_logged: bool = False
 
     def __post_init__(self):
-        self.steps = requested_steps(self.user_request) or (self.user_request.strip(),)
+        # A durable semantic contract, when present, is the ONE step list.
+        # The legacy clause splitter is only a provisional fallback for
+        # unplanned turns; it must not contradict a registered six-step plan.
+        prepared = tuple(
+            str(value).strip()[:180] for value in self.planned_steps[:24]
+            if str(value).strip()
+        )
+        self.steps = (
+            prepared if prepared else
+            requested_steps(self.user_request) or (self.user_request.strip(),)
+        )
 
     def _log(self, line: str):
         self.emit(line)
@@ -282,7 +293,7 @@ class ConversationMissionTrace:
         self._log(
             f"[MISSION_TRACE] id={self.trace_id} state=RECEIVED "
             f"mission_id={self.mission_id or 'none'} objective={_safe(self.user_request)} "
-            f"outline_source=user_clauses_provisional steps={len(self.steps)}"
+            f"outline_source={'semantic_contract_draft' if self.planned_steps else 'user_clauses_provisional'} steps={len(self.steps)}"
         )
         for idx, step in enumerate(self.steps, 1):
             self._log(

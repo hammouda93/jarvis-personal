@@ -14,6 +14,26 @@ def result(name, success=True, detail=""):
 
 
 class MissionTraceV10HTests(unittest.TestCase):
+    def test_registered_semantic_plan_is_single_source_for_mission_outline(self):
+        goal = ("Ouvre un site, inspecte le menu, puis clique sur Joueurs "
+                "et vérifie le résultat.")
+        planned = (
+            "Ouvrir le site demandé", "Observer le menu",
+            "Inspecter les éléments accessibles", "Ouvrir le menu si nécessaire",
+            "Trouver le lien cible", "Vérifier l'URL finale",
+        )
+        events = []
+        trace = ConversationMissionTrace(
+            goal, events.append, trace_id="unified",
+            planned_steps=planned,
+        )
+        trace.start()
+        self.assertEqual(trace.steps, planned)
+        logs = "\n".join(events)
+        self.assertIn("outline_source=semantic_contract_draft steps=6", logs)
+        self.assertEqual(logs.count("state=REQUESTED"), 6)
+        self.assertNotIn("steps=4", logs)
+
     def test_compound_goal_lists_requested_steps_without_inventing_success(self):
         goal = ("Ouvre un site dans Chrome, recherche un sujet, "
                 "puis ouvre le premier résultat et vérifie sa page.")
