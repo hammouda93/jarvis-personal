@@ -3936,6 +3936,7 @@ class GroqResponsesAgent:
         )
         msf_repair_attempted = False
         pseudo_tool_repair_attempted = False
+        mcp_read_repair_attempted = False
         ui_verification_repair_attempted = False
         ui_verification_required = False
         goal_completion_repair_attempted = False
@@ -4002,6 +4003,40 @@ class GroqResponsesAgent:
 
             if not calls:
                 raw_text = str(getattr(message, "content", "") or "")
+                # A model may incorrectly ask for permission despite an
+                # *already operator-approved* MCP read tool in its catalogue.
+                # Give it one bounded chance to use that actual capability.
+                # No extra authority is granted and no tool is forced.
+                if (not actions and not mcp_read_repair_attempted
+                        and round_index < settings.agent_max_tool_rounds
+                        and self._pending_function_approval is None
+                        and not self._feedback_only_turn
+                        and not getattr(self.tools, "uncertain_scopes", None)):
+                    from .mission_read_recovery import needs_authorized_read_retry
+                    if needs_authorized_read_retry(
+                            user_text, raw_text, self._tool_definitions(
+                                ms_football_only=ms_football_turn,
+                                msf_tool_names=msf_tool_names),
+                            self.tools.requires_confirmation):
+                        mcp_read_repair_attempted = True
+                        if self._messages and self._messages[-1].get("role") == "assistant":
+                            self._messages[-1]["content"] = ""
+                        self._messages.append({"role": "user", "content": (
+                            "AUTHORIZED_MCP_READ_AVAILABLE: The executor currently "
+                            "exposes a previously operator-approved read-only MCP "
+                            "capability. Do not claim that new account consent is "
+                            "required merely because you have not called a tool. "
+                            "For this current read/analysis request, inspect the "
+                            "available MCP read schemas and use the applicable "
+                            "tool to discover missing facts, including account "
+                            "or resource identity. Do NOT invent IDs or URLs, "
+                            "request new permission, mutate external state, or "
+                            "assert success without observation. If the eligible "
+                            "tools cannot answer, state the exact missing fact."
+                        )})
+                        if log:
+                            log("[AGENT] repair=preauthorized_mcp_read_no_tool")
+                        continue
                 last = actions[-1] if actions else None
                 local = _action_detail_dict(last) if last else {}
                 observation = local.get("post_observation")
