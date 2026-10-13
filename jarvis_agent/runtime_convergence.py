@@ -917,11 +917,33 @@ class LiveMissionContinuityRuntime:
             state.observed_state["last_routing_needs_review"] = any(
                 route["needs_review"] for route in routes
             )
-            state.observed_state["goal_verified"] = False
+            from .browser_goal_proof import verify_browser_navigation_goal
+            verified_navigation = (
+                verify_browser_navigation_goal(state.user_goal, actions)
+                if not failed and not getattr(result, "pause_reason", "")
+                else None
+            )
+            contract = state.expected_state.get("semantic_contract")
+            # A generated plan is advisory; explicit registered or
+            # semantically unresolved plans keep their existing proof gate.
+            if isinstance(contract, dict):
+                metadata = contract.get("metadata") or {}
+                if (metadata.get("origin") != "same_provider_no_tools_draft"
+                        or contract.get("unresolved")):
+                    verified_navigation = None
+            if verified_navigation is not None:
+                state.proof_refs.append(verified_navigation.proof_ref)
+                state.observed_state["goal_verified"] = True
+                state.observed_state["verified_navigation_url"] = verified_navigation.url
+                state.observed_state["verified_navigation_target"] = verified_navigation.target
+                state.observed_state["proof_scope"] = "browser_navigation_goal"
+            else:
+                state.observed_state["goal_verified"] = False
             # A successful click/write does not prove the intended recipient,
             # target, or overall mission. Explicit missions always await proof.
             state.status = (
-                MissionStatus.WAITING_EXTERNAL if recoverable_failure
+                MissionStatus.COMPLETED if verified_navigation is not None
+                else MissionStatus.WAITING_EXTERNAL if recoverable_failure
                 else MissionStatus.BLOCKED if failed
                 else MissionStatus.WAITING_EXTERNAL
                 if actions or self._explicit
@@ -951,12 +973,27 @@ class LiveMissionContinuityRuntime:
                     "task_id": task_id,
                     "action_count": len(actions),
                     "failed_action_count": failed,
-                    "goal_verified": False,
+                    "goal_verified": verified_navigation is not None,
                     "mission_status": state.status.value,
                 },
             )
+            if verified_navigation is not None:
+                self._audit(mission_id, EventKind.PROOF, {
+                    "source": "independent_browser_navigation",
+                    "proof_ref": verified_navigation.proof_ref,
+                    "verified_url": verified_navigation.url[:300],
+                })
+                self._audit(mission_id, EventKind.MISSION_COMPLETED, {
+                    "goal_verified": True,
+                    "scope": "browser_navigation_goal",
+                })
             self._set_audit_status(mission_id, state.status)
-            if implicit:
+            if verified_navigation is not None:
+                self._active_mission_id = None
+                self._explicit = False
+                if log:
+                    log("[MISSION] state=COMPLETED evidence=independent_browser_navigation")
+            elif implicit:
                 self.detach_mission()
             return result
 

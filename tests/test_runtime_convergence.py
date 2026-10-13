@@ -89,6 +89,48 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertEqual(graph.nodes()[0].result["action_names"], ["browser_click"])
         self.assertEqual(graph.summary()["completed"], 1)
 
+    def test_navigation_goal_completes_from_verified_receipts_not_model_claim(self):
+        from tests.test_browser_goal_proof_v11b import GOAL, DEST, journey
+        mid = self.runtime.begin_mission(GOAL)
+        self.delegate.result = SimpleNamespace(
+            text="Mission vérifiée à partir des actions.",
+            actions=tuple(journey()),
+        )
+        events = []
+        result = self.runtime.run(GOAL, log=events.append)
+        self.assertEqual(result.text, self.delegate.result.text)
+        saved = self.saved(mid)
+        self.assertEqual(saved.status, MissionStatus.COMPLETED)
+        self.assertTrue(saved.observed_state["goal_verified"])
+        self.assertEqual(saved.observed_state["verified_navigation_url"], DEST)
+        self.assertTrue(saved.proof_refs[0].startswith("browser_navigation_verified:"))
+        self.assertIsNone(self.runtime.active_mission_id)
+        self.assertTrue(any("state=COMPLETED" in event for event in events))
+
+    def test_navigation_goal_requires_all_requested_evidence(self):
+        from tests.test_browser_goal_proof_v11b import GOAL, journey
+        mid = self.runtime.begin_mission(GOAL)
+        self.delegate.result = SimpleNamespace(
+            text="clicked", actions=tuple(journey()[:-1]),
+        )
+        self.runtime.run(GOAL)
+        saved = self.saved(mid)
+        self.assertEqual(saved.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(saved.observed_state["goal_verified"])
+
+    def test_unresolved_plan_cannot_be_completed_by_navigation_shortcut(self):
+        from tests.test_browser_goal_proof_v11b import GOAL, journey
+        mid = self.runtime.begin_mission(GOAL)
+        ctx, version = self.runtime.context_store.load(mid)
+        ctx.expected_state["semantic_contract"] = {
+            "metadata": {"origin": "same_provider_no_tools_draft"},
+            "unresolved": ["unknown user intention"], "steps": [],
+        }
+        self.runtime.context_store.save(ctx, expected_version=version)
+        self.delegate.result = SimpleNamespace(text="clicked", actions=tuple(journey()))
+        self.runtime.run(GOAL)
+        self.assertFalse(self.saved(mid).observed_state["goal_verified"])
+
     def test_failed_action_blocks_mission_without_rewriting_reply(self):
         self.delegate.result = SimpleNamespace(
             text="erreur", actions=(action(success=False),)

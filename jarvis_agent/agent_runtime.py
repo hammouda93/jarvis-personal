@@ -5159,6 +5159,23 @@ class GroqResponsesAgent:
                     user_text
                 )
                 from .active_mission_supervisor import execution_scope_active
+                # The mission goal is verified by source refs, actual
+                # navigation and an independent readback. Do not spend another
+                # model round asking an AI to paraphrase an already proven
+                # result. Other goals remain handled by the normal planner.
+                from .browser_goal_proof import verify_browser_navigation_goal
+                navigation_proof = verify_browser_navigation_goal(user_text, actions)
+                if navigation_proof is not None and not execution_scope_active():
+                    text = (
+                        f"Mission vérifiée : lien « {navigation_proof.target} » "
+                        f"ouvert. URL finale : {navigation_proof.url}"
+                    )
+                    self._messages.append({"role": "assistant", "content": text})
+                    if log:
+                        log("[MISSION] independent_goal_proof=browser_navigation")
+                    self._trim_history()
+                    return AgentTurnResult(text=text, actions=tuple(actions))
+
                 if not execution_scope_active() and _browser_verified_fast_completion(
                     user_text,
                     actions,

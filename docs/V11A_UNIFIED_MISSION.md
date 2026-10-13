@@ -64,3 +64,7 @@ When the user explicitly asks Jarvis to verify or explain the resulting page, th
 ## Tool-schema cost for unambiguous social greetings
 
 A strictly standalone greeting, outside active browser or mission context and without pending approvals, exposes only the reversible read-only capability catalog to the language model. This removes irrelevant tool descriptions on conversational turns such as Bonjour. Any mixed greeting + instruction, contextual mission, pending approval, and ordinary request keeps full capability selection. Not a site-specific rule.
+
+## V11B bounded goal-level certification
+
+An evidence-only, website-agnostic browser goal verifier now recognizes a restricted low-risk journey: explicitly provided start URL, independent active-tab read, inspected DOM, unique observed link target, exact click source ref, verified navigation to the link's href, and post-click independent active-tab readback. It also requires an observed menu expansion when a collapsed menu was encountered and explicitly requested. The reasoning agent can stop without a redundant model round once this chain is complete. The persistent mission controller rechecks the proof independently, records a proof reference and transitions to COMPLETED only for this narrow goal, absent any failures or unresolved/manual semantic contract. Writes, messaging, purchases and arbitrary unverified UI steps remain uncertified. This is an extensible proof profile, not a site-specific script nor blanket automatic completion.
