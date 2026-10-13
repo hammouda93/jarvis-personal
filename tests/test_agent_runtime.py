@@ -841,6 +841,74 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("visible", result.text)
 
+    def test_active_browser_surface_survives_business_domain_tool_scope(self):
+        """Regression: business context must not hide controls in a live UI."""
+        from jarvis_agent.request_context import RequestContext
+
+        class MixedTools(FakeTools):
+            def __init__(self):
+                super().__init__()
+                self.browser_mode = True
+
+            def ollama_tools(self):
+                original = super().ollama_tools()
+                def make(name):
+                    return {"type": "function", "function": {
+                        "name": name, "description": name,
+                        "parameters": {"type": "object",
+                                       "properties": {},
+                                       "required": []}}}
+                return original + [
+                    make("browser_list_tabs"),
+                    make("browser_get_active_tab"),
+                    make("browser_observe_dom"),
+                    make("browser_find"),
+                    make("browser_click"),
+                    make("browser_verify"),
+                    make("msf_count_records"),
+                    make("msf_query_records"),
+                ]
+
+        tools = MixedTools()
+        agent = GroqResponsesAgent(tools)
+        context = RequestContext(enabled=True)
+        agent.request_context = context
+        names = lambda: {t["function"]["name"] for t in agent._tool_definitions(
+            ms_football_only=True,
+            msf_tool_names={"msf_count_records", "msf_query_records"},
+        ) if t.get("type") == "function"}
+
+        available = names()
+        for essential in (
+            "browser_observe_dom", "browser_find", "browser_click",
+            "browser_verify", "request_tool_capabilities",
+        ):
+            self.assertIn(essential, available)
+        # The compact first pack need not contain DB schemas for a browser UI
+        # interaction; the model can request them through the local catalog.
+        self.assertIn("msf_count_records", context.available)
+        self.assertIn("msf_query_records", context.available)
+        context.select_tools({"names": [
+            "browser_find", "browser_click", "msf_count_records",
+        ]})
+        self.assertIn("browser_click", names())
+        self.assertIn("msf_count_records", names())
+
+        # Feedback does not grant fresh browser mutations.
+        agent._feedback_only_turn = True
+        restricted = names()
+        self.assertIn("browser_observe_dom", restricted)
+        self.assertNotIn("browser_click", restricted)
+        self.assertNotIn("msf_describe_schema", restricted)
+
+        # Without any current browser scope, don't expose unrelated UI tools.
+        tools.browser_mode = False
+        context.begin_turn()
+        self.assertNotIn("browser_click", names())
+        self.assertIn("msf_count_records", context.available)
+        context.select_tools({"names": ["msf_count_records"]})
+        self.assertIn("msf_count_records", names())
+
     def test_browser_grounding_is_not_an_execution_domain_policy(self):
         class BrowserScopeTools(FakeTools):
             def ollama_tools(self):
@@ -3375,8 +3443,11 @@ class AgentRuntimeTests(unittest.TestCase):
             ],
         )
 
+        # This case isolates a prohibited context reset. An actual
+        # imperative tab-close requires a real close_tab call, covered by
+        # separate browser contract tests.
         result = agent.run(
-            "Fermes l'onglet de MS Football dans Chrome."
+            "Parlons de l'onglet de MS Football dans Chrome."
         )
 
         self.assertNotIn(
@@ -3623,6 +3694,15 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertFalse(_preselection_navigation_pending(mixed, [opened]))
         self.assertFalse(_preselection_navigation_pending(
             "Ouvre le premier résultat.", [opened]))
+        # Actual regression: commas were not treated as stage boundaries;
+        # initial YouTube navigation was refused before reaching the user's
+        # already working normal-profile Chrome Bridge.
+        french = ("Ouvre YouTube, recherche Messi, ouvre la première vidéo, "
+                  "puis reviens aux résultats.")
+        self.assertTrue(_preselection_navigation_pending(french, []))
+        self.assertFalse(_preselection_navigation_pending(french, [opened]))
+        self.assertFalse(_preselection_navigation_pending(
+            "Ouvre la première vidéo.", []))
 
     def test_v10g_compound_browser_dispatch_keeps_grounded_click(self):
         class BrowserTools(FakeTools):
@@ -4382,6 +4462,16 @@ class AgentRuntimeTests(unittest.TestCase):
                         [action],
                     )
                 )
+
+    def test_french_inflected_tab_close_is_not_missed(self):
+        for sentence in (
+            "fermes cet onglet uniquement",
+            "fermes cet onglet aussi",
+            "ferme cet onglet",
+            "fermez cet onglet",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertIn("close_tab", _requested_action_capabilities(sentence))
 
     def test_verified_browser_capability_finishes_without_extra_model_round(self):
         class VerifiedBrowserTools(FakeTools):

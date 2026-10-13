@@ -259,7 +259,12 @@ class NativeToolRegistry:
                     "query": {
                         "type": "string",
                         "description": "Question de recherche précise avec le contexte utile.",
-                    }
+                    },
+                    "subqueries": {
+                        "type": "array", "items": {"type": "string"},
+                        "maxItems": 3,
+                        "description": "Optionnel : jusqu'à 3 sous-questions pour recouper plusieurs thèmes sans ouvrir Chrome.",
+                    },
                 },
                 ["query"],
             ),
@@ -1172,7 +1177,9 @@ class NativeToolRegistry:
             query = str(args.get("query", "")).strip()
             if len(query) < 2:
                 return self._error(name, "La recherche est vide.")
-            result = BACKGROUND_WEB_RESEARCH.research(query)
+            result = BACKGROUND_WEB_RESEARCH.research(
+                query, subqueries=args.get("subqueries"),
+            )
             return AgentActionResult(
                 name=name,
                 success=result.success,

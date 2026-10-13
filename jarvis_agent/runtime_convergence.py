@@ -524,6 +524,7 @@ class LiveMissionContinuityRuntime:
                 "step": node.task_id,
                 "state": node.status.value,
                 "action_names": list(node.result.get("action_names", []))[:6],
+                "evidence_counts": dict(node.result.get("evidence_counts") or {}),
             }
             for node in graph.nodes()[-5:]
         ]
@@ -532,6 +533,15 @@ class LiveMissionContinuityRuntime:
             "goal": state.user_goal[:650],
             "recent_turns": previous,
             "goal_proved": bool(state.observed_state.get("goal_verified")),
+            "provider_pause": bool(state.observed_state.get(
+                "provider_paused_needs_fresh_observation"
+            )),
+            "resume_policy": (
+                "Observe current state first. Do not replay previous external actions. "
+                "Retain original user goal and all prohibitions."
+                if state.observed_state.get("provider_paused_needs_fresh_observation")
+                else ""
+            ),
             "semantic_plan": [
                 {"id": str(step.get("step_id", ""))[:80],
                  "intent": str(step.get("intent", ""))[:180],
@@ -822,24 +832,61 @@ class LiveMissionContinuityRuntime:
                     # do not implement run_with_context.
                     result = self.delegate.run(user_text, log=log, phase=phase)
             except Exception as exc:
-                # The delegate might have executed an external side effect.
-                # Fail closed, including on a quota error or storage timeout.
+                # A provider failure occurs at a synchronous model boundary:
+                # no browser/Windows tool is in flight. Preserve tool receipts
+                # already returned earlier in the turn, and allow the NEXT
+                # user turn to re-observe the real state rather than requiring
+                # a manual side-effect review for a quota/budget error.
+                # Any unknown mutating tool effect still fails closed.
+                from .agent_runtime import AgentRuntimeUnavailable
+                from .mission_outcome_policy import failure_requires_review
                 state, _ = self.context_store.load(mission_id)
+                partial = tuple(getattr(self.delegate, "_last_partial_actions", ()) or ())
+                uncertain = getattr(getattr(self.delegate, "tools", None),
+                                    "uncertain_scopes", None)
+                provider_pause = (
+                    isinstance(exc, AgentRuntimeUnavailable)
+                    and not failure_requires_review(partial)
+                    and not bool(uncertain)
+                )
                 node.status = TaskStatus.WAITING_EXTERNAL
                 node.error = type(exc).__name__[:100]
-                state.status = MissionStatus.BLOCKED
-                state.pending_action = {
-                    "reason": "delegate_exception_outcome_unknown",
-                    "manual_review_required": True,
+                node.result = {
+                    "action_count": len(partial),
+                    "action_names": [str(getattr(a, "name", ""))[:100]
+                                     for a in partial],
+                    "provider_paused": provider_pause,
                 }
+                state.status = (
+                    MissionStatus.WAITING_EXTERNAL if provider_pause
+                    else MissionStatus.BLOCKED
+                )
+                state.pending_action = (
+                    {} if provider_pause else {
+                        "reason": "delegate_exception_outcome_unknown",
+                        "manual_review_required": True,
+                    }
+                )
                 state.observed_state["last_exception_type"] = type(exc).__name__[:100]
+                state.observed_state["provider_paused_needs_fresh_observation"] = provider_pause
+                state.current_step_id = None
+                state.current_step = ""
                 self.graph_store.save(graph)
                 self.context_store.save(state)
                 self._audit(
-                    mission_id, "mission.uncertain_outcome",
-                    {"task_id": task_id, "error_type": type(exc).__name__[:100]},
+                    mission_id,
+                    "mission.provider_paused" if provider_pause else "mission.uncertain_outcome",
+                    {
+                        "task_id": task_id,
+                        "error_type": type(exc).__name__[:100],
+                        "action_names": node.result["action_names"],
+                        "no_automatic_action_replay": True,
+                        "fresh_read_required": provider_pause,
+                    },
                 )
-                self._set_audit_status(mission_id, MissionStatus.BLOCKED)
+                self._set_audit_status(mission_id, state.status)
+                if log and provider_pause:
+                    log("[MISSION] provider_paused=1 resume=read_current_state_without_replay")
                 if implicit:
                     self.detach_mission()
                 raise
@@ -848,34 +895,95 @@ class LiveMissionContinuityRuntime:
             state, _ = self.context_store.load(mission_id)
             actions = tuple(getattr(result, "actions", ()) or ())
             failed = sum(not bool(getattr(action, "success", False)) for action in actions)
-            node.status = TaskStatus.FAILED if failed else TaskStatus.COMPLETED
+            # A failed read-only observation is not a failed side-effect.
+            # Preserve genuine uncertain/mutating failures as BLOCKED.
+            from .mission_outcome_policy import failure_requires_review
+            recoverable_failure = bool(failed) and not failure_requires_review(actions)
+            node.status = (TaskStatus.WAITING_EXTERNAL if recoverable_failure
+                           else TaskStatus.FAILED if failed else TaskStatus.COMPLETED)
             action_names = [
                 str(getattr(action, "name", "") or "")[:100]
                 for action in actions
             ]
             routes = self._observe_routes(action_names, state.user_goal)
+            from .mission_progress import action_evidence_counts
+            evidence_counts = action_evidence_counts(actions)
             node.result = {
                 "action_count": len(actions),
                 "failed_action_count": failed,
                 "action_names": action_names,
                 "agent_routes": routes,
+                "evidence_counts": evidence_counts,
             }
             state.observed_state["completed_turns"] = index
             state.observed_state["last_action_count"] = len(actions)
             state.observed_state["last_failed_action_count"] = failed
+            state.observed_state["last_evidence_counts"] = evidence_counts
+            state.observed_state["last_pause_reason"] = str(
+                getattr(result, "pause_reason", "") or "")[:80]
             state.observed_state["last_routing_needs_review"] = any(
                 route["needs_review"] for route in routes
             )
-            state.observed_state["goal_verified"] = False
+            from .browser_goal_proof import verify_browser_navigation_goal
+            from .memory_goal_proof import (
+                foundation_memory_store,
+                verify_explicit_memory_write,
+            )
+            ready_for_proof = not failed and not getattr(result, "pause_reason", "")
+            verified_navigation = (
+                verify_browser_navigation_goal(state.user_goal, actions)
+                if ready_for_proof else None
+            )
+            verified_memory = (
+                verify_explicit_memory_write(
+                    state.user_goal, actions,
+                    foundation_memory_store(self.delegate),
+                )
+                if ready_for_proof else None
+            )
+            contract = state.expected_state.get("semantic_contract")
+            # A generated plan is advisory; explicit registered or
+            # semantically unresolved plans keep their existing proof gate.
+            if isinstance(contract, dict):
+                metadata = contract.get("metadata") or {}
+                if (metadata.get("origin") != "same_provider_no_tools_draft"
+                        or contract.get("unresolved")):
+                    verified_navigation = None
+                    verified_memory = None
+            verified_goal = verified_navigation or verified_memory
+            if verified_navigation is not None:
+                state.proof_refs.append(verified_navigation.proof_ref)
+                state.observed_state["goal_verified"] = True
+                state.observed_state["verified_navigation_url"] = verified_navigation.url
+                state.observed_state["verified_navigation_target"] = verified_navigation.target
+                state.observed_state["proof_scope"] = "browser_navigation_goal"
+            elif verified_memory is not None:
+                state.proof_refs.append(verified_memory.proof_ref)
+                state.observed_state["goal_verified"] = True
+                state.observed_state["verified_memory_id"] = verified_memory.memory_id
+                state.observed_state["proof_scope"] = "durable_user_memory"
+            else:
+                state.observed_state["goal_verified"] = False
             # A successful click/write does not prove the intended recipient,
             # target, or overall mission. Explicit missions always await proof.
             state.status = (
-                MissionStatus.BLOCKED if failed
+                MissionStatus.COMPLETED if verified_goal is not None
+                else MissionStatus.WAITING_EXTERNAL if recoverable_failure
+                else MissionStatus.BLOCKED if failed
                 else MissionStatus.WAITING_EXTERNAL
                 if actions or self._explicit
                 else MissionStatus.COMPLETED
             )
-            if failed:
+            if recoverable_failure:
+                state.pending_action = {}
+                state.observed_state["recoverable_read_only_failure"] = True
+                self._audit(mission_id, "mission.observation_recoverable", {
+                    "task_id": task_id,
+                    "failed_tools": [str(getattr(a, "name", ""))[:100]
+                                     for a in actions if not a.success],
+                    "next": "observe_fresh_state_without_replaying_mutations",
+                })
+            elif failed:
                 state.pending_action = {
                     "reason": "tool_reported_failure",
                     "manual_review_required": True,
@@ -890,12 +998,42 @@ class LiveMissionContinuityRuntime:
                     "task_id": task_id,
                     "action_count": len(actions),
                     "failed_action_count": failed,
-                    "goal_verified": False,
+                    "goal_verified": verified_goal is not None,
                     "mission_status": state.status.value,
                 },
             )
+            if verified_navigation is not None:
+                self._audit(mission_id, EventKind.PROOF, {
+                    "source": "independent_browser_navigation",
+                    "proof_ref": verified_navigation.proof_ref,
+                    "verified_url": verified_navigation.url[:300],
+                })
+                self._audit(mission_id, EventKind.MISSION_COMPLETED, {
+                    "goal_verified": True,
+                    "scope": "browser_navigation_goal",
+                })
+            if verified_memory is not None:
+                self._audit(mission_id, EventKind.PROOF, {
+                    "source": "independent_sqlite_memory",
+                    "proof_ref": verified_memory.proof_ref,
+                    "memory_id": verified_memory.memory_id,
+                })
+                self._audit(mission_id, EventKind.MISSION_COMPLETED, {
+                    "goal_verified": True,
+                    "scope": "durable_user_memory",
+                })
             self._set_audit_status(mission_id, state.status)
-            if implicit:
+            if verified_goal is not None:
+                self._active_mission_id = None
+                self._explicit = False
+                if log:
+                    evidence_type = (
+                        "independent_browser_navigation"
+                        if verified_navigation is not None
+                        else "independent_sqlite_memory"
+                    )
+                    log(f"[MISSION] state=COMPLETED evidence={evidence_type}")
+            elif implicit:
                 self.detach_mission()
             return result
 

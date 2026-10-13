@@ -7,6 +7,7 @@ come from runtime tool results; a successful tool is not goal completion.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import ast
 import json
 import re
 import unicodedata
@@ -129,6 +130,107 @@ def _tool_step_hint(tool: str, steps: tuple[str, ...]) -> int | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _target_evidence_hint(result, steps, earlier, *, clicked_ref=""):
+    """Correlate a verified UI transition with an observed link label.
+
+    A model-generated URL or a tool name alone is NEVER evidence. This uses
+    the observed href/label of a unique DOM find and the verified destination
+    in the later click's post-observation. It only enriches the trace; no
+    step or overall goal is certified here.
+    """
+    if (getattr(result, "name", None) != "browser_click"
+            or not getattr(result, "success", False)):
+        return None
+    try:
+        detail = json.loads(getattr(result, "detail", "") or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(detail, dict) or detail.get("verified") is not True:
+        return None
+    if detail.get("postcondition") != "navigation_observed":
+        return None
+    current = detail.get("post_observation") or {}
+    tab = current.get("tab") if isinstance(current, dict) else None
+    url = str(tab.get("url") or "") if isinstance(tab, dict) else ""
+    if not url.startswith(("https://", "http://")):
+        return None
+    labels = set()
+    for prior in earlier:
+        if getattr(prior, "name", None) != "browser_find" or not getattr(prior, "success", False):
+            continue
+        try:
+            parsed = json.loads(getattr(prior, "detail", "") or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        matches = parsed.get("matches")
+        if not isinstance(matches, list) or len(matches) != 1:
+            continue
+        match = matches[0]
+        if not isinstance(match, dict):
+            continue
+        observed_ref = str(match.get("ref") or "")
+        if clicked_ref and observed_ref:
+            # Directly linked tool call ref is stronger than an href: the
+            # page may redirect after clicking a genuinely observed target.
+            if observed_ref != clicked_ref:
+                continue
+        elif str(match.get("href") or "") != url:
+            continue
+        label = _normalized(match.get("name") or match.get("text") or "")
+        if len(label) >= 4:
+            labels.add(label)
+    if len(labels) != 1:
+        return None
+    label = next(iter(labels))
+    indices = [idx for idx, step in enumerate(steps, 1)
+               if label in _normalized(step) and
+               re.search(r"\b(?:clique|cliquer|click|ouvre|ouvrir|open)\b",
+                         _normalized(step))]
+    return indices[0] if len(indices) == 1 else None
+
+
+def _anaphoric_ui_activity_hint(result, steps):
+    """Associate an actual UI click with a conditional anaphoric step.
+
+    Example shape: 'inspect the panel, then open it if needed', followed by
+    a click on an *observed* control named 'Open panel'. This is a tentative
+    tool-activity annotation, NOT a verified step or an authorization.
+    """
+    if (getattr(result, "name", None) not in {"browser_click", "click_ui_element"}
+            or not getattr(result, "success", False)):
+        return None
+    try:
+        detail = json.loads(getattr(result, "detail", "") or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(detail, dict):
+        return None
+    target = detail.get("target_after")
+    if not isinstance(target, dict):
+        return None
+    label = _normalized(target.get("name") or target.get("aria_label") or "")
+    if not re.search(r"\b(?:ouvrir|ouvre|open)\b", label):
+        return None
+    # Prefer significant tokens from the observed target label, not invented
+    # application-specific menu identifiers or untrusted DOM instructions.
+    words = set(re.findall(r"[a-z]{4,}", label)) - {
+        "ouvrir", "ouvre", "open", "ouvrirai", "openit", "button", "bouton",
+    }
+    if not words:
+        return None
+    candidates = []
+    for i, step in enumerate(steps):
+        current = _normalized(step)
+        if not re.search(r"\b(?:ouvre|ouvrir|open)[- ](?:le|la|les|it)\b", current):
+            continue
+        prior = " ".join(_normalized(value) for value in steps[:i])
+        if prior and any(re.search(r"\b" + re.escape(word) + r"\b", prior) for word in words):
+            candidates.append(i + 1)
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _evidence_level(result) -> str:
     if not bool(getattr(result, "success", False)):
         return "FAILED"
@@ -154,13 +256,26 @@ class ConversationMissionTrace:
     mission_id: str = ""
     previous: "ConversationMissionTrace | None" = None
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
+    planned_steps: tuple[str, ...] = ()
     steps: tuple[str, ...] = field(init=False)
     tool_calls: list[str] = field(default_factory=list)
+    _tool_call_refs: list[str] = field(default_factory=list)
     _step_tools: dict[int, list[str]] = field(default_factory=dict)
     _finished: bool = False
+    _goal_proof_logged: bool = False
 
     def __post_init__(self):
-        self.steps = requested_steps(self.user_request) or (self.user_request.strip(),)
+        # A durable semantic contract, when present, is the ONE step list.
+        # The legacy clause splitter is only a provisional fallback for
+        # unplanned turns; it must not contradict a registered six-step plan.
+        prepared = tuple(
+            str(value).strip()[:180] for value in self.planned_steps[:24]
+            if str(value).strip()
+        )
+        self.steps = (
+            prepared if prepared else
+            requested_steps(self.user_request) or (self.user_request.strip(),)
+        )
 
     def _log(self, line: str):
         self.emit(line)
@@ -178,7 +293,7 @@ class ConversationMissionTrace:
         self._log(
             f"[MISSION_TRACE] id={self.trace_id} state=RECEIVED "
             f"mission_id={self.mission_id or 'none'} objective={_safe(self.user_request)} "
-            f"outline_source=user_clauses_provisional steps={len(self.steps)}"
+            f"outline_source={'semantic_contract_draft' if self.planned_steps else 'user_clauses_provisional'} steps={len(self.steps)}"
         )
         for idx, step in enumerate(self.steps, 1):
             self._log(
@@ -194,6 +309,20 @@ class ConversationMissionTrace:
         if match:
             name = match.group(1)
             self.tool_calls.append(name)
+            # Capture only the opaque observed target ref from the agent's
+            # own tool dispatch log, not the full arguments or UI content.
+            clicked_ref = ""
+            raw = line.split(" args=", 1)
+            if len(raw) == 2 and len(raw[1]) < 3000:
+                try:
+                    call_args = ast.literal_eval(raw[1])
+                    if isinstance(call_args, dict):
+                        candidate = call_args.get("ref")
+                        if isinstance(candidate, str) and len(candidate) < 300:
+                            clicked_ref = candidate
+                except (SyntaxError, ValueError, TypeError, MemoryError):
+                    pass
+            self._tool_call_refs.append(clicked_ref)
             hint = _tool_step_hint(name, self.steps)
             phase = ("VERIFYING" if name in _VERIFIERS else
                      "OBSERVING" if name in _OBSERVERS else "ACTING")
@@ -216,6 +345,14 @@ class ConversationMissionTrace:
                 f"tool={match.group(1)} success={match.group(2).lower()} "
                 f"goal_completed=not_established"
             )
+        elif line == "[MISSION] state=COMPLETED evidence=independent_browser_navigation":
+            # Only the trusted convergence runtime announces this state.
+            # Tool successes and conversational hints cannot certify goals.
+            self._goal_proof_logged = True
+            self._log(
+                f"[MISSION_TRACE] id={self.trace_id} "
+                "state=GOAL_CERTIFIED proof_source=independent_browser_navigation"
+            )
         elif line.startswith("[MISSION] proof_repair="):
             self._log(
                 f"[MISSION_TRACE] id={self.trace_id} state=RECOVERING "
@@ -227,28 +364,75 @@ class ConversationMissionTrace:
             return
         self._finished = True
         actions = tuple(actions)
-        for result in actions:
+        earlier = []
+        call_sequence_aligned = (
+            len(actions) == len(self.tool_calls)
+            and all(str(getattr(action, "name", "")) == call
+                    for action, call in zip(actions, self.tool_calls))
+        )
+        for action_index, result in enumerate(actions):
             name = str(getattr(result, "name", ""))
             hint = _tool_step_hint(name, self.steps)
+            clicked_ref = (self._tool_call_refs[action_index]
+                           if call_sequence_aligned else "")
+            provenance_hint = _target_evidence_hint(
+                result, self.steps, earlier, clicked_ref=clicked_ref
+            )
+            activity_hint = _anaphoric_ui_activity_hint(result, self.steps)
             evidence = _evidence_level(result)
             if hint is not None:
                 self._step_tools.setdefault(hint, []).append(evidence)
+            if activity_hint is not None:
+                self._step_tools.setdefault(activity_hint, []).append(evidence)
+                self._log(
+                    f"[MISSION_STEP] id={self.trace_id} "
+                    f"step={activity_hint}/{len(self.steps)} "
+                    "state=ACTIVITY_CORRELATED source=observed_ui_target "
+                    "authoritative_assignment=false goal_verified=not_established"
+                )
+            if provenance_hint is not None:
+                self._step_tools.setdefault(provenance_hint, []).append(evidence)
+                self._log(
+                    f"[MISSION_STEP] id={self.trace_id} "
+                    f"step={provenance_hint}/{len(self.steps)} "
+                    "state=EVIDENCE_CORRELATED source=observed_href_and_verified_navigation "
+                    "authoritative_assignment=false goal_verified=not_established"
+                )
             self._log(
                 f"[MISSION_EVIDENCE] id={self.trace_id} tool={name} "
                 f"effect={evidence} goal_proof=not_inferred"
             )
+            earlier.append(result)
+        certified = self._goal_proof_logged and not error
         for idx, step in enumerate(self.steps, 1):
             evidences = self._step_tools.get(idx, [])
-            state = "TOOL_ACTIVITY_RECORDED" if evidences else "NO_ASSIGNED_TOOL_EVIDENCE"
-            self._log(
-                f"[MISSION_STEP] id={self.trace_id} step={idx}/{len(self.steps)} "
-                f"state={state} goal_verified=not_established"
-            )
-        result = ("INTERRUPTED" if error else
+            if certified:
+                # This outline is a non-authoritative split of the original
+                # user request; its steps have no independent evidence gate.
+                # Once the trusted runtime has certified the ENTIRE original
+                # goal, reporting NO_ASSIGNED_TOOL_EVIDENCE for an outlined
+                # clause contradicts the goal outcome. Distinguish the goal
+                # certificate from an independently verified step, without
+                # inventing a per-step proof or retroactively assigning tools.
+                self._log(
+                    f"[MISSION_STEP] id={self.trace_id} step={idx}/{len(self.steps)} "
+                    "state=COVERED_BY_GOAL_CERTIFICATE "
+                    "goal_verified=certified step_verified=not_independently_assessed "
+                    f"tool_evidence={'correlated' if evidences else 'not_assigned'} "
+                    "source=trusted_runtime"
+                )
+            else:
+                state = ("TOOL_ACTIVITY_RECORDED"
+                         if evidences else "NO_ASSIGNED_TOOL_EVIDENCE")
+                self._log(
+                    f"[MISSION_STEP] id={self.trace_id} step={idx}/{len(self.steps)} "
+                    f"state={state} goal_verified=not_established"
+                )
+        result = ("INTERRUPTED" if error else "COMPLETED" if certified else
                   "NO_TOOLS" if not actions else "RESULTS_RECORDED_GOAL_UNVERIFIED")
         self._log(
             f"[MISSION_TRACE] id={self.trace_id} state={result} "
             f"tool_calls={len(self.tool_calls)} results={len(actions)} "
-            f"goal_verification=not_certified "
+            f"goal_verification={'certified' if certified else 'not_certified'} "
             f"error_type={error or 'none'}"
         )

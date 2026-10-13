@@ -12,6 +12,43 @@ from dataclasses import replace
 from .semantic_memory import MemoryProjection
 
 
+_RAW_DATE_TAG = "jarvis_event_date="
+
+
+def raw_temporal_tag(raw: str, *, reference_date: date | None = None) -> str:
+    """Anchor a user-authored relative date without altering the literal note.
+
+    This is a date mention, NOT a claim that the event was scheduled.
+    The caller owns the user-provenance admission and write permission.
+    """
+    import unicodedata
+    plain = unicodedata.normalize("NFKD", str(raw or "").casefold())
+    plain = "".join(c for c in plain if not unicodedata.combining(c))
+    matches = []
+    for term, offset in (
+        (r"\bapres[ -]demain\b", 2),
+        (r"\bdemain\b", 1),
+        (r"\baujourd['’]?hui\b", 0),
+    ):
+        found = list(re.finditer(term, plain))
+        if offset == 1:
+            found = [
+                match for match in found
+                if not re.search(r"apres[ -]$", plain[max(0, match.start()-8):match.start()])
+            ]
+        matches.extend((offset, match.start()) for match in found)
+    if len(matches) != 1:
+        return ""
+    local_day = reference_date or date.today()
+    resolved = (local_day + timedelta(days=matches[0][0])).isoformat()
+    return _RAW_DATE_TAG + resolved
+
+
+def raw_temporal_date_from_tags(tags: str) -> str:
+    match = re.search(r"(?:^|\s)jarvis_event_date=(\d{4}-\d{2}-\d{2})(?=\s|$)", str(tags or ""))
+    return iso_day(match.group(1)) if match else ""
+
+
 def iso_day(value: str) -> str:
     """Accept canonical ISO dates and ISO datetimes, never arbitrary prefixes."""
     text = str(value or "").strip()
@@ -113,6 +150,26 @@ def events_in_range(
             "raw": str(fact.raw_content or "")[:900],
             "warning": warning,
         })
+    # Direct-agent Memory V5 intentionally has no LLM projection.
+    # Include durable user-authored date anchors from the RAW SQLite row.
+    # Do not treat a date mention as proof of attendance/scheduling.
+    if hasattr(store, "all_memories"):
+        indexed_ids = {item["memory_id"] for item in hits}
+        for item in store.all_memories():
+            day = raw_temporal_date_from_tags(item.tags)
+            if not day or not start_iso <= day <= end_iso or item.id in indexed_ids:
+                continue
+            total += 1
+            if len(hits) >= limit:
+                continue
+            hits.append({
+                "memory_id": item.id, "event_date": day,
+                "raw": str(item.content or "")[:900],
+                "created_at": item.created_at,
+                "provenance": "raw_user_date_anchor",
+                "date_mention_only": True,
+                "warning": "raw_note_not_calendar_confirmation",
+            })
     hits.sort(key=lambda row: (row["event_date"], row["memory_id"]))
     return {
         "status": "resolved" if hits else "missing",

@@ -475,8 +475,54 @@ class FoundationToolAdapter:
                 payload = self.browser.activate_tab(active["tab_id"])
                 self.browser_mode = True
             elif name.startswith("browser_") and self.browser:
-                payload = self.browser.call(name[8:], **args)
+                if name == "browser_observe_dom":
+                    from .observation_readiness import bounded_observation
+                    payload = bounded_observation(
+                        lambda: self.browser.call(name[8:], **args)
+                    )
+                else:
+                    payload = self.browser.call(name[8:], **args)
                 self.browser_mode = True
+
+                # A zero-result search in the current DOM is not proof that
+                # a control doesn't exist or the app cannot do the task.
+                # Provide a SMALL fresh read-only inventory of actionable
+                # controls, with observed refs, so the model can decide whether
+                # to expand a menu, inspect another surface, or ask a question.
+                # No mutation or guessed selector is dispatched here.
+                if (name == "browser_find" and isinstance(payload, dict)
+                        and not payload.get("matches")
+                        and isinstance(args.get("tab_id"), int)):
+                    try:
+                        fresh = self.browser.observe_dom(args["tab_id"])
+                        candidates = [
+                            {
+                                "ref": item.get("ref"),
+                                "type": item.get("type"),
+                                "name": item.get("name") or item.get("aria_label")
+                                        or item.get("placeholder"),
+                                "region": item.get("region"),
+                                "writable": bool(item.get("writable")),
+                            }
+                            for item in (fresh.get("controls") or [])
+                            if isinstance(item, dict) and item.get("ref")
+                            and (item.get("actionable") or item.get("writable"))
+                            and (item.get("name") or item.get("aria_label")
+                                 or item.get("placeholder"))
+                        ][:18]
+                        payload = {
+                            **payload,
+                            "observation_id": fresh.get("observation_id"),
+                            "available_controls": candidates,
+                            "no_match_guidance": (
+                                "No exact match in the previous snapshot. "
+                                "Use only the fresh observed controls/refs; "
+                                "consider a collapsed menu or a different "
+                                "observed role. No click has occurred."
+                            ),
+                        }
+                    except Exception:
+                        pass
 
                 # A replace write is idempotent, so an unknown outcome can be
                 # recovered locally without risking a duplicate side effect:
@@ -575,9 +621,17 @@ class FoundationToolAdapter:
                 # No duplicate write even if semantic projection later fails.
                 writer = (self.projection_worker.queue if tool_mode and self.projection_worker is not None
                           else self.memory)
-                item = writer.remember(
-                    raw, tags=str(args.get("tags", "")),
-                )
+                # Resolve relative date expressions ONLY as source
+                # metadata at the moment of the authorized write. Preserve
+                # the user's exact original words in content. A later query
+                # must not reinterpret "demain" relative to a new day.
+                tags = str(args.get("tags", ""))
+                if tool_mode:
+                    from .memory_temporal import raw_temporal_tag
+                    anchor = raw_temporal_tag(raw)
+                    if anchor:
+                        tags = (tags + " " + anchor).strip()
+                item = writer.remember(raw, tags=tags)
                 if tool_mode:
                     self._durable_memory_written_this_turn = True
                     status = ("raw_saved direct_agent_no_projection"
@@ -598,11 +652,25 @@ class FoundationToolAdapter:
                                 error=f"{type(exc).__name__}: {exc}",
                             )
                             status = "projection_failed_raw_preserved"
+                    # Verify persistence by reading the exact user-authored
+                    # row back from SQLite. The brain may choose this tool,
+                    # but may never forge or paraphrase the stored fact.
+                    recorded = self.memory.get_memory(item.id)
+                    if recorded is None or recorded.content != raw:
+                        raise RuntimeError("persistent_memory_sqlite_readback_failed")
+                    from hashlib import sha256
                     return AgentActionResult(
                         name=name,
                         success=True,
-                        message="Information mémorisée localement.",
-                        detail=f"memory_id={item.id} {status}",
+                        message="Information mémorisée et relue dans SQLite.",
+                        detail=json.dumps({
+                            "memory_id": item.id,
+                            "status": status,
+                            "verified": True,
+                            "source": "sqlite_exact_raw_readback",
+                            "raw_sha256": sha256(recorded.content.encode("utf-8")).hexdigest(),
+                            "db_recorded_at": recorded.created_at,
+                        }, ensure_ascii=False),
                     )
                 return AgentActionResult(
                     name=name,
@@ -885,6 +953,29 @@ class FoundationToolAdapter:
             if name in browser_mutating_names and not isinstance(payload, dict):
                 raise RuntimeError("browser_mutation_missing_result")
             if isinstance(payload,dict):
+                # The post-action ref can differ from the clicked observed ref.
+                if name == "browser_click" and isinstance(args.get("ref"), str):
+                    payload["source_ref"] = args["ref"]
+                if (name == "browser_click"
+                        and payload.get("verified") is True
+                        and payload.get("postcondition") == "navigation_observed"):
+                    # Complete the verifier's read-only check immediately
+                    # after the observed navigation, rather than leaving it
+                    # to a discretionary extra LLM/tool round. Never retry a
+                    # click, alter the active tab or infer a successful goal.
+                    try:
+                        active = self.browser.get_active_tab()
+                    except Exception:
+                        active = None
+                    if isinstance(active, dict):
+                        # This is a separate transport observation. It is NOT
+                        # a copy of post_observation and must match downstream
+                        # before a mission certificate can be issued.
+                        payload["independent_readback"] = {
+                            "tab_id": active.get("tab_id"),
+                            "url": active.get("url"),
+                            "status": active.get("status"),
+                        }
                 if name.startswith("semantic_memory_") and self.semantic_memory_engine is not None:
                     payload.update(self.memory.projection_coverage(self.semantic_memory_engine.parser_version))
                     if self.projection_worker is not None:
@@ -1040,9 +1131,91 @@ class FoundationRuntime:
             return True
         return bool(pending.intersection(scopes))
 
+    def _explicit_durable_memory_turn(self, user_text, *, log=None, phase=None):
+        """Provider-independent, permission-scoped SQLite write.
+
+        Only a standalone, explicit instruction in DIRECT V5 mode qualifies.
+        Mixed web/Windows tasks, questions and supervised/delegated work stay
+        with the ordinary reasoning runtime and its approval boundaries.
+        """
+        from .memory_tool_scope import memory_tool_scope_enabled
+        from .active_mission_supervisor import execution_scope_active
+        from .memory_router import MemoryRouter
+        if (
+            not enabled("JARVIS_MEMORY_CORE_ENABLED")
+            or not enabled("JARVIS_SEMANTIC_MEMORY_V5_ENABLED")
+            or not enabled("JARVIS_MEMORY_AGENT_TOOLS_ENABLED")
+            or not enabled("JARVIS_MEMORY_DIRECT_AGENT_ENABLED")
+            or execution_scope_active()
+            or self.tools.memory is None
+            or MemoryRouter().decide(user_text).kind != "write"
+        ):
+            return None
+        # The user's exact words, not a model-paraphrased argument, become
+        # the durable source. The normal adapter still enforces user-source
+        # authorization and one write per turn.
+        if phase:
+            phase("acting")
+        result = self.tools.execute(
+            "remember_information", {"content": user_text}
+        )
+        if not result.success:
+            from .agent_runtime import AgentTurnResult
+            if log:
+                log("[MEMORY] state=WRITE_FAILED source=user_explicit provider=not_required")
+            return AgentTurnResult(
+                text="La mémorisation persistante n'a pas pu être vérifiée : "
+                     + result.message,
+                actions=(result,),
+            )
+        # A tool success alone is not enough. Read back the exact raw row
+        # from SQLite before asserting persistence or returning its receipt.
+        import re
+        match = re.search(r"\bmemory_id=(\d+)\b", str(result.detail or ""))
+        record = (
+            self.tools.memory.get_memory(int(match.group(1)))
+            if match is not None else None
+        )
+        if record is None or record.content != str(user_text or "").strip():
+            from .agent_runtime import AgentTurnResult
+            if log:
+                log("[MEMORY] state=UNVERIFIED_WRITE source=user_explicit")
+            return AgentTurnResult(
+                text="L'écriture a été envoyée, mais la relecture SQLite "
+                     "ne confirme pas le contenu exact.",
+                actions=(result,),
+            )
+        from .native_tools import AgentActionResult
+        from .agent_runtime import AgentTurnResult
+        from hashlib import sha256
+        import json
+        proof = {
+            "verified": True, "memory_id": record.id,
+            "source": "sqlite_exact_raw_readback",
+            "raw_sha256": sha256(record.content.encode("utf-8")).hexdigest(),
+            "db_recorded_at": record.created_at,
+        }
+        receipt = AgentActionResult(
+            name="remember_information", success=True,
+            message="Souvenir enregistré et relu dans SQLite.",
+            detail=json.dumps(proof, ensure_ascii=False),
+        )
+        if log:
+            log(f"[MEMORY] state=PERSISTED_VERIFIED memory_id={record.id} "
+                "provider=not_required")
+        return AgentTurnResult(
+            text="C'est mémorisé durablement dans ma mémoire locale.",
+            actions=(receipt,),
+        )
+
     def run(self, user_text, *, log=None, phase=None):
         was_browser_mode = self.tools.browser_mode
         self.tools.begin_turn(user_text)
+        immediate = self._explicit_durable_memory_turn(
+            user_text, log=log, phase=phase,
+        )
+        if immediate is not None:
+            return immediate
         browser_context = (
             self.tools.browser_grounding_context()
             if was_browser_mode and self.tools.browser_mode
@@ -1066,6 +1239,11 @@ class FoundationRuntime:
     def run_with_context(self, user_text, context, *, log=None, phase=None):
         was_browser_mode = self.tools.browser_mode
         self.tools.begin_turn(user_text)
+        immediate = self._explicit_durable_memory_turn(
+            user_text, log=log, phase=phase,
+        )
+        if immediate is not None:
+            return immediate
         browser_context = (
             self.tools.browser_grounding_context()
             if was_browser_mode and self.tools.browser_mode

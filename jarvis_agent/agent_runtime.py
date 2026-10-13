@@ -177,7 +177,10 @@ Tu disposes de capacités réelles. Quand l'utilisateur demande une action:
   Utilise-le quand une information actuelle/externe est nécessaire, lorsque
   les preuves locales ne suffisent pas, ou pour rechercher une solution après
   un échec récupérable. Préfère les sources officielles et recoupe les points
-  importants avant de modifier la stratégie;
+  importants avant de modifier la stratégie. Pour une étude multi-axes,
+  utilise jusqu'à trois subqueries pertinentes dans le même appel research_web,
+  mais n'en ajoute pas à une question simple. Les extraits du fournisseur ne
+  prouvent pas une lecture intégrale du document d'origine;
 - open_web_search ouvre volontairement une page visible dans le navigateur.
   Ne l'utilise que si l'utilisateur demande explicitement d'ouvrir, voir ou
   afficher la recherche dans son navigateur;
@@ -600,7 +603,7 @@ def _clause_action_capabilities(text: str) -> set[str]:
         required.add("site_search")
 
     close_requested = re.search(
-        r"\b(?:ferme|fermer|close|fermez)\b",
+        r"\b(?:ferme|fermes|fermer|close|fermez)\b",
         normalized,
     )
     explicit_tab = re.search(
@@ -778,7 +781,21 @@ def _preselection_navigation_pending(
     """
     from .instruction_clauses import positive_instruction_clauses
 
-    clauses = positive_instruction_clauses(user_text)
+    # The clause parser deliberately preserves most commas to avoid
+    # reinterpreting constraints. Here, however, a comma followed by a
+    # *new imperative* is a genuine stage boundary: "Ouvre YouTube,
+    # recherche Messi, ouvre la première vidéo". Without splitting it,
+    # the last ordinal selection incorrectly blocks the initial open_url.
+    clauses = [
+        stage.strip()
+        for clause in positive_instruction_clauses(user_text)
+        for stage in re.split(
+            r",\s*(?=(?:ouvre|ouvres|ouvrez|ouvrir|open|"
+            r"cherche|recherche|search|clique|selectionne)\b)",
+            clause,
+        )
+        if stage.strip()
+    ]
     selection = next((
         i for i, clause in enumerate(clauses)
         if _clause_result_selection(clause)
@@ -3062,7 +3079,29 @@ class GroqResponsesAgent:
                 != "type_text_active_window"
             ]
         if ms_football_only:
+            # A domain context only augments the available business tools.
+            # It must NOT erase the currently observed interaction surface:
+            # a follow-up asking to interact with a menu/button remains a
+            # browser/desktop action even if the page exposes a database API.
+            # This is based on active runtime scope, never on site/app names.
             allowed = set(msf_tool_names or ())
+            if bool(getattr(self.tools, "browser_mode", False)):
+                browser_surface_names = {
+                    str((item.get("function") or {}).get("name") or "")
+                    for item in tools
+                    if (
+                        str((item.get("function") or {}).get("name") or "").startswith("browser_")
+                        or str((item.get("function") or {}).get("name") or "") == "open_url"
+                    )
+                }
+                if self._feedback_only_turn:
+                    # Feedback about an action is not authorization for new
+                    # browser mutations, regardless of domain selection.
+                    browser_surface_names &= {
+                        "browser_list_tabs", "browser_get_active_tab",
+                        "browser_observe_dom", "browser_find", "browser_verify",
+                    }
+                allowed.update(browser_surface_names)
             allowed.update(
                 {
                     "reset_conversation_context",
@@ -3153,7 +3192,29 @@ class GroqResponsesAgent:
         tools = [*tools, checkpoint_tool] if checkpoint_tool else tools
         context = getattr(self, "request_context", None)
         if context is not None and not self._memory_scope_active:
-            tools = context.prepare_tools(tools, browser_mode=bool(getattr(self.tools, "browser_mode", False)))
+            from .request_context import strict_social_greeting
+            from .active_mission_supervisor import execution_scope_active
+            social_only = (
+                strict_social_greeting(
+                    str(getattr(self.tools, "current_user_text", "") or "")
+                )
+                and not bool(getattr(self.tools, "browser_mode", False))
+                and not self._active_domain
+                and not self._ephemeral_context
+                and not self._session_grounding
+                and self._pending_function_approval is None
+                and not execution_scope_active()
+            )
+            tools = context.prepare_tools(
+                tools,
+                browser_mode=bool(getattr(self.tools, "browser_mode", False)),
+                conversational_only=social_only,
+                preserve_required=(
+                    ("remember_information",)
+                    if self._memory_write_allowed and not social_only
+                    else ()
+                ),
+            )
         return tools
 
     @staticmethod
@@ -3718,6 +3779,10 @@ class GroqResponsesAgent:
         self.last_reported_usage = None
         self.last_api_error_category = ""
         actions: list[AgentActionResult] = []
+        # Keep an in-memory, turn-scoped receipt for a model/provider failure
+        # that happens AFTER tools have already returned. This is evidence of
+        # past dispatch, not permission to rerun any action or proof of goal.
+        self._last_partial_actions = actions
         end_session = False
         should_exit = False
         failed_results: dict[str, AgentActionResult] = {}
@@ -4498,6 +4563,44 @@ class GroqResponsesAgent:
                         "réelle de la page, donc je ne vais pas les inventer."
                     )
 
+                # For a simple verified tab closure, use the actual Chrome
+                # close receipt as the source of truth for the now-active tab.
+                # The model must not call an unrelated tab the previous page.
+                if _requested_action_capabilities(user_text) == {"close_tab"}:
+                    closure = next((
+                        a for a in reversed(actions)
+                        if a.name == "browser_close_tab" and a.success
+                    ), None)
+                    if closure is not None:
+                        receipt = _action_detail_dict(closure)
+                        if (receipt.get("verified") is True
+                                and receipt.get("postcondition") == "tab_absent"
+                                and isinstance(receipt.get("tabs"), list)):
+                            active_tabs = [
+                                tab for tab in receipt["tabs"]
+                                if isinstance(tab, dict) and tab.get("active") is True
+                            ]
+                            text = "L’onglet demandé a été fermé."
+                            if len(active_tabs) == 1:
+                                title = str(active_tabs[0].get("title") or "").strip()
+                                if not title:
+                                    title = str(active_tabs[0].get("url") or "").strip()
+                                if title:
+                                    title = title.replace("\n", " ").replace("\r", " ")[:100]
+                                    text += f" L’onglet actif est « {title} »."
+                            if log:
+                                log("[AGENT_EVIDENCE] tab_close_reply=verified_active_tab")
+
+                # Exact navigation attestation is rendered from the real
+                # tool receipt, not the model's paraphrased/abbreviated URL.
+                # This certifies ONLY the navigation, never the entire goal.
+                from .browser_outcome_summary import verified_navigation_note
+                proof_note = verified_navigation_note(user_text, actions, text)
+                if proof_note:
+                    text += "\n" + proof_note
+                    if log:
+                        log("[AGENT_EVIDENCE] navigation_receipt=rendered")
+
                 if self._messages and self._messages[-1].get("role") == "assistant":
                     self._messages[-1]["content"] = text
                 if learning_enabled(settings):
@@ -5061,6 +5164,23 @@ class GroqResponsesAgent:
                     user_text
                 )
                 from .active_mission_supervisor import execution_scope_active
+                # The mission goal is verified by source refs, actual
+                # navigation and an independent readback. Do not spend another
+                # model round asking an AI to paraphrase an already proven
+                # result. Other goals remain handled by the normal planner.
+                from .browser_goal_proof import verify_browser_navigation_goal
+                navigation_proof = verify_browser_navigation_goal(user_text, actions)
+                if navigation_proof is not None and not execution_scope_active():
+                    text = (
+                        f"Mission vérifiée : lien « {navigation_proof.target} » "
+                        f"ouvert. URL finale : {navigation_proof.url}"
+                    )
+                    self._messages.append({"role": "assistant", "content": text})
+                    if log:
+                        log("[MISSION] independent_goal_proof=browser_navigation")
+                    self._trim_history()
+                    return AgentTurnResult(text=text, actions=tuple(actions))
+
                 if not execution_scope_active() and _browser_verified_fast_completion(
                     user_text,
                     actions,
@@ -5186,12 +5306,13 @@ class GroqResponsesAgent:
                         }
                     )
 
+        from .mission_progress import partial_mission_report
+        progress_text = partial_mission_report(actions)
+        if log:
+            log("[MISSION] state=WAITING_EXTERNAL reason=turn_budget_exhausted")
         self._trim_history()
         return AgentTurnResult(
-            text=(
-                "Je n'ai pas terminé correctement cette demande. "
-                "Je préfère m'arrêter plutôt que d'exécuter une action incertaine."
-            ),
+            text=progress_text,
             actions=tuple(actions),
             end_session=end_session,
             should_exit=should_exit,
@@ -5320,6 +5441,15 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             ms_football_only=ms_football_only,
             msf_tool_names=msf_tool_names,
         )
+        # A provider fallback must never hide the one capability required
+        # by the CURRENT, explicitly authorized memory task. The old pack
+        # reduced "retiens que ..." to one unrelated catalog tool, then Groq
+        # emitted an undeclared remember_information call (HTTP 400).
+        preserved = set()
+        if getattr(self, "_memory_write_allowed", False):
+            preserved.add("remember_information")
+        if getattr(self, "_memory_scope_active", False):
+            preserved.add("semantic_memory_search")
         from .provider_rate_budget import groq_fallback_preflight
         allowed, estimate, budget = groq_fallback_preflight(
             request_messages, request_tools,
@@ -5328,7 +5458,8 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         if not allowed and context is not None and context.enabled:
             request_messages, saved_chars = context.compact(self._messages_for_request(), retain_latest=1, preview_chars=80)
             request_tools = context.fallback_tools(self._tool_definitions(
-                ms_football_only=ms_football_only, msf_tool_names=msf_tool_names), request_messages)
+                ms_football_only=ms_football_only, msf_tool_names=msf_tool_names),
+                request_messages, preserve_required=preserved)
             if isinstance(tool_choice, dict):
                 forced = (tool_choice.get("function") or {}).get("name")
                 for definition in self._tool_definitions(ms_football_only=ms_football_only, msf_tool_names=msf_tool_names):
@@ -5338,6 +5469,64 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 completion_tokens=getattr(settings, "groq_completion_tokens", 512))
             print(f"[AGENT_CONTEXT] provider=groq_fallback mode=recoverable_minimal_tools "
                   f"tools={len(request_tools)} archived_chars={saved_chars}")
+            if not allowed:
+                pressure_tools = context.fallback_tools(
+                    self._tool_definitions(
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    ),
+                    request_messages,
+                    pressure_minimal=True,
+                    preserve_required=preserved,
+                )
+                if isinstance(tool_choice, dict):
+                    forced = (tool_choice.get("function") or {}).get("name")
+                    for definition in self._tool_definitions(
+                        ms_football_only=ms_football_only,
+                        msf_tool_names=msf_tool_names,
+                    ):
+                        if ((definition.get("function") or {}).get("name") == forced
+                                and definition not in pressure_tools):
+                            pressure_tools.append(definition)
+                pressure_ok, pressure_estimate, pressure_budget = groq_fallback_preflight(
+                    request_messages, pressure_tools,
+                    completion_tokens=getattr(settings, "groq_completion_tokens", 512),
+                )
+                if not pressure_ok:
+                    # Tight budget: archive ONLY previews of superseded,
+                    # successful read observations. Keep the latest live DOM
+                    # observation, full tool-call/result chain, mission
+                    # constraints, all write/approval/unknown-effect receipts
+                    # and local evidence_id lookups unchanged.
+                    lean_messages, extra_saved = context.compact(
+                        self._messages_for_request(),
+                        retain_latest=1, preview_chars=0,
+                    )
+                    lean_ok, lean_estimate, lean_budget = groq_fallback_preflight(
+                        lean_messages, pressure_tools,
+                        completion_tokens=getattr(
+                            settings, "groq_completion_tokens", 512),
+                    )
+                    if lean_ok:
+                        request_messages = lean_messages
+                    pressure_ok, pressure_estimate, pressure_budget = (
+                        lean_ok, lean_estimate, lean_budget
+                    )
+                    print(
+                        "[AGENT_CONTEXT] provider=groq_fallback "
+                        "mode=metadata_only_historical_observations "
+                        f"archived_chars={extra_saved} "
+                        f"estimated_tokens={lean_estimate}"
+                    )
+                if pressure_ok:
+                    request_tools = pressure_tools
+                allowed, estimate, budget = (
+                    pressure_ok, pressure_estimate, pressure_budget
+                )
+                print(
+                    "[AGENT_CONTEXT] provider=groq_fallback mode=next_action_budget_tools "
+                    f"tools={len(pressure_tools)} estimated_tokens={estimate}"
+                )
         if not allowed:
             print(f"[AGENT_BUDGET] groq_fallback_skipped estimated_tokens={estimate} "
                   f"configured_limit={budget}; no_request_sent")
@@ -5598,7 +5787,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         if error:
             raise AgentRuntimeUnavailable(error)
 
-def build_agent_runtime() -> AgentRuntime:
+def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
 
     tools = NATIVE_TOOLS
@@ -5748,7 +5937,7 @@ def build_agent_runtime() -> AgentRuntime:
     # authoritative. No tool is dispatched twice, and pending outcomes are
     # never resumed automatically after a restart.
     import os
-    if active_supervision or os.getenv("JARVIS_RUNTIME_CONVERGENCE_ENABLED", "0").strip().lower() in (
+    if active_supervision or unified_missions or os.getenv("JARVIS_RUNTIME_CONVERGENCE_ENABLED", "0").strip().lower() in (
         "1", "true", "yes", "on",
     ):
         from .runtime_convergence import LiveMissionContinuityRuntime

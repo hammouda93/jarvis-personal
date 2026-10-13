@@ -180,6 +180,19 @@ beforeEach(()=>{
             {text:'Exact Person',type:'link',bbox:[1,40,80,60]},
             {text:'Exact Person Other',type:'link',bbox:[1,70,100,90]}];
 });
+test('new loading blank tab returns a pending read-only observation', async()=>{
+  tabs.set(3,{id:3,windowId:9,active:true,title:'',url:'',status:'loading'});
+  const result=await request('observe_dom',{tab_id:3});
+  assert.equal(result.ready,false);
+  assert.equal(result.reason,'document_loading');
+  assert.equal(result.controls.length,0);
+  assert.equal(operations.some(x=>x[0]==='dom_action'),false);
+  tabs.get(3).url='https://loaded.example/';
+  tabs.get(3).status='complete';
+  const ready=await request('observe_dom',{tab_id:3});
+  assert.equal(ready.ready,true);
+  assert(ready.controls.length>0);
+});
 test('all required generic primitives are present',()=>{
   assert.equal(OPERATIONS.size,15);
 });

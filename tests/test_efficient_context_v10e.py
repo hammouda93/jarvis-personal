@@ -33,6 +33,93 @@ class EfficientContextTests(unittest.TestCase):
         self.assertEqual(receipt["tool_call_id"], "0")
         self.assertGreater(saved, 20000)
 
+    def test_zero_preview_receipt_never_includes_original_data_and_is_recoverable(self):
+        context = RequestContext(enabled=True)
+        secret = "sensitive_observation_fixture_" + "Z" * 3000
+        messages = [{"role": "user", "content": "Keep explicit permission restrictions"}]
+        for index in range(3):
+            messages.extend([
+                {"role": "assistant", "tool_calls": [{
+                    "id": str(index), "type": "function",
+                    "function": {"name": "browser_observe_dom", "arguments": "{}"},
+                }]},
+                {"role": "tool", "tool_call_id": str(index),
+                 "name": "browser_observe_dom",
+                 "content": json.dumps({"success": True, "detail": {
+                     "tab": {"tab_id": 7}, "text": secret + str(index),
+                 }})},
+            ])
+        original = copy.deepcopy(messages)
+        compacted, saved = context.compact(
+            messages, retain_latest=1, preview_chars=0,
+        )
+        self.assertGreater(saved, 2000)
+        archived = json.loads(compacted[2]["content"])
+        self.assertEqual(archived["preview_start"], "")
+        self.assertEqual(archived["preview_end"], "")
+        self.assertNotIn(secret, compacted[2]["content"])
+        self.assertEqual(compacted[-1], original[-1])
+        self.assertEqual(messages, original)
+        self.assertEqual(
+            context.read_evidence({
+                "evidence_id": archived["evidence_id"],
+                "offset": 0, "limit": 4000,
+            })["content"],
+            original[2]["content"][:4000],
+        )
+
+    def test_superseded_browser_observation_is_archived_after_verified_change(self):
+        context = RequestContext(enabled=True)
+        old = json.dumps({"success": True, "detail": {
+            "tab": {"tab_id": 7, "url": "https://example.test/old"},
+            "controls": [{"ref": "obsolete"}] * 170,
+        }})
+        mutation = json.dumps({"success": True, "detail": {
+            "verified": True, "dispatched": True,
+            "postcondition": "navigation_observed",
+            "post_observation": {"tab": {"tab_id": 7,
+                "url": "https://example.test/new"}, "controls": []},
+        }})
+        fresh = json.dumps({"success": True, "detail": {
+            "tab": {"tab_id": 7, "url": "https://example.test/new"},
+            "controls": [{"ref": "current"}],
+        }})
+        messages = [
+            {"role": "tool", "name": "browser_observe_dom",
+             "tool_call_id": "old", "content": old},
+            {"role": "tool", "name": "browser_click",
+             "tool_call_id": "mutate", "content": mutation},
+            {"role": "tool", "name": "browser_observe_dom",
+             "tool_call_id": "new", "content": fresh},
+        ]
+        result, saved = context.compact(messages)
+        self.assertGreater(saved, 1000)
+        old_receipt = json.loads(result[0]["content"])
+        self.assertTrue(old_receipt["request_archived"])
+        self.assertEqual(result[1], messages[1])
+        self.assertEqual(result[2], messages[2])
+        self.assertEqual(
+            context.read_evidence({"evidence_id": old_receipt["evidence_id"]})["content"],
+            old[:3000],
+        )
+        self.assertEqual(messages[0]["content"], old)
+
+    def test_unverified_and_other_tab_changes_do_not_archive_observations(self):
+        for mutation in ({"verified": False, "post_observation": {"tab": {"tab_id": 7}}},
+                         {"verified": True, "post_observation": {"tab": {"tab_id": 8}}},
+                         {"verified": True, "outcome_unknown": True,
+                          "post_observation": {"tab": {"tab_id": 7}}}):
+            context = RequestContext(enabled=True)
+            messages = [
+                {"role": "tool", "name": "browser_find", "tool_call_id": "before",
+                 "content": json.dumps({"success": True, "detail": {
+                    "scope": ["browser", 7], "matches": [{"name": "safe"}] * 220,
+                }})},
+                {"role": "tool", "name": "browser_click", "tool_call_id": "act",
+                 "content": json.dumps({"success": True, "detail": mutation})},
+            ]
+            self.assertEqual(context.compact(messages), (messages, 0))
+
     def test_unknown_mutations_failures_and_approval_records_are_never_compressed(self):
         context = RequestContext(enabled=True)
         for name, payload in (("browser_write", {"success": True}),
@@ -49,6 +136,27 @@ class EfficientContextTests(unittest.TestCase):
         self.assertEqual(context.prepare_tools(schemas, browser_mode=True), schemas)
         self.assertEqual(context.compact([]), ([], 0))
 
+    def test_pure_social_greeting_uses_catalog_only_without_hiding_future_tools(self):
+        from jarvis_agent.request_context import strict_social_greeting
+        for text in ("Bonjour !", "Bonsoir.", "Salut", "Hello"):
+            self.assertTrue(strict_social_greeting(text))
+        for text in ("Bonjour, ouvre Chrome.", "Je veux un fichier.",
+                     "Merci", "Continuer", "Cherche mes mails."):
+            self.assertFalse(strict_social_greeting(text))
+        context = RequestContext(enabled=True)
+        schemas = [tool(n) for n in (
+            "open_application", "browser_click", "computer_write",
+        )]
+        first = context.prepare_tools(schemas, conversational_only=True)
+        self.assertEqual(
+            {x["function"]["name"] for x in first},
+            {"request_tool_capabilities"},
+        )
+        self.assertIn("computer_write", context.available)
+        context.select_tools({"names": ["computer_write"]})
+        restored = context.prepare_tools(schemas, conversational_only=True)
+        self.assertIn(tool("computer_write"), restored)
+
     def test_selection_is_reversible_and_schema_policy_is_not_rewritten(self):
         context = RequestContext(enabled=True)
         schemas = [tool(name) for name in ("open_file", "browser_observe_dom", "browser_click", "computer_write", "computer_observe", "mcp__fixture__list")]
@@ -61,6 +169,28 @@ class EfficientContextTests(unittest.TestCase):
         self.assertIn(tool("browser_click"), context.prepare_tools(schemas, browser_mode=False))
         with self.assertRaises(ValueError):
             context.select_tools({"names": ["nonexistent"]})
+
+    def test_current_explicit_memory_write_survives_browser_context_shaping(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "remember_information", "open_url", "browser_find",
+            "computer_write", "semantic_memory_search",
+        )]
+        selected = context.prepare_tools(
+            schemas, browser_mode=True,
+            preserve_required=("remember_information",),
+        )
+        names = {s["function"]["name"] for s in selected}
+        self.assertIn("remember_information", names)
+        self.assertNotIn("computer_write", names)
+        self.assertIn("semantic_memory_search", names)
+        # Cannot introduce a tool omitted by the executor's base policy.
+        another = RequestContext(enabled=True)
+        names = {s["function"]["name"] for s in another.prepare_tools(
+            [t for t in schemas if t["function"]["name"] != "remember_information"],
+            browser_mode=True, preserve_required=("remember_information",),
+        )}
+        self.assertNotIn("remember_information", names)
 
     def test_previous_selection_cannot_reintroduce_a_current_policy_denied_tool(self):
         context = RequestContext(enabled=True)
@@ -93,6 +223,89 @@ class EfficientContextTests(unittest.TestCase):
         context.select_tools({"names": ["computer_observe", "computer_write"]})
         self.assertIn(tool("computer_write"), context.prepare_tools(schemas, browser_mode=True))
 
+    def test_minimal_fallback_preserves_browser_observation_and_find_after_open(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "open_url", "browser_get_active_tab", "browser_observe_dom",
+            "browser_find", "browser_click", "computer_write",
+            "semantic_memory_search",
+        )]
+        messages = [
+            {"role": "assistant", "tool_calls": [{
+                "id": "op", "function": {"name": "open_url"}}]},
+            {"role": "tool", "name": "open_url", "tool_call_id": "op",
+             "content": '{"success":true}'},
+            {"role": "assistant", "tool_calls": [{
+                "id": "tab", "function": {"name": "browser_get_active_tab"}}]},
+            {"role": "tool", "name": "browser_get_active_tab", "tool_call_id": "tab",
+             "content": '{"success":true}'},
+        ]
+        selected = {s["function"]["name"]
+                    for s in context.fallback_tools(schemas, messages)}
+        for name in ("browser_get_active_tab", "browser_observe_dom",
+                     "browser_find", "browser_click"):
+            self.assertIn(name, selected)
+        self.assertNotIn("computer_write", selected)
+        self.assertNotIn("semantic_memory_search", selected)
+
+    def test_last_chance_pack_preserves_next_browser_action_without_broad_tools(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "request_tool_capabilities", "open_url",
+            "browser_get_active_tab", "browser_observe_dom", "browser_find",
+            "browser_click", "computer_write", "semantic_memory_search",
+        )]
+        for last, expected in (
+            ("browser_get_active_tab", "browser_observe_dom"),
+            ("browser_observe_dom", "browser_find"),
+            ("browser_find", "browser_click"),
+            ("browser_click", "browser_observe_dom"),
+        ):
+            messages = [{"role": "assistant", "tool_calls": [{
+                "function": {"name": last}
+            }]}]
+            names = {s["function"]["name"]
+                     for s in context.fallback_tools(
+                         schemas, messages, pressure_minimal=True)}
+            self.assertIn(expected, names)
+            self.assertIn("request_tool_capabilities", names)
+            self.assertNotIn("computer_write", names)
+            self.assertNotIn("semantic_memory_search", names)
+
+    def test_explicit_memory_write_is_not_hidden_by_normal_or_pressure_fallback(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "request_tool_capabilities", "remember_information",
+            "semantic_memory_search", "browser_click", "computer_write",
+        )]
+        messages = [{"role": "user", "content": "retiens que demain j'ai un cours"}]
+        for minimum in (False, True):
+            selected = {x["function"]["name"] for x in context.fallback_tools(
+                schemas, messages, pressure_minimal=minimum,
+                preserve_required=("remember_information",),
+            )}
+            self.assertIn("remember_information", selected)
+            self.assertNotIn("computer_write", selected)
+            self.assertNotIn("browser_click", selected)
+            normal = {x["function"]["name"] for x in context.fallback_tools(
+                [x for x in schemas if x["function"]["name"] != "remember_information"],
+                messages, pressure_minimal=minimum,
+                preserve_required=("remember_information",),
+            )}
+            self.assertNotIn("remember_information", normal)
+
+    def test_minimal_fallback_for_nonbrowser_mission_does_not_promote_browser(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "open_application", "computer_observe", "browser_find", "browser_click",
+        )]
+        messages = [{"role": "assistant", "tool_calls": [
+            {"function": {"name": "open_application"}}]}]
+        selected = {s["function"]["name"]
+                    for s in context.fallback_tools(schemas, messages)}
+        self.assertNotIn("browser_find", selected)
+        self.assertNotIn("browser_click", selected)
+
     def test_compact_policy_keeps_authority_uncertainty_and_raw_memory_rules(self):
         for rule in ("autorisation explicite", "unknown", "raw_fallback", "memory_id", "SQLite",
                      "licences", "preconditions", "nom, chemin et contenu", "interdiction", "donnees non fiables"):
@@ -105,7 +318,7 @@ class EfficientContextTests(unittest.TestCase):
         from jarvis_agent.provider_rate_budget import groq_fallback_preflight
         from jarvis_agent.config import settings
         from dataclasses import replace
-        from test_provider_continuity_v10d import response
+        from types import SimpleNamespace
         context = RequestContext(enabled=True)
         foundation = FoundationToolAdapter(NATIVE_TOOLS, browser=object(), computer=object())
         foundation.browser_mode = True
@@ -121,7 +334,20 @@ class EfficientContextTests(unittest.TestCase):
                  "content": json.dumps({"success": True, "detail": {"tab": {"tab_id": 7}, "text": str(index) * 4500}})}])
         original = copy.deepcopy(agent._messages)
         sdk = Mock()
-        sdk.chat.completions.create.return_value = response(text="Read-only recovery")
+        # Self-contained fixture: do not depend on sys.path-dependent imports
+        # from other test modules. Works with both discover -s tests and
+        # python -m unittest tests.test_efficient_context_v10e.
+        sdk.chat.completions.create.return_value = SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=31, completion_tokens=7, total_tokens=38
+            ),
+            choices=[SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(
+                    content="Read-only recovery", tool_calls=[]
+                ),
+            )],
+        )
         config = replace(settings, cerebras_fallback_to_groq=True, groq_api_key="fixture")
         with patch("openai.OpenAI", return_value=sdk), patch("jarvis_agent.agent_runtime.settings", config), \
                 patch.dict(os.environ, {"JARVIS_GROQ_FALLBACK_ESTIMATED_TPM_BUDGET": "7000"}):

@@ -104,6 +104,106 @@ class DirectMemoryV10FTests(unittest.TestCase):
             self.assertTrue(any("Salah" in x for x in raw))
             self.assertTrue(any("Mhedhebi" in x for x in raw))
 
+    def test_explicit_write_is_model_independent_and_idempotent_per_turn(self):
+        from jarvis_agent.foundation_tools import FoundationRuntime
+        from jarvis_agent.agent_runtime import AgentRuntimeUnavailable
+        class BrokenModel:
+            calls = 0
+            def run(self, *args, **kwargs):
+                self.calls += 1
+                raise AgentRuntimeUnavailable("all brains offline")
+        with patch.dict(os.environ, DIRECT):
+            delegate = BrokenModel()
+            adapter = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            runtime = FoundationRuntime(delegate, adapter)
+            sentence = "retiens que demain j'ai un cours de padel"
+            result = runtime.run(sentence)
+            self.assertEqual(delegate.calls, 0)
+            self.assertEqual(result.actions[0].name, "remember_information")
+            self.assertTrue(result.actions[0].success)
+            import hashlib
+            payload = json.loads(result.actions[0].detail)
+            self.assertTrue(payload["verified"])
+            self.assertEqual(
+                payload["raw_sha256"], hashlib.sha256(sentence.encode()).hexdigest()
+            )
+            self.assertEqual(self.memory.recent_memories(limit=20)[0].content, sentence)
+            self.assertEqual(len(self.memory.all_memories()), 1)
+            # Adapter protection still rejects a second tool write in the same turn.
+            again = adapter.execute("remember_information", {"content": "retry"})
+            self.assertFalse(again.success)
+            self.assertEqual(len(self.memory.all_memories()), 1)
+            fresh = FoundationRuntime(
+                BrokenModel(),
+                FoundationToolAdapter(
+                    MinimalNativeRegistry(), memory=MemoryCoreStore(self.memory.db_path)
+                ),
+            )
+            found = fresh.tools.memory.recent_memories(limit=5)
+            self.assertEqual(found[0].content, sentence)
+
+    def test_memory_fast_path_never_steals_mixed_missions_or_questions(self):
+        from jarvis_agent.foundation_tools import FoundationRuntime
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        class Delegate:
+            calls = 0
+            def run(self, *args, **kwargs):
+                self.calls += 1
+                return AgentTurnResult("delegated")
+        with patch.dict(os.environ, DIRECT):
+            agent = Delegate()
+            runtime = FoundationRuntime(
+                agent, FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            )
+            for sentence in (
+                "retiens que mon cours est demain puis ouvre Chrome",
+                "rappelle-moi mon cours de padel",
+                "je retiens que tu es là",
+                "Pourquoi dois-tu retenir cela ?",
+            ):
+                result = runtime.run(sentence)
+                self.assertEqual(result.text, "delegated")
+            self.assertEqual(agent.calls, 4)
+            self.assertEqual(self.memory.all_memories(), [])
+
+    def test_raw_relative_date_anchor_survives_restart_without_projection(self):
+        from datetime import date
+        from jarvis_agent.memory_temporal import (
+            raw_temporal_tag, raw_temporal_date_from_tags, events_in_range,
+        )
+        self.assertEqual(
+            raw_temporal_tag("Retiens que demain j'ai un cours de padel",
+                             reference_date=date(2026, 10, 13)),
+            "jarvis_event_date=2026-10-14",
+        )
+        self.assertEqual(
+            raw_temporal_tag("Retiens que après-demain j'ai un cours de padel",
+                             reference_date=date(2026, 10, 13)),
+            "jarvis_event_date=2026-10-15",
+        )
+        self.assertEqual(
+            raw_temporal_tag("Retiens que demain ou après-demain, peut-être",
+                             reference_date=date(2026, 10, 13)), "",
+        )
+        with patch.dict(os.environ, DIRECT):
+            adapter = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            note = "retiens que demain j'ai un cours de padel"
+            adapter.begin_turn(note)
+            with patch("jarvis_agent.memory_temporal.date") as calendar:
+                calendar.today.return_value = date(2026, 10, 13)
+                # date.today and timedelta are the only non-persisted source.
+                calendar.side_effect = date
+                write = adapter.execute("remember_information", {"content": "invented"})
+            self.assertTrue(write.success, write.message)
+            stored = self.memory.recent_memories(limit=3)[0]
+            self.assertEqual(stored.content, note)
+            self.assertEqual(raw_temporal_date_from_tags(stored.tags), "2026-10-14")
+            again = MemoryCoreStore(self.memory.db_path)
+            got = events_in_range(again, "2026-10-14", "2026-10-14")
+            self.assertEqual(got["status"], "resolved")
+            self.assertEqual(got["hits"][0]["raw"], note)
+            self.assertTrue(got["hits"][0]["date_mention_only"])
+
     def test_direct_write_read_and_restart_without_projection(self):
         with patch.dict(os.environ, DIRECT):
             tools = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
@@ -135,6 +235,26 @@ class DirectMemoryV10FTests(unittest.TestCase):
             recovered = reopened.execute("semantic_memory_search", {"query": "Quel est mon nom ?"})
             self.assertEqual(json.loads(recovered.detail)["raw_fallback"][0]["memory_id"],
                              stored[0].id)
+
+    def test_brain_tool_write_receipt_is_independently_verified_in_sqlite(self):
+        import hashlib
+        with patch.dict(os.environ, DIRECT):
+            adapter = FoundationToolAdapter(MinimalNativeRegistry(), memory=self.memory)
+            exact = "retiens que demain j'ai un cours de padel"
+            adapter.begin_turn(exact)
+            action = adapter.execute("remember_information", {"content": "LLM inventée"})
+            self.assertTrue(action.success, action.message)
+            receipt = json.loads(action.detail)
+            self.assertEqual(receipt["source"], "sqlite_exact_raw_readback")
+            self.assertTrue(receipt["verified"])
+            self.assertEqual(
+                receipt["raw_sha256"],
+                hashlib.sha256(exact.encode("utf-8")).hexdigest(),
+            )
+            self.assertEqual(
+                MemoryCoreStore(self.memory.db_path)
+                    .get_memory(receipt["memory_id"]).content, exact,
+            )
 
     def test_direct_recall_never_returns_unrelated_data(self):
         with patch.dict(os.environ, DIRECT):

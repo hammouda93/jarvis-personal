@@ -1464,6 +1464,7 @@ class JarvisWindow(QWidget):
         self._worker.detail_changed.connect(self._on_detail)
         self._worker.audio_level_changed.connect(self.canvas.set_audio_level)
         self._worker.log_line.connect(self._on_log)
+        self._worker.log_line.connect(self.operator_console.record_mission_log)
         self._worker.log_line.connect(_safe_console_log)
         self._worker.conversation_message.connect(self._on_conversation_message)
         self._worker.telemetry_changed.connect(self.operator_console.update_model)

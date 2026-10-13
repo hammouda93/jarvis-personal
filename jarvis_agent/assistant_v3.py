@@ -129,7 +129,7 @@ class AssistantWorker(QObject):
         self._stop = threading.Event()
         self._stt = build_stt()
         self._tts = ElevenLabsTTS()
-        self._agent = build_agent_runtime()
+        self._agent = build_agent_runtime(unified_missions=True)
         self._conversation_language = "fr"
         self._pending_direct_follow_up = ""
         self._previous_conversation_trace = None
@@ -185,7 +185,9 @@ class AssistantWorker(QObject):
         text = (text or "").strip()
         if not text:
             return
-        text = re.sub(r"[*_#]+", "", text).replace("`", "").strip()
+        # Do not strip underscores or URL fragments in the speech path:
+        # those characters may be part of the verified destination.
+        # Styling must not mutate the exact evidence being reported.
         self._state(AssistantState.SPEAKING, text)
         self.log_line.emit(f"[TTS] {text}")
         self._tts.speak(text, on_level=self._level)
@@ -399,7 +401,11 @@ class AssistantWorker(QObject):
         value = (text or "").strip()
         if not value:
             return
-        value = re.sub(r"[*_#]+", "", value).replace("`", "").strip()
+        # Never remove punctuation globally: underscores, hash fragments,
+        # asterisks and backticks can be part of exact browser URLs, file
+        # paths, code symbols and verification evidence. Render plain text
+        # verbatim; presentation layers may style Markdown separately.
+        value = value.strip()
         source = self._reply_source
         self.conversation_message.emit("assistant", value, source)
         if source == "text":
@@ -857,6 +863,14 @@ class AssistantWorker(QObject):
                 )
                 return True
 
+        # A single mission entry: complex work attaches to the existing durable
+        # runtime automatically. Simple commands retain their cheap direct path.
+        from .auto_mission import prepare as prepare_automatic_mission
+        admission = prepare_automatic_mission(
+            self._agent, user_text, log=self.log_line.emit,
+        )
+        if admission.track:
+            self._pending_direct_follow_up = ""
         resolved_intent = legacy_intent or route(user_text)
         if (
             not getattr(self._agent, "active_mission_id", None)
@@ -870,11 +884,29 @@ class AssistantWorker(QObject):
         )
 
         from .mission_trace_v10h import ConversationMissionTrace
+        # Use the SAME persisted semantic mission plan for the user-visible
+        # trace. No second clause parser, model call, step generation or
+        # authority is introduced here.
+        mission_id = str(getattr(self._agent, "active_mission_id", "") or "")
+        planned_steps = ()
+        snapshot_reader = getattr(self._agent, "mission_snapshot", None)
+        if mission_id and callable(snapshot_reader):
+            try:
+                snapshot = snapshot_reader(mission_id)
+                plan = snapshot.get("semantic_plan") or {}
+                planned_steps = tuple(
+                    str(step.get("intent") or "")
+                    for step in (plan.get("steps") or [])
+                    if isinstance(step, dict)
+                )
+            except (RuntimeError, ValueError, KeyError, TypeError):
+                planned_steps = ()
         trace = ConversationMissionTrace(
             user_request=user_text,
             emit=self.log_line.emit,
-            mission_id=str(getattr(self._agent, "active_mission_id", "") or ""),
+            mission_id=mission_id,
             previous=getattr(self, "_previous_conversation_trace", None),
+            planned_steps=planned_steps,
         )
         trace.start()
 

@@ -89,6 +89,135 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertEqual(graph.nodes()[0].result["action_names"], ["browser_click"])
         self.assertEqual(graph.summary()["completed"], 1)
 
+    def test_navigation_goal_completes_from_verified_receipts_not_model_claim(self):
+        from tests.test_browser_goal_proof_v11b import GOAL, DEST, journey
+        mid = self.runtime.begin_mission(GOAL)
+        self.delegate.result = SimpleNamespace(
+            text="Mission vérifiée à partir des actions.",
+            actions=tuple(journey()),
+        )
+        events = []
+        result = self.runtime.run(GOAL, log=events.append)
+        self.assertEqual(result.text, self.delegate.result.text)
+        saved = self.saved(mid)
+        self.assertEqual(saved.status, MissionStatus.COMPLETED)
+        self.assertTrue(saved.observed_state["goal_verified"])
+        self.assertEqual(saved.observed_state["verified_navigation_url"], DEST)
+        self.assertTrue(saved.proof_refs[0].startswith("browser_navigation_verified:"))
+        self.assertIsNone(self.runtime.active_mission_id)
+        self.assertTrue(any("state=COMPLETED" in event for event in events))
+
+    def test_loading_origin_and_action_boundary_readback_finish_mission(self):
+        # Replay the actual failing shape: the first tab read still loads,
+        # but the DOM is grounded, and the final navigation was independently
+        # read back within the click receipt. No eighth model round needed.
+        import json
+        from tests.test_browser_goal_proof_v11b import GOAL, DEST, journey
+        from tests.test_browser_goal_proof_v11b import action as receipt
+        actions = journey()[:-1]
+        first = json.loads(actions[1].detail)
+        first.update(url="", status="loading")
+        actions[1] = receipt("browser_get_active_tab", first)
+        dom = json.loads(actions[2].detail)
+        dom.update(
+            observation_id="read-dom-1", sensor="dom",
+            tab={"tab_id": 7, "url": "https://example.test/dashboard/",
+                 "status": "loading"},
+            controls=[{"name": "Dashboard", "type": "heading"}],
+        )
+        actions[2] = receipt("browser_observe_dom", dom)
+        click = json.loads(actions[-1].detail)
+        click["independent_readback"] = {
+            "tab_id": 7, "url": DEST, "status": "complete",
+        }
+        actions[-1] = receipt("browser_click", click)
+        mission_id = self.runtime.begin_mission(GOAL)
+        self.delegate.result = SimpleNamespace(
+            text="Mission vérifiée : " + DEST, actions=tuple(actions),
+        )
+        self.runtime.run(GOAL)
+        saved = self.saved(mission_id)
+        self.assertEqual(saved.status, MissionStatus.COMPLETED)
+        self.assertTrue(saved.observed_state["goal_verified"])
+        self.assertEqual(saved.observed_state["verified_navigation_url"], DEST)
+        self.assertEqual(len(self.delegate.calls), 1)
+        self.assertIsNone(self.runtime.active_mission_id)
+
+    def test_navigation_goal_requires_all_requested_evidence(self):
+        from tests.test_browser_goal_proof_v11b import GOAL, journey
+        mid = self.runtime.begin_mission(GOAL)
+        self.delegate.result = SimpleNamespace(
+            text="clicked", actions=tuple(journey()[:-1]),
+        )
+        self.runtime.run(GOAL)
+        saved = self.saved(mid)
+        self.assertEqual(saved.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(saved.observed_state["goal_verified"])
+
+    def test_unresolved_plan_cannot_be_completed_by_navigation_shortcut(self):
+        from tests.test_browser_goal_proof_v11b import GOAL, journey
+        mid = self.runtime.begin_mission(GOAL)
+        ctx, version = self.runtime.context_store.load(mid)
+        ctx.expected_state["semantic_contract"] = {
+            "metadata": {"origin": "same_provider_no_tools_draft"},
+            "unresolved": ["unknown user intention"], "steps": [],
+        }
+        self.runtime.context_store.save(ctx, expected_version=version)
+        self.delegate.result = SimpleNamespace(text="clicked", actions=tuple(journey()))
+        self.runtime.run(GOAL)
+        self.assertFalse(self.saved(mid).observed_state["goal_verified"])
+
+    def test_independent_sqlite_memory_proof_completes_persistent_mission(self):
+        from jarvis_agent.memory_core_store import MemoryCoreStore
+        from jarvis_agent.native_tools import AgentActionResult
+        from hashlib import sha256
+        import json
+        goal = "retiens que demain j'ai un cours de padel"
+        store = MemoryCoreStore(self.root / "memory.sqlite3")
+        item = store.remember(goal)
+        payload = json.dumps({
+            "memory_id": item.id, "verified": True,
+            "source": "sqlite_exact_raw_readback",
+            "raw_sha256": sha256(goal.encode()).hexdigest(),
+        })
+        # The fixture binds the real disk store to the existing adapter.
+        self.delegate.tools = SimpleNamespace(memory=store)
+        self.delegate.result = SimpleNamespace(
+            text="Souvenir sauvegardé", actions=(
+                AgentActionResult("remember_information", True, "saved", payload),
+            ),
+        )
+        mid = self.runtime.begin_mission(goal)
+        self.runtime.run(goal)
+        saved = self.saved(mid)
+        self.assertEqual(saved.status, MissionStatus.COMPLETED)
+        self.assertEqual(saved.observed_state["verified_memory_id"], item.id)
+        self.assertTrue(saved.observed_state["goal_verified"])
+        self.assertEqual(saved.observed_state["proof_scope"], "durable_user_memory")
+        self.assertIsNone(self.runtime.active_mission_id)
+
+    def test_memory_tool_success_alone_cannot_complete_goal(self):
+        from jarvis_agent.memory_core_store import MemoryCoreStore
+        from jarvis_agent.native_tools import AgentActionResult
+        import json
+        goal = "retiens que demain j'ai un cours de padel"
+        store = MemoryCoreStore(self.root / "memory.sqlite3")
+        item = store.remember("Different source")
+        self.delegate.tools = SimpleNamespace(memory=store)
+        self.delegate.result = SimpleNamespace(
+            text="saved", actions=(
+                AgentActionResult("remember_information", True, "saved",
+                    json.dumps({"memory_id": item.id, "verified": True,
+                        "source": "sqlite_exact_raw_readback",
+                        "raw_sha256": "wrong"})),
+            ),
+        )
+        mid = self.runtime.begin_mission(goal)
+        self.runtime.run(goal)
+        saved = self.saved(mid)
+        self.assertEqual(saved.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(saved.observed_state["goal_verified"])
+
     def test_failed_action_blocks_mission_without_rewriting_reply(self):
         self.delegate.result = SimpleNamespace(
             text="erreur", actions=(action(success=False),)
@@ -96,6 +225,63 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertIs(self.runtime.run("mission"), self.delegate.result)
         item = self.runtime.context_store.list_resumable()[0]
         self.assertEqual(self.saved(item["mission_id"]).status, MissionStatus.BLOCKED)
+
+    def test_local_open_url_guard_does_not_freeze_explicit_mission(self):
+        # A pre-dispatch safety refusal did NOT change the browser, so the
+        # next user turn may correct the route without a manual recovery.
+        mission_id = self.runtime.begin_mission("Ouvre un site puis cherche")
+        self.delegate.result = SimpleNamespace(
+            text="Navigation refusée localement",
+            actions=(SimpleNamespace(name="open_url", success=False,
+                 detail="open_url_blocked_for_existing_browser_context"),),
+        )
+        self.runtime.run("Ouvre le site")
+        state = self.saved(mission_id)
+        self.assertEqual(state.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(state.pending_action.get("manual_review_required"))
+        self.delegate.result = SimpleNamespace(text="suite", actions=())
+        self.runtime.run("Continue la mission sans recharger les étapes déjà faites")
+        self.assertEqual(len(self.delegate.calls), 2)
+        self.assertEqual(self.saved(mission_id).status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(self.saved(mission_id).observed_state["goal_verified"])
+
+    def test_read_only_sensor_failure_allows_context_continuation(self):
+        mission_id = self.runtime.begin_mission("Read then continue")
+        self.delegate.result = SimpleNamespace(text="Not yet ready", actions=(
+            SimpleNamespace(name="browser_observe_dom", success=False,
+                            detail='RuntimeError: Document still loading'),))
+        self.runtime.run("Observe current app")
+        context = self.saved(mission_id)
+        self.assertEqual(context.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(context.pending_action.get("manual_review_required"))
+        self.delegate.result = SimpleNamespace(text="Ready", actions=())
+        self.runtime.run("continue")
+        self.assertEqual(len(self.delegate.calls), 2)
+        self.assertFalse(self.saved(mission_id).observed_state["goal_verified"])
+
+    def test_mixed_dispatched_navigation_and_failed_observation_is_recoverable(self):
+        mission_id = self.runtime.begin_mission("Open and inspect the web")
+        self.delegate.result = SimpleNamespace(text="Loading", actions=(
+            SimpleNamespace(name="open_url", success=True,
+                            detail='{"dispatched":true,"verified":false}'),
+            SimpleNamespace(name="browser_observe_dom", success=False,
+                            detail='RuntimeError: Invalid URL'),))
+        self.runtime.run("Open then observe")
+        self.assertEqual(self.saved(mission_id).status, MissionStatus.WAITING_EXTERNAL)
+        self.assertEqual(len(self.delegate.calls), 1)
+        self.assertFalse(self.saved(mission_id).observed_state["goal_verified"])
+
+    def test_other_failures_still_block_and_do_not_replay(self):
+        mission_id = self.runtime.begin_mission("Action sensible")
+        self.delegate.result = SimpleNamespace(
+            text="inconnue", actions=(SimpleNamespace(
+                name="browser_click", success=False, detail="outcome_unknown"),),
+        )
+        self.runtime.run("Action")
+        self.assertEqual(self.saved(mission_id).status, MissionStatus.BLOCKED)
+        with self.assertRaises(RuntimeError):
+            self.runtime.run("Retente")
+        self.assertEqual(len(self.delegate.calls), 1)
 
     def test_explicit_multiturn_and_proof_gate(self):
         mission_id = self.runtime.begin_mission("chercher puis préparer un rapport")
@@ -114,6 +300,40 @@ class LiveMissionContinuityTests(unittest.TestCase):
         self.assertTrue(ctx.observed_state["goal_verified"])
         self.assertEqual(ctx.proof_refs, ["independent-review-42"])
         self.assertIsNone(self.runtime.active_mission_id)
+
+    def test_provider_quota_pause_keeps_mission_resumable_without_replay(self):
+        from jarvis_agent.agent_runtime import AgentRuntimeUnavailable
+        mission_id = self.runtime.begin_mission("Browse and inspect")
+        self.delegate._last_partial_actions = [
+            SimpleNamespace(name="browser_press", success=True,
+                            detail='{"verified":true,"postcondition":"navigation_observed"}')
+        ]
+        self.delegate.error = AgentRuntimeUnavailable("429 quota")
+        with self.assertRaises(AgentRuntimeUnavailable):
+            self.runtime.run("Step 1")
+        paused = self.saved(mission_id)
+        self.assertEqual(paused.status, MissionStatus.WAITING_EXTERNAL)
+        self.assertFalse(paused.pending_action.get("manual_review_required"))
+        self.assertTrue(paused.observed_state["provider_paused_needs_fresh_observation"])
+        self.assertEqual(self.runtime.graph_store.load(mission_id).nodes()[0].result[
+            "action_names"], ["browser_press"])
+        self.delegate.error = None
+        self.runtime.run("Continue using the observed state")
+        self.assertEqual(len(self.delegate.calls), 2)
+        self.assertFalse(self.saved(mission_id).observed_state["goal_verified"])
+
+    def test_provider_error_with_uncertain_mutation_still_blocks(self):
+        from jarvis_agent.agent_runtime import AgentRuntimeUnavailable
+        self.runtime.begin_mission("Potentially duplicate effect")
+        self.delegate._last_partial_actions = [
+            SimpleNamespace(name="browser_click", success=False,
+                            detail='{"outcome_unknown":true}')
+        ]
+        self.delegate.error = AgentRuntimeUnavailable("429 quota")
+        with self.assertRaises(AgentRuntimeUnavailable):
+            self.runtime.run("Try once")
+        self.assertEqual(self.saved(self.runtime.active_mission_id).status,
+                         MissionStatus.BLOCKED)
 
     def test_exception_fails_closed_and_never_retries_delegate(self):
         mission_id = self.runtime.begin_mission("send once")
