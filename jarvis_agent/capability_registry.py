@@ -95,6 +95,7 @@ def build_default_registry() -> CapabilityRegistry:
                 "inspect_active_window",
                 "open_application",
                 "open_file",
+                "verify_file_artifact",
                 "click_ui_element",
                 "write_ui_element",
                 "press_key",

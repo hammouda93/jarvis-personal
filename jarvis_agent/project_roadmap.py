@@ -70,17 +70,19 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "human_windows_evidence": {
-            "source": "user_continuation_brief_2026-10-09",
+            "source": "user_continuation_briefs_v10c_v10d_reviewed_2026-10-11",
             "observed": ["conversation_text_voice", "microphone_off_in_text_mode", "windows_tts_fallback",
                          "chrome_normal_profile_youtube_navigation", "targeted_tab_close", "unicode_composer_input",
-                         "installer_uia_intermediate_steps", "installer_close_dialog_recovery"],
+                         "installer_uia_intermediate_steps", "installer_close_dialog_recovery",
+                         "raw_memory_after_restart", "session_recall", "uia_replace_append"],
             "not_independently_verified": ["message_recipient_delivery", "business_final_mutation",
-                                           "installer_completion_and_desktop_shortcut", "memory_after_restart"],
+                                           "installer_completion_and_desktop_shortcut", "semantic_projection_cold_start",
+                                           "composed_browser_windows_mission", "saved_file_exact_content"],
         },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
-            "CI Windows/Linux verte au checkpoint 2a47abe. Correctifs 9G reconcilies, "
+            "CI Windows/Linux verte au checkpoint V10D 56a8cfc. Fiabilisation V10E en recette; "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."

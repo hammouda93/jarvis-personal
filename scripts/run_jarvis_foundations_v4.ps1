@@ -8,6 +8,7 @@ param(
     [switch]$AllowCloudSemanticMemory,
     [switch]$BrowserCore,
     [switch]$ComputerCore,
+    [switch]$EfficientContext,
     [switch]$All,
     [string]$BrowserBridgeConfig = "",
     [ValidateRange(1,5)][int]$GroundingBudgetSeconds = 3,
@@ -86,6 +87,7 @@ try {
     $env:JARVIS_MEMORY_ALLOW_CLOUD_SEMANTICS = $(if ($AllowCloudSemanticMemory) { "1" } else { "0" })
     $env:JARVIS_BROWSER_CORE_ENABLED = $(if ($BrowserCore) { "1" } else { "0" })
     $env:JARVIS_COMPUTER_CORE_ENABLED = $(if ($ComputerCore) { "1" } else { "0" })
+    $env:JARVIS_EFFICIENT_CONTEXT_ENABLED = $(if ($EfficientContext) { "1" } else { "0" })
 
     if ($BrowserCore) {
         # The V4 Browser Core owns the real-profile browser scope. Never enable

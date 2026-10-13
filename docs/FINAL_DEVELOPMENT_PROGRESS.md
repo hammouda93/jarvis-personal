@@ -2,6 +2,55 @@
 
 Date de demarrage : 2026-10-08 (Africa/Lagos).
 
+## V10E Du 2026-10-11
+
+Brief cerveau/missions generales relu; branche `codex/agent-missions-v10e`
+isolee depuis `56a8cfc`. References V10D, 9C, developpement et main preservees.
+Scheduler local, requirements et backup non modifies, non integres ici.
+Journaux/donnees utilisateur non suivis exclus des commits.
+
+Lot implemente : routage des contraintes/negations, retour fichier apres
+navigateur sans perte des outils Windows, contexte efficient opt-in avec
+preuves relisibles et scopes preserves, reponse tronquee vers Secondary sans
+dispatch, budgets completion bornes, cold/warm Ollama, verification read-only
+nom/chemin/contenu fichier, precondition fraiche de document vide UIA/Computer.
+Architecture/ordre Cerebras Primary -> Secondary -> Groq inchanges.
+
+Initial local : 1005 tests Windows passes, 0 echec/erreur/exclusion. Trois tests
+d'integration contexte/factory/superviseur ajoutes; final local : 1008 tests
+passes en 41,755 s, 0 echec/erreur/exclusion. Node : 45/45 passes.
+Baseline CI V10D run 38044416414 : Windows 970 passes; Ubuntu 965 passes et
+5 exclusions explicites, Node 45/45 sur les deux OS.
+Checkpoint source `42967f5` pousse, PR #23 brouillon vers V10D. Premiere CI
+38100516855 : Linux echoue sur une hypothese du nouveau test (tous les schemas
+seraient `function`; Groq expose aussi `browser_search` selon configuration).
+Corrige pour tester les deux configurations sans retirer les assertions sur
+les outils Windows. Regression locale corrigee : 1008 passes en 41,575 s,
+0 echec/erreur/exclusion; nouvelle CI en cours de verification.
+38 nouveaux tests V10E passes dans ce premier lot, sans remplacement des suites
+historiques. Correctif de fixture pousse en `a50f9b8`.
+
+Revue suivante : deux reproductions supplementaires avant correction. Un
+raccourci historique recherche pouvait convertir `sans fermer ... onglet` en
+close-tab; les contraintes priment desormais sur cette exception. Le garde
+de sauvegarde fichier pouvait bloquer une memorisation explicite; cibles
+memoire distinguees. Tests cibles : missions 12/12 et fichiers 6/6 passes.
+40 nouveaux tests au total; regression cumulative finale : 1010 passes en
+41,941 s, 0 echec/erreur/exclusion. Premier job Windows CI annule par la
+concurrence au push du correctif; aucune validation Windows n'en est deduite.
+
+Mesure synthetique reproductible : messages 54488 -> 22706 caracteres,
+schemas 16771 -> 13788, outils 33 -> 25, politique 14775 -> 5728; six lectures
+integrales recuperables, transcript inchange. Aucun cout/API live mesure.
+
+Non valide : desktop reel V10E, missions longues, sauvegarde Word/formats
+complexes, contraintes durables a travers restart, comptes MCP, installation
+complete/licences, Skills avances et scheduler. Aucun statut final/autonome.
+Rapport causes/limites/feuille de route : `docs/V10E_AGENT_MISSIONS.md`.
+Procedure VS Code et 11 cas live : `docs/V10E_WINDOWS_ACCEPTANCE.md`.
+Prochain travail : CI du checkpoint corrige, recette composee et froid/chaud, puis
+invariants de mission durables et integration scheduler revue.
+
 ## Reprise Live V10D Du 2026-10-10
 
 Base retrouvee locale/distante : `4e9e330`, PR #18/#19/#20/#21 ouvertes,

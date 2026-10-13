@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import math
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -308,6 +310,15 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             if timeout_s is not None
             else os.getenv("JARVIS_MEMORY_SEMANTIC_TIMEOUT_S", "8")
         )
+        if not math.isfinite(self.timeout_s) or not 1 <= self.timeout_s <= 180:
+            raise ValueError("semantic_memory_timeout_out_of_bounds")
+        explicit_timeout = timeout_s is not None or bool(os.getenv("JARVIS_MEMORY_SEMANTIC_TIMEOUT_S", "").strip())
+        cold_override = os.getenv("JARVIS_MEMORY_SEMANTIC_COLD_TIMEOUT_S", "").strip()
+        self.cold_timeout_s = (self.timeout_s if timeout_s is not None else
+            float(cold_override) if cold_override else self.timeout_s if explicit_timeout else 45.0)
+        if not math.isfinite(self.cold_timeout_s) or not 1 <= self.cold_timeout_s <= 180:
+            raise ValueError("semantic_memory_cold_timeout_out_of_bounds")
+        self._ollama_last_success = None
         self.max_completion_tokens = max(
             800,
             int(
@@ -439,6 +450,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
             "stream": False,
             "format": "json",
             "think": False,
+            "keep_alive": "5m",
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -456,7 +468,9 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
         try:
             with urllib.request.urlopen(
                 request,
-                timeout=self.timeout_s,
+                timeout=(self.timeout_s if self._ollama_last_success is not None
+                         and time.monotonic() - self._ollama_last_success < 240
+                         else self.cold_timeout_s),
             ) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -468,6 +482,7 @@ class ModelSemanticMemoryInterpreter(SemanticMemoryInterpreter):
         content = str((data.get("message") or {}).get("content") or "")
         if not content.strip():
             raise RuntimeError("semantic_memory_structured_output_empty")
+        self._ollama_last_success = time.monotonic()
         return content
 
     def _chat(self, system: str, payload: Any) -> dict[str, Any]:

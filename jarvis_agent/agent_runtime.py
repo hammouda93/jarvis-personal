@@ -414,6 +414,10 @@ FOUNDATION COMPUTER GROUNDING ACTIF:
 
 
 def _effective_system_instructions() -> str:
+    from .foundation_tools import enabled
+    if enabled("JARVIS_EFFICIENT_CONTEXT_ENABLED"):
+        from .request_context import EFFICIENT_SYSTEM_POLICY
+        return EFFICIENT_SYSTEM_POLICY + (_OPERATIONAL_LEARNING_INSTRUCTIONS if learning_enabled(settings) else "")
     instructions = _SYSTEM_INSTRUCTIONS
     if learning_enabled(settings):
         instructions += _OPERATIONAL_LEARNING_INSTRUCTIONS
@@ -516,6 +520,14 @@ def _looks_like_action_promise(text: str) -> bool:
 
 
 def _requested_action_capabilities(text: str) -> set[str]:
+    from .instruction_clauses import positive_instruction_clauses
+    required = set()
+    for clause in positive_instruction_clauses(text):
+        required.update(_clause_action_capabilities(clause))
+    return required
+
+
+def _clause_action_capabilities(text: str) -> set[str]:
     """Infer broad UI action contracts with conservative STT recovery.
 
     The recovery rules stay capability-level rather than app-specific. They
@@ -754,6 +766,11 @@ def _requests_open_and_search(text: str) -> bool:
 
 
 def _requests_search_submission(text: str) -> bool:
+    from .instruction_clauses import positive_instruction_clauses
+    return any(_clause_search_submission(clause) for clause in positive_instruction_clauses(text))
+
+
+def _clause_search_submission(text: str) -> bool:
     """Detect submitting an already prepared search, not opening a website."""
     normalized = normalize(text)
     has_search = bool(re.search(r"\b(recherche|search)\b", normalized))
@@ -768,6 +785,11 @@ def _requests_search_submission(text: str) -> bool:
 
 
 def _requests_result_selection(text: str) -> bool:
+    from .instruction_clauses import positive_instruction_clauses
+    return any(_clause_result_selection(clause) for clause in positive_instruction_clauses(text))
+
+
+def _clause_result_selection(text: str) -> bool:
     """Detect selecting/opening an ordinal result already visible in a UI."""
     normalized = normalize(text)
     has_open = bool(
@@ -797,6 +819,11 @@ def _requests_result_selection(text: str) -> bool:
 
 
 def _requests_ui_submission(text: str) -> bool:
+    from .instruction_clauses import positive_instruction_clauses
+    return any(_clause_ui_submission(clause) for clause in positive_instruction_clauses(text))
+
+
+def _clause_ui_submission(text: str) -> bool:
     """Detect an explicit submit/send action without making it a global UI contract."""
     normalized = normalize(text)
     submit_verb = re.search(
@@ -1279,6 +1306,8 @@ def _actions_have_verified_proof(
             "save_verified_skill",
             "save_feedback_lesson",
             "agent_knowledge_stats",
+            "request_tool_capabilities",
+            "read_observation_evidence",
         }
     ]
     if not operational_actions or any(
@@ -3045,31 +3074,8 @@ class GroqResponsesAgent:
                     not in blocked_feedback_mutations
                 ]
 
-            if "BROWSER_GROUNDING_READ_ONLY:" in self._ephemeral_context:
-                browser_allowed = {
-                    "open_url",
-                    "browser_list_tabs",
-                    "browser_get_active_tab",
-                    "browser_activate_tab",
-                    "browser_navigate",
-                    "browser_observe_dom",
-                    "browser_find",
-                    "browser_click",
-                    "browser_write",
-                    "browser_select",
-                    "browser_press",
-                    "browser_back",
-                    "browser_forward",
-                    "browser_close_tab",
-                    "browser_download",
-                    "browser_verify",
-                }
-                tools = [
-                    item
-                    for item in tools
-                    if str((item.get("function") or {}).get("name") or "")
-                    in browser_allowed
-                ]
+            # Browser grounding is read data, not an execution-domain policy.
+            # FoundationToolAdapter still blocks unscoped Windows mutations.
         if self._memory_scope_active:
             from .memory_tool_scope import narrow_memory_tools
             tools = narrow_memory_tools(
@@ -3078,7 +3084,11 @@ class GroqResponsesAgent:
         from .active_mission_supervisor import progress_tool_definition
         checkpoint_tool = progress_tool_definition()
         tools = [t for t in tools if (t.get("function") or {}).get("name") != "mission_checkpoint"]
-        return [*tools, checkpoint_tool] if checkpoint_tool else tools
+        tools = [*tools, checkpoint_tool] if checkpoint_tool else tools
+        context = getattr(self, "request_context", None)
+        if context is not None and not self._memory_scope_active:
+            tools = context.prepare_tools(tools, browser_mode=bool(getattr(self.tools, "browser_mode", False)))
+        return tools
 
     @staticmethod
     def _is_ms_football_request(user_text: str) -> bool:
@@ -3090,6 +3100,9 @@ class GroqResponsesAgent:
         )
 
     def _messages_for_request(self) -> list[dict[str, Any]]:
+        context = getattr(self, "request_context", None)
+        if context is not None and context.enabled:
+            return self._messages
         if "BROWSER_GROUNDING_READ_ONLY:" not in self._ephemeral_context:
             return self._messages
         from .active_mission_supervisor import execution_scope_active
@@ -3138,6 +3151,11 @@ class GroqResponsesAgent:
         try:
             request_messages = self._messages_for_request()
             from .request_compaction import compact_duplicate_observations
+            context = getattr(self, "request_context", None)
+            archived_chars = 0
+            if context is not None:
+                request_messages, archived_chars = context.compact(request_messages)
+                tool_definitions = self._tool_definitions(ms_football_only=ms_football_only, msf_tool_names=msf_tool_names)
             request_messages, saved_chars = compact_duplicate_observations(request_messages)
             context_chars = len(
                 json.dumps(request_messages, ensure_ascii=False, separators=(",", ":"))
@@ -3150,6 +3168,7 @@ class GroqResponsesAgent:
                 f"messages_chars={context_chars} tools={len(tool_definitions)} "
                 f"tools_chars={tools_chars}"
                 f" deduplicated_chars={saved_chars}"
+                f" archived_chars={archived_chars}"
             )
             from .active_mission_supervisor import reserve_model_request
             reserve_model_request()
@@ -3161,7 +3180,8 @@ class GroqResponsesAgent:
                 parallel_tool_calls=False,
                 reasoning_effort=self.reasoning_effort,
                 temperature=0.1,
-                max_completion_tokens=256,
+                max_completion_tokens=(settings.agent_completion_tokens if self.provider_name == "cerebras"
+                                       else getattr(settings, "groq_completion_tokens", 512)),
             )
             from .active_mission_supervisor import record_model_usage
             record_model_usage(getattr(response, "usage", None), self.provider_name)
@@ -3570,6 +3590,9 @@ class GroqResponsesAgent:
         log: LogFn | None = None,
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
+        context = getattr(self, "request_context", None)
+        if context is not None:
+            context.begin_turn()
         self._request_turn_start_index = len(self._messages)
         self.last_effective_provider = ""
         self.last_effective_credential = ""
@@ -3579,6 +3602,8 @@ class GroqResponsesAgent:
         end_session = False
         should_exit = False
         failed_results: dict[str, AgentActionResult] = {}
+        from .instruction_clauses import requires_empty_target
+        empty_precondition_pending = requires_empty_target(user_text)
         self._memory_write_allowed = _is_explicit_memory_write_request(user_text)
         self._skill_write_allowed = False
         self._lesson_write_allowed = (
@@ -4142,6 +4167,10 @@ class GroqResponsesAgent:
                 text, memory_guard = guard_memory_answer(text, actions)
                 if memory_guard and log:
                     log("[AGENT_EVIDENCE] guarded=" + memory_guard)
+                from .file_artifact import guard_saved_file_answer
+                text, file_guard = guard_saved_file_answer(user_text, text, actions)
+                if file_guard and log:
+                    log("[AGENT_EVIDENCE] guarded=unverified_saved_file")
 
                 unsupported_claims = _unsupported_browser_quoted_claims(
                     user_text,
@@ -4195,6 +4224,8 @@ class GroqResponsesAgent:
 
                 if log:
                     log(f"[AGENT_TOOL] call={name} args={arguments}")
+                if empty_precondition_pending and name in {"write_ui_element", "computer_write"}:
+                    arguments["precondition_value"] = ""
                 from .memory_tool_scope import narrow_memory_tools
                 memory_denied = (
                     self._memory_scope_active
@@ -4277,7 +4308,11 @@ class GroqResponsesAgent:
                     "browser_close_tab",
                     "browser_download",
                 }
-                if memory_denied:
+                if empty_precondition_pending and name in {"type_text_active_window", "write_visual_target"}:
+                    result = AgentActionResult(name=name, success=False,
+                        message="Une cible prouvee vide est requise avant ecriture.",
+                        detail='{"precondition_failed":true,"dispatched":false}')
+                elif memory_denied:
                     result = AgentActionResult(
                         name=name,
                         success=False,
@@ -4527,6 +4562,9 @@ class GroqResponsesAgent:
                     if name in {"research_web", "search_web"}:
                         research_web_calls += 1
                 actions.append(result)
+                if (name in {"write_ui_element", "computer_write"} and result.success
+                        and _action_detail_dict(result).get("verified") is True):
+                    empty_precondition_pending = False
                 # Only verified previous memory usage can justify keeping a
                 # short follow-up in the memory-only scope. A new external
                 # action or turn clears that weak conversational affinity.
@@ -4893,6 +4931,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 "timeout",
                 "timed out",
                 "connection",
+                "provider_response_incomplete",
             )
         )
 
@@ -4928,6 +4967,10 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         )
         request_messages = self._messages_for_request()
         from .request_compaction import compact_duplicate_observations
+        context = getattr(self, "request_context", None)
+        if context is not None:
+            request_messages, archived_chars = context.compact(request_messages)
+            print(f"[AGENT_CONTEXT] provider=groq_fallback archived_chars={archived_chars}")
         request_messages, saved_chars = compact_duplicate_observations(request_messages)
         if saved_chars:
             print(f"[AGENT_CONTEXT] provider=groq_fallback deduplicated_chars={saved_chars}")
@@ -4953,7 +4996,21 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         from .provider_rate_budget import groq_fallback_preflight
         allowed, estimate, budget = groq_fallback_preflight(
             request_messages, request_tools,
+            completion_tokens=getattr(settings, "groq_completion_tokens", 512),
         )
+        if not allowed and context is not None and context.enabled:
+            request_messages, saved_chars = context.compact(self._messages_for_request(), retain_latest=1, preview_chars=80)
+            request_tools = context.fallback_tools(self._tool_definitions(
+                ms_football_only=ms_football_only, msf_tool_names=msf_tool_names), request_messages)
+            if isinstance(tool_choice, dict):
+                forced = (tool_choice.get("function") or {}).get("name")
+                for definition in self._tool_definitions(ms_football_only=ms_football_only, msf_tool_names=msf_tool_names):
+                    if definition.get("function", {}).get("name") == forced and definition not in request_tools:
+                        request_tools.append(definition)
+            allowed, estimate, budget = groq_fallback_preflight(request_messages, request_tools,
+                completion_tokens=getattr(settings, "groq_completion_tokens", 512))
+            print(f"[AGENT_CONTEXT] provider=groq_fallback mode=recoverable_minimal_tools "
+                  f"tools={len(request_tools)} archived_chars={saved_chars}")
         if not allowed:
             print(f"[AGENT_BUDGET] groq_fallback_skipped estimated_tokens={estimate} "
                   f"configured_limit={budget}; no_request_sent")
@@ -4973,7 +5030,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 parallel_tool_calls=False,
                 reasoning_effort=settings.groq_reasoning_effort,
                 temperature=0.1,
-                max_completion_tokens=256,
+                max_completion_tokens=getattr(settings, "groq_completion_tokens", 512),
             )
             from .active_mission_supervisor import record_model_usage
             record_model_usage(getattr(response, "usage", None), "groq")
@@ -5010,6 +5067,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 ms_football_only=ms_football_only,
                 msf_tool_names=msf_tool_names,
             )
+            self._check_complete_response(response)
             self.last_effective_credential = "primary"
             return response
         except AgentRuntimeUnavailable as primary_error:
@@ -5039,6 +5097,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                         ms_football_only=ms_football_only,
                         msf_tool_names=msf_tool_names,
                     )
+                    self._check_complete_response(response)
                     self.last_effective_credential = "secondary"
                     return response
                 except AgentRuntimeUnavailable as exc:
@@ -5068,6 +5127,14 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 raise secondary_error
             raise primary_error
 
+    @staticmethod
+    def _check_complete_response(response):
+        from .provider_response import response_integrity_error
+        choices = getattr(response, "choices", None)
+        error = response_integrity_error(choices[0]) if choices else "provider_response_incomplete"
+        if error:
+            raise AgentRuntimeUnavailable(error)
+
 def build_agent_runtime() -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
 
@@ -5086,6 +5153,9 @@ def build_agent_runtime() -> AgentRuntime:
     from .mcp_server_registry import MCPRegistry
     mcp_registry = MCPRegistry()
     tools = MCPToolRegistry(tools, registry=mcp_registry, runtime_gate=mcp_registry.runtime_enabled)
+    from .request_context import RequestContext, ContextToolRegistry
+    request_context = RequestContext(enabled=enabled("JARVIS_EFFICIENT_CONTEXT_ENABLED"))
+    tools = ContextToolRegistry(tools, request_context)
 
     # Independent, opt-in Hermes-inspired per-action checkpointing.
     # This registry is the *only* additional boundary around the existing
@@ -5144,6 +5214,7 @@ def build_agent_runtime() -> AgentRuntime:
             f"Agent provider non pris en charge: {settings.agent_provider}"
         )
 
+    runtime.request_context = request_context
     if foundation_tools is not None:
         runtime = FoundationRuntime(runtime, foundation_tools)
         if enabled("JARVIS_MEMORY_CORE_ENABLED"):

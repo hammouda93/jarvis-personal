@@ -144,6 +144,10 @@ class FoundationToolAdapter:
         self._durable_memory_written_this_turn = False
         if not self.browser:
             return
+        from .instruction_clauses import has_windows_objective
+        if has_windows_objective(user_text):
+            self.browser_mode = False
+            return
         from .tools import route
         intent = route(user_text)
         if intent.name.startswith("browser.") or (intent.name == "app.open" and intent.args.get("app") == "chrome"):
@@ -411,12 +415,13 @@ class FoundationToolAdapter:
                       "key": {"type": "string"}, "exact": {"type": "boolean"},
                       "expected": {"type": "object"}, "condition": {"type": "object"}}
             fields["context"] = {"type":"object"}
+            fields["precondition_value"] = {"type": "string", "description": "Valeur exacte a relire sur la cible avant mutation; inconnu bloque, vide exige une cible reellement vide."}
             for op, names, required in (
                 ("observe", ["window_id"], ["window_id"]),
                 ("find", ["text", "type", "exact"], []),
                 ("focus_probe", ["ref"], ["ref"]),
                 ("click", ["ref", "expected"], ["ref"]),
-                ("write", ["ref", "text", "expected", "context"], ["ref", "text"]),
+                ("write", ["ref", "text", "expected", "context", "precondition_value"], ["ref", "text"]),
                 ("press", ["ref", "key", "expected", "context"], ["ref", "key"]),
                 ("shortcut", ["window_id", "key"], ["window_id", "key"]),
                 ("verify", ["window_id", "condition"], ["window_id", "condition"])):
@@ -816,6 +821,14 @@ class FoundationToolAdapter:
                     ref = args.pop("ref")
                     payload = self.computer.act(ref, op, **args)
             else:
+                if name in {"open_file", "open_folder"} and self.browser_mode:
+                    from .instruction_clauses import has_windows_objective
+                    if not has_windows_objective(self.current_user_text):
+                        raise RuntimeError("browser_mission_requires_tab_scoped_primitives")
+                    result = self.delegate.execute(name, arguments, approved=approved)
+                    if result.success:
+                        self.browser_mode = False
+                    return result
                 if name == "open_application" and self.browser:
                     if self.browser_mode:
                         from .tools import route

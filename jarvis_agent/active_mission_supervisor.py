@@ -54,6 +54,7 @@ class MissionLimits:
 
 
 OBSERVATION_TOOLS = frozenset({
+    "verify_file_artifact",
     "browser_list_tabs", "browser_get_active_tab", "browser_observe_dom",
     "browser_verify", "computer_observe", "computer_verify",
     "computer_list_windows", "computer_get_active_window", "list_windows",
@@ -242,8 +243,14 @@ class SupervisedToolRegistry:
             return self.delegate.execute(name, arguments, approved=approved)
         if name == "mission_checkpoint":
             return scope.checkpoint(arguments)
-        if scope.allowed_tools is not None and name not in scope.allowed_tools:
+        context_read = name in {"request_tool_capabilities", "read_observation_evidence"}
+        if scope.allowed_tools is not None and name not in scope.allowed_tools and not context_read:
             raise SupervisorStopped("tool_outside_delegation_scope")
+        if context_read:
+            scope.reserve(actions=1, network_calls=0)
+            scope.transition(SupervisorState.OBSERVING, tool=str(name))
+            # Context reads cannot verify a new effect or trigger UI inspection.
+            return self.delegate.execute(name, arguments, approved=False)
         if approved:
             scope.consume_approval(name, arguments)
         if not approved and self.requires_confirmation(name):

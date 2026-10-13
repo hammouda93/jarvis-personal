@@ -32,6 +32,8 @@ def _root() -> Path:
 
 # Deliberately generic categories. Unrecognized tools are NOT assumed read-only.
 _READ_ONLY = frozenset({
+    "verify_file_artifact",
+    "request_tool_capabilities", "read_observation_evidence",
     "list_windows", "inspect_active_window", "inspect_interface",
     "observe_screen", "list_applications", "get_current_time",
     "get_system_time", "search_agent_knowledge", "agent_knowledge_stats",

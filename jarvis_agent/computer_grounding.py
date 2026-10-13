@@ -13,6 +13,10 @@ import uuid
 from dataclasses import asdict, dataclass
 
 
+class ComputerPreconditionError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class GroundedElement:
     ref: str
@@ -226,7 +230,7 @@ class ComputerGrounding:
             "element": asdict(promoted),
         }
 
-    def act(self, ref, operation, *, text="", key="", expected=None, context=None):
+    def act(self, ref, operation, *, text="", key="", expected=None, context=None, precondition_value=None):
         if ref not in self._refs:
             raise RuntimeError("stale_grounding_ref")
         e, identity, captured, digest = self._refs[ref]
@@ -278,11 +282,20 @@ class ComputerGrounding:
             current = self.backend.capture(window_id)
             if patch_hash(current, e.bbox, identity["bounds"]) != digest:
                 raise RuntimeError("visual_target_changed")
+        if precondition_value is not None:
+            reader = getattr(self.backend, "read_value", None)
+            current_value = reader(window_id, e) if callable(reader) else None
+            if (not isinstance(precondition_value, str) or current_value is None
+                    or current_value != precondition_value or self.backend.identity(window_id) != identity):
+                raise ComputerPreconditionError("computer_value_precondition_not_proven")
         # Consume refs BEFORE dispatch, even when transport outcome is unknown.
         self._refs.clear()
         try:
-            dispatched = self.backend.act(window_id, e, operation, text=text, key=key)
+            dispatched = self.backend.act(window_id, e, operation, text=text, key=key,
+                **({"precondition_value": precondition_value} if precondition_value is not None else {}))
             post = self.observe(window_id)
+        except ComputerPreconditionError:
+            raise
         except Exception as exc:
             raise RuntimeError("computer_outcome_unknown_requires_verification: " + str(exc)) from exc
         verified = False
@@ -463,7 +476,21 @@ class WindowsGroundingBackend:
         self.require_foreground(window_id)
         return self.focused_editable(window_id)
 
-    def act(self, window_id, element, operation, *, text="", key=""):
+    def read_value(self, window_id, element):
+        from . import windows_perception as win
+        if element.sensor not in {"uia", "uia_focus"}:
+            return None
+        window = win._desktop().window(handle=int(window_id)).wrapper_object()
+        wrappers, _ = win._bounded_descendants(window, time_budget_s=1, max_nodes=300)
+        candidates = [w for w in wrappers if json.dumps(list(w.element_info.runtime_id or ())) == element.native_ref]
+        if len(candidates) != 1:
+            return None
+        target = candidates[0]
+        if tuple(win._rect_tuple(target)) != element.bbox or not win._is_visible(target) or not win._is_enabled(target):
+            return None
+        return win._strict_control_value(target)
+
+    def act(self, window_id, element, operation, *, text="", key="", precondition_value=None):
         from . import windows_perception as win
         if element.sensor in {"uia", "uia_focus"}:
             if element.sensor == "uia_focus":
@@ -494,6 +521,8 @@ class WindowsGroundingBackend:
                 pattern = target.iface_value
                 if pattern.CurrentIsReadOnly:
                     raise RuntimeError("uia_value_pattern_read_only")
+                if precondition_value is not None and win._strict_control_value(target) != precondition_value:
+                    raise ComputerPreconditionError("computer_value_precondition_changed")
                 pattern.SetValue(text)
             else:
                 self.require_foreground(window_id)

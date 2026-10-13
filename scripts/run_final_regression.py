@@ -28,6 +28,7 @@ def regression_environment(data_dir: Path) -> dict[str, str]:
         "JARVIS_MEMORY_AGENT_TOOLS_ENABLED", "JARVIS_MEMORY_SCOPE_GUARD_ENABLED",
         "JARVIS_MEMORY_ASYNC_PROJECTION_ENABLED", "JARVIS_BROWSER_CORE_ENABLED",
         "JARVIS_COMPUTER_CORE_ENABLED",
+        "JARVIS_EFFICIENT_CONTEXT_ENABLED",
     )
     env = {name: "0" for name in flags}
     env.update({name: "" for name in (

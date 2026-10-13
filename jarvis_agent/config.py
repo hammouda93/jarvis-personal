@@ -227,6 +227,8 @@ class Settings:
     cerebras_reasoning_effort: str = (
         os.getenv("JARVIS_CEREBRAS_REASONING_EFFORT") or "low"
     ).strip()
+    agent_completion_tokens: int = max(256, min(4096, _int("JARVIS_AGENT_COMPLETION_TOKENS", 1024)))
+    groq_completion_tokens: int = max(256, min(2048, _int("JARVIS_GROQ_COMPLETION_TOKENS", 512)))
     cerebras_request_timeout_s: float = _float(
         "JARVIS_CEREBRAS_REQUEST_TIMEOUT_S",
         8.0,

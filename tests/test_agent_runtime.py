@@ -836,7 +836,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("visible", result.text)
 
-    def test_browser_grounded_turn_exposes_only_browser_scope_tools(self):
+    def test_browser_grounding_is_not_an_execution_domain_policy(self):
         class BrowserScopeTools(FakeTools):
             def ollama_tools(self):
                 tools = super().ollama_tools()
@@ -895,14 +895,9 @@ class AgentRuntimeTests(unittest.TestCase):
         }
 
         self.assertTrue(names)
-        self.assertTrue(
-            all(
-                name == "open_url" or name.startswith("browser_")
-                for name in names
-            )
-        )
-        self.assertNotIn("inspect_active_window", names)
-        self.assertNotIn("research_web", names)
+        self.assertIn("browser_observe_dom", names)
+        self.assertIn("inspect_active_window", names)
+        self.assertIn("research_web", names)
 
     def test_browser_request_compacts_old_history_but_keeps_current_tool_loop(self):
         agent = GroqResponsesAgent(FakeTools())

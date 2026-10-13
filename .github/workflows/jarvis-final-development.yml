@@ -6,6 +6,7 @@ on:
       - feature/codex-jarvis-final-development
       - codex/integrate-memory-v10c
       - codex/live-regressions-v10d
+      - codex/agent-missions-v10e
   pull_request:
   workflow_dispatch:
 
@@ -45,6 +46,7 @@ jobs:
           JARVIS_SEMANTIC_MEMORY_V5_ENABLED: '1'
           JARVIS_MEMORY_AGENT_TOOLS_ENABLED: '1'
           JARVIS_MEMORY_SCOPE_GUARD_ENABLED: '1'
+          JARVIS_EFFICIENT_CONTEXT_ENABLED: '1'
         run: python scripts/run_final_regression.py
       - name: Browser Bridge replay contracts
         run: node --test tests/browser_bridge_replay.mjs

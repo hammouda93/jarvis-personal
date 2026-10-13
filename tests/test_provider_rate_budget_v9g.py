@@ -12,6 +12,11 @@ from jarvis_agent.agent_runtime import (
 )
 
 
+def complete_response(text):
+    return SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop",
+        message=SimpleNamespace(content=text, tool_calls=[]))])
+
+
 class ProviderRateBudgetTests(unittest.TestCase):
     def test_groq_sdk_hidden_retries_are_disabled(self):
         agent = GroqResponsesAgent.__new__(GroqResponsesAgent)
@@ -110,13 +115,13 @@ class ProviderRateBudgetTests(unittest.TestCase):
         agent._provider_rate_gate = ProviderRateGate(cooldown_seconds=60, clock=lambda: now[0])
         agent._provider_rate_gate.note_failure("primary", RuntimeError("429"))
         config = SimpleNamespace(cerebras_secondary_api_key="", cerebras_fallback_to_groq=False, groq_api_key="")
-        with patch("jarvis_agent.agent_runtime.settings", config), patch.object(GroqResponsesAgent, "_chat", return_value="ok") as chat:
+        with patch("jarvis_agent.agent_runtime.settings", config), patch.object(GroqResponsesAgent, "_chat", return_value=complete_response("ok")) as chat:
             now[0] = 59.0
             with self.assertRaises(AgentRuntimeUnavailable):
                 agent._chat()
             self.assertEqual(agent._provider_rate_gate.remaining("primary"), 1.0)
             now[0] = 61.0
-            self.assertEqual(agent._chat(), "ok")
+            self.assertEqual(agent._chat().choices[0].message.content, "ok")
         self.assertEqual(chat.call_count, 1)
 
     def test_cooldown_after_429_but_not_after_unrelated_error(self):
@@ -158,9 +163,9 @@ class ProviderRateBudgetTests(unittest.TestCase):
         with patch("jarvis_agent.agent_runtime.settings", settings), patch.object(
                 GroqResponsesAgent, "_chat",
                 side_effect=[AgentRuntimeUnavailable("API error 429: limit"),
-                             "secondary ok", "secondary again"]) as mocked:
-            self.assertEqual(agent._chat(), "secondary ok")
-            self.assertEqual(agent._chat(), "secondary again")
+                             complete_response("secondary ok"), complete_response("secondary again")]) as mocked:
+            self.assertEqual(agent._chat().choices[0].message.content, "secondary ok")
+            self.assertEqual(agent._chat().choices[0].message.content, "secondary again")
         self.assertEqual(mocked.call_count, 3)
         self.assertGreater(agent._provider_rate_gate.remaining("primary"), 0)
         self.assertLessEqual(agent._provider_rate_gate.remaining("primary"), 60)
@@ -180,9 +185,9 @@ class ProviderRateBudgetTests(unittest.TestCase):
                 GroqResponsesAgent, "_chat",
                 side_effect=[
                     AgentRuntimeUnavailable("cerebras API error 402: payment_required"),
-                    "secondary ok", "secondary again"]) as mocked:
-            self.assertEqual(agent._chat(), "secondary ok")
-            self.assertEqual(agent._chat(), "secondary again")
+                    complete_response("secondary ok"), complete_response("secondary again")]) as mocked:
+            self.assertEqual(agent._chat().choices[0].message.content, "secondary ok")
+            self.assertEqual(agent._chat().choices[0].message.content, "secondary again")
         # Only three actual calls: primary once and secondary twice.
         self.assertEqual(mocked.call_count, 3)
         self.assertTrue(agent._provider_rate_gate.billing_blocked("primary"))
