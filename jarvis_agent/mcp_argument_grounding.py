@@ -11,19 +11,19 @@ from typing import Any
 
 # Whole-token documentation placeholders, not arbitrary user prose.
 _TEMPLATE_TOKEN = re.compile(
-    r"(?i)(?:^|[\\s/])(?:"
+    r"(?i)(?:^|[\s/])(?:"
     r"(?:your|insert|replace|enter|fill)[_-]"
     r"(?:user(?:name)?|owner|org(?:anization)?|repo(?:sitory)?|"
     r"account|project|id|token|api[-_]?key|value|name)"
     r"|(?:owner|username|repository|repo|account|project)[_-]placeholder"
-    r")(?:$|[\\s/])"
+    r")(?:$|[\s/])"
 )
 _DELIMITED = re.compile(
     r"(?:<([a-z][a-z0-9_-]{0,60})>|"
-    r"\\{\\{([a-z][a-z0-9_-]{0,60})\\}\\}|"
-    r"(?<!\\{)\\{([a-z][a-z0-9_-]{0,60})\\}(?!\\})|"
-    r"\\$\\{([a-z][a-z0-9_-]{0,60})\\}|"
-    r"\\[([a-z][a-z0-9_-]{0,60})\\])",
+    r"\{\{([a-z][a-z0-9_-]{0,60})\}\}|"
+    r"(?<!\{)\{([a-z][a-z0-9_-]{0,60})\}(?!\})|"
+    r"\$\{([a-z][a-z0-9_-]{0,60})\}|"
+    r"\[([a-z][a-z0-9_-]{0,60})\])",
     re.IGNORECASE,
 )
 _EXACT = frozenset({
