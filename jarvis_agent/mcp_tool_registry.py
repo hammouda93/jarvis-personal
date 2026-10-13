@@ -144,9 +144,12 @@ class MCPToolRegistry:
         # Validate BEFORE reserving quotas, starting a session or allowing
         # a write to reach a remote server. Only paths, not argument values,
         # may enter the journal / model-facing refusal.
-        from .mcp_argument_grounding import unresolved_argument_paths
+        from .mcp_argument_grounding import (
+            unresolved_argument_paths, missing_required_arguments,
+        )
         unresolved = unresolved_argument_paths(arguments)
-        if unresolved:
+        missing = missing_required_arguments(arguments, tool.get("input_schema"))
+        if unresolved or missing:
             return AgentActionResult(
                 name=name, success=False,
                 message=(
@@ -156,8 +159,9 @@ class MCPToolRegistry:
                     "précision manquante sans inventer de valeur."
                 ),
                 detail=json.dumps({
-                    "guard": "unresolved_argument_template",
-                    "argument_paths": list(unresolved),
+                    "guard": ("unresolved_argument_template"
+                              if unresolved else "missing_required_arguments"),
+                    "argument_paths": list(unresolved or missing),
                     "dispatched": False, "outcome_unknown": False,
                     "verified": False, "recoverable": True,
                     "permissions_changed": False,
