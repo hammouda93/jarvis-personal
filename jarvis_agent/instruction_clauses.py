@@ -58,3 +58,19 @@ def requires_agent_routing(text):
 def requires_empty_target(text):
     return any(re.search(r"\b(?:document|fichier|champ|editeur|file|field|editor)\s+(?:vide|empty|blank)\b|\b(?:empty|blank)\s+(?:document|file|field|editor)\b", clause)
                for clause in positive_instruction_clauses(text))
+
+def requires_new_document(text):
+    """Positive creation intent, never a permission to overwrite an open file.
+
+    Generic for document editors: a new *document* is not a new application
+    instance. Negated user clauses are excluded before matching.
+    """
+    return any(
+        re.search(
+            r"\b(?:cree|creer|ouvre|ouvrir|create|open)\b.{0,90}"
+            r"\b(?:un|une|a|an)?\s*(?:nouveau|nouvelle|new|vierge|blank)\s+"
+            r"(?:document|fichier|file|onglet|tab)\b",
+            clause,
+        )
+        for clause in positive_instruction_clauses(text)
+    )
