@@ -12,7 +12,7 @@ from .request_compaction import _READS
 
 _OBSERVATIONS = _READS | {"computer_observe", "computer_find"}
 _CONTEXT_TOOLS = {"request_tool_capabilities", "read_observation_evidence"}
-_ROOTS = {"open_file", "open_folder", "open_application", "list_windows",
+_ROOTS = {"find_file", "open_file", "open_folder", "open_application", "list_windows",
           "browser_list_tabs", "browser_get_active_tab", "get_current_time",
           "mission_checkpoint", "return_to_standby", "reset_conversation_context"}
 # Essential read/verify tools and the generic Windows close primitive must not
