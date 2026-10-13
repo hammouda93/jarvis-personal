@@ -117,6 +117,26 @@ def invalid_schema_argument_paths(arguments: Any, schema: Any) -> tuple[str, ...
         return ("arguments",)
     if not isinstance(schema, dict):
         raise MCPArgumentSchemaUnavailable("invalid_input_schema")
+    # Schemas are advertised by external servers. Do not allow a validator
+    # to resolve remote or filesystem references during local preflight.
+    stack = [(schema, 0)]
+    scanned = 0
+    while stack:
+        node, depth = stack.pop()
+        scanned += 1
+        if depth > 30 or scanned > 2500:
+            raise MCPArgumentSchemaUnavailable("schema_too_complex")
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in {"$ref", "$dynamicRef", "$recursiveRef"}:
+                    if not isinstance(value, str) or not value.startswith("#"):
+                        raise MCPArgumentSchemaUnavailable("external_schema_reference")
+                if isinstance(value, (dict, list)):
+                    stack.append((value, depth + 1))
+        elif isinstance(node, list):
+            for value in node:
+                if isinstance(value, (dict, list)):
+                    stack.append((value, depth + 1))
     try:
         from jsonschema import validators
         from jsonschema.exceptions import SchemaError
