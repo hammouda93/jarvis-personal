@@ -5436,6 +5436,15 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             ms_football_only=ms_football_only,
             msf_tool_names=msf_tool_names,
         )
+        # A provider fallback must never hide the one capability required
+        # by the CURRENT, explicitly authorized memory task. The old pack
+        # reduced "retiens que ..." to one unrelated catalog tool, then Groq
+        # emitted an undeclared remember_information call (HTTP 400).
+        preserved = set()
+        if getattr(self, "_memory_write_allowed", False):
+            preserved.add("remember_information")
+        if getattr(self, "_memory_scope_active", False):
+            preserved.add("semantic_memory_search")
         from .provider_rate_budget import groq_fallback_preflight
         allowed, estimate, budget = groq_fallback_preflight(
             request_messages, request_tools,
@@ -5444,7 +5453,8 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         if not allowed and context is not None and context.enabled:
             request_messages, saved_chars = context.compact(self._messages_for_request(), retain_latest=1, preview_chars=80)
             request_tools = context.fallback_tools(self._tool_definitions(
-                ms_football_only=ms_football_only, msf_tool_names=msf_tool_names), request_messages)
+                ms_football_only=ms_football_only, msf_tool_names=msf_tool_names),
+                request_messages, preserve_required=preserved)
             if isinstance(tool_choice, dict):
                 forced = (tool_choice.get("function") or {}).get("name")
                 for definition in self._tool_definitions(ms_football_only=ms_football_only, msf_tool_names=msf_tool_names):
@@ -5462,6 +5472,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                     ),
                     request_messages,
                     pressure_minimal=True,
+                    preserve_required=preserved,
                 )
                 if isinstance(tool_choice, dict):
                     forced = (tool_choice.get("function") or {}).get("name")

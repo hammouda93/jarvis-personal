@@ -190,7 +190,8 @@ class RequestContext:
         self.last_saved_chars = saved
         return result, saved
 
-    def fallback_tools(self, schemas, messages, *, pressure_minimal=False):
+    def fallback_tools(self, schemas, messages, *, pressure_minimal=False,
+                       preserve_required=()):
         recent = []
         for item in reversed(messages):
             if item.get("role") == "assistant":
@@ -200,7 +201,16 @@ class RequestContext:
                         recent.append(name)
             if len(recent) >= 2:
                 break
-        keep = _CONTEXT_TOOLS | set(recent[:2]) | {"mission_checkpoint"}
+        # Only already admitted schemas can be retained. Authorization
+        # still belongs to the original user request + execution registry.
+        required = {
+            name for name in preserve_required
+            if name in {
+                str((definition.get("function") or {}).get("name") or "")
+                for definition in schemas
+            }
+        }
+        keep = _CONTEXT_TOOLS | set(recent[:2]) | {"mission_checkpoint"} | required
         if pressure_minimal:
             # Last-chance, schema-only pressure pack. Preserve the *next*
             # generic browser operation while staying inside the original
@@ -208,7 +218,7 @@ class RequestContext:
             # read-only capability catalog; their original execution and
             # confirmation gates are unchanged.
             last = recent[0] if recent else ""
-            keep = _CONTEXT_TOOLS | {"mission_checkpoint"}
+            keep = _CONTEXT_TOOLS | {"mission_checkpoint"} | required
             if last == "browser_find":
                 keep.update({"browser_click", "browser_observe_dom"})
             elif last == "browser_observe_dom":

@@ -250,6 +250,28 @@ class EfficientContextTests(unittest.TestCase):
             self.assertNotIn("computer_write", names)
             self.assertNotIn("semantic_memory_search", names)
 
+    def test_explicit_memory_write_is_not_hidden_by_normal_or_pressure_fallback(self):
+        context = RequestContext(enabled=True)
+        schemas = [tool(name) for name in (
+            "request_tool_capabilities", "remember_information",
+            "semantic_memory_search", "browser_click", "computer_write",
+        )]
+        messages = [{"role": "user", "content": "retiens que demain j'ai un cours"}]
+        for minimum in (False, True):
+            selected = {x["function"]["name"] for x in context.fallback_tools(
+                schemas, messages, pressure_minimal=minimum,
+                preserve_required=("remember_information",),
+            )}
+            self.assertIn("remember_information", selected)
+            self.assertNotIn("computer_write", selected)
+            self.assertNotIn("browser_click", selected)
+            normal = {x["function"]["name"] for x in context.fallback_tools(
+                [x for x in schemas if x["function"]["name"] != "remember_information"],
+                messages, pressure_minimal=minimum,
+                preserve_required=("remember_information",),
+            )}
+            self.assertNotIn("remember_information", normal)
+
     def test_minimal_fallback_for_nonbrowser_mission_does_not_promote_browser(self):
         context = RequestContext(enabled=True)
         schemas = [tool(name) for name in (
