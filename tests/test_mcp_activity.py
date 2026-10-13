@@ -195,6 +195,23 @@ class MCPPanelTests(unittest.TestCase):
         self.assertEqual(panel.bearer.text(), "")
         self.assertEqual(emitted, [("store_bearer", "service", "PRIVATE_FIXTURE")])
 
+    def test_empty_credential_shows_feedback_without_any_secret_dispatch(self):
+        panel = MCPConnectionsPanel()
+        self.addCleanup(panel.close)
+        data = {"enabled": False, "servers": [
+            {"id": "github", "kind": "http", "tools": []}
+        ]}
+        panel.apply_snapshot(data)
+        panel.server_picker.setCurrentIndex(1)
+        emitted = []
+        panel.requested.connect(lambda *args: emitted.append(args))
+        panel.bearer.clear()
+        panel.store_credential_button.click()
+        self.assertIn("vide", panel.feedback.text())
+        self.assertIn("Credential HTTP", panel.feedback.text())
+        self.assertEqual(emitted, [])
+        self.assertEqual(panel.bearer.text(), "")
+
     def test_oauth_only_emits_worker_command_with_cancel_accessible(self):
         panel = MCPConnectionsPanel()
         self.addCleanup(panel.close)
