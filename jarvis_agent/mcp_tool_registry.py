@@ -92,15 +92,24 @@ class MCPToolRegistry:
             for item in self.ollama_tools()
         ]
 
+    def _automatic_read(self, name: str) -> bool:
+        """Only previously fingerprint-pinned, operator-approved read tools."""
+        tool = self._available().get(str(name))
+        return bool(tool and self.registry.is_auto_read_allowed(
+            tool["server"], tool["tool"]))
+
     def requires_confirmation(self, name: str) -> bool:
         if str(name).startswith("mcp__"):
-            return True
+            return not self._automatic_read(name)
         return self.delegate.requires_confirmation(name)
 
     def execute(self, name: str, arguments: dict, *, approved: bool = False):
         if not str(name).startswith("mcp__"):
             return self.delegate.execute(name, arguments, approved=approved)
-        if not approved:
+        # An explicit ONE-TIME server grant can cover only narrow,
+        # fingerprint-pinned read tools. Mutations and all other tools
+        # continue to require a separate user confirmation per call.
+        if not approved and not self._automatic_read(name):
             return AgentActionResult(
                 name=name, success=False,
                 message="Confirmation utilisateur explicite requise.",

@@ -20,6 +20,7 @@ class MCPConnectionsPanel(QFrame):
         self._servers = ()
         self._authorization_pending = ""
         self._selected_server = ""
+        self._rendered_server_state = ""
         self._quota_dirty = False
         self._runtime_pending = False
         self._runtime_enabled = False
@@ -291,6 +292,16 @@ class MCPConnectionsPanel(QFrame):
         self.tool_picker.setObjectName("missionPicker")
         self.tool_picker.addItem("Sélectionner outil découvert…", "")
         layout.addWidget(self.tool_picker)
+        # No need to scroll through dozens of tools merely to permit reads.
+        # This button grants only conservative read APIs from one explicitly
+        # chosen, successfully discovered server; all mutations stay gated.
+        self.auto_read_button = QPushButton("Autoriser les lectures (1 clic)")
+        self.auto_read_button.setToolTip(
+            "Autoriser uniquement les outils de lecture déjà découverts. "
+            "Les autres outils exigent toujours une autorisation séparée."
+        )
+        layout.addWidget(self.auto_read_button)
+        self.auto_read_button.clicked.connect(self._toggle_auto_read)
         self.tool_description = QLabel()
         self.tool_description.setTextFormat(Qt.PlainText)
         self.tool_description.setWordWrap(True)
@@ -500,6 +511,32 @@ class MCPConnectionsPanel(QFrame):
     def _for_server(self, operation: str) -> None:
         self._send(operation, str(self.server_picker.currentData() or ""), "")
 
+    def _toggle_auto_read(self) -> None:
+        server = str(self.server_picker.currentData() or "")
+        entry = next((e for e in self._servers if e.get("id") == server), None)
+        if entry and entry.get("auto_read_enabled") is True:
+            self._send("revoke_auto_read", server, "")
+            return
+        self._grant_auto_read()
+
+    def _grant_auto_read(self) -> None:
+        server = str(self.server_picker.currentData() or "")
+        if not server:
+            self.feedback.setText("Sélectionner un serveur MCP avant d'autoriser les lectures.")
+            return
+        answer = QMessageBox.question(
+            self, "Autorisation MCP de lecture",
+            "Autoriser Jarvis à consulter automatiquement les outils de lecture "
+            "déjà découverts sur ce serveur ?\\n"
+            "Aucune écriture, publication, suppression ou envoi n'est autorisé. "
+            "Les informations lues pourront être envoyées au cerveau IA configuré. "
+            "N'utiliser ce mode qu'avec des serveurs et identifiants de confiance, "
+            "idéalement limités en lecture seule.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            self._send("grant_auto_read", server, "")
+
     def _for_tool(self, operation: str) -> None:
         self._send(
             operation, str(self.server_picker.currentData() or ""),
@@ -536,6 +573,7 @@ class MCPConnectionsPanel(QFrame):
         self.endpoint_label.clear()
         self.inventory.clear()
         self.tool_description.clear()
+        self.auto_read_button.setEnabled(False)
         self.store_credential_button.setEnabled(False)
         self.forget_credential_button.setEnabled(False)
         self.oauth_button.setEnabled(False)
@@ -556,7 +594,15 @@ class MCPConnectionsPanel(QFrame):
             self.oauth_button.setEnabled(http)
             self.oauth_registered.setEnabled(http)
             self.oauth_scope.setEnabled(http)
-            self.save_quotas_button.setEnabled(True)
+            self.save_quotas_button.setEnabled(
+                True)
+            self.auto_read_button.setEnabled(
+                bool(entry.get("enabled") and entry.get("last_discovery_success_utc")))
+            self.auto_read_button.setText(
+                "Désactiver les lectures autonomes"
+                if entry.get("auto_read_enabled") else
+                "Autoriser les lectures (1 clic)"
+            )
             limits = entry.get("quotas") or {}
             if not self._quota_dirty:
                 for widget, key, default in ((self.session_quota, "sessions_per_hour", 100), (self.call_quota, "calls_per_hour", 60)):
@@ -620,6 +666,7 @@ class MCPConnectionsPanel(QFrame):
                        self.allow_button, self.deny_button, self.revoke_button, self.remove_button):
             button.setEnabled(not busy and (bool(server_id) or button in (self.add_button, self.hermes_button)))
         if busy:
+            self.auto_read_button.setEnabled(False)
             self.oauth_registered.setEnabled(False)
             self.oauth_scope.setEnabled(False)
             for button in (self.store_credential_button, self.forget_credential_button, self.oauth_button, self.save_quotas_button):
@@ -627,6 +674,11 @@ class MCPConnectionsPanel(QFrame):
         for widget in self._oauth_client_widgets:
             widget.setEnabled(not busy and self.oauth_registered.isEnabled())
         self._select_tool()
+        # A direct operator selection must also update the rendered snapshot
+        # baseline; otherwise the next background poll rebuilds the picker.
+        current = next((row for row in self._servers if row.get("id") == server_id), None)
+        self._rendered_server_state = json.dumps(
+            current, ensure_ascii=False, sort_keys=True, default=str)
 
     def _select_tool(self, index=0):
         name = self.tool_picker.currentData()
@@ -651,7 +703,9 @@ class MCPConnectionsPanel(QFrame):
             f" · serveurs {len(servers)} · outils autorisés {count}"
         )
         self._servers = servers
-        self.workspace_summary.setPlainText(workspace_summary(servers))
+        workspace = workspace_summary(servers)
+        if self.workspace_summary.toPlainText() != workspace:
+            self.workspace_summary.setPlainText(workspace)
         self._select_workspace_connection(self.workspace_picker.currentIndex())
         old_id = str(self.server_picker.currentData() or "")
         old_tool = str(self.tool_picker.currentData() or "")
@@ -676,10 +730,19 @@ class MCPConnectionsPanel(QFrame):
             if idx >= 0:
                 self.server_picker.setCurrentIndex(idx)
             self.server_picker.blockSignals(False)
-        self._select_server(self.server_picker.currentIndex())
-        idx = self.tool_picker.findData(old_tool)
-        if idx >= 0:
-            self.tool_picker.setCurrentIndex(idx)
+        # Rebuilding a 100+ item QComboBox at every telemetry tick closes
+        # its popup, resets scroll position and makes selecting impossible.
+        # Rebuild only when the actual selected server's metadata changes.
+        current = next((row for row in servers if row.get("id") ==
+                        str(self.server_picker.currentData() or "")), None)
+        rendered = json.dumps(current, ensure_ascii=False, sort_keys=True, default=str)
+        if (rendered != self._rendered_server_state or
+                self._selected_server != str(self.server_picker.currentData() or "")):
+            self._select_server(self.server_picker.currentIndex())
+            self._rendered_server_state = rendered
+            idx = self.tool_picker.findData(old_tool)
+            if idx >= 0:
+                self.tool_picker.setCurrentIndex(idx)
 
     def show_result(self, result: dict) -> None:
         if result.get("operation") == "runtime_set":
@@ -695,6 +758,9 @@ class MCPConnectionsPanel(QFrame):
             self._select_server(self.server_picker.currentIndex())
         if result.get("operation") == "set_quotas" and result.get("success"):
             self._quota_dirty = False
+            # The saved quota can differ from the optimistic spinbox value.
+            # Force one authoritative redraw from the next worker snapshot.
+            self._rendered_server_state = ""
         if result.get("success"):
             self.feedback.setText(
                 str(result.get("message") or "Configuration MCP modifiée.")[:160]

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
 
 from .request_compaction import _READS
 
@@ -80,10 +82,21 @@ class RequestContext:
         self.available = set()
         self.selected = None
         self.last_saved_chars = 0
+        self.user_goal = ""
 
-    def begin_turn(self):
+    def begin_turn(self, user_goal=""):
         self.selected = None
         self.available = set()
+        # Rank *visible* tool names, not permissions, from the current goal.
+        self.user_goal = str(user_goal or "")[:1600]
+
+    @staticmethod
+    def _name_terms(text):
+        value = unicodedata.normalize("NFKD", str(text).lower())
+        value = "".join(c for c in value if not unicodedata.combining(c))
+        tokens = re.findall(r"[a-z0-9]+", value)
+        return {v[:-1] if v.endswith("s") and len(v) > 4 else v
+                for v in tokens if len(v) >= 4}
 
     def prepare_tools(self, schemas, *, browser_mode=False, conversational_only=False,
                       preserve_required=()):
@@ -112,10 +125,23 @@ class RequestContext:
             # request_tool_capabilities catalog, which grants no permission.
             mcp_budget_chars = 6500
             mcp_count = 0
-            for schema in schemas:
+            terms = self._name_terms(self.user_goal)
+            candidates = []
+            from .mcp_read_policy import is_conservative_read_tool
+            for index, schema in enumerate(schemas):
                 name = str((schema.get("function") or {}).get("name") or "")
                 if not name.startswith("mcp__") or name not in available:
                     continue
+                tool_name = name.split("__", 2)[-1]
+                # Only read tools enter the initial pack. Other already
+                # granted capabilities remain selectable through the catalog.
+                if not is_conservative_read_tool(
+                        tool_name, (schema.get("function") or {}).get("parameters")):
+                    continue
+                overlap = len(terms & self._name_terms(tool_name))
+                # Rank by published tool NAME, never external descriptions.
+                candidates.append((-overlap, index, name, schema))
+            for _, _, name, schema in sorted(candidates):
                 size = len(json.dumps(schema, ensure_ascii=False, default=str))
                 if size > mcp_budget_chars:
                     continue

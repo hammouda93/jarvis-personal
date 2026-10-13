@@ -3782,7 +3782,7 @@ class GroqResponsesAgent:
     ) -> AgentTurnResult:
         context = getattr(self, "request_context", None)
         if context is not None:
-            context.begin_turn()
+            context.begin_turn(user_text)
         self._request_turn_start_index = len(self._messages)
         self.last_effective_provider = ""
         self.last_effective_credential = ""

@@ -109,12 +109,15 @@ class MCPRegistry:
                 "inventory_truncated": list(entry.get("inventory_truncated") or []),
                 "credential_source": entry.get("credential_source", "environment") if entry.get("kind") == "http" else "scoped_environment",
                 "discovered": len(entry.get("tools") or {}),
+                "auto_read_enabled": entry.get("auto_read_enabled") is True,
                 "allowed": sum(
-                    (tool.get("allowed") is True)
+                    (tool.get("allowed") is True or self._is_auto_read(entry, tool))
                     for tool in (entry.get("tools") or {}).values()
                 ),
                 "tools": [
-                    {"name": tool_name, "allowed": record.get("allowed") is True,
+                    {"name": tool_name, "allowed": (
+                        record.get("allowed") is True or self._is_auto_read(entry, record)),
+                     "auto_read": self._is_auto_read(entry, record),
                      "description": str(record.get("description") or "")[:150]}
                     for tool_name, record in (entry.get("tools") or {}).items()
                 ][:150],
@@ -268,6 +271,42 @@ class MCPRegistry:
             data["servers"][server_id] = entry
             self._write(data)
 
+    @staticmethod
+    def _is_auto_read(entry: dict, tool: dict) -> bool:
+        return bool(entry.get("auto_read_enabled") is True
+                    and isinstance(tool.get("fingerprint"), str)
+                    and tool.get("fingerprint") in (entry.get("auto_read_fingerprints") or {}).values()
+                    and tool.get("blocked") is not True)
+
+    def set_auto_readonly(self, server_id: str, enabled: bool) -> int:
+        """Single operator consent, pinned to discovered read tool fingerprints.
+
+        Discovery/authentication alone never enables this. Newly added or
+        changed tools require another deliberate operator authorization.
+        """
+        if type(enabled) is not bool:
+            raise ValueError("invalid_auto_read_permission")
+        from .mcp_read_policy import is_conservative_read_tool
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not isinstance(entry, dict):
+                raise KeyError("mcp_server_not_found")
+            if enabled and (entry.get("enabled") is not True
+                            or not entry.get("last_discovery_success_utc")):
+                raise ValueError("mcp_read_autopilot_needs_tested_connection")
+            pinned = {}
+            if enabled:
+                for name, tool in (entry.get("tools") or {}).items():
+                    if (is_conservative_read_tool(name, tool.get("input_schema"))
+                            and tool.get("blocked") is not True
+                            and isinstance(tool.get("fingerprint"), str)):
+                        pinned[name] = tool["fingerprint"]
+            entry["auto_read_enabled"] = enabled
+            entry["auto_read_fingerprints"] = pinned
+            self._write(data)
+            return len(pinned)
+
     def revoke_tools(self, server_id: str) -> None:
         with self._lock:
             data = self._load()
@@ -276,6 +315,8 @@ class MCPRegistry:
                 raise KeyError("mcp_server_not_found")
             for tool in (entry.get("tools") or {}).values():
                 tool["allowed"] = False
+            entry["auto_read_enabled"] = False
+            entry["auto_read_fingerprints"] = {}
             self._write(data)
 
     def set_credential_source(self, server_id: str, source: str) -> None:
@@ -351,6 +392,7 @@ class MCPRegistry:
                     and old.get("fingerprint") == fingerprint
                 )
                 updated[tool_name] = {
+                    "blocked": old.get("blocked") is True and old.get("fingerprint") == fingerprint,
                     "description": description,
                     "input_schema": schema,
                     "fingerprint": fingerprint,
@@ -385,6 +427,7 @@ class MCPRegistry:
             if not isinstance(tool, dict):
                 raise KeyError("mcp_tool_not_discovered")
             tool["allowed"] = bool(allowed)
+            tool["blocked"] = not bool(allowed)
             self._write(data)
 
     def exposed_tools(self) -> list[dict]:
@@ -395,7 +438,10 @@ class MCPRegistry:
             if not isinstance(entry, dict) or entry.get("enabled") is not True:
                 continue
             for name, tool in sorted((entry.get("tools") or {}).items()):
-                if tool.get("allowed") is not True:
+                if tool.get("blocked") is True or (
+                    tool.get("allowed") is not True
+                    and not self._is_auto_read(entry, tool)
+                ):
                     continue
                 result.append({
                     "server": server_id, "tool": name,
@@ -406,5 +452,14 @@ class MCPRegistry:
 
     def is_allowed(self, server_id: str, name: str) -> bool:
         entry = self.get_server(server_id)
-        return bool(entry and entry.get("enabled") is True and
-                    (entry.get("tools") or {}).get(name, {}).get("allowed") is True)
+        tool = (entry.get("tools") or {}).get(name, {}) if entry else {}
+        return bool(entry and entry.get("enabled") is True
+                    and tool.get("blocked") is not True
+                    and (tool.get("allowed") is True or self._is_auto_read(entry, tool)))
+
+    def is_auto_read_allowed(self, server_id: str, name: str) -> bool:
+        entry = self.get_server(server_id)
+        tool = (entry.get("tools") or {}).get(name, {}) if entry else {}
+        return bool(entry and entry.get("enabled") is True
+                    and tool.get("blocked") is not True
+                    and self._is_auto_read(entry, tool))
