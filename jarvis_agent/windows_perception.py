@@ -2602,12 +2602,15 @@ def write_ui_element(
                         "ref": ref,
                         "current_observation_id": _SNAPSHOT_ID or None,
                         "stale_ref": True,
+                        "dispatched": False,
+                        "outcome_unknown": False,
                     }
                 ),
             )
     else:
         if len(normalize(target)) < 2:
-            return UIActionResult(False, "Le nom du champ est trop vague.")
+            return UIActionResult(False, "Le nom du champ est trop vague.",
+                _json({"guard": "target_too_vague", "dispatched": False, "outcome_unknown": False}))
         try:
             wrapper, alternatives = _find_active_element(
                 target,
@@ -2616,7 +2619,9 @@ def write_ui_element(
             if wrapper is None:
                 wrapper, alternatives = _find_active_element(target)
         except Exception as exc:
-            return UIActionResult(False, "Impossible de rechercher ce champ.", str(exc))
+            return UIActionResult(False, "Impossible de rechercher ce champ.",
+                _json({"guard": "lookup_failed", "dispatched": False, "outcome_unknown": False,
+                       "error_type": type(exc).__name__}))
 
     if wrapper is None:
         if alternatives:
