@@ -609,6 +609,7 @@ class NativeToolRegistryTests(unittest.TestCase):
             "id": "",
             "label": "Personne",
             "writable": True,
+            "window_identity": {"handle": 4242, "pid": 321},
         }
         write_mock.side_effect = [
             SimpleNamespace(
@@ -629,6 +630,8 @@ class NativeToolRegistryTests(unittest.TestCase):
                 {
                     "window": {
                         "title": "*bonjour Jarvis – Bloc-notes",
+                        "handle": 4242,
+                        "pid": 321,
                     },
                     "controls": [
                         {

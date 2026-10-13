@@ -103,6 +103,58 @@ class StaleRefContractTests(unittest.TestCase):
         self.assertTrue(json.loads(result.detail)["outcome_unknown"])
 
 
+    def test_stale_write_recovery_rejects_other_window_with_identical_title(self):
+        registry = NativeToolRegistry()
+        registry._record_inspected_app = Mock()
+        descriptor = {"window_title": "Untitled - Editor", "writable": True,
+                      "type": "Document", "id": "editor",
+                      "window_identity": {"pid": 31, "handle": 401}}
+        controls = [{"ref": "obs7:e3", "type": "Document", "id": "editor",
+                     "writable": True, "name": ""}]
+        for hwnd, expected in ((402, False), (401, True)):
+            with self.subTest(handle=hwnd):
+                snapshot = {"observation_id": "obs7",
+                            "window": {"title": "Untitled - Editor",
+                                       "pid": 31, "handle": hwnd},
+                            "controls": controls}
+                observed = wp.UIActionResult(True, "inspected", json.dumps(snapshot))
+                with (patch("jarvis_agent.native_tools.ui_ref_descriptor",
+                            return_value=descriptor),
+                      patch("jarvis_agent.native_tools.inspect_active_window",
+                            return_value=observed),
+                      patch("jarvis_agent.native_tools.write_ui_element",
+                            return_value=wp.UIActionResult(
+                                True, "written", json.dumps({"verified": True})
+                            )) as writer):
+                    result = registry._recover_stale_write(
+                        ref="obs6:e3", target="", text="keep original safe",
+                        mode="replace", delivery_mode="background",
+                    )
+                if expected:
+                    self.assertIsNotNone(result)
+                    self.assertTrue(result.success)
+                    writer.assert_called_once()
+                    self.assertEqual(writer.call_args.kwargs["ref"], "obs7:e3")
+                else:
+                    self.assertIsNone(result)
+                    writer.assert_not_called()
+
+    def test_stale_write_recovery_without_native_window_identity_fails_closed(self):
+        registry = NativeToolRegistry()
+        with (patch("jarvis_agent.native_tools.ui_ref_descriptor",
+                    return_value={"window_title": "Editor", "writable": True,
+                                  "type": "Document", "window_identity": {}}),
+              patch("jarvis_agent.native_tools.inspect_active_window") as inspector,
+              patch("jarvis_agent.native_tools.write_ui_element") as writer):
+            recovered = registry._recover_stale_write(
+                ref="obs5:e7", target="", text="text", mode="replace",
+                delivery_mode="background",
+            )
+        self.assertIsNone(recovered)
+        inspector.assert_not_called()
+        writer.assert_not_called()
+
+
 class GoalEvolutionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

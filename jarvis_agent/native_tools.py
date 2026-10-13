@@ -1924,6 +1924,13 @@ class NativeToolRegistry:
         descriptor = ui_ref_descriptor(ref)
         if not descriptor or not descriptor.get("writable"):
             return None
+        # UIA editors can have many documents with identical titles. A stale
+        # write must never be rebound to another HWND/process merely because
+        # a control happens to have the same name or role.
+        identity = descriptor.get("window_identity") or {}
+        if (not identity.get("pid")
+                or not (identity.get("handle") or identity.get("window_id"))):
+            return None
 
         old_title = str(descriptor.get("window_title") or "").strip()
         current_title = str(self._last_observed_window_title or "").strip()
@@ -1951,6 +1958,13 @@ class NativeToolRegistry:
         try:
             payload = json.loads(observed.detail or "{}")
         except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        current_window = payload.get("window") or {}
+        if not isinstance(current_window, dict):
+            return None
+        if any(current_window.get(key) != value for key, value in identity.items()):
             return None
         controls = [
             item

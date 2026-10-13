@@ -380,10 +380,10 @@ class WindowsPerceptionTests(unittest.TestCase):
     @patch("jarvis_agent.windows_perception._foreground_window_handle", return_value=4242)
     def test_close_tab_ignores_page_internal_tabitems(
         self,
+        foreground_mock,
         active_window_mock,
         send_keys_mock,
         sleep_mock,
-        foreground_mock,
     ):
         browser_tab = _FakeTab("(5) YouTube - Utilisation mémoire", top=4)
         shorts_filter = _FakeTab("Shorts", top=236)
@@ -407,11 +407,11 @@ class WindowsPerceptionTests(unittest.TestCase):
     @patch("jarvis_agent.windows_perception._foreground_window_handle", return_value=4242)
     def test_close_named_tab_recovers_browser_when_jarvis_is_foreground(
         self,
+        foreground_mock,
         active_window_mock,
         window_by_title_mock,
         send_keys_mock,
         sleep_mock,
-        foreground_mock,
     ):
         jarvis = _FakeTabWindow([])
         youtube = _FakeTab("(5) YouTube - Google Chrome")
@@ -433,10 +433,10 @@ class WindowsPerceptionTests(unittest.TestCase):
     @patch("jarvis_agent.windows_perception._foreground_window_handle", return_value=4242)
     def test_close_named_tab_does_not_use_close_window(
         self,
+        foreground_mock,
         active_window_mock,
         send_keys_mock,
         sleep_mock,
-        foreground_mock,
     ):
         youtube = _FakeTab("(5) YouTube - Utilisation mémoire")
         pointer = _FakeTab("Pointer GitHub puis tester")
