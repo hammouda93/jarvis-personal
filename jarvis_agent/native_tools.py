@@ -212,6 +212,17 @@ class NativeToolRegistry:
                 ["name"],
             ),
             self._ollama(
+                "find_file",
+                "Recherche un fichier existant dans les dossiers utilisateur, SANS l'ouvrir ni executer un installateur. Retourne des chemins observes; use open_file only if opening is explicitly requested.",
+                {
+                    "name": {"type": "string", "description": "Nom ou mots distinctifs du fichier."},
+                    "within": {"type": "string", "description": "Dossier de recherche, par exemple Téléchargements."},
+                    "kind": {"type": "string", "enum": ["any", "installer"],
+                             "description": "installer = filtre les fichiers executables de setup."},
+                },
+                ["name"],
+            ),
+            self._ollama(
                 "open_file",
                 "Trouve et ouvre un fichier réel par son nom dans les emplacements utilisateur (Téléchargements, Bureau, Documents). À utiliser pour un fichier téléchargé, un installateur, un document ou un exécutable précis; ne pas détourner open_application.",
                 {
@@ -1056,6 +1067,27 @@ class NativeToolRegistry:
             return AgentActionResult(name=name, success=evidence["verified"],
                 message="Fichier attendu verifie." if evidence["verified"] else "Fichier attendu non verifie.",
                 detail=json.dumps(evidence, ensure_ascii=False))
+
+        if name == "find_file":
+            from .tools import _find_named_file
+            query = str(args.get("name", "")).strip()
+            within = str(args.get("within", "")).strip()
+            if not self._safe_target(query):
+                return AgentActionResult(name, False,
+                    "Un nom de fichier suffisamment précis est nécessaire.",
+                    json.dumps({"dispatched": False, "outcome_unknown": False}))
+            kind = ("installer" if str(args.get("kind", "")).lower() == "installer"
+                    else "any")
+            selected, matches = _find_named_file(
+                query, within=within or None, kind=kind,
+            )
+            payload = {"query": query, "kind": kind, "within": within,
+                       "selected_path": str(selected) if selected else None,
+                       "matches": [str(path) for path in matches[:8]],
+                       "opened": False, "dispatched": False, "read_only": True}
+            return AgentActionResult(name, True,
+                "Recherche de fichier terminée, aucun fichier ouvert.",
+                json.dumps(payload, ensure_ascii=False))
 
         if name == "open_file":
             target = str(args.get("name", "")).strip()
