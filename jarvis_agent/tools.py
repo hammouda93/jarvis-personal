@@ -955,11 +955,26 @@ def _find_named_file(
     within: str | None = None,
 ) -> tuple[Path | None, list[Path]]:
     wanted = _normalize_path_name(query)
+    # Task words in a natural-language filename query are not part of the
+    # filename. Match the actual identity, regardless of app/vendor name.
+    # e.g. "installateur de Example" may be "ExampleUserSetup-x64.exe".
+    filler = {"file", "fichier", "installateur", "installer", "installation",
+              "setup", "installer", "telecharge", "telechargee", "download",
+              "downloaded", "de", "du", "des", "le", "la", "les", "the",
+              "a", "an", "un", "une", "application", "programme", "program"}
+    words = wanted.split()
+    installer_intent = any(token in {
+        "installateur", "installer", "installation", "setup",
+        "msi", "msix", "exe"
+    } for token in words)
     tokens = [
-        token
-        for token in wanted.split()
-        if len(token) >= 3 and token not in {"file", "fichier"}
+        token for token in words
+        if len(token) >= 3 and token not in filler
     ]
+    # "setup" alone is still a literal file query; do not silently match any
+    # arbitrary executable if there is no product/file identity.
+    if not tokens:
+        tokens = [token for token in words if len(token) >= 3]
     if not wanted:
         return None, []
 
@@ -996,6 +1011,10 @@ def _find_named_file(
 
                     candidate = _normalize_path_name(filename)
                     candidate_stem = _normalize_path_name(path.stem)
+                    if installer_intent and path.suffix.lower() not in {
+                        ".exe", ".msi", ".msix", ".msixbundle", ".appinstaller"
+                    }:
+                        continue
                     if wanted == candidate or wanted == candidate_stem:
                         score = 1.0
                     elif tokens and all(
