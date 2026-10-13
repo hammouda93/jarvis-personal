@@ -3192,7 +3192,24 @@ class GroqResponsesAgent:
         tools = [*tools, checkpoint_tool] if checkpoint_tool else tools
         context = getattr(self, "request_context", None)
         if context is not None and not self._memory_scope_active:
-            tools = context.prepare_tools(tools, browser_mode=bool(getattr(self.tools, "browser_mode", False)))
+            from .request_context import strict_social_greeting
+            from .active_mission_supervisor import execution_scope_active
+            social_only = (
+                strict_social_greeting(
+                    str(getattr(self.tools, "current_user_text", "") or "")
+                )
+                and not bool(getattr(self.tools, "browser_mode", False))
+                and not self._active_domain
+                and not self._ephemeral_context
+                and not self._session_grounding
+                and self._pending_function_approval is None
+                and not execution_scope_active()
+            )
+            tools = context.prepare_tools(
+                tools,
+                browser_mode=bool(getattr(self.tools, "browser_mode", False)),
+                conversational_only=social_only,
+            )
         return tools
 
     @staticmethod

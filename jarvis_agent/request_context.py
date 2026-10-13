@@ -38,6 +38,20 @@ CONTEXTE: les recus request_archived sont des extraits historiques, pas des cibl
 """
 
 
+def strict_social_greeting(text):
+    """True only for a self-contained salutation, never a task request.
+
+    This is a conservative language-level cost optimization, not an agent
+    skill, site profile, semantic authorization or mission intent guess.
+    """
+    import unicodedata
+    value = unicodedata.normalize("NFKD", str(text or "").lower())
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    return value.strip(" \t\r\n,.!?") in {
+        "bonjour", "salut", "bonsoir", "coucou", "hello", "hi",
+    }
+
+
 def _protected(value):
     if isinstance(value, dict):
         if any(value.get(key) for key in ("outcome_unknown", "unknown", "approval_required", "pending_approval", "uncertain")):
@@ -64,12 +78,17 @@ class RequestContext:
         self.selected = None
         self.available = set()
 
-    def prepare_tools(self, schemas, *, browser_mode=False):
+    def prepare_tools(self, schemas, *, browser_mode=False, conversational_only=False):
         if not self.enabled:
             return schemas
         available = {s.get("function", {}).get("name") for s in schemas} - _CONTEXT_TOOLS - {None}
         self.available = available
-        if self.selected is None:
+        if self.selected is None and conversational_only:
+            # A standalone social greeting needs no external permissions or
+            # 15KB of tool descriptions. The catalog still allows a later
+            # explicit action if intent changes. Never use for a live mission.
+            selected = set()
+        elif self.selected is None:
             def relevant(name):
                 if name in _ROOTS or name in _CROSS_DOMAIN:
                     return True

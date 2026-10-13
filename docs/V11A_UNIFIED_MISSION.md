@@ -60,3 +60,7 @@ Trace projection can correlate a **verified browser navigation** to the label of
 ## Exact browser navigation evidence in user replies
 
 When the user explicitly asks Jarvis to verify or explain the resulting page, the agent may add a short, exact destination receipt from a successful browser mutation with `verified=true`, `postcondition=navigation_observed` and a real post-observation HTTP(S) URL. This is evidence of the **navigation only**, not proof the entire mission is completed. If the model already includes the exact URL, no duplicate receipt is added. No website-specific paths or selectors.
+
+## Tool-schema cost for unambiguous social greetings
+
+A strictly standalone greeting, outside active browser or mission context and without pending approvals, exposes only the reversible read-only capability catalog to the language model. This removes irrelevant tool descriptions on conversational turns such as Bonjour. Any mixed greeting + instruction, contextual mission, pending approval, and ordinary request keeps full capability selection. Not a site-specific rule.

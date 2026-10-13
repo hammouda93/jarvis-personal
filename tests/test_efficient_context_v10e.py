@@ -101,6 +101,27 @@ class EfficientContextTests(unittest.TestCase):
         self.assertEqual(context.prepare_tools(schemas, browser_mode=True), schemas)
         self.assertEqual(context.compact([]), ([], 0))
 
+    def test_pure_social_greeting_uses_catalog_only_without_hiding_future_tools(self):
+        from jarvis_agent.request_context import strict_social_greeting
+        for text in ("Bonjour !", "Bonsoir.", "Salut", "Hello"):
+            self.assertTrue(strict_social_greeting(text))
+        for text in ("Bonjour, ouvre Chrome.", "Je veux un fichier.",
+                     "Merci", "Continuer", "Cherche mes mails."):
+            self.assertFalse(strict_social_greeting(text))
+        context = RequestContext(enabled=True)
+        schemas = [tool(n) for n in (
+            "open_application", "browser_click", "computer_write",
+        )]
+        first = context.prepare_tools(schemas, conversational_only=True)
+        self.assertEqual(
+            {x["function"]["name"] for x in first},
+            {"request_tool_capabilities"},
+        )
+        self.assertIn("computer_write", context.available)
+        context.select_tools({"names": ["computer_write"]})
+        restored = context.prepare_tools(schemas, conversational_only=True)
+        self.assertIn(tool("computer_write"), restored)
+
     def test_selection_is_reversible_and_schema_policy_is_not_rewritten(self):
         context = RequestContext(enabled=True)
         schemas = [tool(name) for name in ("open_file", "browser_observe_dom", "browser_click", "computer_write", "computer_observe", "mcp__fixture__list")]
