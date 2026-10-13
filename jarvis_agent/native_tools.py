@@ -474,7 +474,7 @@ class NativeToolRegistry:
             ),
             self._ollama(
                 "press_key",
-                "Envoie une touche ou un raccourci clavier sûr à la fenêtre active: Enter, Escape, Tab, flèches, PageUp/PageDown, Home/End, Alt+Left/Alt+Right, Ctrl+S, Ctrl+Shift+S, Ctrl+F, Ctrl+L, Ctrl+C/V/A/Z/Y. Réinspecter ensuite si le raccourci peut modifier l'interface.",
+                "Envoie un raccourci autorisé à la fenêtre observée : Enter, Escape, Tab, flèches, Home/End, Alt+Left/Right, Ctrl+N, Ctrl+S, Ctrl+Shift+S, Ctrl+F/L/C/V/A/Z/Y. Ctrl+N uniquement après inspection de la fenêtre ET demande explicite d'un nouveau document ; toujours réinspecter ensuite.",
                 {
                     "key": {
                         "type": "string",
