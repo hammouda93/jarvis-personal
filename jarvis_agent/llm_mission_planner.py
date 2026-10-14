@@ -122,13 +122,40 @@ def parse_model_plan(
     for key, label, known in (("preconditions", "question", set(unresolved)),
                               ("fact_bindings", "requirement", requirements)):
         bindings = parsed.get(key, [])
-        if (not isinstance(bindings, list) or len(bindings) > 18
-                or any(not isinstance(b, dict) or set(b) != {label, "fact"}
-                       or not isinstance(b[label], str) or b[label] not in known
-                       or not isinstance(b["fact"], str) or b["fact"] not in roles
-                       for b in bindings)):
-            raise MissionPlanError("model_plan_fact_binding_invalid")
-        contract.metadata[key] = bindings
+        # Binding hints are optional, model-authored and NOT a source of
+        # permission or proof. A malformed hint should not discard an
+        # otherwise valid abstract mission plan (nor trigger another costly
+        # LLM request). Admit only strictly known typed bindings.
+        if not isinstance(bindings, list) or len(bindings) > 18:
+            bindings = []
+        # Unknown optional hints are ignored, but any hint attempting to
+        # turn a local observation into authorization or completion must fail
+        # closed. This preserves the established mission-controller security
+        # contract while tolerating ordinary LLM metadata format errors.
+        forbidden_proof = re.compile(
+            r"(?:^|_)(?:permission|approval|authorized|authorised|"
+            r"installed|completed|finished|verified|succeeded|successful|"
+            r"sent|submitted|deployed|deleted|paid)(?:_|$)", re.I
+        )
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                continue
+            fact_name = binding.get("fact")
+            requirement = binding.get("requirement")
+            if (isinstance(fact_name, str) and forbidden_proof.search(fact_name)
+                    or isinstance(requirement, str)
+                    and forbidden_proof.search(requirement)):
+                raise MissionPlanError("model_plan_fact_binding_unsafe")
+        accepted = [
+            {"fact": b["fact"], label: b[label]}
+            for b in bindings
+            if isinstance(b, dict) and set(b) == {label, "fact"}
+            and isinstance(b.get(label), str) and b[label] in known
+            and isinstance(b.get("fact"), str) and b["fact"] in roles
+        ]
+        if len(accepted) != len(bindings):
+            contract.metadata["optional_bindings_ignored"] = True
+        contract.metadata[key] = accepted
     contract.validate()
     return contract
 

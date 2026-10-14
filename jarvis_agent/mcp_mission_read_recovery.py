@@ -86,6 +86,12 @@ def unqueried_requested_lists(goal: str, actions, catalog) -> tuple[str, ...]:
     if not invoked_servers:
         return ()
     goal_terms = _tokens(goal)
+    # "CI" is a widely used, provider-independent short form for continuous
+    # integration. Expand it into common read-inventory concepts, not fixed
+    # tool names or specific service endpoints.
+    if (re.search(r"(?i)\bci\b", str(goal or ""))
+            or re.search(r"(?i)continuous[ _-]+integration", str(goal or ""))):
+        goal_terms.update({"workflow", "pipeline", "build", "check", "run"})
     if not goal_terms:
         return ()
     successful = {str(getattr(action, "name", "") or "")
@@ -108,3 +114,41 @@ def unqueried_requested_lists(goal: str, actions, catalog) -> tuple[str, ...]:
         if name not in successful:
             candidates.append(name)
     return tuple(dict.fromkeys(candidates))[:8]
+
+
+def prior_identity_observation(actions, name: str, arguments) -> bool:
+    """Prevent repeated, identical authenticated identity reads in one turn.
+
+    The source receipt is already in the model's conversation. This is NOT
+    general-purpose read caching: inventory, time-dependent and parameterized
+    reads must still be fresh, and failed or uncertain reads do not qualify.
+    """
+    if not isinstance(arguments, dict) or arguments:
+        return False
+    parts = str(name or "").split("__", 2)
+    if len(parts) != 3 or parts[0] != "mcp":
+        return False
+    from .mcp_read_policy import is_conservative_read_tool
+    tool = parts[2]
+    if not is_conservative_read_tool(tool):
+        return False
+    words = set(re.split(r"[_.-]+", tool.casefold()))
+    if not words.intersection({"me", "whoami", "identity", "profile", "self"}):
+        return False
+    for action in actions:
+        if (str(getattr(action, "name", "")) != name
+                or getattr(action, "success", False) is not True):
+            continue
+        try:
+            detail = json.loads(getattr(action, "detail", "") or "")
+        except (TypeError, ValueError):
+            continue
+        if (isinstance(detail, dict)
+                and detail.get("dispatched") is True
+                and detail.get("outcome_unknown") is False
+                and isinstance(detail.get("source"), dict)
+                and detail["source"].get("trust") == "external_unverified"
+                and detail["source"].get("server_id") == parts[1]
+                and detail["source"].get("tool_name") == tool):
+            return True
+    return False

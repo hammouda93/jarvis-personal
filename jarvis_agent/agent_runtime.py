@@ -19,6 +19,7 @@ from .intent_guards import (
     is_explicit_memory_write_request,
 )
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
+from .mcp_mission_read_recovery import prior_identity_observation
 from .runtime_identity import annotate_provider_request, google_tool_call_extra
 from .tools import normalize
 
@@ -3944,6 +3945,7 @@ class GroqResponsesAgent:
         discovery_repair_attempted = False
         mcp_identity_repair_attempted = False
         mcp_list_coverage_repair_attempted = False
+        mcp_identity_handoff_sent = False
         final_observation_repair_attempted = False
         preterminal_repair_attempted = False
         explicit_memory_repair_attempted = False
@@ -4978,6 +4980,26 @@ class GroqResponsesAgent:
                     if log:
                         log(f"[AGENT_ROUTING] blocked_irrelevant_tool={name}")
                 elif (
+                    name.startswith("mcp__")
+                    and prior_identity_observation(actions, name, arguments)
+                ):
+                    # The same source-labeled identity read was already
+                    # observed this turn. It adds no evidence about a
+                    # different inventory, and wastes provider/API budgets.
+                    result = AgentActionResult(
+                        name=name, success=False,
+                        message=(
+                            "Identité déjà observée dans ce tour. Réutilise la "
+                            "réponse précédente et interroge les autres "
+                            "sources demandées, sans rappeler le même outil."
+                        ),
+                        detail=json.dumps({
+                            "guard": "redundant_identity_observation",
+                            "dispatched": False, "outcome_unknown": False,
+                            "verified": False, "recoverable": True,
+                        }),
+                    )
+                elif (
                     self._feedback_only_turn
                     and name in browser_mutation_names
                 ):
@@ -5424,6 +5446,50 @@ class GroqResponsesAgent:
                         "content": self._compact_tool_content(name, result),
                     }
                 )
+
+                # The authenticated identity is now available in this tool
+                # reply. Proactively reveal the originally requested, already
+                # authorized inventory schemas in the same model turn.
+                # This is local schema exposure, not external dispatch or a
+                # grant. The observation itself is not mission proof.
+                if (name.startswith("mcp__") and result.success
+                        and not mcp_identity_handoff_sent):
+                    from .mcp_mission_read_recovery import (
+                        prior_identity_observation, unqueried_requested_lists,
+                    )
+                    if prior_identity_observation(actions, name, {}):
+                        method = getattr(self.tools, "ollama_tools", None)
+                        full_catalog = method() if callable(method) else ()
+                        pending = unqueried_requested_lists(
+                            user_text, actions, full_catalog
+                        )
+                        if pending:
+                            context = getattr(self, "request_context", None)
+                            if context is not None and getattr(context, "enabled", False):
+                                try:
+                                    context.select_tools({"names": list(pending)})
+                                except (ValueError, TypeError):
+                                    pass  # Never imply capability authority.
+                            self._messages.append({
+                                "role": "user",
+                                "content": (
+                                    "MCP_SOURCE_HANDOFF: An authenticated "
+                                    "identity observation is now present in "
+                                    "the preceding source-labeled tool result. "
+                                    "Use that fact when applicable, and "
+                                    "continue the originally requested reads "
+                                    "with these already-approved inventory "
+                                    "capabilities: "
+                                    + json.dumps(list(pending), ensure_ascii=False)
+                                    + ". Do not repeat the identity read, "
+                                    "assume identity equals resource ownership, "
+                                    "or claim a list is empty without reading it. "
+                                    "Normal MCP permissions still apply."
+                                ),
+                            })
+                            mcp_identity_handoff_sent = True
+                            if log:
+                                log("[MISSION] recovery=mcp_identity_to_inventory_handoff")
 
                 requested_capabilities = _requested_action_capabilities(
                     user_text
