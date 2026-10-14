@@ -153,7 +153,7 @@ class RequestContext:
                 # identities or resource selectors from the *real* service.
                 # This is ranking only; the execution registry still enforces
                 # permissions and the original schema at dispatch time.
-                words = set(re.split(r"[_\\-.]+", tool_name.casefold()))
+                words = set(re.split(r"[_.-]+", tool_name.casefold()))
                 identity_probe = no_required and bool(words & {
                     "me", "whoami", "identity", "profile", "account", "self",
                 })
