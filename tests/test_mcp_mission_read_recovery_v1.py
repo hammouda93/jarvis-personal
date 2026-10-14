@@ -37,7 +37,6 @@ class MCPReadRecoveryTests(unittest.TestCase):
         result = discovery_followup([refusal])
         self.assertEqual(result["approved_read_candidates"], [
             "mcp__orbitdata__get_me", "mcp__orbitdata__get_profile",
-            "mcp__orbitdata__update_records",
         ])
         # Candidate strings alone never cause a tool execution.
         self.assertNotIn("owner", result)
