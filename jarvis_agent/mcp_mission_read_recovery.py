@@ -86,6 +86,12 @@ def unqueried_requested_lists(goal: str, actions, catalog) -> tuple[str, ...]:
     if not invoked_servers:
         return ()
     goal_terms = _tokens(goal)
+    # "CI" is a widely used, provider-independent short form for continuous
+    # integration. Expand it into common read-inventory concepts, not fixed
+    # tool names or specific service endpoints.
+    if (re.search(r"(?i)\\bci\\b", str(goal or ""))
+            or re.search(r"(?i)continuous[ _-]+integration", str(goal or ""))):
+        goal_terms.update({"workflow", "pipeline", "build", "check", "run"})
     if not goal_terms:
         return ()
     successful = {str(getattr(action, "name", "") or "")
