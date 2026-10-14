@@ -128,6 +128,24 @@ def parse_model_plan(
         # LLM request). Admit only strictly known typed bindings.
         if not isinstance(bindings, list) or len(bindings) > 18:
             bindings = []
+        # Unknown optional hints are ignored, but any hint attempting to
+        # turn a local observation into authorization or completion must fail
+        # closed. This preserves the established mission-controller security
+        # contract while tolerating ordinary LLM metadata format errors.
+        forbidden_proof = re.compile(
+            r"(?:^|_)(?:permission|approval|authorized|authorised|"
+            r"installed|completed|finished|verified|succeeded|successful|"
+            r"sent|submitted|deployed|deleted|paid)(?:_|$)", re.I
+        )
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                continue
+            fact_name = binding.get("fact")
+            requirement = binding.get("requirement")
+            if (isinstance(fact_name, str) and forbidden_proof.search(fact_name)
+                    or isinstance(requirement, str)
+                    and forbidden_proof.search(requirement)):
+                raise MissionPlanError("model_plan_fact_binding_unsafe")
         accepted = [
             {"fact": b["fact"], label: b[label]}
             for b in bindings
