@@ -219,9 +219,38 @@ class MCPToolRegistry:
             attempt = activity.reserve(server_id, "call", entry, tool=native_name)
         except MCPBudgetExceeded as exc:
             if str(exc) == "mcp_unknown_requires_review":
-                return AgentActionResult(name=name, success=False,
-                    message="Appel MCP precedent incertain : revue explicite requise dans le centre MCP.",
-                    detail='{"verified":false,"dispatched":false,"outcome_unknown":true,"guard":"mcp_unknown_requires_review"}')
+                # This refusal was NOT dispatched. It protects the unresolved
+                # *previous* attempt for the same service/tool, which may have
+                # produced an external effect. Show only its local ledger ID
+                # and reviewability; never expose tool arguments or release the
+                # lock merely because the current tool is classified as read.
+                try:
+                    unresolved = activity.summary(server_id).get("unresolved") or []
+                except Exception:
+                    unresolved = []
+                pending = next((
+                    row for row in unresolved
+                    if row.get("tool") == native_name
+                    and type(row.get("attempt_id")) is int
+                ), None)
+                return AgentActionResult(
+                    name=name, success=False,
+                    message=("Nouvel appel MCP non envoyé : une ancienne tentative "
+                             "du même outil exige une vérification dans "
+                             "MCP Control Center > Services > Journal."),
+                    detail=json.dumps({
+                        "verified": False, "dispatched": False,
+                        "outcome_unknown": True,
+                        "blocked_by_previous_attempt": True,
+                        "guard": "mcp_unknown_requires_review",
+                        "server_id": server_id,
+                        "tool_name": native_name,
+                        "previous_attempt_id": pending["attempt_id"] if pending else None,
+                        "previous_outcome": pending.get("outcome") if pending else None,
+                        "reviewable": pending.get("reviewable") is True if pending else False,
+                        "permissions_changed": False,
+                    }, ensure_ascii=False),
+                )
             return AgentActionResult(name=name, success=False,
                 message="Quota ou cooldown MCP atteint. Aucun nouvel appel effectue.",
                 detail='{"verified":false,"dispatched":false,"outcome_unknown":false,"guard":"mcp_budget_unavailable"}')

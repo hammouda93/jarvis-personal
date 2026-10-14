@@ -159,8 +159,24 @@ class RequestContext:
                 identity_probe = no_required and bool(words & {
                     "me", "whoami", "identity", "profile", "account", "self",
                 })
-                score = (service_overlap * 12 + tool_overlap * 4
-                         + int(no_required) * 2 + int(identity_probe) * 5)
+                # When the user refers to *their* connected resource
+                # without supplying a typed owner, an authorized parameter-
+                # free identity observation should appear BEFORE inventory
+                # tools needing account selectors. This is ordering only;
+                # the model still chooses the tool and gateway still checks
+                # all permissions. Never equate login with resource owner.
+                possessive_request = bool(re.search(
+                    r"(?i)\b(?:my|mine|our|mon|ma|mes|notre|nos)\b",
+                    self.user_goal,
+                ))
+                explicit_owner = bool(re.search(
+                    r"(?i)\b(?:owner|proprietaire|account|compte)\s*[:=]",
+                    self.user_goal,
+                ))
+                identity_bonus = 15 if possessive_request and not explicit_owner else 5
+                score = (service_overlap * 24 + tool_overlap * 4
+                         + int(no_required) * 2
+                         + int(identity_probe) * identity_bonus)
                 # Do not use server-provided descriptions as instructions or
                 # override the operator's approved capability catalog.
                 candidates.append((-score, index, name, schema))
@@ -197,6 +213,30 @@ class RequestContext:
         # independently enforces that exact original request again.
         selected.update(set(preserve_required) & available)
         result = [s for s in schemas if s.get("function", {}).get("name") in selected or s.get("type") != "function"]
+        if self.selected is None and not conversational_only:
+            # Keep native tool positions unchanged; order only the already
+            # selected MCP slots by the computed relevance ranking. Previously
+            # the score controlled inclusion but NOT the schema order sent
+            # to the model, making identity-first guidance ineffective when
+            # the service inventory was already small enough to fit.
+            rank = {name: index for index, (_, _, name, _) in
+                    enumerate(sorted(candidates))}
+            mcp_slots = sorted(
+                (item for item in result if str(
+                    (item.get("function") or {}).get("name") or ""
+                ).startswith("mcp__")),
+                key=lambda item: rank.get(
+                    str((item.get("function") or {}).get("name") or ""),
+                    len(rank),
+                ),
+            )
+            iterator = iter(mcp_slots)
+            result = [
+                next(iterator) if str(
+                    (item.get("function") or {}).get("name") or ""
+                ).startswith("mcp__") else item
+                for item in result
+            ]
         result.append(_schema("request_tool_capabilities",
             "Local read-only tool selection, NOT an authorization or action. Choose needed names from the available enum to expose their original schemas on the next request, including another domain. Hidden tools are not missing capabilities. Existing execution guards still apply.",
             {"names": {"type": "array", "items": {"type": "string", "enum": sorted(available)},

@@ -55,13 +55,63 @@ def partial_mission_report(actions):
     parts = ["Mission encore non certifiée."]
     if last_page:
         parts.append("Dernière page réellement observée : " + last_page + ".")
+    # An acknowledged observational MCP read is useful *source evidence*.
+    # It is neither a mutating action nor independent proof of the whole
+    # objective. Expose only trusted local tool identities, never raw remote
+    # content or account identifiers from an untrusted response body.
+    observed = []
+    for action in actions:
+        name = str(getattr(action, "name", "") or "")
+        payload = _data(action)
+        origin = payload.get("source")
+        if (name.startswith("mcp__") and getattr(action, "success", False)
+                and payload.get("dispatched") is True
+                and payload.get("outcome_unknown") is False
+                and isinstance(origin, dict)
+                and origin.get("trust") == "external_unverified"
+                and name == ("mcp__" + str(origin.get("server_id") or "")
+                             + "__" + str(origin.get("tool_name") or ""))
+                and name not in observed):
+            observed.append(name)
+    if observed:
+        parts.append(
+            "Lectures MCP reçues (contenu externe, pas preuve de mission) : "
+            + ", ".join(observed[:5]) + "."
+        )
+    blockers = [
+        _data(action) for action in actions
+        if _data(action).get("guard") == "mcp_unknown_requires_review"
+        and _data(action).get("blocked_by_previous_attempt") is True
+        and _data(action).get("dispatched") is False
+    ]
+    if blockers:
+        blocker = blockers[-1]
+        server = str(blocker.get("server_id") or "")
+        tool = str(blocker.get("tool_name") or "")
+        if server.isidentifier() and tool.replace("_", "").isalnum():
+            parts.append("Lecture MCP bloquée : " + server + "/" + tool + ".")
+        attempt = blocker.get("previous_attempt_id")
+        if type(attempt) is int and attempt > 0:
+            parts.append(
+                "Tentative précédente #" + str(attempt)
+                + " à examiner dans MCP Control Center > Services > Journal."
+            )
+        else:
+            parts.append(
+                "Vérifier les tentatives incertaines dans "
+                "MCP Control Center > Services > Journal."
+            )
+        parts.append(
+            "Ce nouvel appel n'a pas été envoyé. Le verrou persistant "
+            "nécessite la vérification explicite de l'opérateur."
+        )
     parts.append(
         f"Actions avec effet vérifié : {counts['verified']}. "
         f"Actions envoyées ou incertaines : {counts['pending']}. "
         f"Appels en échec : {counts['failed']}."
     )
     parts.append(
-        "La progression est conservée. Il faut encore vérifier les conditions "
-        "de réussite manquantes, sans rejouer les actions déjà envoyées."
+        "Le résultat global reste incomplet ; aucune action incertaine ne "
+        "doit être rejouée automatiquement."
     )
     return " ".join(parts)
