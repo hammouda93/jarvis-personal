@@ -159,8 +159,24 @@ class RequestContext:
                 identity_probe = no_required and bool(words & {
                     "me", "whoami", "identity", "profile", "account", "self",
                 })
+                # When the user refers to *their* connected resource
+                # without supplying a typed owner, an authorized parameter-
+                # free identity observation should appear BEFORE inventory
+                # tools needing account selectors. This is ordering only;
+                # the model still chooses the tool and gateway still checks
+                # all permissions. Never equate login with resource owner.
+                possessive_request = bool(re.search(
+                    r"(?i)\\b(?:my|mine|our|mon|ma|mes|notre|nos)\\b",
+                    self.user_goal,
+                ))
+                explicit_owner = bool(re.search(
+                    r"(?i)\\b(?:owner|proprietaire|account|compte)\\s*[:=]",
+                    self.user_goal,
+                ))
+                identity_bonus = 15 if possessive_request and not explicit_owner else 5
                 score = (service_overlap * 12 + tool_overlap * 4
-                         + int(no_required) * 2 + int(identity_probe) * 5)
+                         + int(no_required) * 2
+                         + int(identity_probe) * identity_bonus)
                 # Do not use server-provided descriptions as instructions or
                 # override the operator's approved capability catalog.
                 candidates.append((-score, index, name, schema))
