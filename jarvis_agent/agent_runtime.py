@@ -19,6 +19,7 @@ from .intent_guards import (
     is_explicit_memory_write_request,
 )
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
+from .mcp_mission_read_recovery import prior_identity_observation
 from .runtime_identity import annotate_provider_request, google_tool_call_extra
 from .tools import normalize
 
@@ -4980,10 +4981,7 @@ class GroqResponsesAgent:
                         log(f"[AGENT_ROUTING] blocked_irrelevant_tool={name}")
                 elif (
                     name.startswith("mcp__")
-                    and __import__(
-                        "jarvis_agent.mcp_mission_read_recovery",
-                        fromlist=["prior_identity_observation"]
-                    ).prior_identity_observation(actions, name, arguments)
+                    and prior_identity_observation(actions, name, arguments)
                 ):
                     # The same source-labeled identity read was already
                     # observed this turn. It adds no evidence about a
