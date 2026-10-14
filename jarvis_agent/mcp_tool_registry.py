@@ -166,12 +166,37 @@ class MCPToolRegistry:
                 }),
             )
         if unresolved or missing or invalid_paths:
+            # Give the model actionable, already-consented observations to
+            # resolve identifiers before asking the human. This is a local
+            # capability hint, NOT auto-discovery, extra authority or dispatch.
+            candidate_reads = []
+            for alias, discovered in self._available().items():
+                if discovered["server"] != server_id or alias == name:
+                    continue
+                if not self.registry.is_auto_read_allowed(
+                    discovered["server"], discovered["tool"]
+                ):
+                    continue
+                candidate_schema = discovered.get("input_schema") or {}
+                if not isinstance(candidate_schema, dict):
+                    continue
+                required = candidate_schema.get("required", [])
+                if isinstance(required, list) and not required:
+                    words = set(re.split(r"[_.-]+", discovered["tool"].casefold()))
+                    identity_hint = bool(words & {
+                        "me", "whoami", "self", "account", "identity", "profile"
+                    })
+                    candidate_reads.append((not identity_hint, alias))
+            discovery_candidates = [
+                alias for _, alias in sorted(candidate_reads)
+            ][:6]
             return AgentActionResult(
                 name=name, success=False,
                 message=(
                     "Paramètres MCP non résolus. Aucune requête externe envoyée. "
                     "Retrouve d'abord les identifiants dans les observations ou "
-                    "outils de lecture déjà autorisés, sinon demande la "
+                    "outils de lecture déjà autorisés (voir discovery_candidates "
+                    "et request_tool_capabilities), sinon demande la "
                     "précision manquante sans inventer de valeur."
                 ),
                 detail=json.dumps({
@@ -179,6 +204,7 @@ class MCPToolRegistry:
                               "missing_required_arguments" if missing else
                               "invalid_argument_schema"),
                     "argument_paths": list(unresolved or missing or invalid_paths),
+                    "discovery_candidates": discovery_candidates,
                     "dispatched": False, "outcome_unknown": False,
                     "verified": False, "recoverable": True,
                     "permissions_changed": False,
