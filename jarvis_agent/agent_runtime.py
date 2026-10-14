@@ -4265,10 +4265,12 @@ class GroqResponsesAgent:
                     self._messages.append({
                         "role": "user",
                         "content": (
-                            "MCP_IDENTITY_READ_AVAILABLE: The requested MCP tool "
-                            "was NOT dispatched because its arguments were "
-                            "unresolved. The local gateway identified permitted "
-                            "same-service read-only capabilities: "
+                            "MCP_DISCOVERY_READ_AVAILABLE: The previous MCP "
+                            "request either failed locally before dispatch or "
+                            "returned an explicit, recoverable read-only error. "
+                            "No uncertain external effect was admitted. "
+                            "The gateway identified permitted same-service "
+                            "read-only capabilities: "
                             + json.dumps(mcp_discovery, ensure_ascii=False)
                             + ". Call an appropriate zero-argument read now, "
                             "using request_tool_capabilities if hidden. Do not "
