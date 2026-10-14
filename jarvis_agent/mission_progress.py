@@ -107,7 +107,7 @@ def partial_mission_report(actions):
         )
     parts.append(
         f"Actions avec effet vérifié : {counts['verified']}. "
-        f"Retours externes non certifiés ou incertains : {counts['pending']}. "
+        f"Actions envoyées ou incertaines : {counts['pending']}. "
         f"Appels en échec : {counts['failed']}."
     )
     parts.append(
