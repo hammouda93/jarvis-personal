@@ -177,7 +177,13 @@ class RequestContext:
             # after a progressive capability selection. Replacing the entire
             # set with get_me formerly hid every inventory tool for the rest
             # of a multi-step mission.
-            self.initial_mcp = {n for n in selected if n.startswith("mcp__")}
+            # Keep only goal-relevant initially visible MCP reads after
+            # progressive selection. With no expressed user goal, explicit
+            # selection stays narrow, preserving bounded-inventory contracts.
+            self.initial_mcp = {
+                n for n in selected if n.startswith("mcp__")
+                and terms.intersection(self._name_terms(n.split("__", 2)[-1]))
+            }
             # A memory-only policy must not become an empty tool pack.
             if not selected:
                 selected = available
