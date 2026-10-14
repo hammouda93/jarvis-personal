@@ -3942,6 +3942,8 @@ class GroqResponsesAgent:
         goal_completion_repair_attempted = False
         mission_proof_repair_attempted = False
         discovery_repair_attempted = False
+        mcp_identity_repair_attempted = False
+        mcp_list_coverage_repair_attempted = False
         final_observation_repair_attempted = False
         preterminal_repair_attempted = False
         explicit_memory_repair_attempted = False
@@ -4243,6 +4245,77 @@ class GroqResponsesAgent:
                     recoverable_discovery,
                     post_mutation_observation_missing,
                 )
+
+                # An authorized, parameter-free MCP read is a legitimate
+                # recovery after a locally rejected placeholder. Native
+                # window-discovery receipts use a different shape, so keep
+                # both recovery paths separate and bounded.
+                from .mcp_mission_read_recovery import (
+                    discovery_followup, unqueried_requested_lists,
+                )
+                mcp_discovery = discovery_followup(actions)
+                if (mcp_discovery and not mcp_identity_repair_attempted
+                        and round_index < settings.agent_max_tool_rounds
+                        and self._pending_function_approval is None
+                        and not getattr(self.tools, "uncertain_scopes", None)):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "MCP_IDENTITY_READ_AVAILABLE: The requested MCP tool "
+                            "was NOT dispatched because its arguments were "
+                            "unresolved. The local gateway identified permitted "
+                            "same-service read-only capabilities: "
+                            + json.dumps(mcp_discovery, ensure_ascii=False)
+                            + ". Call an appropriate zero-argument read now, "
+                            "using request_tool_capabilities if hidden. Do not "
+                            "ask the user for an identifier already available "
+                            "through approved observations. Do not guess a "
+                            "resource owner from the account identity. "
+                            "If the read fails, report the precise obstacle."
+                        ),
+                    })
+                    mcp_identity_repair_attempted = True
+                    if log:
+                        log("[MISSION] recovery=mcp_authorized_identity_discovery")
+                    continue
+
+                # A single item fetched from a source cannot establish that a
+                # separate requested list is empty. Only use locally exposed
+                # already-approved list schemas, and only when their subject
+                # is explicitly present in the user's goal.
+                catalog_method = getattr(self.tools, "ollama_tools", None)
+                catalog = catalog_method() if callable(catalog_method) else ()
+                pending_lists = unqueried_requested_lists(
+                    user_text, actions, catalog
+                )
+                if (pending_lists and not mcp_list_coverage_repair_attempted
+                        and round_index < settings.agent_max_tool_rounds
+                        and self._pending_function_approval is None
+                        and not getattr(self.tools, "uncertain_scopes", None)):
+                    if self._messages and self._messages[-1].get("role") == "assistant":
+                        self._messages[-1]["content"] = ""
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "MCP_LIST_COVERAGE_PENDING: This mission requested "
+                            "source inventories that are still UNQUERIED. "
+                            "Only these already-authorized schemas were matched: "
+                            + json.dumps(list(pending_lists), ensure_ascii=False)
+                            + ". Select and call the relevant existing read tools. "
+                            "Do not infer an empty inventory from get_me, an "
+                            "unrelated get_* call, or the default branch. Do "
+                            "not add permissions, guess identifiers, or repeat "
+                            "possible mutations. If a read cannot be made, "
+                            "state which source remains unverified."
+                        ),
+                    })
+                    mcp_list_coverage_repair_attempted = True
+                    if log:
+                        log("[MISSION] recovery=mcp_missing_read_inventories")
+                    continue
+
                 recovery = recoverable_discovery(actions)
                 if (recovery and not discovery_repair_attempted
                         and round_index < settings.agent_max_tool_rounds):
@@ -4639,6 +4712,29 @@ class GroqResponsesAgent:
                     text = safe_text
                     if log:
                         log("[MISSION] unverified_claim_blocked=" + evidence_reason)
+
+                # Local evidence gate: a model's categorical answer must
+                # never conceal that an explicitly requested source inventory
+                # was never queried. This does not certify any source's data.
+                from .mcp_mission_read_recovery import unqueried_requested_lists
+                catalog_method = getattr(self.tools, "ollama_tools", None)
+                catalog = catalog_method() if callable(catalog_method) else ()
+                unfinished_mcp_reads = unqueried_requested_lists(
+                    user_text, actions, catalog
+                )
+                if unfinished_mcp_reads:
+                    text = (
+                        "Analyse incomplète : les inventaires MCP demandés "
+                        "suivants n'ont pas encore été consultés avec succès : "
+                        + ", ".join(unfinished_mcp_reads)
+                        + ". Je ne peux pas conclure qu'ils sont vides, "
+                        "ni que la mission entière est vérifiée. "
+                        "Les lectures déjà obtenues ne prouvent pas l'absence "
+                        "de données dans les sources non interrogées."
+                    )
+                    if log:
+                        log("[MISSION] unqueried_mcp_sources="
+                            + ",".join(unfinished_mcp_reads))
 
                 from .memory_evidence import guard_memory_answer
                 text, memory_guard = guard_memory_answer(text, actions)
