@@ -138,9 +138,30 @@ class RequestContext:
                 if not is_conservative_read_tool(
                         tool_name, (schema.get("function") or {}).get("parameters")):
                     continue
-                overlap = len(terms & self._name_terms(tool_name))
-                # Rank by published tool NAME, never external descriptions.
-                candidates.append((-overlap, index, name, schema))
+                # Server names are part of the approved local alias, not
+                # instructions from a remote MCP description. Including them
+                # lets a request for a connected service reach the right
+                # backend without special-casing GitHub or any other provider.
+                segments = name.split("__", 2)
+                server_name = segments[1] if len(segments) == 3 else ""
+                service_overlap = len(terms & self._name_terms(server_name))
+                tool_overlap = len(terms & self._name_terms(tool_name))
+                params = (schema.get("function") or {}).get("parameters") or {}
+                required = params.get("required") if isinstance(params, dict) else []
+                no_required = isinstance(required, list) and not required
+                # Parameter-free observations help the model resolve missing
+                # identities or resource selectors from the *real* service.
+                # This is ranking only; the execution registry still enforces
+                # permissions and the original schema at dispatch time.
+                words = set(re.split(r"[_.-]+", tool_name.casefold()))
+                identity_probe = no_required and bool(words & {
+                    "me", "whoami", "identity", "profile", "account", "self",
+                })
+                score = (service_overlap * 12 + tool_overlap * 4
+                         + int(no_required) * 2 + int(identity_probe) * 5)
+                # Do not use server-provided descriptions as instructions or
+                # override the operator's approved capability catalog.
+                candidates.append((-score, index, name, schema))
             for _, _, name, schema in sorted(candidates):
                 size = len(json.dumps(schema, ensure_ascii=False, default=str))
                 if size > mcp_budget_chars:
