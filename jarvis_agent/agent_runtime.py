@@ -5454,9 +5454,7 @@ class GroqResponsesAgent:
                 # grant. The observation itself is not mission proof.
                 if (name.startswith("mcp__") and result.success
                         and not mcp_identity_handoff_sent):
-                    from .mcp_mission_read_recovery import (
-                        prior_identity_observation, unqueried_requested_lists,
-                    )
+                    from .mcp_mission_read_recovery import unqueried_requested_lists
                     if prior_identity_observation(actions, name, {}):
                         method = getattr(self.tools, "ollama_tools", None)
                         full_catalog = method() if callable(method) else ()
