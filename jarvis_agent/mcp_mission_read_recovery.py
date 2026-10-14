@@ -73,6 +73,7 @@ def discovery_followup(actions) -> dict | None:
     # These names are advisory: an actual call still passes every usual gate.
     return {
         "failed_tool": name,
+        "failure_kind": "known_read_error" if known_read_error else "local_argument_refusal",
         "approved_read_candidates": list(dict.fromkeys(choices))[:5],
         "instruction": (
             "Before requesting an identifier from the human, use an already "
