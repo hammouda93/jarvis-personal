@@ -174,7 +174,7 @@ class RequestContext:
                     self.user_goal,
                 ))
                 identity_bonus = 15 if possessive_request and not explicit_owner else 5
-                score = (service_overlap * 12 + tool_overlap * 4
+                score = (service_overlap * 24 + tool_overlap * 4
                          + int(no_required) * 2
                          + int(identity_probe) * identity_bonus)
                 # Do not use server-provided descriptions as instructions or
