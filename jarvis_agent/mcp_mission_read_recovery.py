@@ -46,11 +46,13 @@ def discovery_followup(actions) -> dict | None:
     suggestions = detail.get("discovery_candidates")
     if not isinstance(suggestions, list):
         return None
+    from .mcp_read_policy import is_conservative_read_tool
     choices = [candidate for candidate in suggestions[:8]
                if isinstance(candidate, str)
                and candidate.startswith(prefix)
                and re.fullmatch(r"mcp__[a-z][a-z0-9_]{0,35}__[A-Za-z0-9_.-]{1,100}", candidate)
-               and candidate != name]
+               and candidate != name
+               and is_conservative_read_tool(candidate.split("__", 2)[2])]
     if not choices:
         return None
     # The gateway has already applied the user's server-scoped read grants.
