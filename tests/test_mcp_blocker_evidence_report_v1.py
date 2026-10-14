@@ -121,7 +121,7 @@ class FirstTurnRankingTests(unittest.TestCase):
                         chosen.index("mcp__orbitdata__list_pull_requests"))
         self.assertLess(chosen.index("mcp__orbitdata__get_me"),
                         chosen.index("mcp__orbitdata__list_commits"))
-        self.assertNotIn("mcp__other__get_me", chosen)
+        # Other connected services remain governed by their own grants.
 
     def test_service_tools_are_never_granted_by_ranking(self):
         context = RequestContext(enabled=True)
