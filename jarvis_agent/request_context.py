@@ -166,11 +166,11 @@ class RequestContext:
                 # the model still chooses the tool and gateway still checks
                 # all permissions. Never equate login with resource owner.
                 possessive_request = bool(re.search(
-                    r"(?i)\\b(?:my|mine|our|mon|ma|mes|notre|nos)\\b",
+                    r"(?i)\b(?:my|mine|our|mon|ma|mes|notre|nos)\b",
                     self.user_goal,
                 ))
                 explicit_owner = bool(re.search(
-                    r"(?i)\\b(?:owner|proprietaire|account|compte)\\s*[:=]",
+                    r"(?i)\b(?:owner|proprietaire|account|compte)\s*[:=]",
                     self.user_goal,
                 ))
                 identity_bonus = 15 if possessive_request and not explicit_owner else 5
