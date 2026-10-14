@@ -101,6 +101,28 @@ class MCPToolRegistry:
             for item in self.ollama_tools()
         ]
 
+    def _read_discovery_candidates(self, server_id: str, exclude: str) -> list[str]:
+        """Bounded same-service candidate aliases, never grants or dispatch."""
+        choices = []
+        for alias, discovered in self._available().items():
+            if discovered["server"] != server_id or alias == exclude:
+                continue
+            if not self.registry.is_auto_read_allowed(
+                discovered["server"], discovered["tool"]
+            ):
+                continue
+            candidate_schema = discovered.get("input_schema") or {}
+            if not isinstance(candidate_schema, dict):
+                continue
+            required = candidate_schema.get("required", [])
+            if isinstance(required, list) and not required:
+                words = set(re.split(r"[_.-]+", discovered["tool"].casefold()))
+                identity_hint = bool(words & {
+                    "me", "whoami", "self", "account", "identity", "profile"
+                })
+                choices.append((not identity_hint, alias))
+        return [alias for _, alias in sorted(choices)][:6]
+
     def _automatic_read(self, name: str) -> bool:
         """Only previously fingerprint-pinned, operator-approved read tools."""
         tool = self._available().get(str(name))
@@ -169,27 +191,7 @@ class MCPToolRegistry:
             # Give the model actionable, already-consented observations to
             # resolve identifiers before asking the human. This is a local
             # capability hint, NOT auto-discovery, extra authority or dispatch.
-            candidate_reads = []
-            for alias, discovered in self._available().items():
-                if discovered["server"] != server_id or alias == name:
-                    continue
-                if not self.registry.is_auto_read_allowed(
-                    discovered["server"], discovered["tool"]
-                ):
-                    continue
-                candidate_schema = discovered.get("input_schema") or {}
-                if not isinstance(candidate_schema, dict):
-                    continue
-                required = candidate_schema.get("required", [])
-                if isinstance(required, list) and not required:
-                    words = set(re.split(r"[_.-]+", discovered["tool"].casefold()))
-                    identity_hint = bool(words & {
-                        "me", "whoami", "self", "account", "identity", "profile"
-                    })
-                    candidate_reads.append((not identity_hint, alias))
-            discovery_candidates = [
-                alias for _, alias in sorted(candidate_reads)
-            ][:6]
+            discovery_candidates = self._read_discovery_candidates(server_id, name)
             return AgentActionResult(
                 name=name, success=False,
                 message=(
@@ -303,6 +305,9 @@ class MCPToolRegistry:
                     "verified": False, "dispatched": True,
                     "outcome_unknown": False, "recoverable": True,
                     "safe_read_failure": True, "source": source,
+                    "discovery_candidates": self._read_discovery_candidates(
+                        server_id, name
+                    ),
                     "mcp_output": str(result.get("message") or "")[:1500],
                 }, ensure_ascii=False),
             )
