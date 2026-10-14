@@ -146,6 +146,15 @@ def prepare(agent: Any, user_text: str, *, log: Callable[[str], None] | None = N
                     + " approval=not_granted proof=not_established")
         except Exception as exc:
             if log:
+                # MissionPlanError messages are fixed internal identifiers,
+                # not provider outputs or user text. Surface their reason so
+                # persistent format failures can be corrected at the source
+                # without consuming another LLM request or hiding telemetry.
+                from .llm_mission_planner import MissionPlanError
+                reason = str(exc) if isinstance(exc, MissionPlanError) else ""
+                if not re.fullmatch(r"(?:model_plan|planning)_[a-z0-9_]{1,90}", reason):
+                    reason = "unspecified"
                 log("[MISSION_AUTO] state=PLAN_UNAVAILABLE error_type="
-                    + type(exc).__name__ + " fallback=original_goal")
+                    + type(exc).__name__ + " reason=" + reason
+                    + " fallback=original_goal")
     return decision
