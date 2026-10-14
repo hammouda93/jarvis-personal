@@ -31,16 +31,30 @@ def discovery_followup(actions) -> dict | None:
         detail = json.loads(getattr(action, "detail", "") or "")
     except (ValueError, TypeError):
         return None
-    if (not isinstance(detail, dict)
-            or detail.get("guard") not in {
-                "unresolved_argument_template", "missing_required_arguments",
-                "invalid_argument_schema",
-            }
-            or detail.get("dispatched") is not False
-            or detail.get("outcome_unknown") is not False):
+    if not isinstance(detail, dict) or detail.get("outcome_unknown") is not False:
         return None
     parts = name.split("__", 2)
     if len(parts) != 3:
+        return None
+    local_argument_refusal = (
+        detail.get("guard") in {
+            "unresolved_argument_template", "missing_required_arguments",
+            "invalid_argument_schema",
+        }
+        and detail.get("dispatched") is False
+    )
+    known_read_error = (
+        detail.get("dispatched") is True
+        and detail.get("safe_read_failure") is True
+        and detail.get("recoverable") is True
+        and isinstance(detail.get("source"), dict)
+        and detail["source"].get("trust") == "external_unverified"
+        and detail["source"].get("server_id") == parts[1]
+        and detail["source"].get("tool_name") == parts[2]
+    )
+    # A known failed *read* is safe to resolve by a new observation. Unknown
+    # effects, mutation errors and incomplete results never qualify.
+    if not local_argument_refusal and not known_read_error:
         return None
     prefix = "mcp__" + parts[1] + "__"
     suggestions = detail.get("discovery_candidates")
