@@ -81,11 +81,13 @@ class RequestContext:
         self.evidence = {}
         self.available = set()
         self.selected = None
+        self.initial_mcp = set()
         self.last_saved_chars = 0
         self.user_goal = ""
 
     def begin_turn(self, user_goal=""):
         self.selected = None
+        self.initial_mcp = set()
         self.available = set()
         # Rank *visible* tool names, not permissions, from the current goal.
         self.user_goal = str(user_goal or "")[:1600]
@@ -171,11 +173,17 @@ class RequestContext:
                 mcp_count += 1
                 if mcp_count >= 6:
                     break
+            # Preserve the initial bounded, operator-authorized observations
+            # after a progressive capability selection. Replacing the entire
+            # set with get_me formerly hid every inventory tool for the rest
+            # of a multi-step mission.
+            self.initial_mcp = {n for n in selected if n.startswith("mcp__")}
             # A memory-only policy must not become an empty tool pack.
             if not selected:
                 selected = available
         else:
-            selected = (self.selected | _ROOTS | _CROSS_DOMAIN) & available
+            selected = (self.initial_mcp | self.selected
+                        | _ROOTS | _CROSS_DOMAIN) & available
         # A safe default tool subset may not hide the CURRENT explicit
         # memory-write capability merely because Chrome was previously used.
         # This is schema exposure only, NEVER new authorization. The calling
@@ -209,7 +217,7 @@ class RequestContext:
                 or any(not isinstance(name, str) or name not in self.available for name in names)
                 or len(set(names)) != len(names)):
             raise ValueError("capability_not_currently_available")
-        self.selected = set(names)
+        self.selected = (self.selected or set()) | set(names)
         return {"selected": sorted(self.selected), "permissions_changed": False,
                 "verified": False, "dispatched": False,
                 "outcome_unknown": False,
