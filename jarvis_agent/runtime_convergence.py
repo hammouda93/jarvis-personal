@@ -233,9 +233,12 @@ class LiveMissionContinuityRuntime:
                 # provider response or replace its reviewed plan.
                 return
             text = str(user_text or "").strip()
+            import re
             from .intent_guards import is_explicit_memory_write_request
             from .memory_tool_scope import memory_only_request
-            if (is_explicit_memory_write_request(text) and memory_only_request(text)
+            literal_fact = re.match(r"^(?:retiens|retenez|mémorise|memorise|mémorisez|memorisez)\s+que\s+\S|"
+                                    r"^(?:remember|memorize|memorise)\s+that\s+\S", text, re.I)
+            if (literal_fact and is_explicit_memory_write_request(text) and memory_only_request(text)
                     and not memory_only_request(state.user_goal)):
                 # Explicit personal memory writes are independent of a blocked
                 # browser/MCP mission; no model is needed to free conversation.

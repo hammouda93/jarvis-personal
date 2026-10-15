@@ -101,9 +101,11 @@ elle reçoit un reçu local d’annulation sans dispatch ; elle ne peut pas appr
 une action du nouvel objectif. Les verrous d’effets incertains et les droits des
 registres d’outils restent en place.
 
-La demande explicite de mémoire personnelle seule, après une mission non mémoire,
+Une demande de fait explicite (« Retiens que… », « Remember that… »), après une mission non mémoire,
 peut détacher celle-ci localement, sans interprétation modèle. Une demande mêlant
 mémoire et action externe conserve l’interprétation et les contrôles ordinaires.
+Une référence telle que « mémorise cette information » garde aussi le contexte
+de la mission à laquelle elle renvoie.
 
 Les lectures historiques réussies peuvent devenir des reçus relisibles via
 `read_observation_evidence`. Les appels/réponses restent associés ; les préconditions,
@@ -115,6 +117,12 @@ Les requêtes Cerebras/Groq et cerveaux supplémentaires passent un contrôle lo
 avant leur envoi quand le contexte efficient est actif. La délégation supervisée
 applique aussi le plafond du profil. La cascade garde son ordre et ses cooldowns.
 Les requêtes de contrôle JSON sans outils gardent leur contexte séparé existant.
+
+Le compteur d’usage supervisé reconnaît aussi les fournisseurs du registre des
+cerveaux supplémentaires. Un test reproduit l’ancien rejet de `gemini`, qui
+transformait un retour modèle valide en suspension avant l’appel suivant.
+Les identifiants de fournisseurs inconnus restent refusés. Cette correction de
+télémétrie ne change ni les clés, ni les scopes, ni les autorisations cloud mémoire.
 
 `JARVIS_REQUEST_ESTIMATED_TOKEN_BUDGET` règle le plafond général, à 12000 par défaut.
 Le plafond Groq existant et les plafonds des cerveaux supplémentaires restent en
@@ -131,10 +139,10 @@ Ces estimations ne sont ni un tokenizer exact ni des tokens facturés mesurés.
 
 ## Validation et limites
 
-Validation locale du candidat : **1412 tests examinés**, dont **1402 réussis**
+Validation locale du candidat : **1414 tests examinés**, dont **1404 réussis**
 et **10 exclusions Windows explicites**, sans échec ni erreur. Les **46 tests
 Browser Bridge** passent, ainsi que le contrat d’import du SDK MCP officiel.
-Ce lot ajoute **28 tests** à la V13. La CI Windows/Linux sur le commit publié
+Ce lot ajoute **30 tests** à la V13. La CI Windows/Linux sur le commit publié
 est suivie dans la pull request ; ces chiffres locaux ne certifient pas le vrai bureau.
 
 Les essais couvrent stockage/rechargement, conflits de révision, refus de champs

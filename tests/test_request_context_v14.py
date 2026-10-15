@@ -228,3 +228,16 @@ class RequestContextTests(unittest.TestCase):
             runtime.prepare_mission_turn(text)
             self.assertEqual(runtime.active_mission_id, mid)
             self.assertEqual(client.chat.completions.create.call_args.kwargs["tools"], [])
+
+    def test_referential_memory_write_keeps_the_mission_it_refers_to(self):
+        agent, client = self.agent()
+        text = "Mémorise cette information."
+        client.chat.completions.create.return_value = answer(json.dumps({"kind": "clarify", "source_quote": text,
+            "superseded": [], "plan": None, "resolved": []}))
+        with tempfile.TemporaryDirectory() as folder:
+            runtime = LiveMissionContinuityRuntime(agent, base_dir=Path(folder))
+            mid = runtime.begin_mission("Inspecte les fichiers puis explique leur état.")
+            runtime.prepare_mission_turn(text)
+            self.assertEqual(runtime.active_mission_id, mid)
+            self.assertIn("Inspecte les fichiers", runtime.mission_snapshot(mid)["user_goal"])
+            self.assertEqual(client.chat.completions.create.call_args.kwargs["tools"], [])

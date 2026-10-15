@@ -145,6 +145,23 @@ class SupervisedProfileTests(unittest.TestCase):
             self.supervisor.advance()
         self.assertEqual(self.registry.calls, [])
 
+    def test_supported_extra_brain_usage_does_not_block_the_next_tool(self):
+        from jarvis_agent.active_mission_supervisor import record_model_usage
+        self.store()
+        original = self.delegate.run_with_context
+        def extra_brain_reply(text, context, **kwargs):
+            record_model_usage({"prompt_tokens": 31, "completion_tokens": 7}, "gemini")
+            return original(text, context, **kwargs)
+        self.delegate.run_with_context = extra_brain_reply
+        self.approve(assignments={"navigate": {"agent": "browser"}})
+        self.supervisor.advance()
+        self.assertEqual([call[0] for call in self.registry.calls], ["open_url"])
+        self.assertFalse(self.supervisor.model_usage_recording_failed)
+        usage = self.state().observed_state["active_supervisor"]["model_usage"]["gemini"]
+        self.assertEqual((usage["input_tokens"], usage["output_tokens"]), (31, 7))
+        with self.assertRaisesRegex(ValueError, "unknown_model_usage_provider"):
+            self.supervisor.note_model_usage({}, "unregistered-provider")
+
 
 class ProfileWidgetTests(unittest.TestCase):
     @classmethod

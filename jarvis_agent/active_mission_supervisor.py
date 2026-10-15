@@ -414,7 +414,8 @@ class ActiveMissionSupervisor:
         self.runtime.context_store.save(state, expected_version=version)
 
     def note_model_usage(self, usage: Any, provider: str) -> None:
-        if provider not in {"cerebras", "groq"}:
+        from .brain_cascade import _PRESETS
+        if provider not in {"cerebras", "groq"} and provider not in _PRESETS:
             raise ValueError("unknown_model_usage_provider")
         def counter(*names):
             for name in names:
