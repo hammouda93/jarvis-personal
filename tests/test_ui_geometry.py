@@ -97,6 +97,20 @@ class WindowGeometryTests(unittest.TestCase):
         self.assertIs(self.window.side_tabs.currentWidget(), self.window.operator_console)
         self.assertTrue(self.window.operator_console.operational_preferences.isVisible())
 
+    def test_profiles_are_reachable_in_full_window_without_horizontal_overflow(self):
+        from PySide6.QtWidgets import QScrollArea
+        self.resize(660, 500)
+        panel = self.window.architecture_panel
+        self.window.side_tabs.setCurrentWidget(panel)
+        panel.tabs.setCurrentWidget(panel.profile_editor)
+        self.app.processEvents()
+        scroll = panel.profile_editor.findChild(QScrollArea)
+        self.assertTrue(panel.profile_editor.isVisible())
+        self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+        scroll.ensureWidgetVisible(panel.profile_editor.save_button)
+        self.app.processEvents()
+        self.assertTrue(panel.profile_editor.save_button.isVisible())
+
     def test_compact_and_normal_modes_restore_visible_controls(self):
         self.resize(1024, 640)
         self.window.compact_button.setChecked(True)

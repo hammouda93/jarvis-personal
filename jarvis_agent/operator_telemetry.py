@@ -329,11 +329,17 @@ def runtime_model_snapshot(runtime: Any) -> dict[str, Any]:
     effective_provider = ""
     effective_credential = ""
     usage_observed = False
+    context_budget = None
     seen = set()
     for _ in range(12):
         if current is None or id(current) in seen:
             break
         seen.add(id(current))
+        context = getattr(current, "request_context", None)
+        measured = getattr(context, "last_request", None)
+        if context_budget is None and isinstance(measured, dict) and measured:
+            context_budget = {key: measured.get(key) for key in
+                ("estimated_tokens", "original_estimated_tokens", "budget", "tool_count", "admitted", "estimate_only")}
         if budget is None:
             budget = getattr(current, "reliability_round_budget", None)
             used = getattr(current, "reliability_rounds_used", None)
@@ -372,4 +378,5 @@ def runtime_model_snapshot(runtime: Any) -> dict[str, Any]:
         "rounds_limit": budget if isinstance(budget, int) else None,
         "failure_category": category[:50],
         "reported_usage": last_usage,
+        "context_budget": context_budget,
     }

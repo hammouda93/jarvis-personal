@@ -86,6 +86,7 @@ class RequestContext:
         self.initial_mcp = set()
         self.last_saved_chars = 0
         self.user_goal = ""
+        self.last_request = {}
 
     def reset(self):
         """Forget session observations, without touching personal memory/files."""
@@ -277,11 +278,15 @@ class RequestContext:
             {"names": {"type": "array", "items": {"type": "string", "enum": sorted(available)},
                        "minItems": 1, "maxItems": 50, "uniqueItems": True}}, ["names"]))
         if self.evidence or self.external_evidence:
-            result.append(_schema("read_observation_evidence",
+            result.append(self.evidence_schema())
+        return result
+
+    @staticmethod
+    def evidence_schema():
+        return _schema("read_observation_evidence",
                 "Read an archived historical observation by evidence_id from its receipt, with character offset and bounded limit. Historical refs are NOT fresh targets. This read cannot verify a new effect or authorize an action.",
                 {"evidence_id": {"type": "string"}, "offset": {"type": "integer", "minimum": 0},
-                 "limit": {"type": "integer", "minimum": 1, "maximum": 4000}}, ["evidence_id"]))
-        return result
+                 "limit": {"type": "integer", "minimum": 1, "maximum": 4000}}, ["evidence_id"])
 
     def select_tools(self, args):
         if not self.enabled or set(args) != {"names"}:
@@ -324,7 +329,7 @@ class RequestContext:
             return scope[1]
         return None
 
-    def compact(self, messages, *, retain_latest=2, preview_chars=400):
+    def compact(self, messages, *, retain_latest=2, preview_chars=400, historical_before=0):
         if not self.enabled:
             return messages, 0
         result, seen, retained, saved = list(messages), {}, set(), 0
@@ -339,6 +344,10 @@ class RequestContext:
                 if not isinstance(payload, dict) or payload.get("success") is not True or _protected(payload):
                     continue
             except (ValueError, TypeError, RecursionError):
+                continue
+            if payload.get("request_archived") is True:
+                if payload.get("evidence_id") in self.evidence:
+                    retained.add(payload["evidence_id"])
                 continue
             tab_id = self._browser_tab_id(name, payload)
             detail = payload.get("detail") or {}
@@ -358,8 +367,9 @@ class RequestContext:
             retained.add(identity)
             seen[name] = seen.get(name, 0) + 1
             superseded = tab_id is not None and tab_id in changed_tabs
-            if ((not superseded and seen[name] <= retain_latest)
-                    or len(content) < 2400):
+            historical = index < historical_before
+            if ((not historical and not superseded and seen[name] <= retain_latest)
+                    or len(content) < (800 if historical else 2400)):
                 continue
             marker = json.dumps({"tool": name, "success": True, "historical_observation": True,
                 "request_archived": True, "evidence_id": identity, "source_tool_call_id": call_id,
@@ -373,6 +383,40 @@ class RequestContext:
         self.evidence = {key: value for key, value in self.evidence.items() if key in retained}
         self.last_saved_chars = saved
         return result, saved
+
+    def fit_request(self, messages, schemas, *, limit_tokens, completion_tokens, forced_tool=None,
+                    preserve_required=()):
+        """Request-only admission. Never trim human text, failures or mutations.
+
+        An oversized protected request remains oversized and is paused locally.
+        Schema selection changes exposure, never the execution authority.
+        """
+        from .provider_rate_budget import groq_fallback_preflight
+        admitted, estimated, limit = groq_fallback_preflight(
+            messages, schemas, limit_tokens=limit_tokens, completion_tokens=completion_tokens)
+        original = estimated
+        selected = schemas
+        if (self.evidence or self.external_evidence) and not any(
+                (s.get("function") or {}).get("name") == "read_observation_evidence" for s in schemas):
+            schemas = [*schemas, self.evidence_schema()]
+            selected = schemas
+            admitted, estimated, limit = groq_fallback_preflight(messages, schemas,
+                limit_tokens=limit_tokens, completion_tokens=completion_tokens)
+        if not admitted and self.enabled:
+            required = set(preserve_required) | ({forced_tool} if forced_tool else set())
+            for pressure in (False, True):
+                candidate = self.fallback_tools(schemas, messages, pressure_minimal=pressure,
+                                                preserve_required=required)
+                ok, size, _ = groq_fallback_preflight(messages, candidate,
+                    limit_tokens=limit_tokens, completion_tokens=completion_tokens)
+                if size < estimated:
+                    selected, estimated, admitted = candidate, size, ok
+                if admitted:
+                    break
+        self.last_request = {"estimated_tokens": estimated, "original_estimated_tokens": original,
+            "budget": limit, "tool_count": len(selected), "admitted": admitted,
+            "estimate_only": True}
+        return messages, selected, admitted
 
     def fallback_tools(self, schemas, messages, *, pressure_minimal=False,
                        preserve_required=()):
@@ -411,6 +455,10 @@ class RequestContext:
                 keep.update({"browser_observe_dom", "browser_find"})
             elif last == "browser_get_active_tab" or last == "open_url":
                 keep.update({"browser_observe_dom", "browser_find"})
+            elif last in {"inspect_active_window", "inspect_interface", "write_ui_element", "press_key"}:
+                keep.update({"inspect_active_window", "write_ui_element", "press_key"})
+            elif last in {"open_application", "close_window"}:
+                keep.add("inspect_active_window")
             elif last:
                 keep.add(last)
             return [s for s in schemas if s.get("function", {}).get("name") in keep
@@ -425,6 +473,9 @@ class RequestContext:
                 "browser_get_active_tab", "browser_observe_dom",
                 "browser_find", "browser_click",
             })
+        if any(name in {"open_application", "inspect_active_window", "inspect_interface", "write_ui_element",
+                        "press_key", "close_window"} for name in recent):
+            keep.update({"inspect_active_window", "write_ui_element", "press_key"})
         # Selection remains reversible through the catalog; execution guards
         # and the unchanged provider preflight remain authoritative.
         return [s for s in schemas if s.get("function", {}).get("name") in keep or s.get("type") != "function"]

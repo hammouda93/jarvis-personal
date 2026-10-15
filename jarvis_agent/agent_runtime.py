@@ -2849,6 +2849,8 @@ class GroqResponsesAgent:
         self._session_grounding: dict[str, str] = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
+        self._request_scope_anchor = None
+        self._request_scope_pending = False
         self.last_effective_provider = ""
         self.last_effective_credential = ""
         self.last_reported_usage = None
@@ -2876,6 +2878,8 @@ class GroqResponsesAgent:
         self._session_grounding = {}
         self._ephemeral_context = ""
         self._request_turn_start_index = 1
+        self._request_scope_anchor = None
+        self._request_scope_pending = False
         self.last_effective_provider = ""
         self.last_effective_credential = ""
         self.last_reported_usage = None
@@ -3337,7 +3341,9 @@ class GroqResponsesAgent:
             return self._mission_decision_messages
         context = getattr(self, "request_context", None)
         if context is not None and context.enabled:
-            return self._messages
+            anchor = getattr(self, "_request_scope_anchor", None)
+            start = next((i for i, message in enumerate(self._messages) if message is anchor), 1)
+            return [self._messages[0], *self._messages[max(1, start):]]
         if "BROWSER_GROUNDING_READ_ONLY:" not in self._ephemeral_context:
             return self._messages
         from .active_mission_supervisor import execution_scope_active
@@ -3367,6 +3373,58 @@ class GroqResponsesAgent:
         prior = prior[-4:]
         current = self._messages[start:]
         return [self._messages[0], *prior, *current]
+
+    def start_request_scope(self):
+        """Detach request history only; keep durable data and uncertain effects.
+
+        Called by local mission control, never a model-facing tool. A pending
+        approval belongs to the old objective and cannot authorize the new one.
+        """
+        context = getattr(self, "request_context", None)
+        if context is None or not context.enabled:
+            return
+        pending = self._pending_function_approval
+        if pending is not None:
+            for call in [pending, *pending.get("deferred_calls", ())]:
+                self._messages.append({"role": "tool", "tool_call_id": call["call_id"],
+                    "name": call["name"], "content": json.dumps({"success": False,
+                        "detail": {"guard": "previous_mission_approval_cancelled", "dispatched": False,
+                                   "outcome_unknown": False, "verified": False}})})
+            self._pending_function_approval = None
+        self._request_scope_pending = True
+
+    def _fit_provider_request(self, messages, schemas, *, provider, completion_tokens, limit_tokens=None,
+                              tool_choice="auto"):
+        context = getattr(self, "request_context", None)
+        from .active_mission_supervisor import delegated_context_budget
+        profile_limit = delegated_context_budget()
+        if (context is None or (not context.enabled and profile_limit is None)
+                or getattr(self, "_mission_decision_messages", None) is not None):
+            return messages, schemas
+        import os
+        if limit_tokens is None:
+            try:
+                limit_tokens = int(os.getenv("JARVIS_REQUEST_ESTIMATED_TOKEN_BUDGET", "12000"))
+            except ValueError:
+                limit_tokens = 12000
+        limit_tokens = max(1000, min(limit_tokens, 200000))
+        if profile_limit is not None:
+            limit_tokens = min(limit_tokens, profile_limit)
+        current_ids = {id(m) for m in self._messages[self._request_turn_start_index:]}
+        first_current = next((i for i, m in enumerate(messages) if id(m) in current_ids), len(messages))
+        messages, _ = context.compact(messages, retain_latest=1, preview_chars=0,
+                                      historical_before=first_current)
+        forced = (tool_choice.get("function") or {}).get("name") if isinstance(tool_choice, dict) else None
+        required = {"remember_information"} if self._memory_write_allowed else set()
+        messages, schemas, admitted = context.fit_request(messages, schemas, limit_tokens=limit_tokens,
+            completion_tokens=completion_tokens, forced_tool=forced, preserve_required=required)
+        print(f"[AGENT_CONTEXT] provider={provider} mode=mission_request_budget "
+              f"estimated_tokens={context.last_request['estimated_tokens']} budget={limit_tokens} "
+              f"tools={len(schemas)} admitted={int(admitted)}")
+        if not admitted:
+            raise AgentRuntimeUnavailable("request_context_budget_exhausted: contexte protégé trop volumineux; "
+                "aucun appel envoyé, mission et preuves conservées.")
+        return messages, schemas
 
     def _chat(
         self,
@@ -3400,6 +3458,10 @@ class GroqResponsesAgent:
             request_messages = annotate_provider_request(
                 request_messages, provider=label, model=self.model,
             )
+            request_messages, tool_definitions = self._fit_provider_request(
+                request_messages, tool_definitions, provider=self.provider_name,
+                completion_tokens=(settings.agent_completion_tokens if self.provider_name == "cerebras"
+                                   else getattr(settings, "groq_completion_tokens", 512)), tool_choice=tool_choice)
             context_chars = len(
                 json.dumps(request_messages, ensure_ascii=False, separators=(",", ":"))
             )
@@ -3989,9 +4051,11 @@ class GroqResponsesAgent:
                         )
                     except Exception:
                         log("[KNOWLEDGE] injected")
-            self._messages.append(
-                {"role": "user", "content": user_text}
-            )
+            user_message = {"role": "user", "content": user_text}
+            self._messages.append(user_message)
+            if getattr(self, "_request_scope_pending", False):
+                self._request_scope_anchor = user_message
+                self._request_scope_pending = False
             explicit_msf = self._is_ms_football_request(user_text)
             contextual_msf = (
                 self._active_domain == "ms_football"
@@ -5908,6 +5972,11 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         if getattr(self, "_memory_scope_active", False):
             preserved.add("semantic_memory_search")
         from .provider_rate_budget import groq_fallback_preflight
+        import os
+        try:
+            fallback_budget = int(os.getenv("JARVIS_GROQ_FALLBACK_ESTIMATED_TPM_BUDGET", "7000"))
+        except ValueError:
+            fallback_budget = 7000
         allowed, estimate, budget = groq_fallback_preflight(
             request_messages, request_tools,
             completion_tokens=getattr(settings, "groq_completion_tokens", 512),
@@ -6032,6 +6101,9 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
                 "Mission préservée; une nouvelle décision ou une réduction du "
                 "contexte est nécessaire."
             )
+        request_messages, request_tools = self._fit_provider_request(
+            request_messages, request_tools, provider="groq_fallback", limit_tokens=fallback_budget,
+            completion_tokens=getattr(settings, "groq_completion_tokens", 512), tool_choice=tool_choice)
         try:
             from .active_mission_supervisor import reserve_model_request
             reserve_model_request()
@@ -6110,6 +6182,14 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
             key = resolved_api_key(brain)
             if not key:
                 print("[AGENT] configured brain " + brain.id + " skipped: no credential")
+                continue
+            try:
+                request_messages, request_tools = self._fit_provider_request(
+                    request_messages, request_tools, provider=brain.provider,
+                    limit_tokens=brain.max_estimated_tokens, completion_tokens=brain.completion_tokens,
+                    tool_choice=tool_choice)
+            except AgentRuntimeUnavailable:
+                print("[AGENT_BUDGET] configured_brain_skipped id=" + brain.id + " reason=request_context_budget")
                 continue
             allowed, estimated, budget = groq_fallback_preflight(
                 request_messages, request_tools, limit_tokens=brain.max_estimated_tokens,
@@ -6302,7 +6382,8 @@ def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
     from .mcp_server_registry import MCPRegistry
     mcp_registry = MCPRegistry()
     from .request_context import RequestContext, ContextToolRegistry
-    request_context = RequestContext(enabled=enabled("JARVIS_EFFICIENT_CONTEXT_ENABLED"))
+    request_context = RequestContext(enabled=enabled("JARVIS_EFFICIENT_CONTEXT_ENABLED")
+        or enabled("JARVIS_ACTIVE_SUPERVISOR_ENABLED"))
     tools = MCPToolRegistry(tools, registry=mcp_registry,
         runtime_gate=mcp_registry.runtime_enabled, observation_context=request_context)
     tools = ContextToolRegistry(tools, request_context)

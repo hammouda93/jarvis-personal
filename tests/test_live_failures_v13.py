@@ -110,7 +110,7 @@ class LiveFailuresTests(unittest.TestCase):
             self.assertTrue(previous["manual_review_required"])
             self.assertFalse(previous["goal_verified"])
             self.assertEqual(previous["goal_revision"], 1)
-            self.assertEqual(client.chat.completions.create.call_args.kwargs["tools"], [])
+            client.chat.completions.create.assert_not_called()
 
     def test_explicit_mission_change_works_without_a_model_and_does_not_delete_memory(self):
         delegate = Mock(spec=["run", "run_with_context"])

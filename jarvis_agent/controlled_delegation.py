@@ -38,7 +38,7 @@ def available_tools(registry: Any) -> frozenset[str]:
     return frozenset(str(t["function"]["name"]) for t in registry.ollama_tools())
 
 
-def role_tools(agent_id: str, available: frozenset[str], explicit: list[str] | None = None) -> frozenset[str]:
+def base_role_tools(agent_id: str, available: frozenset[str], explicit: list[str] | None = None) -> frozenset[str]:
     manifest = DEFAULT_CAPABILITY_REGISTRY.get_agent(agent_id)
     if manifest is None:
         raise ValueError("unknown_delegation_responsibility")
@@ -65,6 +65,12 @@ def role_tools(agent_id: str, available: frozenset[str], explicit: list[str] | N
         raise ValueError("delegation_tool_outside_responsibility")
     # Remote tool descriptions never grant permissions or choose this scope.
     return requested
+
+
+def role_tools(agent_id: str, available: frozenset[str], explicit: list[str] | None = None,
+               *, profile: dict | None = None) -> frozenset[str]:
+    from .agent_profiles import effective_tools
+    return effective_tools(agent_id, base_role_tools(agent_id, available, explicit), profile)
 
 
 def validate_assignments(plan: dict, assignments: dict, registry: Any) -> dict:

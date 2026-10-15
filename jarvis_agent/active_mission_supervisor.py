@@ -196,6 +196,11 @@ def delegation_context() -> dict:
             "process_id": scope.process_id}
 
 
+def delegated_context_budget() -> int | None:
+    scope = _SCOPE.get()
+    return scope.profile["settings"]["context_tokens"] if scope is not None and scope.profile else None
+
+
 def bind_pending_tool_approval(name: str, arguments: dict) -> None:
     """Bind a provider's pending confirmation to this mission, step and payload."""
     scope = _SCOPE.get()
@@ -301,6 +306,7 @@ class ActiveMissionSupervisor:
         self.progress_decision = None
         self.phase_callback = None
         self.model_usage_recording_failed = False
+        self.profile = None
         self.factory = build_responsibility_factory(self)
 
     def _load(self):
@@ -390,6 +396,17 @@ class ActiveMissionSupervisor:
         for key, amount in changes.items():
             if usage.get(key, 0) + amount > limits[key]:
                 raise SupervisorStopped("mission_budget_exhausted:" + key)
+        if self.profile and self.step.get("step_id"):
+            step_usage = record.setdefault("profile_usage", {}).setdefault(
+                self.step["step_id"], {"started_at": time.time(), "actions": 0, "model_calls": 0})
+            configured = self.profile["settings"]
+            if time.time() - step_usage["started_at"] > configured["seconds"]:
+                raise SupervisorStopped("agent_profile_time_budget_exhausted")
+            for key in ("actions", "model_calls"):
+                if step_usage[key] + increments.get(key, 0) > configured[key]:
+                    raise SupervisorStopped("agent_profile_budget_exhausted:" + key)
+            for key in ("actions", "model_calls"):
+                step_usage[key] += increments.get(key, 0)
         for key, amount in changes.items():
             usage[key] = usage.get(key, 0) + amount
         record["usage"] = usage
@@ -397,7 +414,8 @@ class ActiveMissionSupervisor:
         self.runtime.context_store.save(state, expected_version=version)
 
     def note_model_usage(self, usage: Any, provider: str) -> None:
-        if provider not in {"cerebras", "groq"}:
+        from .brain_cascade import _PRESETS
+        if provider not in {"cerebras", "groq"} and provider not in _PRESETS:
             raise ValueError("unknown_model_usage_provider")
         def counter(*names):
             for name in names:
@@ -550,6 +568,7 @@ class ActiveMissionSupervisor:
             self.progress_decision = None
             self.turn_result, self.process_id, self.allowed_tools = None, "", None
             self.agent_id = "unassigned"
+            self.profile = (record.get("role_profiles") or {}).get(self.step["step_id"])
             self.approval_tool = ""
             self.stop_event = stop_event
             self.phase_callback = phase
@@ -581,15 +600,29 @@ class ActiveMissionSupervisor:
                     agents = {str(c["agent"]) for c in candidates if c["provider"] == "native_declared"}
                     inferred = next(iter(agents)) if len(agents) == 1 else "interaction"
                     assignment = record.get("assignments", {}).get(self.step["step_id"], {})
-                    self.agent_id = assignment.get("agent", inferred)
+                    from .agent_profiles import AgentProfileStore, profile_context
+                    profiles = record.setdefault("role_profiles", {})
+                    profile = profiles.get(self.step["step_id"])
+                    self.agent_id = assignment.get("agent", profile["id"] if profile else inferred)
+                    if profile is None:
+                        profile = AgentProfileStore().get(self.agent_id)
+                        profiles[self.step["step_id"]] = profile
+                        # Freeze operator settings for this step, including continuations.
+                        saved, saved_version = self._load()
+                        saved.observed_state["active_supervisor"]["role_profiles"] = profiles
+                        self.runtime.context_store.save(saved, expected_version=saved_version)
+                    if profile["id"] != self.agent_id:
+                        raise SupervisorStopped("agent_profile_assignment_changed")
+                    self.profile = profile
                     self.allowed_tools = role_tools(self.agent_id, available_tools(self.tools.delegate),
-                                                   assignment.get("tools"))
+                                                   assignment.get("tools"), profile=profile)
                     if not self.allowed_tools:
                         raise SupervisorStopped("responsibility_has_no_available_tools")
                     step_context = "[SUPERVISED STEP DATA]\n" + _canonical({
                         "step": self.step, "objective": plan["objective"], "original_goal": state.user_goal,
                         "capability_proposal": proposed, "executor": "legacy_runtime", "responsible_agent": self.agent_id,
                         "allowed_tools": sorted(self.allowed_tools),
+                        "operator_role_profile": profile_context(profile),
                         "rule": (
                             "Preserve the whole original goal, not just the latest screen. Observe actual targets "
                             "before choosing arguments. Preserve existing approvals. Tool success is not goal success. "
