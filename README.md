@@ -5,7 +5,23 @@ habituel, outils Windows, mémoire SQLite et services MCP explicitement connect�
 Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
 distinct de la preuve que l'objectif entier est atteint.
 
-## Candidat V12 — 15 octobre 2026
+## Candidat V13 — architecture visible et corrections réelles
+
+La branche `feature/architecture-console-live-fixes-v13` prolonge V12 `c5d0cdd`.
+La recette utilisateur a confirmé la mémoire après redémarrage et révélé trois
+défauts reproduits puis corrigés : contexte de contrôle capturé par un wrapper,
+ouverture de recherche bloquée et nouveau document écrit dans un ancien buffer.
+
+L’onglet **ARCHITECTURE** montre le graphe de Jarvis, les profils d’agents,
+compétences, outils, connecteurs et développements prévus. Il distingue le
+runtime partagé, les rôles déclarés et les fonctions planifiées. Le contrôle
+affiche les préférences Skills/Learning et un bouton **Nouvelle demande**.
+
+Lire l’[étude d’architecture et son plan de migration](docs/JARVIS_ARCHITECTURE_V13.md),
+puis l’[analyse des tests et la recette ciblée](docs/V13_LIVE_FIXES.md).
+Le panneau ne démarre aucun worker autonome et ne modifie pas les droits MCP.
+
+## Socle V12 conservé
 
 La branche `feature/autonomous-mission-reliability-v12` poursuit le dernier
 checkpoint `fix/mcp-blocker-evidence-report-v1` (`53f7999`).

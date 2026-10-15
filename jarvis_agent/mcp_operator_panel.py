@@ -549,6 +549,20 @@ class MCPConnectionsPanel(QFrame):
             str(self.tool_picker.currentData() or "")
         )
 
+    def focus_review(self, server: str, attempt: int) -> bool:
+        """Navigate to an existing receipt; never acknowledge or replay it."""
+        index = self.server_picker.findData(server)
+        if index < 0:
+            return False
+        self.tabs.setCurrentIndex(1)
+        self.server_picker.setCurrentIndex(index)
+        self.service_tabs.setCurrentIndex(2)
+        row = self.outcome_picker.findData(attempt)
+        if row < 0:
+            return False
+        self.outcome_picker.setCurrentIndex(row)
+        return True
+
     def _review_outcome(self) -> None:
         attempt = self.outcome_picker.currentData()
         server = str(self.server_picker.currentData() or "")

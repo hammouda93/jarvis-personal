@@ -213,6 +213,18 @@ class LiveMissionContinuityRuntime:
                 raise PermissionError("mission_owner_mismatch")
             self._initialize_goal_control(state)
             goal_control = state.expected_state["goal_control"]
+            from .mission_turn_contract import explicit_detach_requested
+            if explicit_detach_requested(user_text):
+                self.detach_mission()
+                self._audit(mid, "mission.detached_by_human", {"checkpoint_preserved": True})
+                self._prepared_turn = (None, str(user_text))
+                self._control_reply = (
+                    "Conversation libérée pour une nouvelle demande. La mission précédente "
+                    "et ses effets incertains restent enregistrés ; la mémoire personnelle est conservée."
+                )
+                if log:
+                    log("[MISSION_CONTROL] kind=detach source=explicit_human checkpoint_preserved=true")
+                return
             if state.observed_state.get("active_supervisor"):
                 # This separate, explicitly approved mode already has a
                 # bounded disposition/approval protocol. Do not consume its

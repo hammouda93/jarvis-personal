@@ -51,7 +51,7 @@ try {
         Write-Host "P0 live log: $p0Log"
         # Native stderr is diagnostic output, not a PowerShell terminating error.
         $ErrorActionPreference = 'Continue'
-        & $p0Python @p0Arguments 2>&1 | Tee-Object -FilePath $p0Log
+        & $p0Python @p0Arguments 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath $p0Log
         $ErrorActionPreference = 'Stop'
     }
     $p0ExitCode = $LASTEXITCODE

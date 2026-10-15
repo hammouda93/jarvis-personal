@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from .assistant_v3 import AssistantWorker
 from .operator_console import OperatorConsole
+from .architecture_panel import ArchitecturePanel
 from .operator_telemetry import snapshot as operator_snapshot
 from .config import settings
 from .states import AssistantState, STATE_LABELS
@@ -970,6 +971,7 @@ class JarvisWindow(QWidget):
         self.side_tabs = QTabWidget(self)
         self.side_tabs.setObjectName("sideTabs")
         self.side_tabs.setMinimumWidth(300)
+        self.side_tabs.setUsesScrollButtons(True)
         self.side_tabs.addTab(self.operator_console, "◉  CONTRÔLE")
         self.side_tabs.addTab(self.flow_panel, "◇  TRAJET")
         self.mcp_scroll = QScrollArea(self)
@@ -985,6 +987,10 @@ class JarvisWindow(QWidget):
         self.brain_scroll.setFrameShape(QFrame.NoFrame)
         self.brain_scroll.setWidget(self.brain_manager)
         self.side_tabs.addTab(self.brain_scroll, "CERVEAUX")
+        self.architecture_panel = ArchitecturePanel(self)
+        self.architecture_panel.section_requested.connect(self._show_architecture_section)
+        self.architecture_panel.review_requested.connect(self._show_mcp_review)
+        self.side_tabs.insertTab(1, self.architecture_panel, "ARCHITECTURE")
         self.canvas.setMinimumSize(240, 100)
 
         title = QLabel("PERSONAL JARVIS")
@@ -1504,14 +1510,24 @@ class JarvisWindow(QWidget):
         if self._compact_mode or self.clean_button.isChecked():
             return
         try:
-            self.operator_console.apply_snapshot(
-                operator_snapshot(
-                    max_items=18 if self.operator_full_button.isChecked() else 7
-                )
-            )
+            data = operator_snapshot(max_items=18 if self.operator_full_button.isChecked() else 7)
+            self.operator_console.apply_snapshot(data)
+            self.architecture_panel.apply_snapshot(data)
         except (OSError, ValueError, RuntimeError):
             # Read-only monitoring must never stop user interaction.
             self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
+
+    def _show_architecture_section(self, section: str) -> None:
+        target = {"control": self.operator_console, "mcp": self.mcp_scroll,
+                  "brains": self.brain_scroll, "skills": self.operator_console}.get(section)
+        if target is not None:
+            self.side_tabs.setCurrentWidget(target)
+        if section == "skills":
+            self.operator_console.scroll_area.ensureWidgetVisible(self.operator_console.operational_preferences)
+
+    def _show_mcp_review(self, server: str, attempt: int) -> None:
+        self.side_tabs.setCurrentWidget(self.mcp_scroll)
+        self.operator_console.mcp_panel.focus_review(server, attempt)
 
     def _on_skill_request(self, operation: str, value: str) -> None:
         panel = (self.operator_console.operational_preferences if operation == "policy_set"

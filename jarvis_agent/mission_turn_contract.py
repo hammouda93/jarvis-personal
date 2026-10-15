@@ -8,9 +8,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
+import unicodedata
 
 KINDS = frozenset({"continue", "revise", "correct", "clarify", "authorize",
                    "constrain", "new", "cancel", "pause", "status"})
+
+
+def explicit_detach_requested(text: str) -> bool:
+    """A standalone local mission-control command, never a memory deletion."""
+    value = "".join(c for c in unicodedata.normalize("NFKD", str(text).casefold())
+                    if not unicodedata.combining(c)).strip(" .!?\n")
+    return bool(re.fullmatch(
+        r"(?:nouvelle mission|new mission|changement de mission|"
+        r"(?:on )?change(?:ons)? de mission)"
+        r"(?:\s*[,;]?\s*(?:et\s+)?oublie\s+(?:tout|tt|le contexte|la mission precedente))?",
+        value,
+    ))
 SYSTEM = """Interpret the current HUMAN message relative to the persisted mission.
 Return JSON only with exactly these fields:
 {"kind":"continue|revise|correct|clarify|authorize|constrain|new|cancel|pause|status",
@@ -44,6 +58,9 @@ class MissionTurnDecision:
         if isinstance(raw, str):
             if len(raw) > 12000:
                 raise ValueError("mission_decision_too_large")
+            fenced = re.fullmatch(r"\s*```(?:json)?\s*\n(.*?)\n```\s*", raw, re.DOTALL)
+            if fenced:
+                raw = fenced.group(1)
             raw = json.loads(raw)
         if not isinstance(raw, dict) or set(raw) != {
             "kind", "source_quote", "superseded", "plan", "resolved",

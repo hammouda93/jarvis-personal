@@ -70,16 +70,16 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "development_priority": {
-            "phase": "V12",
-            "title": "Continuité des missions et fiabilité MCP",
+            "phase": "V13",
+            "title": "Architecture visible et corrections de la recette réelle",
             "implementation": "integrated",
             "automated": "local_regression_passed",
             "windows_real": "not_validated",
-            "evidence": "docs/V12_MISSION_RELIABILITY.md",
-            "next": "Recette Windows et comptes connectés sur le candidat V12, puis contrats de missions composées",
+            "evidence": "docs/V13_LIVE_FIXES.md",
+            "next": "Retester les corrections Windows, puis aligner les profils et contrats des spécialistes avant les workers isolés",
         },
         "human_windows_evidence": {
-            "source": "user_continuation_briefs_v10c_v10d_reviewed_2026-10-11",
+            "source": "user_windows_logs_reviewed_2026-10-15",
             "observed": ["conversation_text_voice", "microphone_off_in_text_mode", "windows_tts_fallback",
                          "chrome_normal_profile_youtube_navigation", "targeted_tab_close", "unicode_composer_input",
                          "installer_uia_intermediate_steps", "installer_close_dialog_recovery",
@@ -87,12 +87,18 @@ def snapshot() -> dict:
             "not_independently_verified": ["message_recipient_delivery", "business_final_mutation",
                                            "installer_completion_and_desktop_shortcut", "semantic_projection_cold_start",
                                            "composed_browser_windows_mission", "saved_file_exact_content"],
+            "v12_reported_failures": ["mission_control_wrapped_provider_context", "search_bootstrap_before_article",
+                                      "new_document_replaced_existing_buffer"],
+            "v13_retest_required": ["independent_goal_after_blocked_mission", "search_and_article_summary",
+                                    "new_document_preserves_existing_text", "architecture_ui_real_windows"],
         },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
-            "CI Windows/Linux verte au HEAD V11A e5947c4 avant P0. "
-            "V12: suspension MCP, contexte de sources et continuité testés automatiquement; recette Windows réelle attendue. "
+            "CI Windows/Linux verte sur V12 c5d0cdd (1358 tests Windows). "
+            "Mémoire retrouvée après redémarrage dans la recette du 15 octobre. "
+            "V13 corrige contrôle de mission, ouverture de recherche et protection du nouveau document, "
+            "avec catalogue d’architecture et de rôles ; ces corrections nécessitent une nouvelle recette réelle. "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."

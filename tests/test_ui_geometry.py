@@ -79,6 +79,24 @@ class WindowGeometryTests(unittest.TestCase):
         self.assertGreater(self.window.side_tabs.width(), 410)
         self.assertGreater(self.window.operator_console.scroll_area.viewport().height(), 100)
 
+    def test_architecture_is_directly_accessible_and_routes_to_existing_panels(self):
+        self.resize(660, 500)
+        panel = self.window.architecture_panel
+        self.assertEqual(self.window.side_tabs.indexOf(panel), 1)
+        self.window.side_tabs.setCurrentWidget(panel)
+        self.app.processEvents()
+        self.assertTrue(panel.isVisible())
+        overview = panel.tabs.widget(0)
+        self.assertEqual(overview.horizontalScrollBar().maximum(), 0)
+        self.window._show_architecture_section("brains")
+        self.assertIs(self.window.side_tabs.currentWidget(), self.window.brain_scroll)
+        self.window._show_architecture_section("mcp")
+        self.assertIs(self.window.side_tabs.currentWidget(), self.window.mcp_scroll)
+        self.window._show_architecture_section("skills")
+        self.app.processEvents()
+        self.assertIs(self.window.side_tabs.currentWidget(), self.window.operator_console)
+        self.assertTrue(self.window.operator_console.operational_preferences.isVisible())
+
     def test_compact_and_normal_modes_restore_visible_controls(self):
         self.resize(1024, 640)
         self.window.compact_button.setChecked(True)

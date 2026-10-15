@@ -39,7 +39,9 @@ class P0LauncherTests(unittest.TestCase):
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, 1, output)
         self.assertIn("P0 live log:", output)
+        self.assertNotIn("NativeCommandError", output)
         self.assertIn("Browser bridge configuration missing", output)
+        self.assertNotIn("NativeCommandError", output)
         self.assertNotIn("SyntaxError", output)
 
     def test_full_check_only_passes_flags_through_windows_powershell(self):

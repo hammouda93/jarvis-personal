@@ -830,7 +830,7 @@ def _preselection_navigation_pending(
         for clause in positive_instruction_clauses(user_text)
         for stage in re.split(
             r",\s*(?=(?:ouvre|ouvres|ouvrez|ouvrir|open|"
-            r"cherche|recherche|search|clique|selectionne)\b)",
+            r"cherche|recherche|search|clique|selectionne|lis|lire|read)\b)",
             clause,
         )
         if stage.strip()
@@ -887,7 +887,7 @@ def _clause_result_selection(text: str) -> bool:
             r"\b(?:ouvre|ouvres|ouvrez|ouvrir|"
             r"selectionne|selectionnes|selectionnez|selectionner|"
             r"clique|cliques|cliquez|cliquer|"
-            r"choisis|choisissez|choisir|open|select|click)\b",
+            r"choisis|choisissez|choisir|lis|lire|read|open|select|click)\b",
             normalized,
         )
     )
@@ -1173,6 +1173,13 @@ def _browser_verified_fast_completion(
     Windows, learning and legacy UI workflows keep their historical control
     flow and final-response behavior.
     """
+    from .instruction_clauses import positive_instruction_clauses
+    if any(re.search(r"\b(?:lis|lire|read|resume|resumer|summarize|summarise|"
+                     r"explique|expliquer|explain|analyse|analyze|compare)\b", clause)
+           for clause in positive_instruction_clauses(user_text)):
+        # Navigation proof cannot fulfill a requested reading or analysis.
+        # The next model turn may synthesize the already observed page.
+        return False
     browser_mutations = {
         "browser_navigate",
         "browser_click",
@@ -3858,8 +3865,8 @@ class GroqResponsesAgent:
         should_exit = False
         failed_results: dict[str, AgentActionResult] = {}
         from .instruction_clauses import requires_empty_target, requires_new_document
-        empty_precondition_pending = requires_empty_target(user_text)
         new_document_requested = requires_new_document(user_text)
+        empty_precondition_pending = requires_empty_target(user_text) or new_document_requested
         self._memory_write_allowed = _is_explicit_memory_write_request(user_text)
         self._skill_write_allowed = False
         self._lesson_write_allowed = (
