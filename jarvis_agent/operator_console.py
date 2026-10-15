@@ -319,6 +319,13 @@ class OperatorConsole(QFrame):
         event_list.addWidget(summary)
         self.operational_preferences = OperationalPreferencesPanel(self)
         self.operational_preferences.requested.connect(self.skill_requested.emit)
+        event_list.addWidget(self.operational_preferences)
+        self.new_request_button = QPushButton("Nouvelle demande")
+        self.new_request_button.setToolTip(
+            "Détacher la mission sans la certifier, sans rejouer d’outil et sans effacer la mémoire."
+        )
+        self.new_request_button.clicked.connect(lambda: self._request_mission("detach", ""))
+        event_list.addWidget(self.new_request_button)
         # The user sends objectives through the conversation. Plan editing is
         # diagnostics-only, never a required step to start a normal mission.
         self.advanced_toggle = QPushButton("Diagnostics techniques (facultatif)")
@@ -535,6 +542,7 @@ class OperatorConsole(QFrame):
 
     def apply_snapshot(self, data: dict) -> None:
         self._last_snapshot = dict(data)
+        self.new_request_button.setEnabled(data.get("mission_enabled") is True)
         self.active_panel.apply_snapshot(data)
         self.mcp_panel.apply_snapshot(data.get("mcp") or {})
         missions, steps, actions = render_snapshot(data)

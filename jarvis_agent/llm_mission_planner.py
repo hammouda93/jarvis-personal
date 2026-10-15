@@ -167,6 +167,14 @@ def _unwrap_provider(agent: Any) -> Any:
         if target is None or id(target) in visited:
             break
         visited.add(id(target))
+        # Runtime decorators forward provider_name/model/_chat through
+        # __getattr__. Setting control state on such a wrapper does NOT set it
+        # on the instance bound to _chat, and used to send the normal mission
+        # history and tools instead of the isolated JSON control request.
+        delegate = vars(target).get("delegate") if hasattr(target, "__dict__") else None
+        if delegate is not None:
+            target = delegate
+            continue
         if (
             hasattr(target, "provider_name") and hasattr(target, "model")
         ) or (
