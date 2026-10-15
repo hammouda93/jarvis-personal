@@ -36,11 +36,8 @@ def _tool_log_detail(name, result):
     if name.startswith("mcp__") or name == "read_observation_evidence":
         # Private service content stays in the conversation, never in log
         # files or the UI's diagnostic panel. Keep locally generated status.
-        data = _action_detail_dict(result)
-        allowed = {"verified", "dispatched", "outcome_unknown", "guard",
-                   "budget_reason", "retry_after_seconds", "previous_attempt_id",
-                   "previous_outcome", "blocked_by_previous_attempt", "reviewable"}
-        detail = json.dumps({key: data[key] for key in allowed if key in data})
+        from .mcp_result import receipt_metadata
+        detail = json.dumps(receipt_metadata(result.detail, name=name))
     else:
         detail = str(result.detail or "")
     return detail[:900] + ("…" if len(detail) > 900 else "")

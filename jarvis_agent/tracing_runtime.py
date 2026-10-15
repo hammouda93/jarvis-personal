@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import json
 from typing import Any
 
 from .event_journal import StructuredEventJournal
@@ -8,7 +9,7 @@ from .kernel_contracts import EventKind
 
 
 class TracingToolRegistry:
-    """Transparent proxy that journals exact tool args/results for one mission."""
+    """Trace local tools; retain metadata only for MCP and archived content."""
 
     def __init__(
         self,
@@ -46,6 +47,7 @@ class TracingToolRegistry:
         mission_id = getattr(self._local, "mission_id", None)
         agent_id = getattr(self._local, "agent_id", None)
         request_event_id = None
+        private_observation = str(name).startswith("mcp__") or name == "read_observation_evidence"
         if mission_id:
             request_event_id = self.journal.append_event(
                 mission_id=mission_id,
@@ -54,7 +56,8 @@ class TracingToolRegistry:
                 component="native_tools",
                 payload={
                     "tool_name": str(name),
-                    "arguments": dict(arguments or {}),
+                    "arguments": {} if private_observation else dict(arguments or {}),
+                    **({"arguments_omitted": True} if private_observation else {}),
                     "approved": bool(approved),
                 },
             )
@@ -66,6 +69,10 @@ class TracingToolRegistry:
         )
 
         if mission_id:
+            detail = str(getattr(result, "detail", "") or "")
+            if private_observation:
+                from .mcp_result import receipt_metadata
+                detail = json.dumps(receipt_metadata(detail, name=name), ensure_ascii=False)
             self.journal.append_event(
                 mission_id=mission_id,
                 kind=EventKind.TOOL_RESULT,
@@ -75,12 +82,10 @@ class TracingToolRegistry:
                 success=bool(getattr(result, "success", False)),
                 payload={
                     "tool_name": str(name),
-                    "message": str(
+                    "message": "Contenu de source omis de la trace." if private_observation else str(
                         getattr(result, "message", "") or ""
                     ),
-                    "detail": str(
-                        getattr(result, "detail", "") or ""
-                    ),
+                    "detail": detail,
                     "end_session": bool(
                         getattr(result, "end_session", False)
                     ),

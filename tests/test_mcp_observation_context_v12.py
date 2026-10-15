@@ -12,6 +12,8 @@ from jarvis_agent.mcp_sdk_transport import tool_reply_envelope
 from jarvis_agent.mcp_server_registry import MCPRegistry
 from jarvis_agent.mcp_tool_registry import MCPToolRegistry
 from jarvis_agent.request_context import RequestContext, ContextToolRegistry
+from jarvis_agent.event_journal import StructuredEventJournal
+from jarvis_agent.tracing_runtime import TracingToolRegistry
 
 
 class NativeStub:
@@ -130,6 +132,34 @@ class MCPObservationContextTests(unittest.TestCase):
         detail = json.loads(shown["detail"])
         self.assertIn("evidence_id", detail["observation_evidence"])
         self.assertTrue(detail["output_truncated"])
+
+    def test_opt_in_structured_trace_does_not_persist_raw_mcp_arguments_or_output(self):
+        self.transport.call_tool.return_value = {"success": True,
+            "message": "PRIVATE-TRACE-CONTENT", "data": {"value": "PRIVATE-STRUCTURED"}}
+        journal = StructuredEventJournal(self.adapter.registry.path.parent / "traces.sqlite3")
+        mission = journal.create_mission(goal_summary="Read fixture", owner_agent_id="fixture")
+        traced = TracingToolRegistry(self.tools, journal=journal)
+        traced.set_mission(mission)
+        result = traced.execute("mcp__orbitdata__list_records", {"filter": "PRIVATE-TRACE-ARGUMENT"})
+        self.assertTrue(result.success)
+        serialized = json.dumps(journal.mission_trace(mission))
+        for private in ("PRIVATE-TRACE-CONTENT", "PRIVATE-STRUCTURED", "PRIVATE-TRACE-ARGUMENT"):
+            self.assertNotIn(private, serialized)
+        self.assertIn("attempt_id", serialized)
+        self.assertIn("list_records", serialized)
+
+    def test_archive_read_is_not_copied_into_the_opt_in_structured_trace(self):
+        self.transport.call_tool.return_value = {"success": True, "message": "PRIVATE-ARCHIVE-TRACE" * 300}
+        result = self.tools.execute("mcp__orbitdata__list_records", {})
+        identity = json.loads(result.detail)["observation_evidence"]["evidence_id"]
+        journal = StructuredEventJournal(self.adapter.registry.path.parent / "archive_trace.sqlite3")
+        mission = journal.create_mission(goal_summary="Read fixture", owner_agent_id="fixture")
+        traced = TracingToolRegistry(self.tools, journal=journal)
+        traced.set_mission(mission)
+        result = traced.execute("read_observation_evidence", {"evidence_id": identity})
+        self.assertTrue(result.success)
+        self.assertIn("PRIVATE-ARCHIVE-TRACE", result.detail)
+        self.assertNotIn("PRIVATE-ARCHIVE-TRACE", json.dumps(journal.mission_trace(mission)))
 
 
 if __name__ == "__main__":

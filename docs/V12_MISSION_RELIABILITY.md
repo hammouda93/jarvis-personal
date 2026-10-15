@@ -46,7 +46,7 @@ copient plus le contenu ou les paramètres MCP.
 
 ## Validation
 
-Les cinq nouvelles suites ajoutent 26 tests couvrant les suspensions de lots, l'association des
+Les cinq nouvelles suites ajoutent 28 tests couvrant les suspensions de lots, l'association des
 appels/réponses après confirmation, les lectures volumineuses en français/arabe,
 les limites d'archive, l'historique de conversation et les budgets de sélection.
 
@@ -55,12 +55,18 @@ python scripts/run_final_regression.py
 node --test tests/browser_bridge_replay.mjs
 ```
 
-Résultat local Linux : 1 341 tests examinés, 1 333 réussis, huit contrôles Windows
+Résultat local Linux : 1 343 tests examinés, 1 335 réussis, huit contrôles Windows
 explicitement non exécutés, aucun échec ou erreur. Les 46 replays du navigateur
 réussissent également ; compilation Python vérifiée. La CI Windows/Linux doit
 encore être observée sur le commit publié. Les tests sont synthétiques et isolés ; aucun compte personnel,
 message, installation ou mission réelle Windows n'a été exécuté pendant cette
 reprise.
+
+La revue finale a également reproduit puis corrigé la copie de contenu MCP dans
+les traces structurées optionnelles. Ces événements ne conservent désormais que
+les métadonnées locales de dispatch, de provenance, de tentative et de pause.
+La réponse complète reste disponible pour le modèle et l'utilisateur ; seule
+sa copie automatique dans les événements techniques est supprimée.
 
 ## Recette réelle restant à effectuer
 
