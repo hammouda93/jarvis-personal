@@ -10,7 +10,7 @@ import html
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPainterPath
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
+    QFrame, QGridLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QTabWidget, QTextBrowser, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -32,7 +32,7 @@ class ArchitectureMap(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(410)
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setAccessibleName("Architecture Jarvis : orchestration, spécialistes, outils, preuves et mémoire")
 
@@ -43,14 +43,15 @@ class ArchitectureMap(QWidget):
         painter.setFont(QFont("Segoe UI", 9))
         margin, gap = 12, 10
         width = self.width() - 2 * margin
+        compact = self.width() < 340
         nodes = [
             (QRectF(margin, 8, width, 51), "JARVIS · interlocuteur unique", "Cerveaux en cascade · conversation", "#63d9d4"),
-            (QRectF(margin, 79, width, 51), "MISSION · objectif et contraintes", "Plan · contexte utile · budget · permissions", "#7dc2ed"),
-            (QRectF(margin, 151, (width-gap)/2, 58), "Spécialistes", "Browser · Windows\nRecherche · Documents", "#7dc2ed"),
-            (QRectF(margin+(width+gap)/2, 151, (width-gap)/2, 58), "Agents métier", "MS Football\nAutres domaines à définir", "#c6adf4"),
-            (QRectF(margin, 232, width, 51), "OUTILS · exécution contrôlée", "Natifs · MCP/API · autorisations existantes", "#80cba7"),
-            (QRectF(margin, 305, width, 51), "PREUVES · vérifier puis poursuivre", "Observer · replanifier · suspendre si incertain", "#e9c586"),
-            (QRectF(margin, 375, width, 28), "Mémoire SQLite · mission · Skills séparés", "", "#8ba8c0"),
+            (QRectF(margin, 79, width, 51), "MISSION · objectif et contraintes", "Plan · contexte · permissions" if compact else "Plan · contexte utile · budget · permissions", "#7dc2ed"),
+            (QRectF(margin, 151, (width-gap)/2, 58), "Spécialistes", "Web · Windows\nRecherche" if compact else "Browser · Windows\nRecherche · Documents", "#7dc2ed"),
+            (QRectF(margin+(width+gap)/2, 151, (width-gap)/2, 58), "Agents métier", "MS Football\nAutres domaines" if compact else "MS Football\nAutres domaines à définir", "#c6adf4"),
+            (QRectF(margin, 232, width, 51), "OUTILS · exécution contrôlée", "Natifs · MCP/API autorisés" if compact else "Natifs · MCP/API · autorisations existantes", "#80cba7"),
+            (QRectF(margin, 305, width, 51), "PREUVES · vérifier" if compact else "PREUVES · vérifier puis poursuivre", "Observer · adapter · suspendre" if compact else "Observer · replanifier · suspendre si incertain", "#e9c586"),
+            (QRectF(margin, 375, width, 28), "SQLite · mission · Skills" if compact else "Mémoire SQLite · mission · Skills séparés", "", "#8ba8c0"),
         ]
         painter.setPen(QPen(QColor("#416176"), 1.3))
         for start, end in ((0, 1), (1, 2), (1, 3), (2, 4), (3, 4), (4, 5), (5, 6)):
@@ -100,6 +101,8 @@ class ArchitecturePanel(QFrame):
         layout.addWidget(self.tabs, 1)
         overview = QWidget()
         overview.setObjectName("architectureOverview")
+        overview.setMinimumWidth(0)
+        overview.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         overview_layout = QVBoxLayout(overview)
         overview_layout.setContentsMargins(6, 6, 6, 6)
         self.notice = QLabel("Un runtime partagé aujourd’hui. Spécialistes isolés : évolution progressive.")
@@ -117,11 +120,13 @@ class ArchitecturePanel(QFrame):
         self.review_button = QPushButton("Examiner le blocage MCP")
         self.review_button.clicked.connect(self._request_review)
         overview_layout.addWidget(self.review_button)
-        navigation = QHBoxLayout()
-        for label, section in (("Missions", "control"), ("Cerveaux", "brains"), ("Connexions", "mcp")):
+        navigation = QGridLayout()
+        navigation.setContentsMargins(0, 0, 0, 0)
+        navigation.setSpacing(4)
+        for index, (label, section) in enumerate((("Missions", "control"), ("Cerveaux", "brains"), ("Connexions", "mcp"))):
             button = QPushButton(label)
             button.clicked.connect(lambda checked=False, target=section: self.section_requested.emit(target))
-            navigation.addWidget(button)
+            navigation.addWidget(button, index // 2, index % 2, 1, 2 if index == 2 else 1)
         overview_layout.addLayout(navigation)
         preferences = QPushButton("Préférences Skills / Learning")
         preferences.clicked.connect(lambda: self.section_requested.emit("skills"))
@@ -170,7 +175,7 @@ class ArchitecturePanel(QFrame):
             QHeaderView::section {background:#103246;color:#b7dce5;padding:5px;border:0;}
             QTabWidget::pane {border:0;} QTabBar::tab {background:#0b293d;color:#a5cbd6;padding:7px;}
             QTabBar::tab:selected {background:#17495b;color:#a1f3e9;}
-            QPushButton {background:#10394b;color:#a0e8df;border:1px solid #286278;border-radius:5px;padding:6px;}
+            QPushButton {background:#10394b;color:#a0e8df;border:1px solid #286278;border-radius:5px;padding:6px;font-size:11px;}
             QPushButton:disabled {color:#738b9a;}
         """)
         self.apply_snapshot({})

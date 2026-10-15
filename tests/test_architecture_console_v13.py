@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 from jarvis_agent.architecture_catalog import build_snapshot
@@ -122,6 +123,14 @@ class ArchitectureWidgetTests(unittest.TestCase):
         panel.apply_snapshot(recorded_state())
         self.app.processEvents()
         self.assertEqual(scroll.value(), before)
+
+    def test_narrow_overview_does_not_overflow_with_larger_inherited_font(self):
+        panel = self.panel()
+        panel.setFont(QFont("Sans Serif", 14))
+        panel.resize(300, 500)
+        panel.show()
+        self.app.processEvents()
+        self.assertEqual(panel.tabs.widget(0).horizontalScrollBar().maximum(), 0)
 
     def test_unknown_reservation_cannot_be_acknowledged_while_it_may_be_running(self):
         panel = self.panel()

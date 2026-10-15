@@ -69,17 +69,22 @@ pas une mission et ne rejoue aucun appel. Les accès restent autorisés séparé
 
 ## Validation automatique et visuelle
 
-25 contrôles sont ajoutés : 12 reproductions et garde-fous de runtime, 12 tests
+26 contrôles sont ajoutés : 12 reproductions et garde-fous de runtime, 13 tests
 du catalogue et des widgets, un contrôle de navigation et de géométrie dans
 l’interface complète. Les scénarios de contrôle vérifient aussi le fallback
 Cerebras secondaire et la restauration du contexte après erreur fournisseur.
 
-La régression locale examine 1 383 tests : 1 373 réussissent, dix contrôles
+La régression locale examine 1 384 tests : 1 374 réussissent, dix contrôles
 spécifiques Windows sont explicitement ignorés, aucun échec ou erreur. Les
 46 replays Browser Bridge réussissent. Les nouveaux panneaux ont été rendus
 hors écran et inspectés visuellement ; la géométrie minimale est testée à
 660 × 500. Ces vérifications n’exécutent pas les missions sur un bureau réel.
-La CI du commit publié doit également être observée sous Windows et Linux.
+La première CI Windows a également détecté un débordement horizontal de 42
+pixels dans la nouvelle vue à petite taille. La navigation occupe maintenant
+deux colonnes et le diagramme s’adapte à la largeur disponible. Un test de vue
+étroite avec police héritée agrandie couvre ce cas ; les barres horizontales ne
+sont pas simplement masquées. La CI du commit corrigé doit être observée sous
+Windows et Linux.
 
 ## Recette ciblée
 
