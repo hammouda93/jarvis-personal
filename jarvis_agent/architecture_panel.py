@@ -1,7 +1,7 @@
 """Inspectable architecture, agent responsibilities and real configuration.
 
-All interactions are local projections or navigation signals. No agent,
-network session, tool grant or model request is started by this panel.
+Catalog interactions are local projections or navigation signals. The profile
+editor persists operator settings; it starts no agent, session or tool grant.
 """
 from __future__ import annotations
 
@@ -108,6 +108,9 @@ class ArchitecturePanel(QFrame):
         self.notice = QLabel("Un runtime partagé aujourd’hui. Spécialistes isolés : évolution progressive.")
         self.notice.setWordWrap(True)
         overview_layout.addWidget(self.notice)
+        self.context_status = QLabel("Contexte : aucune requête mesurée dans cette session.")
+        self.context_status.setWordWrap(True)
+        overview_layout.addWidget(self.context_status)
         overview_layout.addWidget(ArchitectureMap())
         self.feature_view = QTextBrowser()
         self.feature_view.setMinimumHeight(130)
@@ -166,6 +169,13 @@ class ArchitecturePanel(QFrame):
         self.roadmap_view = QTextBrowser()
         self.roadmap_view.setOpenExternalLinks(False)
         self.tabs.addTab(self.roadmap_view, "Développement")
+        from .agent_profile_panel import AgentProfilePanel
+        self.profile_editor = AgentProfilePanel(self)
+        self.profile_editor.profile_saved.connect(lambda *_: self._select_agent(self.agent_tree.currentItem()))
+        self.tabs.addTab(self.profile_editor, "Profils")
+        self.edit_profile_button = QPushButton("Configurer le profil sélectionné")
+        self.edit_profile_button.clicked.connect(self._edit_profile)
+        agents_layout.addWidget(self.edit_profile_button)
         self.setStyleSheet("""
             QFrame#architecturePanel {background:#061725;color:#cfebf0;border:0;}
             QWidget#architectureOverview,QScrollArea {background:#061725;border:0;}
@@ -181,6 +191,7 @@ class ArchitecturePanel(QFrame):
         self.apply_snapshot({})
 
     def apply_snapshot(self, runtime: dict) -> None:
+        self.profile_editor.apply_snapshot(runtime)
         self._data = build_snapshot(runtime)
         self._agents = self._data["agents"]
         self._set_html(self.feature_view, "features", "<b>Configuration de ce processus</b><br>" + "<br>".join(
@@ -231,6 +242,23 @@ class ArchitecturePanel(QFrame):
         view.verticalScrollBar().setValue(position)
         self._render_cache[key] = content
 
+    def _edit_profile(self):
+        current = self.agent_tree.currentItem()
+        if current is not None:
+            self.profile_editor.select_role(current.data(0, Qt.UserRole))
+        self.tabs.setCurrentWidget(self.profile_editor)
+
+    def update_model(self, data):
+        budget = data.get("context_budget")
+        if not isinstance(budget, dict):
+            return
+        estimate, maximum = budget.get("estimated_tokens"), budget.get("budget")
+        if type(estimate) is int and type(maximum) is int:
+            self.context_status.setText("Dernière requête · tokens estimés : " + str(estimate)
+                + " / " + str(maximum) + " · outils : " + str(budget.get("tool_count", 0))
+                + (" · admise" if budget.get("admitted") is True else " · suspendue avant envoi")
+                + ". Estimation locale, distincte des tokens facturés.")
+
     def _filter_agents(self, text: str) -> None:
         query = text.strip().casefold()
         for index, agent in enumerate(self._agents):
@@ -247,6 +275,7 @@ class ArchitecturePanel(QFrame):
         agent = next((a for a in self._agents if a["id"] == current.data(0, Qt.UserRole)), None)
         if agent is None:
             return
+        self.edit_profile_button.setEnabled(agent["mode"] != "planned")
         blocks = ["<h3>" + _escape(agent["name"]) + "</h3>", "<p>" + _escape(agent["purpose"]) + "</p>",
             "<p><b>" + _MODES[agent["mode"]] + "</b><br>" + _escape(agent["module"]) + "</p>",
             "<p>Ce panneau ne démarre aucun worker indépendant. Les outils utilisent leurs contrôles existants.</p>",
@@ -259,6 +288,17 @@ class ArchitecturePanel(QFrame):
             blocks.append("<h4>Outils intégrés au runtime partagé</h4><p>" + "<br>".join(map(_escape, agent["native_tools"])) + "</p>")
         if agent["declared_tools"]:
             blocks.append("<h4>Outils déclarés du profil</h4><p>" + "<br>".join(map(_escape, agent["declared_tools"])) + "</p>")
+        if agent["mode"] != "planned":
+            try:
+                saved = self.profile_editor.store.get(agent["id"])
+                configured = saved["settings"]
+                blocks.append("<h4>Profil opérateur · version " + str(saved["revision"]) + "</h4><p>"
+                    + _escape(configured["name"]) + "<br>" + _escape(configured["purpose"]) + "</p><p>"
+                    + "Contexte estimé : " + str(configured["context_tokens"]) + " tokens / requête · "
+                    + str(configured["model_calls"]) + " appels et " + str(configured["actions"]) + " actions / étape.</p>"
+                    + "<p>Appliqué à la délégation supervisée. Aucun droit ajouté.</p>")
+            except (OSError, ValueError, TypeError):
+                blocks.append("<p>Profil opérateur illisible ; délégation à suspendre jusqu’à correction.</p>")
         if agent["connectors"]:
             blocks.append("<h4>Connecteurs déclarés</h4><p>" + ", ".join(map(_escape, agent["connectors"])) + "</p>")
         for server in agent["connections"]:

@@ -145,7 +145,7 @@ class LiveMissionContinuityRuntime:
     def active_mission_id(self) -> str | None:
         return self._active_mission_id
 
-    def begin_mission(self, goal: str) -> str:
+    def begin_mission(self, goal: str, *, new_request_scope: bool = True) -> str:
         """Open an explicit multi-turn mission; never infer a plan from keywords."""
         with self._lock:
             if self._active_mission_id is not None:
@@ -184,6 +184,8 @@ class LiveMissionContinuityRuntime:
             )
             self._active_mission_id = mission_id
             self._explicit = True
+            if new_request_scope:
+                self._new_request_scope()
             return mission_id
 
     @staticmethod
@@ -231,6 +233,18 @@ class LiveMissionContinuityRuntime:
                 # provider response or replace its reviewed plan.
                 return
             text = str(user_text or "").strip()
+            from .intent_guards import is_explicit_memory_write_request
+            from .memory_tool_scope import memory_only_request
+            if (is_explicit_memory_write_request(text) and memory_only_request(text)
+                    and not memory_only_request(state.user_goal)):
+                # Explicit personal memory writes are independent of a blocked
+                # browser/MCP mission; no model is needed to free conversation.
+                self.detach_mission()
+                self._audit(mid, "mission.detached_for_memory", {"checkpoint_preserved": True})
+                self._prepared_turn = (None, text)
+                if log:
+                    log("[MISSION_CONTROL] kind=new source=explicit_memory_request checkpoint_preserved=true")
+                return
             if (text == state.user_goal.strip()
                     or text.casefold().strip(" .!?") in {
                         "continue", "continue la mission", "poursuis", "oui", "yes",
@@ -1121,11 +1135,23 @@ class LiveMissionContinuityRuntime:
             tools = []
         return propose_capabilities(saved, allowed_mcp=tools)
 
-    def detach_mission(self) -> None:
+    def detach_mission(self, *, new_request_scope: bool = True) -> None:
         """Stop tracking locally without changing persistent state or replaying."""
         with self._lock:
             self._active_mission_id = None
             self._explicit = False
+            if new_request_scope:
+                self._new_request_scope()
+
+    def _new_request_scope(self):
+        from .llm_mission_planner import _unwrap_provider, MissionPlanError
+        try:
+            provider = _unwrap_provider(self.delegate)
+        except MissionPlanError:
+            return
+        method = getattr(type(provider), "start_request_scope", None)
+        if callable(method):
+            method(provider)
 
     def approve_supervised_plan(self, *, digest: str, rules=None, limits=None, assignments=None):
         if self.active_supervisor is None:
@@ -1236,7 +1262,7 @@ class LiveMissionContinuityRuntime:
         with self._lock:
             implicit = self._active_mission_id is None
             if implicit:
-                self.begin_mission(user_text)
+                self.begin_mission(user_text, new_request_scope=False)
                 self._explicit = False
             mission_id = self._active_mission_id
             loaded = self.context_store.load(mission_id)
@@ -1552,7 +1578,9 @@ class LiveMissionContinuityRuntime:
                             "C'est mémorisé durablement dans ma mémoire locale.")
                     result = replace(result, text=text, pause_reason="")
             elif implicit:
-                self.detach_mission()
+                # Ordinary-turn bookkeeping is not a human change of topic.
+                # Keep conversational follow-ups and pending confirmations.
+                self.detach_mission(new_request_scope=False)
             return result
 
     def record_external_turn(self, user_text, assistant_text, **kwargs):

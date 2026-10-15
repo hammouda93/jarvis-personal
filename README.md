@@ -5,7 +5,23 @@ habituel, outils Windows, mémoire SQLite et services MCP explicitement connect�
 Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
 distinct de la preuve que l'objectif entier est atteint.
 
-## Candidat V13 — architecture visible et corrections réelles
+## Candidat V14 — profils d’agents et contexte par mission
+
+La branche `feature/agent-profiles-context-v14` prolonge la V13 `7569493`.
+**ARCHITECTURE > Profils** permet de modifier les responsabilités, compétences,
+sélections d’outils et budgets. Les paramètres sont versionnés et appliqués aux
+étapes de délégation supervisée, sans accorder de droit MCP ni démarrer de worker.
+
+Un changement de mission sépare l’historique envoyé au modèle tout en conservant
+les checkpoints. Les requêtes disposent d’un contrôle de taille avant l’API ;
+les observations historiques restent relisibles par référence. La cascade et
+les protections des outils sont conservées. Le journal affiche des estimations,
+distinctes des compteurs de tokens renvoyés par les fournisseurs.
+
+Voir les [contrats, limites et essais V14](docs/V14_AGENT_PROFILES_CONTEXT.md).
+Les workers autonomes avec leur propre contexte restent la prochaine étape.
+
+## Socle V13 — architecture visible et corrections réelles
 
 La branche `feature/architecture-console-live-fixes-v13` prolonge V12 `c5d0cdd`.
 La recette utilisateur a confirmé la mémoire après redémarrage et révélé trois

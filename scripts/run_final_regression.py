@@ -37,6 +37,7 @@ def regression_environment(data_dir: Path) -> dict[str, str]:
     )})
     env.update(QT_QPA_PLATFORM="offscreen", JARVIS_DATA_DIR=str(data_dir),
                JARVIS_MCP_CONFIG_PATH=str(data_dir / "mcp_servers.json"),
+               JARVIS_AGENT_PROFILES_PATH=str(data_dir / "agent_profiles.json"),
                JARVIS_BRAIN_CONFIG_PATH=str(data_dir / "brains.json"))
     return env
 

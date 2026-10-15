@@ -941,6 +941,9 @@ class AssistantWorker(QObject):
             )
             self._state(AssistantState.ERROR, "Cerveau agent indisponible")
             self._deliver_reply(
+                "Le contexte dépasse le budget de cette requête. La mission et ses preuves sont conservées. "
+                "Utilisez Nouvelle demande pour un autre objectif ; aucune action incertaine ne sera rejouée."
+                if "request_context_budget_exhausted" in str(exc) or "contexte estimé trop volumineux" in str(exc) else
                 "Mon cerveau agent n'est pas disponible pour le moment. "
                 "Vérifiez le modèle configuré puis réessayez."
             )

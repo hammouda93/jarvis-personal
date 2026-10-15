@@ -1474,6 +1474,7 @@ class JarvisWindow(QWidget):
         self._worker.log_line.connect(_safe_console_log)
         self._worker.conversation_message.connect(self._on_conversation_message)
         self._worker.telemetry_changed.connect(self.operator_console.update_model)
+        self._worker.telemetry_changed.connect(self.architecture_panel.update_model)
         self._worker.operator_event.connect(self.operator_console.update_live_event)
         self._worker.mission_control_result.connect(self.operator_console.show_mission_result)
         self.operator_console.mission_requested.connect(self._on_mission_request)

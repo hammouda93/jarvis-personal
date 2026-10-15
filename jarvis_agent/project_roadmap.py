@@ -70,20 +70,22 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "development_priority": {
-            "phase": "V13",
-            "title": "Architecture visible et corrections de la recette réelle",
+            "phase": "V14",
+            "title": "Profils configurables et contexte limité par mission",
             "implementation": "integrated",
             "automated": "local_regression_passed",
             "windows_real": "not_validated",
-            "evidence": "docs/V13_LIVE_FIXES.md",
-            "next": "Retester les corrections Windows, puis aligner les profils et contrats des spécialistes avant les workers isolés",
+            "evidence": "docs/V14_AGENT_PROFILES_CONTEXT.md",
+            "next": "Valider les profils et les budgets sur Windows, puis introduire un spécialiste à contexte isolé sur des lectures indépendantes",
         },
         "human_windows_evidence": {
             "source": "user_windows_logs_reviewed_2026-10-15",
             "observed": ["conversation_text_voice", "microphone_off_in_text_mode", "windows_tts_fallback",
                          "chrome_normal_profile_youtube_navigation", "targeted_tab_close", "unicode_composer_input",
                          "installer_uia_intermediate_steps", "installer_close_dialog_recovery",
-                         "raw_memory_after_restart", "session_recall", "uia_replace_append"],
+                         "raw_memory_after_restart", "session_recall", "uia_replace_append",
+                         "v13_empty_document_precondition_refused_old_buffer", "v13_new_document_unicode_readback",
+                         "v13_code_recall_after_restart", "v13_google_search_dom_observed"],
             "not_independently_verified": ["message_recipient_delivery", "business_final_mutation",
                                            "installer_completion_and_desktop_shortcut", "semantic_projection_cold_start",
                                            "composed_browser_windows_mission", "saved_file_exact_content"],
@@ -91,14 +93,19 @@ def snapshot() -> dict:
                                       "new_document_replaced_existing_buffer"],
             "v13_retest_required": ["independent_goal_after_blocked_mission", "search_and_article_summary",
                                     "new_document_preserves_existing_text", "architecture_ui_real_windows"],
+            "v13_reported_failures": ["independent_memory_goal_classified_as_continue", "context_growth_blocks_fallback",
+                                       "browser_find_timeout", "provider_pause_after_close_window"],
+            "v14_retest_required": ["profile_editor_real_windows", "new_goal_context_isolation",
+                                    "continued_mission_constraints_and_receipts", "search_article_summary_with_provider_cascade"],
         },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
-            "CI Windows/Linux verte sur V12 c5d0cdd (1358 tests Windows). "
-            "Mémoire retrouvée après redémarrage dans la recette du 15 octobre. "
-            "V13 corrige contrôle de mission, ouverture de recherche et protection du nouveau document, "
-            "avec catalogue d’architecture et de rôles ; ces corrections nécessitent une nouvelle recette réelle. "
+            "CI Windows/Linux verte sur V13 7569493 (1384 tests Windows). "
+            "Recette V13 du 15 octobre : mémoire après redémarrage, protection du document et écriture Unicode observées. "
+            "Contexte volumineux et résumé navigateur restent à valider. "
+            "V14 ajoute des profils opérateur appliqués à la délégation supervisée et un budget de requête. "
+            "Les workers indépendants et leur isolation mémoire restent à développer. "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."
