@@ -19,13 +19,45 @@ from .intent_guards import (
     is_explicit_memory_write_request,
 )
 from .native_tools import AgentActionResult, NATIVE_TOOLS, NativeToolRegistry
-from .mcp_mission_read_recovery import prior_identity_observation
+from .mcp_mission_read_recovery import prior_identity_observation, mcp_pause_reason
 from .runtime_identity import annotate_provider_request, google_tool_call_extra
 from .tools import normalize
 
 
 LogFn = Callable[[str], None]
 PhaseFn = Callable[[str], None]
+
+
+def _tool_log_arguments(name, arguments):
+    return "<MCP arguments omitted>" if name.startswith("mcp__") else arguments
+
+
+def _tool_log_detail(name, result):
+    if name.startswith("mcp__") or name == "read_observation_evidence":
+        # Private service content stays in the conversation, never in log
+        # files or the UI's diagnostic panel. Keep locally generated status.
+        from .mcp_result import receipt_metadata
+        detail = json.dumps(receipt_metadata(result.detail, name=name))
+    else:
+        detail = str(result.detail or "")
+    return detail[:900] + ("…" if len(detail) > 900 else "")
+
+
+def _mcp_skipped_action(name, *, awaiting_approval=False):
+    return AgentActionResult(name=name, success=False,
+        message="Appel non exécuté après la suspension du lot.",
+        detail=json.dumps({"guard": ("batch_deferred_for_approval" if awaiting_approval
+                                    else "batch_stopped_after_mcp_pause"),
+                           "dispatched": False, "outcome_unknown": False,
+                           "verified": False, "permissions_changed": False}))
+
+
+def _mcp_paused_turn(actions, reason, *, end_session=False, should_exit=False, log=None):
+    from .mission_progress import partial_mission_report
+    if log:
+        log("[MISSION] state=WAITING_EXTERNAL reason=" + reason + " no_further_dispatch=1")
+    return AgentTurnResult(text=partial_mission_report(actions), actions=tuple(actions),
+        end_session=end_session, should_exit=should_exit, pause_reason=reason)
 
 
 _SYSTEM_INSTRUCTIONS = """Tu es Jarvis, l'assistant personnel de l'utilisateur sur Windows.
@@ -1904,6 +1936,9 @@ class OllamaToolAgent:
         self._messages = [
             {"role": "system", "content": _effective_system_instructions()}
         ]
+        context = getattr(self, "request_context", None)
+        if context is not None:
+            context.reset()
         self._ephemeral_context = ""
 
     def record_external_turn(
@@ -2130,7 +2165,7 @@ class OllamaToolAgent:
                     should_exit=should_exit,
                 )
 
-            for call in tool_calls:
+            for call_index, call in enumerate(tool_calls):
                 function = call.get("function") or {}
                 name = str(function.get("name") or "").strip()
                 raw_args = function.get("arguments") or {}
@@ -2145,7 +2180,7 @@ class OllamaToolAgent:
                     arguments = {}
 
                 if log:
-                    log(f"[AGENT_TOOL] call={name} args={arguments}")
+                    log(f"[AGENT_TOOL] call={name} args={_tool_log_arguments(name, arguments)}")
                 if phase:
                     phase("acting")
 
@@ -2181,9 +2216,7 @@ class OllamaToolAgent:
                     )
 
                 if log:
-                    detail_for_log = result.detail
-                    if len(detail_for_log) > 900:
-                        detail_for_log = detail_for_log[:900] + "…"
+                    detail_for_log = _tool_log_detail(name, result)
                     log(
                         f"[AGENT_TOOL] result={name} "
                         f"success={result.success} detail={detail_for_log!r}"
@@ -2196,6 +2229,19 @@ class OllamaToolAgent:
                         "content": result.as_json(),
                     }
                 )
+                reason = mcp_pause_reason(result)
+                if reason:
+                    for item in tool_calls[call_index + 1:]:
+                        skipped_name = str((item.get("function") or {}).get("name") or "")
+                        skipped = _mcp_skipped_action(skipped_name)
+                        actions.append(skipped)
+                        self._messages.append({"role": "tool", "tool_name": skipped_name,
+                                               "content": skipped.as_json()})
+                    paused = _mcp_paused_turn(actions, reason, end_session=end_session,
+                                              should_exit=should_exit, log=log)
+                    self._messages.append({"role": "assistant", "content": paused.text})
+                    self._trim_history()
+                    return paused
 
         self._trim_history()
         return AgentTurnResult(
@@ -2238,6 +2284,7 @@ class OpenAIResponsesAgent:
         self.store_responses = True
         self._local_input_history: list[dict[str, Any]] = []
         self._previous_response_id: str | None = None
+        self._pending_tool_outputs: list[dict[str, Any]] = []
         self._pending_mcp_approval: dict[str, Any] | None = None
         self._pending_mcp_response_id: str | None = None
         self._pending_function_approval: dict[str, Any] | None = None
@@ -2248,6 +2295,10 @@ class OpenAIResponsesAgent:
     def reset(self) -> None:
         self._local_input_history = []
         self._previous_response_id = None
+        self._pending_tool_outputs = []
+        context = getattr(self, "request_context", None)
+        if context is not None:
+            context.reset()
         self._pending_mcp_approval = None
         self._pending_mcp_response_id = None
         self._pending_function_approval = None
@@ -2374,7 +2425,7 @@ class OpenAIResponsesAgent:
                     name=name,
                     success=False,
                     message="Action refusée par l'utilisateur.",
-                    detail="user_denied",
+                    detail=json.dumps({"guard": "user_denied", "dispatched": False, "outcome_unknown": False, "verified": False}),
                 )
             actions.append(result)
             approval_output = {
@@ -2382,13 +2433,24 @@ class OpenAIResponsesAgent:
                 "call_id": call_id,
                 "output": result.as_json(),
             }
+            resolved_outputs = [*pending.get("prior_outputs", ()), approval_output]
+            for deferred in pending.get("deferred_calls", ()):
+                skipped = _mcp_skipped_action(deferred["name"], awaiting_approval=True)
+                resolved_outputs.append({"type": "function_call_output",
+                    "call_id": deferred["call_id"], "output": skipped.as_json()})
             if self.supports_response_continuation:
-                next_input: Any = [approval_output]
+                next_input: Any = resolved_outputs
+                self._pending_tool_outputs = resolved_outputs
             else:
-                self._local_input_history.append(approval_output)
+                self._local_input_history.extend(resolved_outputs)
                 next_input = list(self._local_input_history)
             self._pending_function_approval = None
             self._pending_function_response_id = None
+            reason = mcp_pause_reason(result)
+            if reason:
+                if self.supports_response_continuation:
+                    self._pending_tool_outputs = resolved_outputs
+                return _mcp_paused_turn(actions, reason, log=log)
 
         elif self._pending_mcp_approval is not None:
             from .active_mission_supervisor import execution_scope_active, SupervisorStopped
@@ -2432,7 +2494,9 @@ class OpenAIResponsesAgent:
             self._pending_mcp_response_id = None
         else:
             if self.supports_response_continuation:
-                next_input = user_text
+                next_input = ([*self._pending_tool_outputs,
+                               {"role": "user", "content": user_text}]
+                              if self._pending_tool_outputs else user_text)
             else:
                 self._local_input_history.append(
                     {"role": "user", "content": user_text}
@@ -2486,6 +2550,7 @@ class OpenAIResponsesAgent:
                 )
             previous = response_id
             self._previous_response_id = response_id
+            self._pending_tool_outputs = []
 
             output = data.get("output") or []
             if not self.supports_response_continuation:
@@ -2581,7 +2646,7 @@ class OpenAIResponsesAgent:
                 )
 
             tool_outputs: list[dict[str, Any]] = []
-            for call in calls:
+            for call_index, call in enumerate(calls):
                 name = str(call.get("name") or "").strip()
                 call_id = str(call.get("call_id") or "").strip()
                 raw_arguments = call.get("arguments") or "{}"
@@ -2595,7 +2660,7 @@ class OpenAIResponsesAgent:
                     arguments = {}
 
                 if log:
-                    log(f"[AGENT_TOOL] call={name} args={arguments}")
+                    log(f"[AGENT_TOOL] call={name} args={_tool_log_arguments(name, arguments)}")
                 autonomous_research = (
                     name in {"research_web", "search_web"}
                     and not _is_explicit_web_request(user_text)
@@ -2628,12 +2693,18 @@ class OpenAIResponsesAgent:
                         "call_id": call_id,
                         "name": name,
                         "arguments": arguments,
+                        "prior_outputs": list(tool_outputs),
+                        "deferred_calls": [
+                            {"call_id": str(item.get("call_id") or ""),
+                             "name": str(item.get("name") or "")}
+                            for item in calls[call_index + 1:]
+                        ],
                     }
                     self._pending_function_response_id = response_id
                     if log:
                         log(
                             f"[APPROVAL] required tool={name} "
-                            f"arguments={arguments}"
+                            f"arguments={_tool_log_arguments(name, arguments)}"
                         )
                     return AgentTurnResult(
                         text=(
@@ -2675,7 +2746,7 @@ class OpenAIResponsesAgent:
                 if log:
                     log(
                         f"[AGENT_TOOL] result={name} "
-                        f"success={result.success} detail={result.detail!r}"
+                        f"success={result.success} detail={_tool_log_detail(name, result)!r}"
                     )
 
                 tool_outputs.append(
@@ -2686,8 +2757,24 @@ class OpenAIResponsesAgent:
                     }
                 )
 
+                reason = mcp_pause_reason(result)
+                if reason:
+                    for item in calls[call_index + 1:]:
+                        skipped = _mcp_skipped_action(str(item.get("name") or ""))
+                        actions.append(skipped)
+                        tool_outputs.append({"type": "function_call_output",
+                            "call_id": str(item.get("call_id") or ""),
+                            "output": skipped.as_json()})
+                    if self.supports_response_continuation:
+                        self._pending_tool_outputs = tool_outputs
+                    else:
+                        self._local_input_history.extend(tool_outputs)
+                    return _mcp_paused_turn(actions, reason, end_session=end_session,
+                                            should_exit=should_exit, log=log)
+
             if self.supports_response_continuation:
                 next_input = tool_outputs
+                self._pending_tool_outputs = tool_outputs
             else:
                 self._local_input_history.extend(tool_outputs)
                 next_input = list(self._local_input_history)
@@ -2767,6 +2854,9 @@ class GroqResponsesAgent:
         self._messages = [
             {"role": "system", "content": _effective_system_instructions()}
         ]
+        context = getattr(self, "request_context", None)
+        if context is not None:
+            context.reset()
         self._pending_function_approval = None
         self._last_msf_grounding_at = 0.0
         self._active_domain = ""
@@ -3714,7 +3804,7 @@ class GroqResponsesAgent:
             "inspect_active_window",
             "inspect_browser_page",
             "observe_screen",
-        } else 3500
+        } or name.startswith("mcp__") else 3500
         if len(detail_text) > max_detail:
             detail_text = detail_text[:max_detail] + "…"
 
@@ -3730,49 +3820,19 @@ class GroqResponsesAgent:
         )
 
     def _trim_history(self) -> None:
-        clean: list[dict[str, Any]] = []
-        internal_prefixes = (
-            "Réponds à la demande précédente uniquement",
-            "Cet outil vient d échouer",
-            "Tu viens d'écrire une imitation JSON d'outil",
-            "Une action vient de modifier l'interface",
-            "CHECKPOINT_APPRENTISSAGE_SKILL",
-            "CHECKPOINT_APPRENTISSAGE_LESSON",
+        from .request_compaction import bounded_conversation_history
+        self._messages = bounded_conversation_history(
+            self._messages, maximum_turns=max(4, settings.agent_history_turns),
+            internal_prefixes=(
+                "Réponds à la demande précédente uniquement",
+                "Cet outil vient d échouer",
+                "Tu viens d'écrire une imitation JSON d'outil",
+                "Une action vient de modifier l'interface",
+                "CHECKPOINT_APPRENTISSAGE_SKILL",
+                "CHECKPOINT_APPRENTISSAGE_LESSON",
+                "CONNAISSANCE_OPERATIONNELLE_LOCALE",
+            ),
         )
-        for item in self._messages[1:]:
-            role = str(item.get("role") or "")
-            if role == "tool":
-                continue
-            if role == "assistant" and item.get("tool_calls"):
-                continue
-            content = str(item.get("content") or "").strip()
-            if not content:
-                continue
-            if any(content.startswith(prefix) for prefix in internal_prefixes):
-                continue
-            if role in {"user", "assistant"}:
-                clean.append({"role": role, "content": content})
-
-        maximum_turns = max(4, settings.agent_history_turns)
-        user_turns_seen = 0
-        start_index = 0
-        for index in range(len(clean) - 1, -1, -1):
-            if clean[index].get("role") != "user":
-                continue
-            user_turns_seen += 1
-            if user_turns_seen >= maximum_turns:
-                start_index = index
-                break
-
-        system_content = (
-            str(self._messages[0].get("content") or "")
-            if self._messages and self._messages[0].get("role") == "system"
-            else _effective_system_instructions()
-        )
-        self._messages = [
-            {"role": "system", "content": system_content},
-            *clean[start_index:],
-        ]
 
     def run(
         self,
@@ -3867,7 +3927,7 @@ class GroqResponsesAgent:
                     name=name,
                     success=False,
                     message="Action refusée par l'utilisateur.",
-                    detail="user_denied",
+                    detail=json.dumps({"guard": "user_denied", "dispatched": False, "outcome_unknown": False, "verified": False}),
                 )
             actions.append(result)
             self._messages.append(
@@ -3879,6 +3939,16 @@ class GroqResponsesAgent:
                 }
             )
             self._pending_function_approval = None
+            for deferred in pending.get("deferred_calls", ()):
+                skipped = _mcp_skipped_action(deferred["name"], awaiting_approval=True)
+                self._messages.append({"role": "tool", "tool_call_id": deferred["call_id"],
+                    "name": deferred["name"], "content": skipped.as_json()})
+            reason = mcp_pause_reason(result)
+            if reason:
+                paused = _mcp_paused_turn(actions, reason, log=log)
+                self._messages.append({"role": "assistant", "content": paused.text})
+                self._trim_history()
+                return paused
             ms_football_turn = any(
                 self._is_ms_football_request(
                     str(item.get("content") or "")
@@ -3946,6 +4016,7 @@ class GroqResponsesAgent:
         mcp_identity_repair_attempted = False
         mcp_list_coverage_repair_attempted = False
         mcp_identity_handoff_sent = False
+        context_selection_stalls = 0
         final_observation_repair_attempted = False
         preterminal_repair_attempted = False
         explicit_memory_repair_attempted = False
@@ -4820,7 +4891,7 @@ class GroqResponsesAgent:
                     should_exit=should_exit,
                 )
 
-            for call in calls:
+            for call_index, call in enumerate(calls):
                 name = str(call.function.name or "").strip()
                 raw_arguments = str(call.function.arguments or "{}")
                 try:
@@ -4879,7 +4950,7 @@ class GroqResponsesAgent:
                         if log:
                             log("[MISSION] policy=reuse_existing_application_instance")
                 if log:
-                    log(f"[AGENT_TOOL] call={name} args={arguments}")
+                    log(f"[AGENT_TOOL] call={name} args={_tool_log_arguments(name, arguments)}")
                 if empty_precondition_pending and name in {"write_ui_element", "computer_write"}:
                     arguments["precondition_value"] = ""
                 from .memory_tool_scope import narrow_memory_tools
@@ -4923,6 +4994,10 @@ class GroqResponsesAgent:
                         "call_id": str(call.id),
                         "name": name,
                         "arguments": arguments,
+                        "deferred_calls": [
+                            {"call_id": str(item.id), "name": str(item.function.name or "")}
+                            for item in calls[call_index + 1:]
+                        ],
                     }
                     return AgentTurnResult(
                         text=(
@@ -5428,9 +5503,7 @@ class GroqResponsesAgent:
                 should_exit = should_exit or result.should_exit
 
                 if log:
-                    detail_for_log = result.detail
-                    if len(detail_for_log) > 900:
-                        detail_for_log = detail_for_log[:900] + "…"
+                    detail_for_log = _tool_log_detail(name, result)
                     log(
                         f"[PERF] tool={name} "
                         f"seconds={time.perf_counter() - tool_started:.3f}"
@@ -5448,6 +5521,52 @@ class GroqResponsesAgent:
                         "content": self._compact_tool_content(name, result),
                     }
                 )
+
+                pause_reason = mcp_pause_reason(result)
+                if pause_reason:
+                    # A terminal local receipt cannot be solved by another
+                    # model round. Close all tool-call IDs without dispatching
+                    # the remaining calls so a later turn has a valid history.
+                    for skipped_call in calls[call_index + 1:]:
+                        skipped_name = str(skipped_call.function.name or "").strip()
+                        skipped = _mcp_skipped_action(skipped_name)
+                        actions.append(skipped)
+                        self._messages.append({
+                            "role": "tool", "tool_call_id": str(skipped_call.id),
+                            "name": skipped_name,
+                            "content": self._compact_tool_content(skipped_name, skipped),
+                        })
+                    from .mission_progress import partial_mission_report
+                    text = partial_mission_report(actions)
+                    self._messages.append({"role": "assistant", "content": text})
+                    if log:
+                        log("[MISSION] state=WAITING_EXTERNAL reason=" + pause_reason
+                            + " no_further_dispatch=1")
+                    self._trim_history()
+                    return AgentTurnResult(text=text, actions=tuple(actions),
+                        end_session=end_session, should_exit=should_exit,
+                        pause_reason=pause_reason)
+
+                if name == "request_tool_capabilities" and result.success:
+                    selected = arguments.get("names")
+                    selected = [selected] if isinstance(selected, str) else selected
+                    already = _action_detail_dict(result).get("already_exposed") or []
+                    no_new_schema = (isinstance(selected, list) and bool(selected)
+                                     and set(selected) <= set(already))
+                    context_selection_stalls = context_selection_stalls + 1 if no_new_schema else 0
+                else:
+                    context_selection_stalls = 0
+                if context_selection_stalls >= 2 and call_index == len(calls) - 1:
+                    from .mission_progress import partial_mission_report
+                    text = (partial_mission_report(actions)
+                            + " Les mêmes capacités ont été sélectionnées sans nouvelle action.")
+                    self._messages.append({"role": "assistant", "content": text})
+                    if log:
+                        log("[MISSION] state=WAITING_EXTERNAL reason=capability_selection_no_progress")
+                    self._trim_history()
+                    return AgentTurnResult(text=text, actions=tuple(actions),
+                        end_session=end_session, should_exit=should_exit,
+                        pause_reason="capability_selection_no_progress")
 
                 # The authenticated identity is now available in this tool
                 # reply. Proactively reveal the originally requested, already
@@ -6175,9 +6294,10 @@ def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
     from .mcp_tool_registry import MCPToolRegistry
     from .mcp_server_registry import MCPRegistry
     mcp_registry = MCPRegistry()
-    tools = MCPToolRegistry(tools, registry=mcp_registry, runtime_gate=mcp_registry.runtime_enabled)
     from .request_context import RequestContext, ContextToolRegistry
     request_context = RequestContext(enabled=enabled("JARVIS_EFFICIENT_CONTEXT_ENABLED"))
+    tools = MCPToolRegistry(tools, registry=mcp_registry,
+        runtime_gate=mcp_registry.runtime_enabled, observation_context=request_context)
     tools = ContextToolRegistry(tools, request_context)
 
     # Independent, opt-in Hermes-inspired per-action checkpointing.

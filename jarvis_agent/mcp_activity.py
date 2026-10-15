@@ -6,6 +6,7 @@ fixed UTC hours, not monetary charges or every HTTP packet inside the SDK.
 from __future__ import annotations
 
 from pathlib import Path
+import math
 import re
 import sqlite3
 import time
@@ -14,7 +15,11 @@ from .sqlite_utils import ClosingConnection
 
 
 class MCPBudgetExceeded(RuntimeError):
-    pass
+    def __init__(self, reason: str, *, receipt: dict | None = None):
+        super().__init__(reason)
+        # Constructed inside the reservation transaction: no argument values,
+        # second journal query, truncated UI inventory or race with a review.
+        self.receipt = dict(receipt or {})
 
 
 def quota_limits(entry: dict) -> dict:
@@ -64,20 +69,30 @@ class MCPActivityStore:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             if operation == "call" and tool:
-                unresolved = conn.execute("""SELECT a.id FROM attempts a
+                unresolved = conn.execute("""SELECT a.id,a.outcome,a.started FROM attempts a
                     LEFT JOIN outcome_reviews r ON r.attempt_id=a.id
                     WHERE a.server=? AND a.operation='call' AND a.tool=?
-                    AND a.outcome IN ('reserved','unknown') AND r.attempt_id IS NULL LIMIT 1""",
+                    AND a.outcome IN ('reserved','unknown') AND r.attempt_id IS NULL
+                    ORDER BY a.id LIMIT 1""",
                     (server, tool)).fetchone()
                 if unresolved:
-                    raise MCPBudgetExceeded("mcp_unknown_requires_review")
+                    raise MCPBudgetExceeded("mcp_unknown_requires_review", receipt={
+                        "previous_attempt_id": unresolved["id"],
+                        "previous_outcome": unresolved["outcome"],
+                        "reviewable": (unresolved["outcome"] == "unknown"
+                                       or now - unresolved["started"] >= 60),
+                    })
             last = conn.execute("SELECT ended,outcome FROM attempts WHERE server=? ORDER BY id DESC LIMIT 1", (server,)).fetchone()
             if last and last["ended"] is not None and last["outcome"] in {"failed", "unknown", "preflight_failed"} and now - last["ended"] < 15:
-                raise MCPBudgetExceeded("mcp_failure_cooldown")
+                raise MCPBudgetExceeded("mcp_failure_cooldown", receipt={
+                    "retry_after_seconds": math.ceil(15 - (now - last["ended"])),
+                })
             row = conn.execute("SELECT sessions,calls FROM usage WHERE server=? AND hour=?", (server, hour)).fetchone()
             sessions, calls = (row["sessions"], row["calls"]) if row else (0, 0)
             if sessions >= limits["sessions_per_hour"] or (operation == "call" and calls >= limits["calls_per_hour"]):
-                raise MCPBudgetExceeded("mcp_hourly_quota_exhausted")
+                raise MCPBudgetExceeded("mcp_hourly_quota_exhausted", receipt={
+                    "retry_after_seconds": max(1, math.ceil((hour + 1) * 3600 - now)),
+                })
             conn.execute("INSERT INTO usage VALUES (?,?,?,?) ON CONFLICT(server,hour) DO UPDATE SET sessions=excluded.sessions,calls=excluded.calls",
                          (server, hour, sessions + 1, calls + int(operation == "call")))
             cursor = conn.execute("INSERT INTO attempts(server,operation,tool,started,outcome) VALUES (?,?,?,?,?)",

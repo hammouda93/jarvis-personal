@@ -70,13 +70,13 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "development_priority": {
-            "phase": "P0",
-            "title": "V11A Reliability & Autopilot Recovery",
+            "phase": "V12",
+            "title": "Continuité des missions et fiabilité MCP",
             "implementation": "integrated",
             "automated": "local_regression_passed",
             "windows_real": "not_validated",
-            "evidence": "docs/P0_V11A_RELIABILITY.md",
-            "next": "P1: composed goal contracts, evidence and bounded recovery in the existing runtime",
+            "evidence": "docs/V12_MISSION_RELIABILITY.md",
+            "next": "Recette Windows et comptes connectés sur le candidat V12, puis contrats de missions composées",
         },
         "human_windows_evidence": {
             "source": "user_continuation_briefs_v10c_v10d_reviewed_2026-10-11",
@@ -92,7 +92,7 @@ def snapshot() -> dict:
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
             "CI Windows/Linux verte au HEAD V11A e5947c4 avant P0. "
-            "P0: mémoire et preuves multi-tours validées automatiquement en local; recette Windows réelle attendue. "
+            "V12: suspension MCP, contexte de sources et continuité testés automatiquement; recette Windows réelle attendue. "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."

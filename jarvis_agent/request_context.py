@@ -79,16 +79,49 @@ class RequestContext:
     def __init__(self, *, enabled=False):
         self.enabled = bool(enabled)
         self.evidence = {}
+        self.external_evidence = {}
         self.available = set()
+        self.exposed = set()
         self.selected = None
         self.initial_mcp = set()
         self.last_saved_chars = 0
         self.user_goal = ""
 
+    def reset(self):
+        """Forget session observations, without touching personal memory/files."""
+        self.evidence.clear()
+        self.external_evidence.clear()
+        self.last_saved_chars = 0
+        self.begin_turn()
+
+    def archive_external_observation(self, name, payload):
+        """Bounded in-process source data; never SQLite, disk or Skills."""
+        if not self.enabled:
+            return None
+        content = json.dumps(payload, ensure_ascii=False, default=str)
+        identity = hashlib.sha256((name + "\0" + content).encode()).hexdigest()
+        retained = content[:131072]
+        self.external_evidence.pop(identity, None)
+        while self.external_evidence and (
+                len(self.external_evidence) >= 16
+                or sum(len(item["content"]) for item in self.external_evidence.values())
+                + len(retained) > 262144):
+            self.external_evidence.pop(next(iter(self.external_evidence)))
+        self.external_evidence[identity] = {
+            "content": retained, "tool": name, "trust": "external_unverified",
+            "source": dict(payload.get("source") or {}),
+            "archive_truncated": len(retained) < len(content),
+        }
+        return {"evidence_id": identity, "total_chars": len(content),
+                "retained_chars": len(retained),
+                "archive_truncated": len(retained) < len(content),
+                "read_tool": "read_observation_evidence"}
+
     def begin_turn(self, user_goal=""):
         self.selected = None
         self.initial_mcp = set()
         self.available = set()
+        self.exposed = set()
         # Rank *visible* tool names, not permissions, from the current goal.
         self.user_goal = str(user_goal or "")[:1600]
 
@@ -149,7 +182,7 @@ class RequestContext:
                 service_overlap = len(terms & self._name_terms(server_name))
                 tool_overlap = len(terms & self._name_terms(tool_name))
                 params = (schema.get("function") or {}).get("parameters") or {}
-                required = params.get("required") if isinstance(params, dict) else []
+                required = params.get("required", []) if isinstance(params, dict) else []
                 no_required = isinstance(required, list) and not required
                 # Parameter-free observations help the model resolve missing
                 # identities or resource selectors from the *real* service.
@@ -213,6 +246,8 @@ class RequestContext:
         # independently enforces that exact original request again.
         selected.update(set(preserve_required) & available)
         result = [s for s in schemas if s.get("function", {}).get("name") in selected or s.get("type") != "function"]
+        self.exposed = {s.get("function", {}).get("name") for s in result
+                        if s.get("function", {}).get("name")}
         if self.selected is None and not conversational_only:
             # Keep native tool positions unchanged; order only the already
             # selected MCP slots by the computed relevance ranking. Previously
@@ -241,7 +276,7 @@ class RequestContext:
             "Local read-only tool selection, NOT an authorization or action. Choose needed names from the available enum to expose their original schemas on the next request, including another domain. Hidden tools are not missing capabilities. Existing execution guards still apply.",
             {"names": {"type": "array", "items": {"type": "string", "enum": sorted(available)},
                        "minItems": 1, "maxItems": 50, "uniqueItems": True}}, ["names"]))
-        if self.evidence:
+        if self.evidence or self.external_evidence:
             result.append(_schema("read_observation_evidence",
                 "Read an archived historical observation by evidence_id from its receipt, with character offset and bounded limit. Historical refs are NOT fresh targets. This read cannot verify a new effect or authorize an action.",
                 {"evidence_id": {"type": "string"}, "offset": {"type": "integer", "minimum": 0},
@@ -263,11 +298,14 @@ class RequestContext:
                 or any(not isinstance(name, str) or name not in self.available for name in names)
                 or len(set(names)) != len(names)):
             raise ValueError("capability_not_currently_available")
+        already_exposed = sorted(set(names) & self.exposed)
         self.selected = (self.selected or set()) | set(names)
         return {"selected": sorted(self.selected), "permissions_changed": False,
                 "verified": False, "dispatched": False,
                 "outcome_unknown": False,
-                "normalized_singleton": normalized_scalar}
+                "normalized_singleton": normalized_scalar,
+                "already_exposed": already_exposed,
+                "next_step": "Use the needed exposed tool directly; do not select its schema again."}
 
     @staticmethod
     def _browser_tab_id(name, payload):
@@ -395,10 +433,10 @@ class RequestContext:
         if not self.enabled or set(args) - {"evidence_id", "offset", "limit"}:
             raise ValueError("invalid_evidence_request")
         identity, offset, limit = args.get("evidence_id"), args.get("offset", 0), args.get("limit", 3000)
-        if (not isinstance(identity, str) or identity not in self.evidence or type(offset) is not int
+        if (not isinstance(identity, str) or identity not in self.evidence and identity not in self.external_evidence or type(offset) is not int
                 or type(limit) is not int or offset < 0 or not 1 <= limit <= 4000):
             raise ValueError("evidence_unavailable_or_invalid_range")
-        source = self.evidence[identity]
+        source = self.evidence.get(identity) or self.external_evidence[identity]
         content = source["content"]
         end = min(offset + limit, len(content))
         return {**source, "content": content[offset:end], "evidence_id": identity, "offset": offset,

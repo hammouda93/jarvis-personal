@@ -9,7 +9,7 @@ import unittest
 
 @unittest.skipUnless(sys.platform == "win32", "Windows PowerShell native argument contract")
 class P0LauncherTests(unittest.TestCase):
-    def launch(self, *, check_only):
+    def launch(self, *, check_only, full=False):
         shell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
         if not shell.is_file():
             self.skipTest("Windows PowerShell 5.1 unavailable")
@@ -23,6 +23,8 @@ class P0LauncherTests(unittest.TestCase):
                        str(Path(folder) / "missing bridge.json")]
             if check_only:
                 command.append("-CheckOnly")
+            if full:
+                command.append("-Full")
             return subprocess.run(command, cwd=root, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=60)
 
@@ -39,6 +41,22 @@ class P0LauncherTests(unittest.TestCase):
         self.assertIn("P0 live log:", output)
         self.assertIn("Browser bridge configuration missing", output)
         self.assertNotIn("SyntaxError", output)
+
+    def test_full_check_only_passes_flags_through_windows_powershell(self):
+        result = self.launch(check_only=True, full=True)
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn("V12 full profile | commit=", output)
+        self.assertIn("winrt.windows.media.ocr", output)
+        self.assertIn("Skills/Learning off for this session", output)
+        self.assertIn("CHECK ONLY", output)
+
+    def test_full_logged_launch_preserves_missing_bridge_gate(self):
+        result = self.launch(check_only=False, full=True)
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("V12 full profile | commit=", output)
+        self.assertIn("Browser bridge configuration missing", output)
 
 
 if __name__ == "__main__":

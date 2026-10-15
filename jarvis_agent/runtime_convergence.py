@@ -886,6 +886,8 @@ class LiveMissionContinuityRuntime:
         fields |= {"path", "selected_path", "read_only", "opened", "stale_ref", "ref",
                    "current_observation_id", "recovered_from_stale_ref", "recovered_ref",
                    "recovery_attempted", "local_refusal", "reason", "guard", "precondition_failed"}
+        fields |= {"blocked_by_previous_attempt", "previous_attempt_id", "previous_outcome",
+                   "reviewable", "budget_reason", "retry_after_seconds", "output_truncated"}
         receipts = []
         for index, action in enumerate(actions):
             detail = str(getattr(action, "detail", "") or "")
@@ -1478,7 +1480,8 @@ class LiveMissionContinuityRuntime:
                 })
             elif failed or needs_review:
                 state.pending_action = {
-                    "reason": "tool_reported_failure",
+                    "reason": (str(getattr(result, "pause_reason", "") or "")[:80]
+                               or "tool_reported_failure"),
                     "manual_review_required": True,
                 }
             state.current_step_id = None

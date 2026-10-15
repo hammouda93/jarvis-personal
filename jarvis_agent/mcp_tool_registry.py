@@ -25,11 +25,13 @@ def _alias(server: str, tool: str) -> str:
 class MCPToolRegistry:
     def __init__(self, delegate: Any, *,
                  registry: MCPRegistry | None = None,
-                 transport: Any | None = None, runtime_gate=None):
+                 transport: Any | None = None, runtime_gate=None,
+                 observation_context=None):
         self.delegate = delegate
         self.registry = registry or MCPRegistry()
         self.transport = transport or OfficialMCPTransport()
         self.runtime_gate = runtime_gate
+        self.observation_context = observation_context
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
@@ -224,15 +226,7 @@ class MCPToolRegistry:
                 # produced an external effect. Show only its local ledger ID
                 # and reviewability; never expose tool arguments or release the
                 # lock merely because the current tool is classified as read.
-                try:
-                    unresolved = activity.summary(server_id).get("unresolved") or []
-                except Exception:
-                    unresolved = []
-                pending = next((
-                    row for row in unresolved
-                    if row.get("tool") == native_name
-                    and type(row.get("attempt_id")) is int
-                ), None)
+                pending = exc.receipt
                 return AgentActionResult(
                     name=name, success=False,
                     message=("Nouvel appel MCP non envoyé : une ancienne tentative "
@@ -245,15 +239,21 @@ class MCPToolRegistry:
                         "guard": "mcp_unknown_requires_review",
                         "server_id": server_id,
                         "tool_name": native_name,
-                        "previous_attempt_id": pending["attempt_id"] if pending else None,
-                        "previous_outcome": pending.get("outcome") if pending else None,
+                        "previous_attempt_id": pending.get("previous_attempt_id"),
+                        "previous_outcome": pending.get("previous_outcome"),
                         "reviewable": pending.get("reviewable") is True if pending else False,
                         "permissions_changed": False,
                     }, ensure_ascii=False),
                 )
             return AgentActionResult(name=name, success=False,
                 message="Quota ou cooldown MCP atteint. Aucun nouvel appel effectue.",
-                detail='{"verified":false,"dispatched":false,"outcome_unknown":false,"guard":"mcp_budget_unavailable"}')
+                detail=json.dumps({
+                    "verified": False, "dispatched": False,
+                    "outcome_unknown": False, "guard": "mcp_budget_unavailable",
+                    "budget_reason": str(exc),
+                    "retry_after_seconds": exc.receipt.get("retry_after_seconds"),
+                    "server_id": server_id, "tool_name": native_name,
+                }))
         except Exception:
             return AgentActionResult(name=name, success=False,
                 message="Quota, cooldown ou journal MCP indisponible. Aucun appel effectue.",
@@ -340,19 +340,38 @@ class MCPToolRegistry:
                     "mcp_output": str(result.get("message") or "")[:1500],
                 }, ensure_ascii=False),
             )
+        output = str(result.get("message") or "")
         structured = result.get("data")
+        full_structured = structured if isinstance(structured, dict) else None
+        truncated = result.get("output_truncated") is True or len(output) > 2200
         if not isinstance(structured, dict):
             structured = None
         elif len(json.dumps(structured, ensure_ascii=False, default=str)) > 1500:
             structured = {"truncated": True}
+            truncated = True
+        archive = None
+        if truncated and known_read and self.observation_context is not None:
+            try:
+                archive = self.observation_context.archive_external_observation(name, {
+                    "source": source, "mcp_output": output,
+                    "mcp_structured": full_structured,
+                    "output_truncated_at_source": result.get("output_truncated") is True,
+                })
+            except (ValueError, TypeError, RuntimeError, OSError):
+                # Optional context storage must not turn a known successful
+                # read into an uncertain dispatch or provoke a service replay.
+                archive = None
         # Always keep valid JSON. Never mark remote content as verification.
         safe_detail = json.dumps({
             "verified": False,
             "dispatched": True,
             "outcome_unknown": False,
+            "arguments_empty": not bool(arguments),
             "source": source,
-            "mcp_output": str(result.get("message") or "")[:2200],
+            "mcp_output": output[:2200],
             "mcp_structured": structured,
+            "output_truncated": truncated,
+            **({"observation_evidence": archive} if archive else {}),
         }, ensure_ascii=False, default=str)
         return AgentActionResult(
             name=name, success=successful,

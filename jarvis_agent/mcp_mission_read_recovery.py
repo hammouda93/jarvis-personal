@@ -10,6 +10,35 @@ import json
 import re
 import unicodedata
 
+from .mcp_result import source_matches_alias
+
+
+def mcp_pause_reason(action) -> str:
+    """Terminal local receipts need no further model reasoning or dispatch.
+
+    This does not clear the persisted lock, replay anything, or promote a
+    remote claim. A later user turn still goes through the original gateway.
+    """
+    if not str(getattr(action, "name", "")).startswith("mcp__"):
+        return ""
+    try:
+        data = json.loads(getattr(action, "detail", "") or "{}")
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    if data.get("outcome_unknown") is True:
+        return ("mcp_unknown_requires_review"
+                if data.get("guard") == "mcp_unknown_requires_review"
+                else "mcp_outcome_unknown")
+    if (data.get("dispatched") is False
+            and data.get("guard") == "mcp_budget_unavailable"):
+        reason = data.get("budget_reason")
+        return reason if reason in {
+            "mcp_failure_cooldown", "mcp_hourly_quota_exhausted",
+        } else "mcp_budget_unavailable"
+    return ""
+
 
 def _tokens(value: str) -> set[str]:
     decomposed = unicodedata.normalize("NFKD", str(value or "").casefold())
@@ -47,10 +76,7 @@ def discovery_followup(actions) -> dict | None:
         detail.get("dispatched") is True
         and detail.get("safe_read_failure") is True
         and detail.get("recoverable") is True
-        and isinstance(detail.get("source"), dict)
-        and detail["source"].get("trust") == "external_unverified"
-        and detail["source"].get("server_id") == parts[1]
-        and detail["source"].get("tool_name") == parts[2]
+        and source_matches_alias(name, detail.get("source"))
     )
     # A known failed *read* is safe to resolve by a new observation. Unknown
     # effects, mutation errors and incomplete results never qualify.
@@ -161,9 +187,7 @@ def prior_identity_observation(actions, name: str, arguments) -> bool:
         if (isinstance(detail, dict)
                 and detail.get("dispatched") is True
                 and detail.get("outcome_unknown") is False
-                and isinstance(detail.get("source"), dict)
-                and detail["source"].get("trust") == "external_unverified"
-                and detail["source"].get("server_id") == parts[1]
-                and detail["source"].get("tool_name") == tool):
+                and ("arguments_empty" not in detail or detail["arguments_empty"] is True)
+                and source_matches_alias(name, detail.get("source"))):
             return True
     return False
