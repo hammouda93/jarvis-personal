@@ -6,9 +6,48 @@ No connection, process spawn or network request occurs at import/startup.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import tempfile
 from typing import Any
+
+
+def tool_reply_envelope(reply) -> dict:
+    """Bound external data explicitly; never silently turn a prefix into a list.
+
+    A retained response is source data, not instructions or independent proof.
+    Pagination/cursors remain service-specific and must be followed normally.
+    """
+    maximum = 65536
+    parts = list(getattr(reply, "content", []) or [])
+    content, used = [], 0
+    truncated = len(parts) > 32
+    for part in parts[:32]:
+        value = getattr(part, "text", None)
+        if not isinstance(value, str):
+            truncated = True  # images/resources are not represented as text
+            continue
+        separator = int(bool(content))
+        room = max(0, maximum - used - separator)
+        if len(value) > room:
+            truncated = True
+        content.append(value[:room])
+        used += len(value[:room]) + separator
+    structured = getattr(reply, "structured_content", None)
+    if structured is None:
+        structured = getattr(reply, "structuredContent", None)
+    if structured is not None:
+        try:
+            if (not isinstance(structured, dict)
+                    or len(json.dumps(structured, ensure_ascii=False)) > maximum):
+                structured, truncated = {"truncated": True}, True
+        except (TypeError, ValueError, RecursionError):
+            structured, truncated = {"truncated": True}, True
+    is_error = getattr(reply, "is_error", None)
+    if is_error is None:
+        is_error = getattr(reply, "isError", False)
+    return {"success": not bool(is_error), "message": "\n".join(content)[:maximum],
+            "data": structured, "output_truncated": truncated}
 
 
 async def session_inventory(session, initialized, *, tools_only=False) -> dict:
@@ -92,27 +131,7 @@ class OfficialMCPTransport:
                     return inventory["tools"] if operation == "discover" else inventory
                 if operation == "call":
                     reply = await session.call_tool(tool, arguments=arguments or {})
-                    # Tool success is NOT whole-mission verification.
-                    content = []
-                    for part in list(getattr(reply, "content", []) or [])[:8]:
-                        text = getattr(part, "text", None)
-                        if isinstance(text, str):
-                            content.append(text[:1500])
-                    structured = (
-                        getattr(reply, "structured_content", None)
-                        or getattr(reply, "structuredContent", None)
-                    )
-                    if not isinstance(structured, dict):
-                        structured = None
-                    return {
-                        "success": not bool(
-                            getattr(reply, "is_error", None)
-                            if getattr(reply, "is_error", None) is not None
-                            else getattr(reply, "isError", False)
-                        ),
-                        "message": "\n".join(content)[:2800],
-                        "data": structured,
-                    }
+                    return tool_reply_envelope(reply)
                 raise ValueError("invalid_mcp_operation")
 
         kind = str(entry.get("kind") or "")

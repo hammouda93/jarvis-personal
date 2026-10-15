@@ -1,73 +1,82 @@
-# Desktop clap → Jarvis-style welcome
+# Jarvis Personal
 
-Python script that listens to your default microphone and runs a **double-clap** welcome flow (Spotify, Chrome windows, ElevenLabs voice, Cursor). See constants at the top of `jarvis.py` for behavior and tuning.
+Assistant personnel Windows : conversation texte et voix, navigateur Chrome
+habituel, outils Windows, mémoire SQLite et services MCP explicitement connectés.
+Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
+distinct de la preuve que l'objectif entier est atteint.
 
-## Setup
+## Candidat V12 — 15 octobre 2026
 
-From this project directory:
+La branche `feature/autonomous-mission-reliability-v12` poursuit le dernier
+checkpoint `fix/mcp-blocker-evidence-report-v1` (`53f7999`).
 
-```bash
-python -m pip install -r requirements.txt
+- Suspension immédiate après un résultat MCP incertain, avec identification de
+  la tentative à examiner. Les autres actions du lot ne sont pas exécutées.
+- Conservation bornée des réponses d'outils entre tours, avec les appels et
+  réponses associés, pour poursuivre une mission sans tout redécouvrir.
+- Réponses MCP volumineuses signalées comme partielles ; passages conservés
+  relisibles localement quand le contexte efficient est actif.
+- Confirmations cohérentes sur Chat Completions et Responses, reçus précis de
+  quotas/cooldowns et arrêt des sélections d'outils sans progrès.
+- Paramètres et contenu MCP exclus des journaux diagnostiques du runtime.
+
+Voir le [rapport V12 et ses limites](docs/V12_MISSION_RELIABILITY.md).
+Ce candidat nécessite encore une recette Windows réelle et des comptes connectés.
+
+## Capacités et configuration
+
+| Domaine | Implémentation existante | Configuration / preuve attendue |
+| --- | --- | --- |
+| Cerveaux | Cerebras principal, secondaire, Groq ; cerveaux supplémentaires configurables | Clés personnelles et Brain Manager ; ordre existant préservé |
+| Conversation | Chat texte, voix et TTS de secours | Micro coupé en mode texte ; essai audio réel |
+| Chrome | Observation DOM, navigation, écriture et onglets ciblés | Extension Browser Bridge dans le profil Chrome habituel |
+| Windows | Découverte d'applications/fichiers, UIA et perception visuelle de secours | Python Windows et dépendances du pilote utilisé |
+| Mémoire | SQLite V5, recherches et outils directs de l'agent | Aucun enregistrement personnel sans demande explicite |
+| Missions | Checkpoints, preuves et reprise contrôlée | Effets incertains examinés avant reprise ; pas de replay automatique |
+| MCP | Centre de connexion, découverte et autorisations par service/outil | Connexion et droits de l'opérateur |
+| MS Football | Outils métier et passerelle déjà présents | Instance et accès configurés ; essais métier réels nécessaires |
+| Skills / apprentissage | Opt-ins séparés | Désactivés par défaut ; ce candidat ne les active pas |
+
+## Installation et lancement Windows
+
+Utiliser Python 3.12 dans l'environnement habituel de Jarvis. Les clés restent
+dans le fichier `.env` existant ou le coffre système ; elles ne vont pas dans Git.
+
+```powershell
+python -m pip install -r requirements.txt -r requirements-mcp.txt
 ```
 
-## Environment variables
+Le lanceur existant charge le `.env` indiqué, vérifie les dépendances et le
+Browser Bridge, puis démarre l'interface. Pour une copie de test distincte :
 
-The script loads a **`.env` file** in the same folder as `jarvis.py` (via `python-dotenv`). You can also set variables in the shell.
-
-### Required (ElevenLabs welcome line)
-
-| Variable | Purpose |
-| -------- | ------- |
-| `ELEVENLABS_API_KEY` | API key from [ElevenLabs](https://elevenlabs.io). |
-| `ELEVENLABS_VOICE_ID` | Voice ID from the ElevenLabs app (My Voices / library). |
-
-Without these, the welcome speech is skipped (other actions may still run).
-
-### Optional
-
-| Variable | Purpose |
-| -------- | ------- |
-| `ELEVENLABS_MODEL_ID` | TTS model (default in code: `eleven_multilingual_v2`). |
-| `ELEVENLABS_OUTPUT_FORMAT` | e.g. `pcm_24000` (must match playback expectations). |
-| `ELEVENLABS_PCM_SAMPLE_RATE` | Override PCM sample rate if it differs from the format name. |
-| `JARVIS_WELCOME_CACHE_DIR` | Custom folder for cached welcome WAV (default: `.cache/jarvis_welcome/` under the project). |
-| `JARVIS_INPUT_DEVICE` | Optional mic override: **integer** index or **substring** of the device name. If unset, the script uses the Windows default; when that mic is silent, it auto-picks the loudest working input. List devices: `python -c "import sounddevice as sd; print(sd.query_devices())"`. |
-| `CLAUDE_CODE_URL` | URL opened for Claude in Chrome (default: new chat). |
-| `TASARADAR_URL` | URL opened for Tasaradar in Chrome (default: `https://tasaradar.com`). `BINANCE_BTC_URL` is still read as a fallback if set. |
-| `CHROME_NEW_WINDOW_WAIT_S` | Seconds to wait for a new Chrome window on Windows (default `25`). |
-| `CHROME_WINDOW_WIDTH` / `CHROME_WINDOW_HEIGHT` | Windowed Chrome size when not fullscreen. |
-
-Example `.env`:
-
-```env
-ELEVENLABS_API_KEY=your_key_here
-ELEVENLABS_VOICE_ID=your_voice_id_here
+```powershell
+$source = 'D:\Django_Projects\jarvis-main\jarvis-main'
+.\scripts\run_p0_acceptance.ps1 -EnvPath "$source\.env"
 ```
 
-## Run
+Le mode `-CheckOnly` contrôle les dépendances sans ouvrir l'interface, connecter
+Chrome ni appeler les modèles. Les réglages de cerveaux et les droits MCP
+existants sont conservés. Pour Computer Core/OCR, voir la
+[recette de l'environnement](docs/P0_WINDOWS_ACCEPTANCE.md) et le lanceur
+`scripts/run_jarvis_foundations_v4.ps1`.
 
-```bash
-python jarvis.py
+## Validation automatique
+
+```powershell
+python scripts/run_final_regression.py
+node --test tests/browser_bridge_replay.mjs
 ```
 
-Allow the microphone if Windows prompts you. Stop with **Ctrl+C**.
+Le runner Python isole les données et désactive les accès aux comptes réels.
+Sur Linux, les contrôles Windows sont signalés explicitement comme non exécutés.
+Une CI verte ne certifie pas une mission sur le PC de l'utilisateur.
 
-## Tuning
+La [recette historique des capacités](docs/P0_HISTORICAL_CAPABILITY_GATES.md)
+couvre notamment Chrome/YouTube, les documents Windows, la découverte d'un
+installateur, la mémoire après redémarrage et la cascade de cerveaux.
 
-Edit the constants at the top of `jarvis.py`:
+## Ancien script d'accueil
 
-| Constant      | Effect                                                            |
-| ------------- | ----------------------------------------------------------------- |
-| `SPIKE_RATIO` | Increase if you get false triggers; decrease if claps are missed. |
-| `COOLDOWN_S`  | Minimum time between two logged claps.                            |
-| `BLOCK_MS`    | Larger = slightly less CPU, a bit less precise timing.            |
-| `MIN_RMS`     | Floor on how loud a block must be (helps in very quiet rooms).  |
-| `SAMPLE_RATE` | Try `48000` if your device does not like `44100`.                 |
-
-## Troubleshooting
-
-- **Wrong or quiet mic:** On startup the script probes your default Windows input. If it is silent, it **auto-selects** the loudest working mic. To force a specific device, set `JARVIS_INPUT_DEVICE` in `.env` (index or name substring from `sounddevice.query_devices()`).
-- **PortAudio / audio errors:** Update audio drivers or try another `SAMPLE_RATE`.
-- **No reaction to claps:** Lower `SPIKE_RATIO` slightly or speak/clap closer to the mic.
-- **Spam logs:** Raise `SPIKE_RATIO` or `COOLDOWN_S`.
-- **No welcome speech:** Set `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` in `.env` and restart the terminal so variables load.
+`jarvis.py` conserve le scénario d'accueil par double claquement de mains.
+Le point d'entrée de l'assistant personnel actuel est `run_jarvis.py` et les
+lanceurs du dossier `scripts/`.

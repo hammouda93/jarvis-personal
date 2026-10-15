@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import json
+import re
 from urllib.parse import urlsplit
+
+from .mcp_result import source_matches_alias
+from .mcp_read_policy import is_conservative_read_tool
 
 
 def _data(action):
@@ -67,10 +71,8 @@ def partial_mission_report(actions):
         if (name.startswith("mcp__") and getattr(action, "success", False)
                 and payload.get("dispatched") is True
                 and payload.get("outcome_unknown") is False
-                and isinstance(origin, dict)
-                and origin.get("trust") == "external_unverified"
-                and name == ("mcp__" + str(origin.get("server_id") or "")
-                             + "__" + str(origin.get("tool_name") or ""))
+                and source_matches_alias(name, origin)
+                and is_conservative_read_tool(origin["tool_name"])
                 and name not in observed):
             observed.append(name)
     if observed:
@@ -88,8 +90,10 @@ def partial_mission_report(actions):
         blocker = blockers[-1]
         server = str(blocker.get("server_id") or "")
         tool = str(blocker.get("tool_name") or "")
-        if server.isidentifier() and tool.replace("_", "").isalnum():
-            parts.append("Lecture MCP bloquée : " + server + "/" + tool + ".")
+        if (re.fullmatch(r"[a-z][a-z0-9_]{0,35}", server)
+                and re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", tool)):
+            label = "Lecture MCP bloquée" if is_conservative_read_tool(tool) else "Appel MCP bloqué"
+            parts.append(label + " : " + server + "/" + tool + ".")
         attempt = blocker.get("previous_attempt_id")
         if type(attempt) is int and attempt > 0:
             parts.append(
@@ -105,6 +109,22 @@ def partial_mission_report(actions):
             "Ce nouvel appel n'a pas été envoyé. Le verrou persistant "
             "nécessite la vérification explicite de l'opérateur."
         )
+    elif any(_data(action).get("outcome_unknown") is True
+             and str(getattr(action, "name", "")).startswith("mcp__")
+             for action in actions):
+        parts.append(
+            "Un appel MCP a un résultat incertain. Examiner sa tentative "
+            "dans MCP Control Center > Services > Journal avant de poursuivre."
+        )
+    budgets = [_data(action) for action in actions
+               if _data(action).get("guard") == "mcp_budget_unavailable"]
+    if budgets:
+        budget = budgets[-1]
+        label = ("Quota horaire MCP atteint" if budget.get("budget_reason") ==
+                 "mcp_hourly_quota_exhausted" else "Service MCP temporairement indisponible")
+        delay = budget.get("retry_after_seconds")
+        parts.append(label + (f" ; nouvelle tentative possible dans {delay} s."
+            if type(delay) is int and 0 < delay <= 3600 else "."))
     parts.append(
         f"Actions avec effet vérifié : {counts['verified']}. "
         f"Actions envoyées ou incertaines : {counts['pending']}. "
