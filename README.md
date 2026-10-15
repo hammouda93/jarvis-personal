@@ -19,6 +19,8 @@ checkpoint `fix/mcp-blocker-evidence-report-v1` (`53f7999`).
 - Confirmations cohérentes sur Chat Completions et Responses, reçus précis de
   quotas/cooldowns et arrêt des sélections d'outils sans progrès.
 - Paramètres et contenu MCP exclus des journaux diagnostiques du runtime.
+- Profil de recette `-Full` : mémoire V5, Chrome habituel et Windows UIA/OCR,
+  avec version affichée et contrôle des dépendances avant démarrage.
 
 Voir le [rapport V12 et ses limites](docs/V12_MISSION_RELIABILITY.md).
 Ce candidat nécessite encore une recette Windows réelle et des comptes connectés.
@@ -43,7 +45,7 @@ Utiliser Python 3.12 dans l'environnement habituel de Jarvis. Les clés restent
 dans le fichier `.env` existant ou le coffre système ; elles ne vont pas dans Git.
 
 ```powershell
-python -m pip install -r requirements.txt -r requirements-mcp.txt
+python -m pip install -r requirements.txt -r requirements-mcp.txt -r requirements-grounding.txt
 ```
 
 Le lanceur existant charge le `.env` indiqué, vérifie les dépendances et le
@@ -51,14 +53,16 @@ Browser Bridge, puis démarre l'interface. Pour une copie de test distincte :
 
 ```powershell
 $source = 'D:\Django_Projects\jarvis-main\jarvis-main'
-.\scripts\run_p0_acceptance.ps1 -EnvPath "$source\.env"
+.\scripts\run_p0_acceptance.ps1 -Full -EnvPath "$source\.env"
 ```
 
-Le mode `-CheckOnly` contrôle les dépendances sans ouvrir l'interface, connecter
-Chrome ni appeler les modèles. Les réglages de cerveaux et les droits MCP
-existants sont conservés. Pour Computer Core/OCR, voir la
-[recette de l'environnement](docs/P0_WINDOWS_ACCEPTANCE.md) et le lanceur
-`scripts/run_jarvis_foundations_v4.ps1`.
+Ajouter `-CheckOnly` contrôle les dépendances sans ouvrir l'interface, connecter
+Chrome ni appeler les modèles. Le profil `-Full` demande Windows, UIA et OCR ;
+il désactive le modèle de grounding ainsi que Skills/Learning pour cette session,
+sans réécrire les préférences. Les réglages de cerveaux, données et droits MCP
+existants sont conservés. Le lancement P0 sans `-Full` reste disponible.
+Voir la [recette Windows V12](docs/V12_WINDOWS_TEST.md) pour la mise à jour et
+les premières missions, et la [configuration du bridge](docs/P0_WINDOWS_ACCEPTANCE.md).
 
 ## Validation automatique
 

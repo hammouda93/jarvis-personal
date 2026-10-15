@@ -26,6 +26,12 @@ Le journal est dans `.cache\p0_live_YYYYMMDD_HHMMSS.log`. Options utiles si l'in
 
 Le lanceur appelle `scripts/p0_acceptance.py` comme fichier Python pour fonctionner aussi avec Windows PowerShell 5.1. Il ne transmet plus de source Python via `-c` : cette méthode perdait des guillemets et provoquait `SyntaxError: '(' was never closed`. La correction du lanceur ne nécessite pas de réinstaller l'extension ni de réactiver un environnement virtuel.
 
+Le candidat V12 ajoute `-Full` à ce même lanceur pour inclure Computer Core
+UIA/OCR et vérifier ses dépendances Windows. Ce profil désactive le modèle de
+grounding et démarre Skills/Learning à l'arrêt pour la session sans réécrire
+les préférences. Le lancement P0 ci-dessus conserve son comportement. Voir la
+[recette V12](V12_WINDOWS_TEST.md) pour la commande complète.
+
 ## A. Écriture mémoire et redémarrage
 
 Donner cette demande naturelle une seule fois :

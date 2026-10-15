@@ -2,7 +2,8 @@ param(
     [string]$PythonExe = 'C:\jv312\Scripts\python.exe',
     [string]$EnvPath = '',
     [string]$BrowserBridgeConfig = '',
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [switch]$Full
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,6 +28,7 @@ $p0Bridge = [IO.Path]::GetFullPath($BrowserBridgeConfig)
 $p0Bootstrap = Join-Path $p0Root 'scripts\p0_acceptance.py'
 $p0Arguments = @('-u', $p0Bootstrap, '--env-path', $p0EnvFile, '--bridge-config', $p0Bridge)
 if ($CheckOnly) { $p0Arguments += '--check-only' }
+if ($Full) { $p0Arguments += '--full' }
 
 $p0PreviousPath = $env:PYTHONPATH
 $p0PreviousHome = $env:PYTHONHOME

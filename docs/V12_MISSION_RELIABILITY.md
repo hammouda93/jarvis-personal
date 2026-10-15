@@ -19,6 +19,8 @@ de la reprise. Travail cumulatif sur `feature/autonomous-mission-reliability-v12
 | Répétition d'une sélection déjà visible | Indique les outils déjà exposés ; suspend après deux sélections sans information nouvelle |
 | Schéma sans mot-clé `required` | Traite correctement la lecture d'identité comme sans paramètre obligatoire pour le classement initial |
 | Outils MCP avec points/tirets | Associe correctement les alias du modèle aux noms natifs dans les reçus et rapports |
+| Recette Windows `-Full` | Lance mémoire V5, Chrome habituel et UIA/OCR avec vérification préalable ; Skills/Learning et modèle de grounding désactivés pour la session |
+| Diagnostic bloquant | `ok=false` concorde avec le code d'échec pour les dépendances, chemins de test, version Python ou plateforme incompatible |
 
 Le chemin principal Cerebras/Groq et les cerveaux supplémentaires compatibles
 Chat Completions utilisent le même runtime. Les chemins Responses et Ollama
@@ -46,19 +48,23 @@ copient plus le contenu ou les paramètres MCP.
 
 ## Validation
 
-Les cinq nouvelles suites ajoutent 28 tests couvrant les suspensions de lots, l'association des
+Les cinq suites du premier lot ajoutent 28 tests couvrant les suspensions de lots, l'association des
 appels/réponses après confirmation, les lectures volumineuses en français/arabe,
 les limites d'archive, l'historique de conversation et les budgets de sélection.
+La préparation de recette ajoute 15 contrôles : 13 tests des profils et des
+diagnostics, plus deux passages réels par Windows PowerShell 5.1 dans la CI.
 
 ```text
 python scripts/run_final_regression.py
 node --test tests/browser_bridge_replay.mjs
 ```
 
-Résultat local Linux : 1 343 tests examinés, 1 335 réussis, huit contrôles Windows
+Résultat local Linux du profil de recette : 1 358 tests examinés, 1 348 réussis, dix contrôles Windows
 explicitement non exécutés, aucun échec ou erreur. Les 46 replays du navigateur
-réussissent également ; compilation Python vérifiée. La CI Windows/Linux doit
-encore être observée sur le commit publié. Les tests sont synthétiques et isolés ; aucun compte personnel,
+réussissent également ; compilation Python et imports du SDK MCP officiel vérifiés.
+La V12 initiale `c4bf8d0` a passé les 1 343 contrôles sous Windows et la suite Linux ;
+la CI du profil de recette doit être vérifiée sur sa propre tête publiée.
+Les tests sont synthétiques et isolés ; aucun compte personnel,
 message, installation ou mission réelle Windows n'a été exécuté pendant cette
 reprise.
 
@@ -69,6 +75,8 @@ La réponse complète reste disponible pour le modèle et l'utilisateur ; seule
 sa copie automatique dans les événements techniques est supprimée.
 
 ## Recette réelle restant à effectuer
+
+Les commandes et missions prêtes à lancer sont dans la [recette Windows V12](V12_WINDOWS_TEST.md).
 
 1. Démarrage avec les réglages personnels existants, texte et voix ; microphone
    arrêté en mode texte et voix de réponse disponible.

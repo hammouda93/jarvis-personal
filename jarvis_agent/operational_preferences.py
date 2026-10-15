@@ -58,6 +58,20 @@ def learning_enabled(config) -> bool:
     return effective_flags(config)["learning_enabled"]
 
 
+def set_session_preferences(flags: dict) -> dict:
+    """Apply an explicit launch profile without replacing persisted consent.
+
+    A later operator change through save_preferences remains authoritative.
+    This only changes this process; personal memory and tool grants are outside
+    this policy.
+    """
+    global _live_flags
+    checked = validate_flags(flags)
+    with _lock:
+        _live_flags = checked
+        return dict(checked)
+
+
 def save_preferences(flags: dict, *, path: Path | None = None) -> dict:
     global _live_flags
     checked = validate_flags(flags)

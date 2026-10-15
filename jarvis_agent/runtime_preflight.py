@@ -101,13 +101,15 @@ def main() -> int:
     args = parser.parse_args()
 
     checks = [_check(*item) for item in CORE_IMPORTS]
+    needs_automation = args.require_windows_automation or args.require_grounding
+    windows = platform.system().lower() == "windows"
+    platform_reason = ""
+    if needs_automation and not windows:
+        platform_reason = "Windows UI Automation and native OCR require Windows."
     python_automation_compatible = True
     python_automation_reason = ""
-    if platform.system().lower() == "windows":
+    if windows:
         checks.extend(_check(*item) for item in WINDOWS_BASE_IMPORTS)
-        needs_automation = (
-            args.require_windows_automation or args.require_grounding
-        )
         if needs_automation:
             # comtypes documents Python 3.8/3.9 runtime issues fixed in
             # CPython >=3.10.10 and >=3.11.2. Keep old V3 environments usable
@@ -129,11 +131,13 @@ def main() -> int:
 
     contamination = _live_path_contamination()
     failures = [item for item in checks if not item["ok"]]
+    ok = not failures and not contamination and python_automation_compatible and not platform_reason
     payload = {
-        "ok": not failures,
+        "ok": bool(ok),
         "python": sys.executable,
         "version": sys.version.split()[0],
         "platform": platform.platform(),
+        "platform_reason": platform_reason,
         "checks": checks,
         "windows_automation_compatible": python_automation_compatible,
         "windows_automation_reason": python_automation_reason,
@@ -145,13 +149,7 @@ def main() -> int:
         ),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return (
-        0
-        if not failures
-        and not contamination
-        and python_automation_compatible
-        else 2
-    )
+    return 0 if ok else 2
 
 
 if __name__ == "__main__":
