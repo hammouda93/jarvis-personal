@@ -95,6 +95,12 @@ def build_snapshot(runtime: dict | None = None, *, registry=None) -> dict:
             module = "Outils métier intégrés · configuration et recette métier à vérifier"
         elif mode == "declared":
             module = "Rôle déclaré ; aucun worker indépendant activé par ce panneau"
+        independent = (state.get("orchestra") or {}).get("independent_contexts") is True
+        if independent and identifier != "interaction":
+            mode = "isolated_analysis"
+            module = "Conversation spécialisée séparée · lectures autorisées et préparation locale ; actions externes par Jarvis"
+            if identifier == "automations":
+                module += " · veille sur machine éveillée, activée dans PILOTAGE"
         linked = servers if identifier == "mcp" else [
             s for s in servers if s.get("id") in manifest.allowed_connectors]
         connections = []
@@ -117,7 +123,7 @@ def build_snapshot(runtime: dict | None = None, *, registry=None) -> dict:
             "connectors": list(manifest.allowed_connectors), "connections": connections,
             "memory_scopes": [scope.value for scope in manifest.memory_scopes],
             "max_concurrency": manifest.max_concurrency,
-            "independent_worker": False})
+            "independent_worker": independent and identifier != "interaction"})
     for identifier, name, purpose, capabilities in _PLANNED:
         agents.append({"id": identifier, "name": name, "purpose": purpose,
             "category": "À développer", "mode": "planned", "module": "Planifié · aucun exécuteur actif",

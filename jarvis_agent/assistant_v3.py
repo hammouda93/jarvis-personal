@@ -130,6 +130,7 @@ class AssistantWorker(QObject):
         self._stt = build_stt()
         self._tts = ElevenLabsTTS()
         self._agent = build_agent_runtime(unified_missions=True)
+        self._orchestra_service = None
         self._conversation_language = "fr"
         self._pending_direct_follow_up = ""
         self._previous_conversation_trace = None
@@ -248,6 +249,12 @@ class AssistantWorker(QObject):
         self._stop.set()
         self._mission_control.stop_requested.set()
         self._input_mode.changed.set()
+        service = getattr(self, "_orchestra_service", None)
+        if service is not None:
+            service.stop()
+        orchestra = getattr(getattr(self, "_agent", None), "orchestra", None)
+        if orchestra is not None:
+            orchestra.stop()
 
     def submit_text(self, text: str) -> bool:
         """Queue a typed turn without touching the agent from the UI thread."""
@@ -1170,6 +1177,12 @@ class AssistantWorker(QObject):
         try:
             self.status_changed.emit("Chargement du cerveau local…")
             self._agent.warm_up(log=self.log_line.emit)
+            orchestra = getattr(self._agent, "orchestra", None)
+            voice = getattr(self._agent, "orchestra_voice", None)
+            if orchestra is not None and voice is not None:
+                from .orchestra_service import OrchestraService
+                self._orchestra_service = OrchestraService(orchestra, voice, log=self.log_line.emit)
+                self._orchestra_service.start()
             while not self._stop.is_set():
                 self._input_mode.changed.clear()
                 text_mode, generation = self._apply_input_mode()
@@ -1260,4 +1273,10 @@ class AssistantWorker(QObject):
                 f"Erreur · {type(exc).__name__}",
             )
         finally:
+            service = getattr(self, "_orchestra_service", None)
+            if service is not None:
+                service.stop()
+            orchestra = getattr(getattr(self, "_agent", None), "orchestra", None)
+            if orchestra is not None:
+                orchestra.stop()
             self.finished.emit()

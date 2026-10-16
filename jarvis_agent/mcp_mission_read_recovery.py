@@ -19,7 +19,8 @@ def mcp_pause_reason(action) -> str:
     This does not clear the persisted lock, replay anything, or promote a
     remote claim. A later user turn still goes through the original gateway.
     """
-    if not str(getattr(action, "name", "")).startswith("mcp__"):
+    name = str(getattr(action, "name", ""))
+    if not name.startswith("mcp__") and name not in {"orchestra_call_owner", "orchestra_delegate", "orchestra_schedule"}:
         return ""
     try:
         data = json.loads(getattr(action, "detail", "") or "{}")

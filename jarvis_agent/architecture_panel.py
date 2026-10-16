@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
 from .architecture_catalog import build_snapshot
 
 
-_MODES = {"shared_runtime": "Runtime partagé", "declared": "Rôle déclaré", "planned": "Planifié"}
+_MODES = {"shared_runtime": "Runtime partagé", "declared": "Rôle déclaré", "planned": "Planifié",
+          "isolated_analysis": "Analyse en contexte séparé"}
 _STAGES = {"integrated": "Intégré", "in_progress": "En développement", "planned": "Planifié"}
 _RISKS = {"read": "lecture", "reversible": "modification réversible",
           "external_side_effect": "effet externe", "destructive": "destruction", "unknown": "à définir"}
@@ -46,10 +47,10 @@ class ArchitectureMap(QWidget):
         compact = self.width() < 340
         nodes = [
             (QRectF(margin, 8, width, 51), "JARVIS · interlocuteur unique", "Cerveaux en cascade · conversation", "#63d9d4"),
-            (QRectF(margin, 79, width, 51), "MISSION · objectif et contraintes", "Plan · contexte · permissions" if compact else "Plan · contexte utile · budget · permissions", "#7dc2ed"),
-            (QRectF(margin, 151, (width-gap)/2, 58), "Spécialistes", "Web · Windows\nRecherche" if compact else "Browser · Windows\nRecherche · Documents", "#7dc2ed"),
-            (QRectF(margin+(width+gap)/2, 151, (width-gap)/2, 58), "Agents métier", "MS Football\nAutres domaines" if compact else "MS Football\nAutres domaines à définir", "#c6adf4"),
-            (QRectF(margin, 232, width, 51), "OUTILS · exécution contrôlée", "Natifs · MCP/API autorisés" if compact else "Natifs · MCP/API · autorisations existantes", "#80cba7"),
+            (QRectF(margin, 79, width, 51), "MISSION · objectif et contraintes", "Budget · veille opt-in" if compact else "Plan · budget · veille persistée opt-in", "#7dc2ed"),
+            (QRectF(margin, 151, (width-gap)/2, 58), "Spécialistes", "Contexte propre\n2 en parallèle" if compact else "Conversations séparées\n2 au maximum en parallèle", "#7dc2ed"),
+            (QRectF(margin+(width+gap)/2, 151, (width-gap)/2, 58), "Agents métier", "Profils et outils\nMS Football" if compact else "Profils · compétences\nMS Football · services", "#c6adf4"),
+            (QRectF(margin, 232, width, 51), "OUTILS · exécution contrôlée", "Actions externes : Jarvis" if compact else "Lectures : agents · actions externes : Jarvis", "#80cba7"),
             (QRectF(margin, 305, width, 51), "PREUVES · vérifier" if compact else "PREUVES · vérifier puis poursuivre", "Observer · adapter · suspendre" if compact else "Observer · replanifier · suspendre si incertain", "#e9c586"),
             (QRectF(margin, 375, width, 28), "SQLite · mission · Skills" if compact else "Mémoire SQLite · mission · Skills séparés", "", "#8ba8c0"),
         ]
@@ -126,7 +127,7 @@ class ArchitecturePanel(QFrame):
         navigation = QGridLayout()
         navigation.setContentsMargins(0, 0, 0, 0)
         navigation.setSpacing(4)
-        for index, (label, section) in enumerate((("Missions", "control"), ("Cerveaux", "brains"), ("Connexions", "mcp"), ("Mon quotidien", "workspace"))):
+        for index, (label, section) in enumerate((("Missions", "control"), ("Cerveaux", "brains"), ("Connexions", "mcp"), ("Mon quotidien", "workspace"), ("Équipe et veille", "orchestra"))):
             button = QPushButton(label)
             button.clicked.connect(lambda checked=False, target=section: self.section_requested.emit(target))
             navigation.addWidget(button, index // 2, index % 2)

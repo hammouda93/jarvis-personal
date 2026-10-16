@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-_READS = frozenset({"workspace_read", "inspect_active_window", "inspect_interface", "inspect_browser_page",
+_READS = frozenset({"orchestra_read", "workspace_read", "inspect_active_window", "inspect_interface", "inspect_browser_page",
     "browser_observe_dom", "browser_find", "browser_list_tabs", "msf_query_records",
     "msf_describe_schema", "msf_capabilities", "msf_list_routes", "msf_search_code", "list_applications"})
 

@@ -156,6 +156,7 @@ class PersonalJarvisCanvas(QWidget):
     """Pure visual projection of the runtime signals already emitted by Jarvis."""
 
     route_changed = Signal(object)
+    planet_selected = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -172,6 +173,12 @@ class PersonalJarvisCanvas(QWidget):
         self._animations_frozen = False
         self._source_mode = "voice"
         self._history = deque([0.0] * 64, maxlen=64)
+        from .space_universe import UniverseRenderer
+        self._universe = UniverseRenderer(self)
+        self._universe_mode = True
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName("Univers Jarvis : planètes interactives des agents, veille et appels")
 
         rng = random.Random(42)
         self._stars = tuple(
@@ -255,6 +262,7 @@ class PersonalJarvisCanvas(QWidget):
 
     def ingest_log(self, line: object) -> None:
         text = str(line)
+        self._universe.ingest_log(text)
 
         if text.startswith("[AGENT] provider="):
             self._append_route("think")
@@ -295,6 +303,10 @@ class PersonalJarvisCanvas(QWidget):
         self.update()
 
     def _tick(self) -> None:
+        if not self.isVisible():
+            self._timer.setInterval(250)
+            return
+        self._timer.setInterval(50 if self._animations_frozen else 33)
         if not self._animations_frozen:
             speed = {
                 AssistantState.IDLE.value: 0.006,
@@ -771,6 +783,10 @@ class PersonalJarvisCanvas(QWidget):
             True,
         )
 
+        if self._universe_mode:
+            self._universe.paint(painter)
+            return
+
         rect = QRectF(self.rect())
         self._draw_background(painter, rect)
 
@@ -788,6 +804,45 @@ class PersonalJarvisCanvas(QWidget):
 
         for node in NODES:
             self._draw_node(painter, node, rect)
+
+    def apply_orchestra_snapshot(self, runtime):
+        self._universe.apply_snapshot(runtime)
+
+    def set_universe_mode(self, enabled):
+        self._universe_mode = bool(enabled)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if self._universe_mode and event.button() == Qt.LeftButton:
+            key = self._universe.hit(event.position())
+            if key:
+                self._universe.selected = key
+                self.planet_selected.emit(key)
+                self.update()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        key = self._universe.hit(event.position()) if self._universe_mode else None
+        self.setCursor(Qt.PointingHandCursor if key else Qt.ArrowCursor)
+        self.setToolTip(("Jarvis · chef d’orchestre" if key == "interaction" else self._universe.status(key)) if key else "")
+        super().mouseMoveEvent(event)
+
+    def keyPressEvent(self, event):
+        if self._universe_mode:
+            keys = list(self._universe.positions())
+            if event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+                selected = self._universe.selected
+                index = keys.index(selected) if selected in keys else 0
+                step = -1 if event.key() in (Qt.Key_Left, Qt.Key_Up) else 1
+                self._universe.selected = keys[(index + step) % len(keys)]
+                self.update()
+                event.accept()
+                return
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+                self.planet_selected.emit(self._universe.selected)
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
 
 class StatusChip(QFrame):
@@ -996,6 +1051,14 @@ class JarvisWindow(QWidget):
         self.personal_workspace.request_ready.connect(self._on_workspace_request)
         self.personal_workspace.connections_requested.connect(lambda: self.side_tabs.setCurrentWidget(self.mcp_scroll))
         self.side_tabs.addTab(self.personal_workspace, "QUOTIDIEN")
+        from .orchestra_panel import OrchestraPanel
+        self.orchestra_panel = OrchestraPanel(self)
+        self.orchestra_panel.request_ready.connect(self._on_orchestra_request)
+        self.orchestra_panel.profile_requested.connect(self._show_agent_profile)
+        self.orchestra_panel.connections_requested.connect(lambda: self.side_tabs.setCurrentWidget(self.mcp_scroll))
+        self.canvas.planet_selected.connect(self._show_planet)
+        self.orchestra_panel.universe_requested.connect(self.canvas.set_universe_mode)
+        self.side_tabs.addTab(self.orchestra_panel, "PILOTAGE")
         self.canvas.setMinimumSize(240, 100)
 
         title = QLabel("PERSONAL JARVIS")
@@ -1513,21 +1576,24 @@ class JarvisWindow(QWidget):
             self.showFullScreen()
 
     def _refresh_operator_console(self) -> None:
-        if self._compact_mode or self.clean_button.isChecked():
-            return
         try:
             data = operator_snapshot(max_items=18 if self.operator_full_button.isChecked() else 7)
+            self.canvas.apply_orchestra_snapshot(data)
+            if self._compact_mode or self.clean_button.isChecked():
+                return
             self.operator_console.apply_snapshot(data)
             self.architecture_panel.apply_snapshot(data)
             if self.personal_workspace.isVisible():
                 self.personal_workspace.refresh(data)
+            if self.orchestra_panel.isVisible():
+                self.orchestra_panel.refresh(data)
         except (OSError, ValueError, RuntimeError):
             # Read-only monitoring must never stop user interaction.
             self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
 
     def _show_architecture_section(self, section: str) -> None:
         target = {"control": self.operator_console, "mcp": self.mcp_scroll,
-                  "workspace": self.personal_workspace,
+                  "workspace": self.personal_workspace, "orchestra": self.orchestra_panel,
                   "brains": self.brain_scroll, "skills": self.operator_console}.get(section)
         if target is not None:
             self.side_tabs.setCurrentWidget(target)
@@ -1549,6 +1615,29 @@ class JarvisWindow(QWidget):
             self.personal_workspace.status_line.setText("Demande confiée à Jarvis. La réponse arrive dans la conversation.")
         else:
             self.personal_workspace.status_line.setText("La demande n’a pas été ajoutée. Réessaie quand la file de Jarvis est disponible.")
+
+    def _show_planet(self, key):
+        if key == "workspace":
+            self.side_tabs.setCurrentWidget(self.personal_workspace)
+        elif key == "mcp":
+            self.side_tabs.setCurrentWidget(self.mcp_scroll)
+        else:
+            self.side_tabs.setCurrentWidget(self.orchestra_panel)
+            self.orchestra_panel.focus_planet(key)
+
+    def _show_agent_profile(self, role):
+        self.side_tabs.setCurrentWidget(self.architecture_panel)
+        self.architecture_panel.tabs.setCurrentWidget(self.architecture_panel.profile_editor)
+        self.architecture_panel.profile_editor.select_role(role)
+
+    def _on_orchestra_request(self, text):
+        if not self._thread.isRunning():
+            self.orchestra_panel.status.setText("Le moteur Jarvis n’est pas actif.")
+        elif self._worker.submit_text(text):
+            self.canvas.begin_request("conversation")
+            self.orchestra_panel.status.setText("Demande confiée à Jarvis. La réponse arrive dans la conversation.")
+        else:
+            self.orchestra_panel.status.setText("La file est pleine. Réessaie quand Jarvis est disponible.")
 
     def _on_skill_request(self, operation: str, value: str) -> None:
         panel = (self.operator_console.operational_preferences if operation == "policy_set"
