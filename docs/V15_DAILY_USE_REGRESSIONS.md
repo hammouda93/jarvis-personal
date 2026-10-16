@@ -34,6 +34,8 @@ permissions MCP, verrous d’effets incertains, contrôles UIA/DOM et plafonds d
 fournisseurs restent appliqués. Une sélection de capacités n’est pas une action
 exécutée : le journal utilise maintenant `tool_results` plutôt que
 `completed_actions` pour le nombre de résultats reçus.
+L’onglet **Architecture > Développement** affiche la priorité V15, les échecs
+rapportés sur V14 et les parcours à retester, sans les présenter comme acceptés.
 
 ## Vérifications
 

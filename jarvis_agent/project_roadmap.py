@@ -70,13 +70,13 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "development_priority": {
-            "phase": "V14",
-            "title": "Profils configurables et contexte limité par mission",
+            "phase": "V15",
+            "title": "Usages quotidiens : mémoire utilisable et actions exécutées",
             "implementation": "integrated",
             "automated": "local_regression_passed",
             "windows_real": "not_validated",
-            "evidence": "docs/V14_AGENT_PROFILES_CONTEXT.md",
-            "next": "Valider les profils et les budgets sur Windows, puis introduire un spécialiste à contexte isolé sur des lectures indépendantes",
+            "evidence": "docs/V15_DAILY_USE_REGRESSIONS.md",
+            "next": "Valider mémoire, recherche et applications sur Windows, puis rendre le profil personnel et les activités quotidiennes et métier consultables",
         },
         "human_windows_evidence": {
             "source": "user_windows_logs_reviewed_2026-10-15",
@@ -97,14 +97,20 @@ def snapshot() -> dict:
                                        "browser_find_timeout", "provider_pause_after_close_window"],
             "v14_retest_required": ["profile_editor_real_windows", "new_goal_context_isolation",
                                     "continued_mission_constraints_and_receipts", "search_article_summary_with_provider_cascade"],
+            "v14_reported_failures": ["saved_fact_missing_from_next_request", "selected_schema_removed_by_budget",
+                                      "youtube_no_dispatch", "installer_no_dispatch", "incomplete_turn_displayed_as_success"],
+            "v15_retest_required": ["saved_movie_followed_by_site_search", "selected_tools_dispatch_after_budget_reduction",
+                                    "memory_date_lookup", "notepad_direct_open", "downloaded_installer_discovery"],
         },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
-            "CI Windows/Linux verte sur V13 7569493 (1384 tests Windows). "
+            "CI Windows/Linux verte sur V14 0c10cde (1414 tests Windows). "
             "Recette V13 du 15 octobre : mémoire après redémarrage, protection du document et écriture Unicode observées. "
             "Contexte volumineux et résumé navigateur restent à valider. "
-            "V14 ajoute des profils opérateur appliqués à la délégation supervisée et un budget de requête. "
+            "V14 ajoute les profils opérateur et un budget de requête ; la recette a révélé une perte du fait récent et des outils sélectionnés. "
+            "V15 corrige ces régressions et l'affichage des tours suspendus. Recette Windows réelle encore attendue. "
+            "Priorité : gestion quotidienne, football personnel, MS Football et projets logiciels. "
             "Les workers indépendants et leur isolation mémoire restent à développer. "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
