@@ -55,6 +55,20 @@ Les données transitent par ce fournisseur et ses conditions s’appliquent.
 Les identifiants restent dans le coffre existant de Jarvis. Une connexion
 ChatGPT n’est pas copiée vers Jarvis.
 
+Le compte **Pipedream MCP** est distinct du compte développeur Pipedream.
+Son portail d’inscription est <https://mcp.pipedream.com/sign-up> ; la fiche
+Gmail se trouve sur <https://mcp.pipedream.com/app/gmail>. Si le formulaire
+affiche « Please sign up with your work email address », vérifier le portail
+utilisé. Cette erreur d’inscription vient du fournisseur ; la connexion Gmail
+n’est pas encore effectuée. Le portail MCP ne garantit pas que le fournisseur
+acceptera un compte donné.
+
+Le correctif de veille vocale permet au clic de connexion d’interrompre
+l’attente du double clap, la capture audio et l’admission d’une transcription
+devenue périmée. La commande s’exécute dans le worker existant ; le mode vocal
+reprend ensuite. Aucun clap ni passage préalable en mode texte n’est requis.
+Le journal indique `MCP_CONTROL … state=STARTED` au début du traitement.
+
 Pour une première utilisation réelle, vérifier le compte puis demander une
 lecture sans modification. Un envoi de test doit être demandé explicitement et
 contrôlé dans Gmail. Aucun compte personnel n’a été connecté pendant le

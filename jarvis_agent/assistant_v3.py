@@ -88,11 +88,15 @@ class InputModeGate:
                 not self._text_mode
                 and self._generation == generation
                 and not self.inbox.pending()
+                # Accepted UI commands also wake the serialized worker. Yield
+                # capture until its outer loop acknowledges that wake-up; a
+                # connection must not wait for a clap or consume stale speech.
+                and not self.changed.is_set()
             )
 
 
 class VoiceCaptureInterrupt:
-    """Cancel a clap/recording operation as soon as text mode takes over."""
+    """Yield clap/recording waits to text mode or accepted UI commands."""
 
     def __init__(self, gate: InputModeGate, generation: int) -> None:
         self.gate = gate
@@ -303,6 +307,7 @@ class AssistantWorker(QObject):
             self.log_line.emit(f"[OPERATIONAL_POLICY] skills={int(flags['skills_enabled'])} learning={int(flags['learning_enabled'])}")
 
     def _run_mcp_control(self, command) -> None:
+        self.log_line.emit("[MCP_CONTROL] operation=" + command.operation + " state=STARTED")
         try:
             result = perform_mcp_command(self._mcp_registry, command,
                 stop_event=self._mcp_control.stop_requested)

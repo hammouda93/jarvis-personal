@@ -249,7 +249,7 @@ class GmailConnectionPanel(QFrame):
                 (" Sélectionne Gmail dans le navigateur." if not connected else ""))
         self.test_button.setVisible(ready)
         self.test_button.setEnabled(ready and not self._busy)
-        self.step.setText("Connexion en cours dans le navigateur…" if self._busy else
+        self.step.setText("Préparation et connexion au compte…" if self._busy else
             "Connecte Gmail pour utiliser ses fonctions avec Jarvis." if not connected or not permitted else
             "Modifications avancées à enregistrer." if self._dirty else
             "Les connexions sont en pause. Tu peux les réactiver." if activate else
@@ -268,7 +268,7 @@ class GmailConnectionPanel(QFrame):
             revision = (self.workspace.bindings().get("gmail") or {}).get("revision", 0)
             self._pending_server = sid
             self.set_busy(True)
-            self.feedback.setText("Connexion en cours dans le navigateur. Termine la sélection Gmail et le consentement, puis reviens dans Jarvis.")
+            self.feedback.setText("Connexion demandée. Le navigateur va s’ouvrir : utilise ton compte Pipedream MCP, sélectionne Gmail et termine le consentement, puis reviens dans Jarvis.")
             self.requested.emit("gmail_connect", sid, json.dumps({"provider": self.provider.currentData(), "binding_revision": revision, "access": access}))
         except (ValueError, KeyError, OSError, sqlite3.Error):
             self.feedback.setText("Configuration indisponible. Recharge avant de réessayer.")

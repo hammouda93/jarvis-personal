@@ -1,4 +1,5 @@
 import contextlib
+import json
 import unittest
 from dataclasses import replace
 from unittest.mock import Mock, patch
@@ -100,6 +101,98 @@ class TextInputModeV3Tests(unittest.TestCase):
                 for item in self.logs
             )
         )
+
+    def _gmail_command_during_voice(self):
+        return self.worker.submit_mcp_control("gmail_connect", "gmail", json.dumps({
+            "provider": "pipedream", "binding_revision": 0, "access": "plugin"}))
+
+    def _run_with_voice_control(self, wake, *, record=None, recognize=None):
+        self.agent.orchestra = self.agent.orchestra_voice = None
+        result = {"success": True, "operation": "gmail_connect", "server_id": "gmail"}
+        with patch("jarvis_agent.assistant_v3.wait_for_double_clap", side_effect=wake), patch(
+            "jarvis_agent.assistant_v3.record_utterance", side_effect=record
+        ) as recorder, patch(
+            "jarvis_agent.assistant_v3.recognize_command", side_effect=recognize
+        ) as stt, patch(
+            "jarvis_agent.assistant_v3.perform_mcp_command", return_value=result
+        ) as perform:
+            self.worker.run()
+        return recorder, stt, perform
+
+    def test_gmail_click_interrupts_passive_wake_and_worker_resumes_voice(self):
+        waits, interrupts = [], []
+
+        def wake(*args, **kwargs):
+            waits.append(True)
+            if len(waits) == 1:
+                self._gmail_command_during_voice()
+                interrupts.append(kwargs["interrupt_event"].is_set())
+            else:
+                self.worker.stop()
+            return False
+
+        recorder, stt, perform = self._run_with_voice_control(wake)
+        self.assertEqual(interrupts, [True])
+        perform.assert_called_once()
+        self.assertEqual(perform.call_args.args[1].operation, "gmail_connect")
+        self.assertEqual(len(waits), 2, "Voice must resume after the control command")
+        self.assertEqual(self.worker._input_mode.snapshot(), (False, 0))
+        recorder.assert_not_called()
+        stt.assert_not_called()
+        self.agent.run.assert_not_called()
+
+    def test_gmail_click_interrupts_recording_before_transcription(self):
+        waits, interrupts = [], []
+
+        def wake(*args, **kwargs):
+            waits.append(True)
+            if len(waits) > 1:
+                self.worker.stop()
+                return False
+            return True
+
+        def record(*args, **kwargs):
+            self._gmail_command_during_voice()
+            interrupts.append(kwargs["interrupt_event"].is_set())
+            return object()  # Even a late completed capture must be discarded.
+
+        recorder, stt, perform = self._run_with_voice_control(wake, record=record)
+        self.assertEqual(interrupts, [True])
+        recorder.assert_called_once()
+        stt.assert_not_called()
+        perform.assert_called_once()
+        self.assertEqual(len(waits), 2)
+        self.agent.run.assert_not_called()
+
+    def test_gmail_click_during_transcription_discards_stale_voice_turn(self):
+        waits = []
+
+        def wake(*args, **kwargs):
+            waits.append(True)
+            if len(waits) > 1:
+                self.worker.stop()
+                return False
+            return True
+
+        def recognize(*args, **kwargs):
+            self._gmail_command_during_voice()
+            return Mock(text="Open a website", language="fr"), None
+
+        recorder, stt, perform = self._run_with_voice_control(
+            wake, record=lambda *a, **k: object(), recognize=recognize)
+        stt.assert_called_once()
+        perform.assert_called_once()
+        self.assertEqual(len(waits), 2)
+        self.agent.run.assert_not_called()
+        self.assertTrue(any("stale transcription discarded" in line for line in self.logs))
+
+    def test_rejected_control_does_not_interrupt_passive_voice(self):
+        from jarvis_agent.assistant_v3 import VoiceCaptureInterrupt
+        generation = self.worker._input_mode.snapshot()[1]
+        interrupt = VoiceCaptureInterrupt(self.worker._input_mode, generation)
+        self.assertFalse(interrupt.is_set())
+        self.assertFalse(self.worker.submit_mcp_control("invalid", "gmail"))
+        self.assertFalse(interrupt.is_set())
 
     def test_old_browser_question_cannot_hijack_a_qualified_search(self):
         self.worker.set_text_mode(True)
