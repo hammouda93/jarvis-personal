@@ -16,6 +16,7 @@ _OBSERVATIONS = _READS | {"computer_observe", "computer_find"}
 _CONTEXT_TOOLS = {"request_tool_capabilities", "read_observation_evidence"}
 _ROOTS = {"find_file", "open_file", "open_folder", "open_application", "list_windows",
           "workspace_read",
+          "orchestra_read",
           "list_applications",
           "browser_list_tabs", "browser_get_active_tab", "get_current_time",
           "mission_checkpoint", "return_to_standby", "reset_conversation_context"}

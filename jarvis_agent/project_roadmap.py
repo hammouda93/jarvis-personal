@@ -70,13 +70,13 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "development_priority": {
-            "phase": "V16",
-            "title": "Gestion quotidienne : profil, activités et préparations de services",
+            "phase": "V17",
+            "title": "Orchestre, contextes spécialisés, univers interactif et veille bornée",
             "implementation": "integrated",
             "automated": "local_regression_passed",
             "windows_real": "not_validated",
-            "evidence": "docs/V16_PERSONAL_WORKSPACE.md",
-            "next": "Valider profil, journée et suivis métier sur Windows, puis relier les services MCP et vérifier leurs résultats réels",
+            "evidence": "docs/V17_ORCHESTRA_SPACE_WATCH.md",
+            "next": "Valider les équipes et la veille sur Windows, puis connecter les MCP et vérifier les appels réels",
         },
         "human_windows_evidence": {
             "source": "user_windows_logs_reviewed_2026-10-15",
@@ -104,11 +104,13 @@ def snapshot() -> dict:
             "v16_retest_required": ["personal_profile_and_timezone", "daily_activity_after_restart",
                                     "business_follow_up_via_chat", "local_preparation_without_dispatch",
                                     "mcp_service_binding_and_live_result"],
+            "v17_retest_required": ["isolated_specialist_reports", "spatial_cockpit_windows",
+                                    "scheduled_work_on_awake_machine", "owner_voice_mcp_and_actual_phone_session"],
         },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
-            "CI Windows/Linux verte sur V15 88c952b (1423 tests Windows). "
+            "CI Windows/Linux verte sur V16 eb3c54c (1454 tests Windows). "
             "Recette V13 du 15 octobre : mémoire après redémarrage, protection du document et écriture Unicode observées. "
             "Contexte volumineux et résumé navigateur restent à valider. "
             "V14 ajoute les profils opérateur et un budget de requête ; la recette a révélé une perte du fait récent et des outils sélectionnés. "
@@ -116,7 +118,8 @@ def snapshot() -> dict:
             "V16 ajoute le profil personnel, les activités datées et les préparations locales dans QUOTIDIEN, accessibles aux outils de Jarvis. "
             "Les MCP seront connectés séparément ; une préparation ne vaut ni envoi ni résultat externe. "
             "Priorité : gestion quotidienne, football personnel, MS Football et projets logiciels. "
-            "Les workers indépendants et leur isolation mémoire restent à développer. "
+            "V17 ajoute des conversations spécialisées séparées, deux analyses parallèles, une file de veille locale et un univers interactif. "
+            "Les agents lisent et préparent ; les actions externes restent à Jarvis. La téléphonie exige un service MCP vocal réel. "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."

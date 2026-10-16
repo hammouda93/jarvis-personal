@@ -39,6 +39,7 @@ def regression_environment(data_dir: Path) -> dict[str, str]:
                JARVIS_MCP_CONFIG_PATH=str(data_dir / "mcp_servers.json"),
                JARVIS_AGENT_PROFILES_PATH=str(data_dir / "agent_profiles.json"),
                JARVIS_PERSONAL_WORKSPACE_PATH=str(data_dir / "personal_workspace.sqlite3"),
+               JARVIS_ORCHESTRA_PATH=str(data_dir / "orchestra.sqlite3"),
                JARVIS_BRAIN_CONFIG_PATH=str(data_dir / "brains.json"))
     return env
 

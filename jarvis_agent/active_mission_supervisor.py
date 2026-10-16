@@ -55,6 +55,7 @@ class MissionLimits:
 
 OBSERVATION_TOOLS = frozenset({
     "workspace_read",
+    "orchestra_read",
     "verify_file_artifact",
     "browser_list_tabs", "browser_get_active_tab", "browser_observe_dom",
     "browser_verify", "computer_observe", "computer_verify",
@@ -143,6 +144,8 @@ def conversation_stop_event():
 
 def reserve_model_request() -> None:
     """Called at each provider request, including Cerebras secondary/Groq."""
+    from .orchestra_budget import reserve_worker_model
+    reserve_worker_model()
     scope = _SCOPE.get()
     if scope is not None:
         scope.reserve(model_calls=1, network_calls=1)
@@ -200,7 +203,11 @@ def delegation_context() -> dict:
 
 def delegated_context_budget() -> int | None:
     scope = _SCOPE.get()
-    return scope.profile["settings"]["context_tokens"] if scope is not None and scope.profile else None
+    if scope is not None and scope.profile:
+        return scope.profile["settings"]["context_tokens"]
+    from .orchestra_budget import current_worker
+    worker = current_worker()
+    return worker.profile["settings"]["context_tokens"] if worker is not None else None
 
 
 def bind_pending_tool_approval(name: str, arguments: dict) -> None:

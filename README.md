@@ -5,6 +5,25 @@ habituel, outils Windows, mémoire SQLite et services MCP explicitement connect�
 Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
 distinct de la preuve que l'objectif entier est atteint.
 
+## V17 — chef d’orchestre, univers spatial et veille
+
+La branche `feature/orchestra-space-watch-v17`, issue de V16, ajoute de vraies
+conversations spécialisées séparées : Jarvis répartit les analyses, reçoit les
+rapports et garde l’exécution des actions externes. Deux spécialistes peuvent
+travailler en parallèle, avec profils, outils autorisés et budget commun.
+
+L’univers central donne accès aux agents par des planètes ; les étoiles
+filantes représentent des échanges enregistrés. **PILOTAGE** regroupe l’équipe,
+les travaux programmés, les rapports persistés et la configuration des appels.
+Le flux graphique classique reste sélectionnable.
+
+La veille est désactivée au départ. Une fois autorisée, elle recherche et
+prépare sur un PC éveillé avec Jarvis ouvert. Les appels et les demandes reçues
+par téléphone passent par un service MCP vocal à connecter ; aucune ligne
+téléphonique n’est fournie ou simulée par cette version.
+
+Voir le [guide V17 et les essais Windows](docs/V17_ORCHESTRA_SPACE_WATCH.md).
+
 ## V16 — espace personnel et gestion quotidienne
 
 La branche `feature/personal-workspace-daily-v16` ajoute **QUOTIDIEN** à

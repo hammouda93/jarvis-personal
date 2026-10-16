@@ -281,7 +281,18 @@ def snapshot(*, max_items: int = 7) -> dict[str, Any]:
     except (OSError, ValueError, TypeError, KeyError):
         mcp_servers = []
         mcp_enabled = False
+    try:
+        from .orchestra_store import OrchestraStore
+        orchestra = OrchestraStore().snapshot()
+        # Monitoring carries metadata only; private requests, owner contact
+        # and full reports are read explicitly by the local cockpit.
+        orchestra["jobs"] = [{k: row[k] for k in ("id", "revision", "state", "next_at")} for row in orchestra["jobs"]]
+        orchestra["voice"] = {"revision": orchestra["voice"]["revision"],
+                              "data": {"enabled": orchestra["voice"]["data"]["enabled"]}}
+    except (OSError, sqlite3.Error, ValueError, TypeError, KeyError):
+        orchestra = {"unavailable": True}
     return {
+        "orchestra": orchestra,
         "active_supervisor_enabled": _flag("JARVIS_ACTIVE_SUPERVISOR_ENABLED"),
         "active_supervisor": active_supervisor,
         "supervised_plan": supervised_plan,

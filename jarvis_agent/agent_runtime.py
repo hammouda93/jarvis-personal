@@ -29,13 +29,13 @@ PhaseFn = Callable[[str], None]
 
 
 def _tool_log_arguments(name, arguments):
-    if name.startswith("workspace_"):
+    if name.startswith(("workspace_", "orchestra_")):
         return "<Personal workspace arguments omitted>"
     return "<MCP arguments omitted>" if name.startswith("mcp__") else arguments
 
 
 def _tool_log_detail(name, result):
-    if name.startswith(("mcp__", "workspace_")) or name == "read_observation_evidence":
+    if name.startswith(("mcp__", "workspace_", "orchestra_")) or name == "read_observation_evidence":
         # Private service content stays in the conversation, never in log
         # files or the UI's diagnostic panel. Keep locally generated status.
         from .mcp_result import receipt_metadata
@@ -2378,9 +2378,10 @@ class OpenAIResponsesAgent:
             else settings.groq_browser_search
         )
         from .active_mission_supervisor import execution_scope_active
-        if web_enabled and not execution_scope_active():
+        from .orchestra_budget import current_worker
+        if web_enabled and not execution_scope_active() and current_worker() is None:
             tools.append({"type": self.web_search_tool_type})
-        if not execution_scope_active():
+        if not execution_scope_active() and current_worker() is None:
             # Provider-hosted connectors bypass the local ledger and role scope.
             # Supervised missions use only Jarvis' confirmed local MCP registry.
             tools.extend(CONNECTORS.openai_tools())
@@ -3239,6 +3240,8 @@ class GroqResponsesAgent:
             allowed = set(msf_tool_names or ())
             from .workspace_tools import WORKSPACE_TOOLS
             allowed.update(WORKSPACE_TOOLS)
+            from .orchestra_tools import ORCHESTRA_TOOLS
+            allowed.update(ORCHESTRA_TOOLS)
             if bool(getattr(self.tools, "browser_mode", False)):
                 browser_surface_names = {
                     str((item.get("function") or {}).get("name") or "")
@@ -6407,7 +6410,7 @@ class CerebrasResponsesAgent(GroqResponsesAgent):
         if error:
             raise AgentRuntimeUnavailable(error)
 
-def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
+def build_agent_runtime(*, unified_missions: bool = False, _worker_policy=None) -> AgentRuntime:
     provider = settings.agent_provider.lower().strip()
 
     tools = NATIVE_TOOLS
@@ -6425,12 +6428,25 @@ def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
     from .mcp_server_registry import MCPRegistry
     mcp_registry = MCPRegistry()
     from .request_context import RequestContext, ContextToolRegistry
-    request_context = RequestContext(enabled=enabled("JARVIS_EFFICIENT_CONTEXT_ENABLED")
+    request_context = RequestContext(enabled=_worker_policy is not None or enabled("JARVIS_EFFICIENT_CONTEXT_ENABLED")
         or enabled("JARVIS_ACTIVE_SUPERVISOR_ENABLED"))
     tools = MCPToolRegistry(tools, registry=mcp_registry,
         runtime_gate=mcp_registry.runtime_enabled, observation_context=request_context)
     from .workspace_tools import WorkspaceToolRegistry
     tools = WorkspaceToolRegistry(tools, mcp_tools=tools)
+    orchestra = voice = None
+    if _worker_policy is not None:
+        from .orchestra_workers import WorkerToolGate
+        tools = WorkerToolGate(tools, policy=_worker_policy, mcp_tools=tools.mcp_tools)
+    else:
+        from .orchestra_workers import AgentOrchestra
+        from .orchestra_voice import VoiceChannel
+        from .orchestra_tools import OrchestraToolRegistry
+        orchestra = AgentOrchestra(builder=lambda policy: build_agent_runtime(_worker_policy=policy))
+        voice_gateway = MCPToolRegistry(NATIVE_TOOLS, registry=mcp_registry,
+            runtime_gate=mcp_registry.runtime_enabled, observation_context=RequestContext(enabled=True))
+        voice = VoiceChannel(voice_gateway, store=orchestra.store)
+        tools = OrchestraToolRegistry(tools, orchestra=orchestra, voice=voice)
     tools = ContextToolRegistry(tools, request_context)
 
     # Independent, opt-in Hermes-inspired per-action checkpointing.
@@ -6439,9 +6455,9 @@ def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
     import os
     reliability_tools = None
     active_supervision = enabled("JARVIS_ACTIVE_SUPERVISOR_ENABLED")
-    if active_supervision or os.getenv("JARVIS_HERMES_RELIABILITY_ENABLED", "0").strip().lower() in (
+    if _worker_policy is None and (active_supervision or os.getenv("JARVIS_HERMES_RELIABILITY_ENABLED", "0").strip().lower() in (
         "1", "true", "yes", "on",
-    ):
+    )):
         from .hermes_reliability import ActionLedger, ReliabilityToolRegistry
 
         reliability_tools = ReliabilityToolRegistry(
@@ -6451,7 +6467,7 @@ def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
         tools = reliability_tools
 
     supervised_tools = None
-    if active_supervision:
+    if active_supervision and _worker_policy is None:
         from .active_mission_supervisor import SupervisedToolRegistry
         supervised_tools = SupervisedToolRegistry(tools)
         tools = supervised_tools
@@ -6491,6 +6507,9 @@ def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
         )
 
     runtime.request_context = request_context
+    if _worker_policy is not None:
+        # Core model + scoped tools only: routing shortcuts cannot bypass the gate.
+        return runtime
     if foundation_tools is not None:
         runtime = FoundationRuntime(runtime, foundation_tools)
         if enabled("JARVIS_MEMORY_CORE_ENABLED"):
@@ -6578,4 +6597,6 @@ def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
         from .hermes_reliability import HermesReliabilityRuntime
 
         runtime = HermesReliabilityRuntime(runtime, reliability_tools)
+    runtime.orchestra = orchestra
+    runtime.orchestra_voice = voice
     return runtime
