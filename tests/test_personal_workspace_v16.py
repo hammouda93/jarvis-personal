@@ -4,6 +4,7 @@ Fixtures contain no personal data. No network, credential access or UI action
 outside Qt is performed. MCP transport and model responses are simulated.
 """
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -156,14 +157,14 @@ class WorkspaceStoreTests(WorkspaceFixture):
         self.assertEqual(len(self.store.preparations()), 1)
 
     def test_foreign_or_future_database_is_never_migrated_or_replaced(self):
-        with sqlite3.connect(self.store.path) as con:
+        with closing(sqlite3.connect(self.store.path)) as con, con:
             con.execute("CREATE TABLE unrelated(value TEXT)")
             con.execute("INSERT INTO unrelated VALUES ('preserve')")
         before = self.store.path.read_bytes()
         with self.assertRaisesRegex(ValueError, "unrecognized"):
             self.store.save_profile(PROFILE_DEFAULTS, expected_revision=0)
         self.assertEqual(self.store.path.read_bytes(), before)
-        with sqlite3.connect(self.store.path) as con:
+        with closing(sqlite3.connect(self.store.path)) as con, con:
             con.execute("PRAGMA user_version=99")
         with self.assertRaisesRegex(ValueError, "unsupported"):
             self.store.profile()
