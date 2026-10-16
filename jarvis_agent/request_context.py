@@ -416,6 +416,11 @@ class RequestContext:
         self.last_request = {"estimated_tokens": estimated, "original_estimated_tokens": original,
             "budget": limit, "tool_count": len(selected), "admitted": admitted,
             "estimate_only": True}
+        if admitted:
+            # Selection receipts must describe the schemas on the actual API
+            # request, not the wider pre-budget pack prepared earlier.
+            self.exposed = {s.get("function", {}).get("name") for s in selected
+                            if s.get("function", {}).get("name")}
         return messages, selected, admitted
 
     def fallback_tools(self, schemas, messages, *, pressure_minimal=False,
@@ -432,7 +437,11 @@ class RequestContext:
         # Only already admitted schemas can be retained. Authorization
         # still belongs to the original user request + execution registry.
         required = {
-            name for name in preserve_required
+            # A requested schema is a commitment for the next model request.
+            # Dropping it here previously stranded every pressure-limited turn
+            # in a catalogue-only loop. If it cannot fit, admission must stop
+            # locally rather than spend another request selecting it again.
+            name for name in set(preserve_required) | (self.selected or set())
             if name in {
                 str((definition.get("function") or {}).get("name") or "")
                 for definition in schemas

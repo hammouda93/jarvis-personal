@@ -1256,6 +1256,7 @@ class FoundationRuntime:
                 text="La mémorisation persistante n'a pas pu être vérifiée : "
                      + result.message,
                 actions=(result,),
+                pause_reason="memory_write_unverified",
             )
         # A tool success alone is not enough. Read back the exact raw row
         # from SQLite before asserting persistence or returning its receipt.
@@ -1274,6 +1275,7 @@ class FoundationRuntime:
                     "verified": False, "outcome_unknown": True,
                     "reason": "memory_receipt_or_readback_unverified",
                 })),),
+                pause_reason="memory_readback_unverified",
             )
         from .native_tools import AgentActionResult
         from .agent_runtime import AgentTurnResult
@@ -1304,6 +1306,25 @@ class FoundationRuntime:
         return (self.tools.browser_grounding_context()
                 if (was_browser_mode or resume) and self.tools.browser_mode else "")
 
+    def _record_immediate_turn(self, user_text, result, *, log=None):
+        """A local fast path still belongs to the ordinary conversation.
+
+        Keep the exact user source and the verified OR uncertain receipt. This
+        does not call a model, replay a tool or create another memory record.
+        """
+        recorder = getattr(self.delegate, "record_external_turn", None)
+        if not callable(recorder):
+            return
+        action = result.actions[0]
+        try:
+            recorder(user_text, result.text, action_name=action.name,
+                     action_detail=action.detail, success=action.success)
+        except Exception as exc:
+            # A context-sync failure must not turn a committed memory write
+            # into an apparent failed operation that might be replayed.
+            if log:
+                log("[CONTEXT] local_memory_sync_failed=" + type(exc).__name__)
+
     def run(self, user_text, *, log=None, phase=None):
         was_browser_mode = self.tools.browser_mode
         self.tools.begin_turn(user_text)
@@ -1311,6 +1332,7 @@ class FoundationRuntime:
             user_text, log=log, phase=phase,
         )
         if immediate is not None:
+            self._record_immediate_turn(user_text, immediate, log=log)
             return immediate
         browser_context = self._browser_turn_context(was_browser_mode)
         method = getattr(self.delegate, "run_with_context", None)
@@ -1335,6 +1357,7 @@ class FoundationRuntime:
             user_text, log=log, phase=phase,
         )
         if immediate is not None:
+            self._record_immediate_turn(user_text, immediate, log=log)
             return immediate
         browser_context = self._browser_turn_context(was_browser_mode)
         combined_context = "\n\n".join(
