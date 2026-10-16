@@ -5,6 +5,23 @@ habituel, outils Windows, mémoire SQLite et services MCP explicitement connect�
 Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
 distinct de la preuve que l'objectif entier est atteint.
 
+## V16 — espace personnel et gestion quotidienne
+
+La branche `feature/personal-workspace-daily-v16` ajoute **QUOTIDIEN** à
+l’interface : tableau de la journée, activités et échéances, profil personnel,
+préparations d’actions et état des services. Les domaines quotidien, football,
+MS Football et projets logiciels partagent le même stockage local versionné.
+Jarvis peut consulter et modifier ces activités avec des outils dédiés.
+
+Le profil reste vide au départ ; son inclusion automatique dans les requêtes
+est un choix enregistré par l’utilisateur. Les services pourront être reliés
+aux serveurs du centre MCP existant, y compris sous un identifiant personnalisé.
+Une préparation reste locale jusqu’à une véritable exécution via les outils
+autorisés du service. Aucune connexion ni notification permanente n’est simulée.
+
+Voir les [parcours, architecture et essais V16](docs/V16_PERSONAL_WORKSPACE.md).
+Les corrections V15 et les réglages existants sont conservés.
+
 ## Correctif V15 — mémoire utilisable et actions quotidiennes
 
 La branche `fix/daily-use-context-tools-v15` corrige les régressions observées
@@ -80,6 +97,7 @@ Ce candidat nécessite encore une recette Windows réelle et des comptes connect
 | Chrome | Observation DOM, navigation, écriture et onglets ciblés | Extension Browser Bridge dans le profil Chrome habituel |
 | Windows | Découverte d'applications/fichiers, UIA et perception visuelle de secours | Python Windows et dépendances du pilote utilisé |
 | Mémoire | SQLite V5, recherches et outils directs de l'agent | Aucun enregistrement personnel sans demande explicite |
+| Quotidien | Profil, activités, échéances et préparations SQLite ; interface et outils Jarvis | Fuseau et profil choisis par l’utilisateur ; agendas externes via leurs services |
 | Missions | Checkpoints, preuves et reprise contrôlée | Effets incertains examinés avant reprise ; pas de replay automatique |
 | MCP | Centre de connexion, découverte et autorisations par service/outil | Connexion et droits de l'opérateur |
 | MS Football | Outils métier et passerelle déjà présents | Instance et accès configurés ; essais métier réels nécessaires |

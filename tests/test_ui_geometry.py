@@ -122,6 +122,32 @@ class WindowGeometryTests(unittest.TestCase):
         self.assertTrue(self.window.resize_grip.isVisible())
         self.assertEqual(self.window.compact_button.text(), "")
 
+    def test_daily_workspace_is_reachable_at_narrow_window_and_routes_to_mcp(self):
+        self.resize(660, 500)
+        panel = self.window.personal_workspace
+        self.window._show_architecture_section("workspace")
+        self.app.processEvents()
+        self.assertIs(self.window.side_tabs.currentWidget(), panel)
+        for index in range(panel.tabs.count()):
+            panel.tabs.setCurrentIndex(index)
+            self.app.processEvents()
+            self.assertEqual(panel.tabs.currentWidget().horizontalScrollBar().maximum(), 0)
+        panel.connections_requested.emit()
+        self.assertIs(self.window.side_tabs.currentWidget(), self.window.mcp_scroll)
+
+    def test_workspace_handoff_uses_worker_queue_without_overwriting_chat_draft(self):
+        self.window.chat_input.setText("Brouillon personnel à conserver")
+        with patch.object(self.window._thread, "isRunning", return_value=True), \
+                patch.object(self.window._worker, "submit_text", return_value=True) as submit:
+            self.window.personal_workspace.request_ready.emit("Organise ma journée")
+        submit.assert_called_once_with("Organise ma journée")
+        self.assertEqual(self.window.chat_input.text(), "Brouillon personnel à conserver")
+        self.assertIn("confiée", self.window.personal_workspace.status_line.text())
+        with patch.object(self.window._thread, "isRunning", return_value=True), \
+                patch.object(self.window._worker, "submit_text", return_value=False):
+            self.window._on_workspace_request("Nouvelle demande")
+        self.assertIn("n’a pas été ajoutée", self.window.personal_workspace.status_line.text())
+
 
 if __name__ == "__main__":
     unittest.main()

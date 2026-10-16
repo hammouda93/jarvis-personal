@@ -38,6 +38,7 @@ def regression_environment(data_dir: Path) -> dict[str, str]:
     env.update(QT_QPA_PLATFORM="offscreen", JARVIS_DATA_DIR=str(data_dir),
                JARVIS_MCP_CONFIG_PATH=str(data_dir / "mcp_servers.json"),
                JARVIS_AGENT_PROFILES_PATH=str(data_dir / "agent_profiles.json"),
+               JARVIS_PERSONAL_WORKSPACE_PATH=str(data_dir / "personal_workspace.sqlite3"),
                JARVIS_BRAIN_CONFIG_PATH=str(data_dir / "brains.json"))
     return env
 
@@ -60,6 +61,7 @@ def platform_suite(suite: unittest.TestSuite) -> unittest.TestSuite:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pattern", default="test_*.py")
+    parser.add_argument("--verbose", action="store_true", help="Show each test name to locate slow or blocked CI checks.")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root))
@@ -70,7 +72,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="regression-", dir=root / ".cache") as isolated:
         os.environ.update(regression_environment(Path(isolated)))
         suite = unittest.defaultTestLoader.discover("tests", pattern=args.pattern)
-        result = unittest.TextTestRunner(verbosity=1).run(platform_suite(suite))
+        result = unittest.TextTestRunner(verbosity=2 if args.verbose else 1).run(platform_suite(suite))
         for test, reason in result.skipped:
             print(f"Explicit skip: {test.id()}: {reason}")
         gc.collect()

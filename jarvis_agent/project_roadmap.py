@@ -53,7 +53,7 @@ STAGES: tuple[Stage, ...] = (
           "green_ancestor", "not_validated", "tests/test_mission_continuation.py"),
     Stage(10, "skills_learning", "Skills revisionnes et apprentissage opt-in", "in_progress",
           "green_ancestor", "not_validated", "tests/test_operational_preferences.py"),
-    Stage(11, "integrations", "Centre MCP et integrations / taches durables", "in_progress",
+    Stage(11, "integrations", "Centre MCP, espace personnel et tâches durables", "in_progress",
           "pending", "not_validated", "tests/test_mcp_control_center.py"),
 )
 CURRENT_STAGE_KEY = "multi_agent"
@@ -70,13 +70,13 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "development_priority": {
-            "phase": "V15",
-            "title": "Usages quotidiens : mémoire utilisable et actions exécutées",
+            "phase": "V16",
+            "title": "Gestion quotidienne : profil, activités et préparations de services",
             "implementation": "integrated",
             "automated": "local_regression_passed",
             "windows_real": "not_validated",
-            "evidence": "docs/V15_DAILY_USE_REGRESSIONS.md",
-            "next": "Valider mémoire, recherche et applications sur Windows, puis rendre le profil personnel et les activités quotidiennes et métier consultables",
+            "evidence": "docs/V16_PERSONAL_WORKSPACE.md",
+            "next": "Valider profil, journée et suivis métier sur Windows, puis relier les services MCP et vérifier leurs résultats réels",
         },
         "human_windows_evidence": {
             "source": "user_windows_logs_reviewed_2026-10-15",
@@ -101,15 +101,20 @@ def snapshot() -> dict:
                                       "youtube_no_dispatch", "installer_no_dispatch", "incomplete_turn_displayed_as_success"],
             "v15_retest_required": ["saved_movie_followed_by_site_search", "selected_tools_dispatch_after_budget_reduction",
                                     "memory_date_lookup", "notepad_direct_open", "downloaded_installer_discovery"],
+            "v16_retest_required": ["personal_profile_and_timezone", "daily_activity_after_restart",
+                                    "business_follow_up_via_chat", "local_preparation_without_dispatch",
+                                    "mcp_service_binding_and_live_result"],
         },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
-            "CI Windows/Linux verte sur V14 0c10cde (1414 tests Windows). "
+            "CI Windows/Linux verte sur V15 88c952b (1423 tests Windows). "
             "Recette V13 du 15 octobre : mémoire après redémarrage, protection du document et écriture Unicode observées. "
             "Contexte volumineux et résumé navigateur restent à valider. "
             "V14 ajoute les profils opérateur et un budget de requête ; la recette a révélé une perte du fait récent et des outils sélectionnés. "
             "V15 corrige ces régressions et l'affichage des tours suspendus. Recette Windows réelle encore attendue. "
+            "V16 ajoute le profil personnel, les activités datées et les préparations locales dans QUOTIDIEN, accessibles aux outils de Jarvis. "
+            "Les MCP seront connectés séparément ; une préparation ne vaut ni envoi ni résultat externe. "
             "Priorité : gestion quotidienne, football personnel, MS Football et projets logiciels. "
             "Les workers indépendants et leur isolation mémoire restent à développer. "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "

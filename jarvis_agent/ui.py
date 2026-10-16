@@ -991,6 +991,11 @@ class JarvisWindow(QWidget):
         self.architecture_panel.section_requested.connect(self._show_architecture_section)
         self.architecture_panel.review_requested.connect(self._show_mcp_review)
         self.side_tabs.insertTab(1, self.architecture_panel, "ARCHITECTURE")
+        from .workspace_panel import PersonalWorkspacePanel
+        self.personal_workspace = PersonalWorkspacePanel(self)
+        self.personal_workspace.request_ready.connect(self._on_workspace_request)
+        self.personal_workspace.connections_requested.connect(lambda: self.side_tabs.setCurrentWidget(self.mcp_scroll))
+        self.side_tabs.addTab(self.personal_workspace, "QUOTIDIEN")
         self.canvas.setMinimumSize(240, 100)
 
         title = QLabel("PERSONAL JARVIS")
@@ -1514,12 +1519,15 @@ class JarvisWindow(QWidget):
             data = operator_snapshot(max_items=18 if self.operator_full_button.isChecked() else 7)
             self.operator_console.apply_snapshot(data)
             self.architecture_panel.apply_snapshot(data)
+            if self.personal_workspace.isVisible():
+                self.personal_workspace.refresh(data)
         except (OSError, ValueError, RuntimeError):
             # Read-only monitoring must never stop user interaction.
             self.operator_console.mode_line.setText("Télémétrie temporairement indisponible")
 
     def _show_architecture_section(self, section: str) -> None:
         target = {"control": self.operator_console, "mcp": self.mcp_scroll,
+                  "workspace": self.personal_workspace,
                   "brains": self.brain_scroll, "skills": self.operator_console}.get(section)
         if target is not None:
             self.side_tabs.setCurrentWidget(target)
@@ -1529,6 +1537,18 @@ class JarvisWindow(QWidget):
     def _show_mcp_review(self, server: str, attempt: int) -> None:
         self.side_tabs.setCurrentWidget(self.mcp_scroll)
         self.operator_console.mcp_panel.focus_review(server, attempt)
+
+    def _on_workspace_request(self, text: str) -> None:
+        # Exactly the ordinary typed-turn queue, without overwriting a draft
+        # in the chat entry or running the agent/MCP on the GUI thread.
+        if not self._thread.isRunning():
+            self.personal_workspace.status_line.setText("Le moteur Jarvis n’est pas actif.")
+            return
+        if self._worker.submit_text(text):
+            self.canvas.begin_request("conversation")
+            self.personal_workspace.status_line.setText("Demande confiée à Jarvis. La réponse arrive dans la conversation.")
+        else:
+            self.personal_workspace.status_line.setText("La demande n’a pas été ajoutée. Réessaie quand la file de Jarvis est disponible.")
 
     def _on_skill_request(self, operation: str, value: str) -> None:
         panel = (self.operator_console.operational_preferences if operation == "policy_set"
