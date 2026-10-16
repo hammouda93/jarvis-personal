@@ -52,9 +52,22 @@ class WorkerToolGate:
         if self.policy["role"] == "ms_football":
             connectors.add("ms_football")
         assigned = self.policy.get("tools")
+        # A Gmail binding may use a custom or shared MCP server ID. Only its
+        # Gmail reads join Communications; unrelated tools on that server do
+        # not become part of this role through the binding.
+        gmail_server = ""
+        if self.policy["role"] == "communications":
+            from .personal_workspace import PersonalWorkspaceStore
+            gmail_server = (PersonalWorkspaceStore().bindings().get("gmail") or {}).get("server", "")
+        def bound_gmail_read(item):
+            if not gmail_server or item["server"] != gmail_server:
+                return False
+            from .gmail_connection import tool_group
+            entry = self.mcp_tools.registry.get_server(gmail_server) or {}
+            return tool_group(item["tool"], entry) == "read"
         remote = {alias for alias, item in self.mcp_tools._available().items()
             if self.mcp_tools._automatic_read(alias)
-            and (alias in assigned if assigned is not None else self.policy["role"] in {"interaction", "mcp"} or item["server"] in connectors)}
+            and (alias in assigned if assigned is not None else self.policy["role"] in {"interaction", "mcp"} or item["server"] in connectors or bound_gmail_read(item))}
         choices = ((base & native) | remote)
         if assigned is not None:
             choices &= set(assigned) | {"workspace_read", "get_current_time"}

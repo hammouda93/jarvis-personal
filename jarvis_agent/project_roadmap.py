@@ -70,13 +70,13 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "development_priority": {
-            "phase": "V17",
-            "title": "Orchestre, contextes spécialisés, univers interactif et veille bornée",
+            "phase": "V18",
+            "title": "Connexion Gmail guidée et capacités réelles dans l’orchestre",
             "implementation": "integrated",
             "automated": "local_regression_passed",
             "windows_real": "not_validated",
-            "evidence": "docs/V17_ORCHESTRA_SPACE_WATCH.md",
-            "next": "Valider les équipes et la veille sur Windows, puis connecter les MCP et vérifier les appels réels",
+            "evidence": "docs/V18_GMAIL_CONNECTION.md",
+            "next": "Connecter Gmail sur Windows, vérifier le compte et ses outils, puis préparer Calendar",
         },
         "human_windows_evidence": {
             "source": "user_windows_logs_reviewed_2026-10-15",
@@ -106,11 +106,13 @@ def snapshot() -> dict:
                                     "mcp_service_binding_and_live_result"],
             "v17_retest_required": ["isolated_specialist_reports", "spatial_cockpit_windows",
                                     "scheduled_work_on_awake_machine", "owner_voice_mcp_and_actual_phone_session"],
+            "v18_retest_required": ["pipedream_google_oauth_on_owner_pc", "actual_gmail_inventory_and_account_identity",
+                                    "gmail_reads_with_configured_brains", "confirmed_gmail_write_and_service_receipt"],
         },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
             "9A-9C preservees; supervision, delegation et transports MCP integres. "
-            "CI Windows/Linux verte sur V16 eb3c54c (1454 tests Windows). "
+            "CI Windows/Linux verte sur V17 8b463a6 (1490 tests Windows). "
             "Recette V13 du 15 octobre : mémoire après redémarrage, protection du document et écriture Unicode observées. "
             "Contexte volumineux et résumé navigateur restent à valider. "
             "V14 ajoute les profils opérateur et un budget de requête ; la recette a révélé une perte du fait récent et des outils sélectionnés. "
@@ -120,6 +122,7 @@ def snapshot() -> dict:
             "Priorité : gestion quotidienne, football personnel, MS Football et projets logiciels. "
             "V17 ajoute des conversations spécialisées séparées, deux analyses parallèles, une file de veille locale et un univers interactif. "
             "Les agents lisent et préparent ; les actions externes restent à Jarvis. La téléphonie exige un service MCP vocal réel. "
+            "V18 ajoute la connexion Gmail guidée via Pipedream ou un serveur existant, la sélection des capacités et une vérification du compte. "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."

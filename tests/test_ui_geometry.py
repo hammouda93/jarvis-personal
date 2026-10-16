@@ -52,11 +52,11 @@ class WindowGeometryTests(unittest.TestCase):
         self.assertTrue(panel.isVisible())
         self.assertFalse(self.window.operator_console.scroll_area.isAncestorOf(panel))
         for page in (panel.workspace_page, panel.services_page,
-                     panel.catalog_page, panel.add_page):
+                     panel.catalog_page, panel.add_page, panel.gmail_panel):
             panel.tabs.setCurrentWidget(page)
             self.app.processEvents()
             self.assertEqual(self.window.mcp_scroll.horizontalScrollBar().maximum(), 0)
-        self.assertEqual(panel.tabs.count(), 4)
+        self.assertEqual(panel.tabs.count(), 5)
         self.assertEqual(panel.tabs.tabText(0), "Mon espace")
 
     def test_small_logical_screen_with_text_entry_keeps_window_controls_accessible(self):

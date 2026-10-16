@@ -5,6 +5,24 @@ habituel, outils Windows, mémoire SQLite et services MCP explicitement connect�
 Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
 distinct de la preuve que l'objectif entier est atteint.
 
+## V18 — connecter Gmail depuis l’interface
+
+La branche `feature/gmail-connector-onboarding-v18`, issue de V17, ajoute un
+parcours **MCP → Gmail** : connexion Google gérée par Pipedream, découverte des
+outils réels, choix des capacités puis vérification de la boîte par Jarvis.
+Un serveur MCP Gmail déjà configuré reste utilisable avec son authentification.
+
+L’interface regroupe lecture, brouillons, envoi, classement et suppression selon
+les outils effectivement découverts. Les lectures sélectionnées peuvent être
+préautorisées ; les envois et modifications conservent leurs confirmations.
+Le spécialiste Communications peut utiliser les lectures Gmail autorisées,
+avec son contexte isolé. Les cerveaux Cerebras/Groq et les fonctions V17 sont
+conservés.
+
+**Le compte personnel reste à connecter sur le PC Windows.** Les essais
+automatiques utilisent des transports simulés ; aucun mail réel n’a été envoyé.
+Voir le [guide de connexion et d’essai Gmail](docs/V18_GMAIL_CONNECTION.md).
+
 ## V17 — chef d’orchestre, univers spatial et veille
 
 La branche `feature/orchestra-space-watch-v17`, issue de V16, ajoute de vraies

@@ -20,6 +20,13 @@ _ID = re.compile(r"^[a-z][a-z0-9_]{0,35}$")
 _TOOL = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
+def connection_fingerprint(entry):
+    """Metadata identity for an operator review; contains no credentials."""
+    value = {k: entry.get(k) for k in ("kind", "url", "command", "args", "env_refs", "trusted_stdio",
+        "credential_source", "credential_revision", "last_discovery_success_utc", "enabled", "connection_state")}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+
+
 def config_path() -> Path:
     custom = os.getenv("JARVIS_MCP_CONFIG_PATH", "").strip()
     if custom:
@@ -319,6 +326,35 @@ class MCPRegistry:
             entry["auto_read_fingerprints"] = {}
             self._write(data)
 
+    def apply_tool_review(self, server_id, *, expected_connection, reviewed, selected, automatic_reads):
+        """Atomic operator review of an observed subset, never a tool call."""
+        from .mcp_read_policy import is_conservative_read_tool
+        if (not isinstance(reviewed, dict) or not isinstance(selected, list) or
+                any(n not in reviewed for n in selected) or type(automatic_reads) is not bool):
+            raise ValueError("gmail_invalid_selection")
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not entry or entry.get("enabled") is not True or not entry.get("last_discovery_success_utc"):
+                raise ValueError("mcp_read_autopilot_needs_tested_connection")
+            if connection_fingerprint(entry) != expected_connection:
+                raise ValueError("gmail_connection_changed")
+            tools = entry.get("tools") or {}
+            if any(name not in tools or tools[name].get("fingerprint") != fingerprint for name, fingerprint in reviewed.items()):
+                raise ValueError("mcp_tool_review_changed")
+            pinned = dict(entry.get("auto_read_fingerprints") or {})
+            for name in reviewed:
+                tools[name]["allowed"] = name in selected
+                tools[name]["blocked"] = name not in selected
+                pinned.pop(name, None)
+                if name in selected and automatic_reads and is_conservative_read_tool(name, tools[name].get("input_schema")):
+                    pinned[name] = tools[name]["fingerprint"]
+            entry["auto_read_fingerprints"] = pinned
+            entry["auto_read_enabled"] = bool(pinned)
+            self._write(data)
+            return {"selected": len(selected), "automatic_reads": sum(n in pinned for n in reviewed),
+                    "writes_require_confirmation": True}
+
     def set_credential_source(self, server_id: str, source: str) -> None:
         if source not in {"environment", "vault", "none", "oauth", "api_key"}:
             raise ValueError("invalid_mcp_credential_source")
@@ -328,6 +364,7 @@ class MCPRegistry:
             if not isinstance(entry, dict) or entry.get("kind") != "http":
                 raise ValueError("http_server_required_for_bearer")
             entry["credential_source"] = source
+            entry["credential_revision"] = int(entry.get("credential_revision") or 0) + 1
             self._write(data)
 
     def set_api_key_header(self, server_id: str, header: str) -> None:
@@ -340,6 +377,7 @@ class MCPRegistry:
                 raise ValueError("http_server_required_for_api_key")
             entry["api_key_header"] = header
             entry["credential_source"] = "api_key"
+            entry["credential_revision"] = int(entry.get("credential_revision") or 0) + 1
             self._write(data)
 
     def remove_server(self, server_id: str) -> None:

@@ -1548,6 +1548,7 @@ class JarvisWindow(QWidget):
         self.operator_console.mission_requested.connect(self._on_mission_request)
         self._worker.mcp_control_result.connect(self.operator_console.show_mcp_result)
         self.operator_console.mcp_requested.connect(self._on_mcp_request)
+        self.operator_console.mcp_panel.request_ready.connect(self._on_gmail_request)
         self._worker.skill_control_result.connect(self._on_skill_result)
         self.operator_console.skill_requested.connect(self._on_skill_request)
 
@@ -1668,6 +1669,14 @@ class JarvisWindow(QWidget):
             self.operator_console.mcp_panel.feedback.setText(
                 "Commande en attente dans le worker ; aucune action de modèle lancée."
             )
+
+    def _on_gmail_request(self, text):
+        panel = self.operator_console.mcp_panel.gmail_panel
+        if self._thread.isRunning() and self._worker.submit_text(text):
+            self.canvas.begin_request("conversation")
+            panel.feedback.setText("Demande confiée à Jarvis ; le résultat apparaîtra dans la conversation.")
+        else:
+            panel.feedback.setText("Demande non ajoutée. Vérifie que Jarvis est actif et que sa file est disponible.")
 
     def _on_mission_request(self, operation: str, value: str) -> None:
         """UI only submits a command; all mission methods run on worker."""
