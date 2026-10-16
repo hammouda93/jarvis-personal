@@ -8,6 +8,9 @@ import sys
 import tempfile
 import faulthandler
 import gc
+import threading
+import time
+from functools import partial
 import unittest
 
 
@@ -19,17 +22,79 @@ WINDOWS_ONLY = frozenset({
 })
 
 
+class ProgressWatchdog:
+    """One reusable Python thread; never recreate native timers per test."""
+
+    def __init__(self, *, timeout=180, clock=time.monotonic):
+        self.timeout, self.clock = timeout, clock
+        self.deadline = None
+        self._lock = threading.Lock()
+        self._wake, self._stop = threading.Event(), threading.Event()
+        self.thread = None
+
+    def start(self):
+        if self.thread is None:
+            self.thread = threading.Thread(target=self._run,
+                name="jarvis-regression-watchdog", daemon=True)
+            self.thread.start()
+
+    def arm(self):
+        with self._lock:
+            self.deadline = self.clock() + self.timeout
+        self._wake.set()
+
+    def disarm(self):
+        with self._lock:
+            self.deadline = None
+        self._wake.set()
+
+    def expired(self):
+        with self._lock:
+            if self.deadline is None or self.clock() < self.deadline:
+                return False
+            self.deadline = None
+            return True
+
+    def _run(self):
+        while not self._stop.is_set():
+            self._wake.clear()
+            with self._lock:
+                delay = max(0, self.deadline - self.clock()) if self.deadline is not None else None
+            if self._wake.wait(delay):
+                continue
+            if not self._stop.is_set() and self.expired():
+                print("Regression stalled for " + str(self.timeout) + " seconds; current stacks:", file=sys.stderr)
+                faulthandler.dump_traceback(all_threads=True)
+
+    def close(self):
+        self._stop.set()
+        self._wake.set()
+        if self.thread is not None:
+            self.thread.join(timeout=1)
+
+
 class ProgressTestResult(unittest.TextTestResult):
     """Diagnose a stalled test, rather than the age of the entire suite."""
 
+    def __init__(self, *args, watchdog=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.watchdog = watchdog or ProgressWatchdog()
+
+    def startTestRun(self):
+        self.watchdog.start()
+        super().startTestRun()
+
     def startTest(self, test):
-        faulthandler.cancel_dump_traceback_later()
-        faulthandler.dump_traceback_later(180, repeat=False)
+        self.watchdog.arm()
         super().startTest(test)
 
     def stopTest(self, test):
-        faulthandler.cancel_dump_traceback_later()
+        self.watchdog.disarm()
         super().stopTest(test)
+
+    def stopTestRun(self):
+        self.watchdog.close()
+        super().stopTestRun()
 
 
 def regression_environment(data_dir: Path) -> dict[str, str]:
@@ -82,16 +147,20 @@ def main() -> int:
     os.chdir(root)
     # Global memory stores initialize at import. Never use personal data in tests.
     (root / ".cache").mkdir(exist_ok=True)
-    faulthandler.dump_traceback_later(180, repeat=False)
-    with tempfile.TemporaryDirectory(prefix="regression-", dir=root / ".cache") as isolated:
-        os.environ.update(regression_environment(Path(isolated)))
-        suite = unittest.defaultTestLoader.discover("tests", pattern=args.pattern)
-        result = unittest.TextTestRunner(verbosity=2 if args.verbose else 1,
-            resultclass=ProgressTestResult).run(platform_suite(suite))
-        for test, reason in result.skipped:
-            print(f"Explicit skip: {test.id()}: {reason}")
-        gc.collect()
-    faulthandler.cancel_dump_traceback_later()
+    watchdog = ProgressWatchdog()
+    watchdog.start()
+    watchdog.arm()
+    try:
+        with tempfile.TemporaryDirectory(prefix="regression-", dir=root / ".cache") as isolated:
+            os.environ.update(regression_environment(Path(isolated)))
+            suite = unittest.defaultTestLoader.discover("tests", pattern=args.pattern)
+            result = unittest.TextTestRunner(verbosity=2 if args.verbose else 1,
+                resultclass=partial(ProgressTestResult, watchdog=watchdog)).run(platform_suite(suite))
+            for test, reason in result.skipped:
+                print(f"Explicit skip: {test.id()}: {reason}")
+            gc.collect()
+    finally:
+        watchdog.close()
     print(f"Automated regression: {result.testsRun} tests, "
           f"{len(result.failures)} failures, {len(result.errors)} errors, "
           f"{len(result.skipped)} explicit skips. Live acceptance NOT performed.")
