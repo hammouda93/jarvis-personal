@@ -211,3 +211,26 @@ class GmailUITests(Fixture):
         self.assertIn("http_status=400", " ".join(logs))
         self.assertNotIn("PRIVATE", str(results) + str(logs) + str(stages))
         self.assertTrue(worker._mcp_control.submit("connect", "another"))
+
+    def test_worker_and_panel_expose_inventory_method_and_code_without_private_body(self):
+        from jarvis_agent.mcp_sdk_transport import MCPUnavailable
+        with patch.object(AssistantWorker, "__init__", lambda self: QObject.__init__(self)):
+            worker = AssistantWorker()
+        worker._mcp_registry, worker._mcp_control = self.registry, MCPControlInbox()
+        command = MCPCommand("gmail_connect", "gmail", json.dumps({"provider": "pipedream", "binding_revision": 0}))
+        worker._mcp_control.submit(command.operation, command.server_id, command.value)
+        results, logs = [], []
+        worker.mcp_control_result.connect(results.append)
+        worker.log_line.connect(logs.append)
+        panel = self.panel()
+        worker.mcp_control_result.connect(panel.show_result)
+        def fail(*args, **kwargs):
+            kwargs["progress"]({"stage": "service_inventory"})
+            raise ExceptionGroup("PRIVATE_BODY", [MCPUnavailable("PRIVATE_BODY",
+                rpc_method="resources/templates/list", rpc_code=-32602)])
+        with patch("jarvis_agent.assistant_v3.perform_mcp_command", side_effect=fail):
+            worker._run_mcp_control(command)
+        self.assertIn("resources/templates/list", panel.feedback.text())
+        self.assertIn("-32602", panel.feedback.text())
+        self.assertIn("rpc_method=resources/templates/list", " ".join(logs))
+        self.assertNotIn("PRIVATE", str(results) + str(logs) + panel.feedback.text())

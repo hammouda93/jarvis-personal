@@ -78,6 +78,25 @@ Un échec affiche son étape et, lorsqu’ils sont disponibles, le statut HTTP e
 code OAuth reconnu. Les corps de réponse, codes d’autorisation, jetons et URL
 de retour ne sont pas recopiés dans ces diagnostics.
 
+Après une autorisation réussie, Jarvis distingue les outils exécutables des
+métadonnées facultatives. Un refus JSON-RPC `MethodNotFound` (`-32601`) pour
+`resources/list`, `resources/templates/list` ou `prompts/list` ne bloque plus les
+outils découverts. L’inventaire correspondant est signalé comme partiel. Un échec
+de `tools/list`, d’authentification ou un autre refus reste bloquant : les outils
+anciens ne sont pas activés à la place d’une nouvelle vérification.
+
+Si OAuth a enregistré ses identifiants et des outils Gmail avant un échec de
+l’inventaire, le bouton reprend cette vérification avec le coffre existant.
+Il ne refait pas le consentement dans ce cas précis. Une déconnexion explicite,
+une autorisation révoquée ou un changement de fournisseur garde le parcours
+normal. Un échec RPC indique maintenant aussi la méthode et son code numérique,
+sans recopier le message ni les données du serveur.
+
+Le journal utilisateur du 16 octobre confirme les étapes `credentials_storage`
+et `authorized`, suivies d’un échec `MCPError` à `service_inventory`. Il ne donne
+pas encore la méthode ni le code : le refus d’une métadonnée facultative est un
+cas reproduit et corrigé, pas une attribution certaine de cet échec réel.
+
 La page de retour local distingue un retour accepté d’un retour refusé.
 Un retour accepté confirme uniquement la réception de l’autorisation ; le
 résultat de connexion se vérifie dans Jarvis après l’échange du code, la session
@@ -89,9 +108,9 @@ et des réponses distantes de test. Il vérifie en une fois le callback sans
 paramètre `iss`, la cohérence des scopes, l’échange du code, la session MCP,
 l’inventaire et l’enregistrement au coffre. Les refus de jeton, l’annulation,
 le budget interactif et le maintien de l’interface occupée sont aussi testés.
-Cela ne certifie pas l’accès à une boîte réelle. Le journal de l’essai utilisateur
-précédent n’indiquait pas assez de détails pour attribuer avec certitude son
-échec au défaut de scopes ; le nouvel essai doit le confirmer ou donner sa cause.
+Le parcours complet couvre aussi les trois listes facultatives non implémentées,
+les refus bloquants et la reprise avec les identifiants enregistrés, sans nouvel
+échange OAuth ni appel à la boîte. Cela ne certifie pas l’accès à une boîte réelle.
 
 Pour une première utilisation réelle, vérifier le compte puis demander une
 lecture sans modification. Un envoi de test doit être demandé explicitement et

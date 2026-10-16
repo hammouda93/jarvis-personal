@@ -277,7 +277,7 @@ class GmailConnectionPanel(QFrame):
             revision = (self.workspace.bindings().get("gmail") or {}).get("revision", 0)
             self._pending_server = sid
             self.set_busy(True)
-            self.feedback.setText("Connexion demandée. Le navigateur va s’ouvrir : utilise ton compte Pipedream MCP, sélectionne Gmail et termine le consentement, puis reviens dans Jarvis.")
+            self.feedback.setText("Jarvis vérifie ta connexion. Si une autorisation est nécessaire, le navigateur s’ouvrira : utilise ton compte Pipedream MCP, sélectionne Gmail et termine le consentement, puis reviens dans Jarvis.")
             self.requested.emit("gmail_connect", sid, json.dumps({"provider": self.provider.currentData(), "binding_revision": revision, "access": access}))
         except (ValueError, KeyError, OSError, sqlite3.Error):
             self.feedback.setText("Configuration indisponible. Recharge avant de réessayer.")
@@ -350,6 +350,10 @@ class GmailConnectionPanel(QFrame):
                 from .mcp_oauth import OAUTH_ERRORS
                 if details.get("oauth_error") in OAUTH_ERRORS:
                     message += " Code : " + details["oauth_error"] + "."
+                from .mcp_sdk_transport import INVENTORY_RPC_METHODS
+                method, code = details.get("rpc_method"), details.get("rpc_code")
+                if method in INVENTORY_RPC_METHODS and type(code) is int and -(2**31) <= code < 2**31:
+                    message += "\nAppel MCP : " + method + " ; code " + str(code) + "."
                 self.feedback.setText(message)
         self.refresh()
 

@@ -81,6 +81,47 @@ class PluginConnectionTests(Fixture):
         self.assertFalse(self.registry.get_server("gmail")["enabled"])
         self.assertEqual(self.transport.calls,[])
 
+    def test_inventory_retry_reuses_oauth_but_requires_fresh_discovery_before_grant(self):
+        original = self.transport.inventory
+        def broken_inventory(entry):
+            original(entry)
+            raise MCPUnavailable("mcp_inventory_rpc_failed", rpc_method="resources/list", rpc_code=-32000)
+        with patch.object(self.transport, "inventory", side_effect=broken_inventory):
+            with self.assertRaises(MCPUnavailable):
+                self.ready()
+        failed = self.registry.get_server("gmail")
+        self.assertEqual(failed["credential_source"], "oauth")
+        self.assertEqual(failed["connection_state"], "transport_error")
+        self.assertFalse(failed["enabled"])
+        self.assertFalse(self.registry.runtime_enabled())
+        self.assertFalse(any(t["allowed"] for t in snapshot(self.registry, self.workspace)["tools"]))
+        # Failed attempts still observe the existing cooldown/quota policy.
+        activity = self.registry.activity()
+        later = time.time() + 20
+        activity.clock = lambda: later
+        self.transport.tools = [schema("GMAIL-SEARCH-EMAILS"), schema("list_calendar_events")]
+        with patch.object(self.registry, "activity", return_value=activity):
+            result = self.ready()
+        self.assertTrue(result["success"])
+        self.assertEqual(len(self.transport.authorizations), 1)
+        self.assertEqual(self.transport.inventories, ["gmail", "gmail"])
+        self.assertEqual([t["name"] for t in result["gmail"]["tools"]], ["GMAIL-SEARCH-EMAILS"])
+        self.assertTrue(all(t["allowed"] for t in result["gmail"]["tools"]))
+        self.assertFalse(self.registry.is_allowed("gmail", "list_calendar_events"))
+        self.assertEqual(self.transport.calls, [])
+
+    def test_revoked_authorization_and_explicit_disconnect_still_request_consent(self):
+        for reason in ("authorization_required", "disconnected"):
+            with self.subTest(reason=reason):
+                sid = "gmail_" + reason
+                self.ready(sid=sid)
+                self.command("disconnect", {}, sid)
+                self.registry.note_connection_state(sid, reason)
+                before = len(self.transport.authorizations)
+                self.ready(sid=sid)
+                self.assertEqual(len(self.transport.authorizations), before + 1)
+        self.assertEqual(self.transport.calls, [])
+
     def test_connection_change_before_atomic_grant_does_not_activate_runtime(self):
         original=self.registry.apply_tool_review
         def conflict(server, **review):

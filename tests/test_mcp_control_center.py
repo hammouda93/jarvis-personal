@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from mcp.shared.exceptions import MCPError
 from mcp.types import (ListPromptsResult, ListResourcesResult, ListResourceTemplatesResult,
     ListToolsResult, PaginatedRequestParams, Prompt, PromptsCapability, Resource,
     ResourcesCapability, ResourceTemplate, ServerCapabilities, Tool, ToolsCapability)
@@ -19,6 +20,7 @@ from jarvis_agent.mcp_control import (MCPCommand, MCPControlInbox, connection_fa
     perform_mcp_command)
 from jarvis_agent.mcp_credentials import CredentialVault
 from jarvis_agent.mcp_operator_panel import MCPConnectionsPanel
+from jarvis_agent.mcp_oauth import connection_diagnostic
 from jarvis_agent.mcp_sdk_transport import MCPUnavailable, OfficialMCPTransport, session_inventory
 from jarvis_agent.mcp_server_registry import MCPRegistry
 from jarvis_agent.mcp_tool_registry import MCPToolRegistry
@@ -115,6 +117,26 @@ class InventoryTests(unittest.IsolatedAsyncioTestCase):
         initialized = SimpleNamespace(capabilities=ServerCapabilities(tools=ToolsCapability(), resources=ResourcesCapability()))
         await session_inventory(session, initialized, tools_only=True)
         self.assertEqual([x[0] for x in session.calls], ["tools", "tools"])
+
+    async def test_inventory_recovers_only_optional_method_not_found(self):
+        initialized = SimpleNamespace(capabilities=ServerCapabilities(tools=ToolsCapability(),
+            resources=ResourcesCapability(), prompts=PromptsCapability()))
+        cases = [("list_tools", "tools/list", -32601),
+                 ("list_resources", "resources/list", -32000),
+                 ("list_resource_templates", "resources/templates/list", -32602),
+                 ("list_prompts", "prompts/list", -32001)]
+        for method, rpc, code in cases:
+            with self.subTest(method=rpc, code=code):
+                session = InventorySession()
+                async def fail(*args, **kwargs):
+                    raise MCPError(code, "PRIVATE_REMOTE_BODY", data={"secret": "PRIVATE"})
+                setattr(session, method, fail)
+                with self.assertRaises(MCPUnavailable) as caught:
+                    await session_inventory(session, initialized)
+                details = connection_diagnostic(caught.exception, stage="service_inventory")
+                self.assertEqual(details["rpc_method"], rpc)
+                self.assertEqual(details["rpc_code"], code)
+                self.assertNotIn("PRIVATE", str(details) + str(caught.exception))
 
 
 class ControlCenterTests(unittest.TestCase):

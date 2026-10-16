@@ -32,6 +32,7 @@ _ERROR_TYPES = frozenset({"OAuthFlowError", "OAuthTokenError", "OAuthRegistratio
 
 def connection_diagnostic(exc, *, stage="preparing"):
     """Only local enums/status numbers. Never retain exception text or URLs."""
+    from .mcp_sdk_transport import INVENTORY_RPC_METHODS
     pending, seen, details = [exc], set(), {}
     while pending and len(seen) < 32:
         item = pending.pop(0)
@@ -48,6 +49,9 @@ def connection_diagnostic(exc, *, stage="preparing"):
         status = getattr(getattr(item, "response", None), "status_code", None)
         if type(status) is int and 100 <= status <= 599:
             details["http_status"] = status
+        method, code = getattr(item, "rpc_method", ""), getattr(item, "rpc_code", None)
+        if method in INVENTORY_RPC_METHODS and type(code) is int and -(2**31) <= code < 2**31:
+            details.update(rpc_method=method, rpc_code=code)
         pending.extend(getattr(item, "exceptions", ()))
         if item.__cause__ is not None:
             pending.append(item.__cause__)
@@ -67,6 +71,10 @@ class OAuthConnectionFailure(RuntimeError):
             self.diagnostic["http_status"] = status
         if diagnostic.get("oauth_error") in OAUTH_ERRORS:
             self.diagnostic["oauth_error"] = diagnostic["oauth_error"]
+        from .mcp_sdk_transport import INVENTORY_RPC_METHODS
+        method, code = diagnostic.get("rpc_method"), diagnostic.get("rpc_code")
+        if method in INVENTORY_RPC_METHODS and type(code) is int and -(2**31) <= code < 2**31:
+            self.diagnostic.update(rpc_method=method, rpc_code=code)
         super().__init__(self.reason)
 
 

@@ -12,6 +12,10 @@ import tempfile
 from typing import Any
 
 
+INVENTORY_RPC_METHODS = frozenset({"initialize", "tools/list", "resources/list",
+                                  "resources/templates/list", "prompts/list"})
+
+
 def tool_reply_envelope(reply) -> dict:
     """Bound external data explicitly; never silently turn a prefix into a list.
 
@@ -52,6 +56,7 @@ def tool_reply_envelope(reply) -> dict:
 
 async def session_inventory(session, initialized, *, tools_only=False) -> dict:
     """Read bounded metadata only; never fetch a resource or execute a prompt."""
+    from mcp.shared.exceptions import MCPError
     from mcp.types import PaginatedRequestParams
     capabilities = getattr(initialized, "capabilities", None)
     declared = {name: getattr(capabilities, name, None) is not None
@@ -60,18 +65,28 @@ async def session_inventory(session, initialized, *, tools_only=False) -> dict:
         declared["tools"] = True  # compatibility with older injected sessions
     result = {"tools": [], "resources": [], "prompts": [], "resource_templates": [],
               "capabilities": declared, "truncated": []}
-    methods = [("tools", "list_tools", "tools")]
+    methods = [("tools", "list_tools", "tools", "tools/list")]
     if not tools_only:
-        methods += [("resources", "list_resources", "resources"),
-                    ("resources", "list_resource_templates", "resource_templates"),
-                    ("prompts", "list_prompts", "prompts")]
-    for capability, method_name, field in methods:
+        methods += [("resources", "list_resources", "resources", "resources/list"),
+                    ("resources", "list_resource_templates", "resource_templates", "resources/templates/list"),
+                    ("prompts", "list_prompts", "prompts", "prompts/list")]
+    for capability, method_name, field, rpc_method in methods:
         if not declared[capability]:
             continue
         method = getattr(session, method_name)
         cursor, seen, found = None, set(), []
         for _ in range(9):
-            listing = await method() if cursor is None else await method(params=PaginatedRequestParams(cursor=cursor))
+            try:
+                listing = await method() if cursor is None else await method(params=PaginatedRequestParams(cursor=cursor))
+            except MCPError as exc:
+                # Some servers advertise resources but omit one of its list
+                # methods. Only an explicit MethodNotFound is recoverable;
+                # tool discovery, authentication and other errors stay fatal.
+                if field != "tools" and exc.code == -32601:
+                    result["truncated"].append(field)
+                    break
+                raise MCPUnavailable("mcp_inventory_rpc_failed", rpc_method=rpc_method,
+                                     rpc_code=exc.code) from exc
             found.extend(getattr(listing, field, None) or
                          getattr(listing, "resourceTemplates", None) or [])
             next_cursor = getattr(listing, "next_cursor", None) or getattr(listing, "nextCursor", None)
@@ -104,9 +119,12 @@ async def session_inventory(session, initialized, *, tools_only=False) -> dict:
 
 
 class MCPUnavailable(RuntimeError):
-    def __init__(self, message: str, *, outcome_unknown: bool = False):
+    def __init__(self, message: str, *, outcome_unknown: bool = False,
+                 rpc_method: str = "", rpc_code=None):
         super().__init__(message)
         self.outcome_unknown = outcome_unknown
+        self.rpc_method = rpc_method if rpc_method in INVENTORY_RPC_METHODS else ""
+        self.rpc_code = rpc_code if type(rpc_code) is int and -(2**31) <= rpc_code < 2**31 else None
 
 
 class OfficialMCPTransport:
@@ -124,8 +142,15 @@ class OfficialMCPTransport:
             raise MCPUnavailable("optional_mcp_sdk_not_installed") from exc
 
         async def proceed(read, write):
+            from mcp.shared.exceptions import MCPError
             async with ClientSession(read, write) as session:
-                initialized = await session.initialize()
+                try:
+                    initialized = await session.initialize()
+                except MCPError as exc:
+                    if operation not in {"discover", "inventory"}:
+                        raise
+                    raise MCPUnavailable("mcp_inventory_rpc_failed", rpc_method="initialize",
+                                         rpc_code=exc.code) from exc
                 if operation in {"discover", "inventory"}:
                     if oauth_flow is not None:
                         oauth_flow.set_stage("tools_discovery")

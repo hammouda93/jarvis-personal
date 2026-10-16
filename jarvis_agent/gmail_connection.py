@@ -152,7 +152,14 @@ def connect(registry, server_id, packet, *, command_runner, workspace=None, stop
             entry = registry.get_server(server_id)
         if stop_event is not None and stop_event.is_set():
             raise ValueError("gmail_oauth_cancelled")
-        command_runner("oauth_authorize", server_id, json.dumps({"scope": PIPEDREAM_SCOPE}))
+        # OAuth already committed its credentials and tools before a later
+        # inventory failure. Retry that inventory without another consent or
+        # client registration. Cached tools never substitute for a fresh test.
+        resume = (entry.get("credential_source") == "oauth" and not entry.get("enabled")
+                  and entry.get("connection_state") == "transport_error"
+                  and any(tool_group(name, entry) for name in (entry.get("tools") or {})))
+        if not resume:
+            command_runner("oauth_authorize", server_id, json.dumps({"scope": PIPEDREAM_SCOPE}))
         current = registry.get_server(server_id)
         if not current or current.get("url") != PIPEDREAM_ENDPOINT or current.get("credential_source") != "oauth":
             raise ValueError("gmail_connection_changed")
