@@ -127,6 +127,24 @@ class MCPAutonomyTests(unittest.TestCase):
         self.assertNotIn("PRIVATE-MCP-OUTPUT", logs)
         self.assertIn("mcp__orbitdata__get_me", logs)
 
+    def test_nested_transport_error_keeps_lock_and_exposes_only_safe_diagnostic(self):
+        import httpx2
+        from jarvis_agent.mcp_result import receipt_metadata
+        error = httpx2.HTTPStatusError("PRIVATE_BODY", request=httpx2.Request("POST",
+            "https://fixture.example/PRIVATE_URL"), response=httpx2.Response(503))
+        self.transport.call_tool.side_effect = ExceptionGroup("PRIVATE_GROUP", [error])
+        result = self.run_agent([response(("mcp__orbitdata__get_me", {}))])
+        self.assertEqual(result.pause_reason, "mcp_outcome_unknown")
+        diagnostic = json.loads(result.actions[0].detail)["diagnostic"]
+        self.assertEqual(diagnostic, {"error_type": "HTTPStatusError", "http_status": 503})
+        logs = " ".join(self.logs)
+        self.assertIn('"http_status": 503', logs)
+        self.assertNotIn("PRIVATE", logs + result.text + result.actions[0].detail)
+        self.assertEqual(self.registry.activity().summary("orbitdata")["last_outcome"], "unknown")
+        self.assertEqual(receipt_metadata({"diagnostic": {"error_type": [],
+            "rpc_method": {"private": "PRIVATE"}, "rpc_code": True, "http_status": True},
+            "mcp_output": "PRIVATE"}), {"content_omitted": True})
+
     def test_review_receipt_is_exact_beyond_twenty_unresolved_tools(self):
         now = [1000.0]
         activity = MCPActivityStore(self.registry.path.parent / "many.sqlite3",

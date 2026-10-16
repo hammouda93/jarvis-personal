@@ -279,7 +279,7 @@ class MCPConnectionsPanel(QFrame):
         self.outcome_picker = QComboBox()
         self.outcome_picker.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.outcome_picker.setMinimumContentsLength(12)
-        self.review_outcome_button = QPushButton()
+        self.review_outcome_button = QPushButton("Examiné")
         self.review_outcome_button.setIcon(self.style().standardIcon(QStyle.SP_DialogApplyButton))
         self.review_outcome_button.setToolTip("Enregistrer ma verification de l'effet exterieur")
         self.review_outcome_button.setAccessibleName("Revoir un appel MCP incertain")
@@ -380,6 +380,7 @@ class MCPConnectionsPanel(QFrame):
         self.gmail_panel.requested.connect(self._gmail_send)
         self.gmail_panel.request_ready.connect(self.request_ready.emit)
         self.gmail_panel.advanced_requested.connect(self._gmail_advanced)
+        self.gmail_panel.review_requested.connect(self._gmail_review)
         self.tabs.addTab(self.gmail_panel, "Gmail")
         self.tabs.setUsesScrollButtons(True)
         self._select_server(0)
@@ -503,6 +504,12 @@ class MCPConnectionsPanel(QFrame):
         card = find_card(str(self.catalog_picker.currentData() or ""))
         if card is None:
             return
+        self.catalog_prepare_button.setText("Ouvrir la connexion Gmail" if card.identifier == "gmail" else "Préparer la configuration")
+        if card.identifier == "gmail":
+            from .gmail_connection import PIPEDREAM_DOC
+            self.catalog_note.setText("Gmail : connecte ton compte dans le navigateur. Jarvis disposera des fonctions Gmail découvertes, sans sélection outil par outil.")
+            self.catalog_endpoint.setText("Connexion Google gérée par Pipedream.\n" + PIPEDREAM_DOC)
+            return
         self.catalog_note.setText(
             card.label + " : " + card.requirement + " " + card.warning
         )
@@ -512,6 +519,10 @@ class MCPConnectionsPanel(QFrame):
     def _prepare_catalog_service(self):
         card = find_card(str(self.catalog_picker.currentData() or ""))
         if card is None:
+            return
+        if card.identifier == "gmail":
+            self.tabs.setCurrentWidget(self.gmail_panel)
+            self.gmail_panel.refresh()
             return
         self.server_name.setText(card.identifier)
         self.server_url.setText(card.endpoint)
@@ -540,6 +551,12 @@ class MCPConnectionsPanel(QFrame):
         index = self.server_picker.findData(server)
         if index >= 0:
             self.server_picker.setCurrentIndex(index)
+
+    def _gmail_review(self, server, attempt):
+        if not self.focus_review(server, attempt):
+            message = "Cet appel n’est plus disponible à la revue dans le journal affiché. Attends son actualisation, puis vérifie de nouveau."
+            self.gmail_panel.feedback.setText(message)
+            self.feedback.setText(message)
 
     def _for_server(self, operation: str) -> None:
         self._send(operation, str(self.server_picker.currentData() or ""), "")
@@ -581,11 +598,13 @@ class MCPConnectionsPanel(QFrame):
         index = self.server_picker.findData(server)
         if index < 0:
             return False
-        self.tabs.setCurrentIndex(1)
+        self.tabs.setCurrentWidget(self.services_page)
         self.server_picker.setCurrentIndex(index)
+        self._select_server(index)
         self.service_tabs.setCurrentIndex(2)
         row = self.outcome_picker.findData(attempt)
         if row < 0:
+            self.outcome_picker.setCurrentIndex(0)
             return False
         self.outcome_picker.setCurrentIndex(row)
         return True
@@ -793,7 +812,17 @@ class MCPConnectionsPanel(QFrame):
             if idx >= 0:
                 self.tool_picker.setCurrentIndex(idx)
 
+    def show_progress(self, progress: dict) -> None:
+        if progress.get("operation") == "gmail_connect":
+            self.gmail_panel.show_progress(progress)
+
     def show_result(self, result: dict) -> None:
+        if (result.get("operation") == "gmail_connect" and result.get("success") and
+                isinstance(result.get("gmail"), dict)):
+            self._runtime_enabled = result["gmail"].get("runtime_enabled") is True
+            self.runtime_switch.blockSignals(True)
+            self.runtime_switch.setChecked(self._runtime_enabled)
+            self.runtime_switch.blockSignals(False)
         if result.get("operation") == "runtime_set":
             self._runtime_pending = False
             self.runtime_switch.setEnabled(True)

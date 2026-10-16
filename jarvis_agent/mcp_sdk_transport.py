@@ -12,6 +12,11 @@ import tempfile
 from typing import Any
 
 
+INVENTORY_RPC_METHODS = frozenset({"initialize", "tools/list", "resources/list",
+                                  "resources/templates/list", "prompts/list"})
+MCP_RPC_METHODS = INVENTORY_RPC_METHODS | {"tools/call"}
+
+
 def tool_reply_envelope(reply) -> dict:
     """Bound external data explicitly; never silently turn a prefix into a list.
 
@@ -52,6 +57,7 @@ def tool_reply_envelope(reply) -> dict:
 
 async def session_inventory(session, initialized, *, tools_only=False) -> dict:
     """Read bounded metadata only; never fetch a resource or execute a prompt."""
+    from mcp.shared.exceptions import MCPError
     from mcp.types import PaginatedRequestParams
     capabilities = getattr(initialized, "capabilities", None)
     declared = {name: getattr(capabilities, name, None) is not None
@@ -60,18 +66,28 @@ async def session_inventory(session, initialized, *, tools_only=False) -> dict:
         declared["tools"] = True  # compatibility with older injected sessions
     result = {"tools": [], "resources": [], "prompts": [], "resource_templates": [],
               "capabilities": declared, "truncated": []}
-    methods = [("tools", "list_tools", "tools")]
+    methods = [("tools", "list_tools", "tools", "tools/list")]
     if not tools_only:
-        methods += [("resources", "list_resources", "resources"),
-                    ("resources", "list_resource_templates", "resource_templates"),
-                    ("prompts", "list_prompts", "prompts")]
-    for capability, method_name, field in methods:
+        methods += [("resources", "list_resources", "resources", "resources/list"),
+                    ("resources", "list_resource_templates", "resource_templates", "resources/templates/list"),
+                    ("prompts", "list_prompts", "prompts", "prompts/list")]
+    for capability, method_name, field, rpc_method in methods:
         if not declared[capability]:
             continue
         method = getattr(session, method_name)
         cursor, seen, found = None, set(), []
         for _ in range(9):
-            listing = await method() if cursor is None else await method(params=PaginatedRequestParams(cursor=cursor))
+            try:
+                listing = await method() if cursor is None else await method(params=PaginatedRequestParams(cursor=cursor))
+            except MCPError as exc:
+                # Some servers advertise resources but omit one of its list
+                # methods. Only an explicit MethodNotFound is recoverable;
+                # tool discovery, authentication and other errors stay fatal.
+                if field != "tools" and exc.code == -32601:
+                    result["truncated"].append(field)
+                    break
+                raise MCPUnavailable("mcp_inventory_rpc_failed", rpc_method=rpc_method,
+                                     rpc_code=exc.code) from exc
             found.extend(getattr(listing, field, None) or
                          getattr(listing, "resourceTemplates", None) or [])
             next_cursor = getattr(listing, "next_cursor", None) or getattr(listing, "nextCursor", None)
@@ -104,9 +120,12 @@ async def session_inventory(session, initialized, *, tools_only=False) -> dict:
 
 
 class MCPUnavailable(RuntimeError):
-    def __init__(self, message: str, *, outcome_unknown: bool = False):
+    def __init__(self, message: str, *, outcome_unknown: bool = False,
+                 rpc_method: str = "", rpc_code=None):
         super().__init__(message)
         self.outcome_unknown = outcome_unknown
+        self.rpc_method = rpc_method if rpc_method in MCP_RPC_METHODS else ""
+        self.rpc_code = rpc_code if type(rpc_code) is int and -(2**31) <= rpc_code < 2**31 else None
 
 
 class OfficialMCPTransport:
@@ -124,13 +143,30 @@ class OfficialMCPTransport:
             raise MCPUnavailable("optional_mcp_sdk_not_installed") from exc
 
         async def proceed(read, write):
+            from mcp.shared.exceptions import MCPError
             async with ClientSession(read, write) as session:
-                initialized = await session.initialize()
+                try:
+                    initialized = await session.initialize()
+                except MCPError as exc:
+                    if operation not in {"discover", "inventory"}:
+                        raise
+                    raise MCPUnavailable("mcp_inventory_rpc_failed", rpc_method="initialize",
+                                         rpc_code=exc.code) from exc
                 if operation in {"discover", "inventory"}:
+                    if oauth_flow is not None:
+                        oauth_flow.set_stage("tools_discovery")
                     inventory = await session_inventory(session, initialized, tools_only=operation == "discover")
                     return inventory["tools"] if operation == "discover" else inventory
                 if operation == "call":
-                    reply = await session.call_tool(tool, arguments=arguments or {})
+                    try:
+                        reply = await session.call_tool(tool, arguments=arguments or {})
+                    except MCPError as exc:
+                        # A completed JSON-RPC error is distinct from a lost
+                        # response. Only the gateway's pinned read grant can
+                        # treat it as a known failure; writes remain uncertain.
+                        return {"success": False,
+                            "message": "Le serveur MCP a refusé cet appel (code " + str(exc.code) + ").",
+                            "diagnostic": {"error_type": "MCPError", "rpc_method": "tools/call", "rpc_code": exc.code}}
                     return tool_reply_envelope(reply)
                 raise ValueError("invalid_mcp_operation")
 
@@ -231,12 +267,22 @@ class OfficialMCPTransport:
     def call_tool(self, entry: dict, tool: str, arguments: dict) -> dict:
         return self.invoke(entry, "call", tool=tool, arguments=arguments)
 
-    def authorize(self, entry: dict, *, stop_event=None, vault=None, opener=None, options=None) -> list[dict]:
-        from .mcp_oauth import LoopbackOAuth, until_cancelled
+    def authorize(self, entry: dict, *, stop_event=None, vault=None, opener=None, options=None, progress=None) -> list[dict]:
+        from .mcp_oauth import LoopbackOAuth, until_cancelled, connection_diagnostic, OAuthConnectionFailure
+        flows = []
         async def connect():
-            async with LoopbackOAuth(entry["url"], opener=opener, options=options) as flow:
+            async with LoopbackOAuth(entry["url"], opener=opener, options=options, progress=progress) as flow:
+                flows.append(flow)
                 result = await self._with_session({**entry, "credential_source": "oauth"},
                     "discover", oauth_flow=flow, vault=vault)
+                flow.set_stage("credentials_storage")
                 flow.storage.commit()
+                flow.set_stage("authorized")
                 return result
-        return asyncio.run(until_cancelled(connect(), stop_event))
+        try:
+            # First-time provider + Google consent can take several minutes.
+            # Ordinary tool calls keep their independent 18-second default.
+            return asyncio.run(until_cancelled(connect(), stop_event, timeout=600))
+        except Exception as exc:
+            details = connection_diagnostic(exc, stage=flows[-1].stage if flows else "preparing")
+            raise OAuthConnectionFailure(details.get("reason", "oauth_connection_failed"), details) from None

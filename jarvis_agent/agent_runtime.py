@@ -1299,8 +1299,10 @@ def _is_explicit_context_reset_request(text: str) -> bool:
 
 def _looks_like_clear_operational_feedback(text: str) -> bool:
     normalized = (text or "").lower().replace("’", "'").strip()
+    if normalized.startswith(("non,", "non ", "nn ")):
+        return True
     correction_markers = (
-        "non,", "non ", "nn ", "ce n'est pas", "c'est pas", "tu as juste",
+        "ce n'est pas", "c'est pas", "tu as juste",
         "tu n'as pas", "je t'ai dit", "je voulais dire", "pas comme ça",
         "pas comme ca", "incorrect", "erreur", "wrong", "that's not",
         "you only", "you didn't", "mauvaise", "mauvais", "sans rapport",
@@ -1330,7 +1332,9 @@ def _looks_like_explicit_operational_request(text: str) -> bool:
         r"cherche|cherches|recherche|recherches|clique|cliques|cliquez|"
         r"selectionne|selectionnes|selectionnez|choisis|choisissez|"
         r"ecris|ecrivez|envoie|envoies|envoyez|appuie|appuies|appuyez|"
-        r"inspecte|inspectes|inspectez|retour|reviens|avance|change|modifie)"
+        r"inspecte|inspectes|inspectez|verifie|verifiez|verifier|consulte|"
+        r"lis|lisez|compte|denombre|analyse|check|verify|count|"
+        r"retour|reviens|avance|change|modifie)"
     )
     prefix = (
         r"(?:(?:ok|d accord|daccord|maintenant|alors|non|nn|vas y|stp|"
@@ -3192,6 +3196,7 @@ class GroqResponsesAgent:
         *,
         ms_football_only: bool = False,
         msf_tool_names: set[str] | None = None,
+        catalog_only: bool = False,
     ) -> list[dict[str, Any]]:
         if getattr(self, "_mission_decision_messages", None) is not None:
             return []
@@ -3348,7 +3353,7 @@ class GroqResponsesAgent:
         tools = [t for t in tools if (t.get("function") or {}).get("name") != "mission_checkpoint"]
         tools = [*tools, checkpoint_tool] if checkpoint_tool else tools
         context = getattr(self, "request_context", None)
-        if context is not None and not self._memory_scope_active:
+        if context is not None and not self._memory_scope_active and not catalog_only:
             from .request_context import strict_social_greeting
             from .active_mission_supervisor import execution_scope_active
             social_only = (
@@ -4206,7 +4211,7 @@ class GroqResponsesAgent:
                     if needs_authorized_read_retry(
                             user_text, raw_text, self._tool_definitions(
                                 ms_football_only=ms_football_turn,
-                                msf_tool_names=msf_tool_names),
+                                msf_tool_names=msf_tool_names, catalog_only=True),
                             self.tools.requires_confirmation):
                         mcp_read_repair_attempted = True
                         if self._messages and self._messages[-1].get("role") == "assistant":
@@ -4217,7 +4222,9 @@ class GroqResponsesAgent:
                             "capability. Do not claim that new account consent is "
                             "required merely because you have not called a tool. "
                             "For this current read/analysis request, inspect the "
-                            "available MCP read schemas and use the applicable "
+                            "available MCP read schemas; if hidden by the prompt "
+                            "budget, select them through request_tool_capabilities. "
+                            "Then use the applicable "
                             "tool to discover missing facts, including account "
                             "or resource identity. Do NOT invent IDs or URLs, "
                             "request new permission, mutate external state, or "

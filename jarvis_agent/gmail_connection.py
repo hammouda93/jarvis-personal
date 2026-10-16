@@ -108,10 +108,14 @@ def options(operation, value):
     packet = json.loads(value)
     expected = {"provider", "binding_revision"} if operation == "gmail_connect" else {
         "binding_revision", "connection", "inventory", "selected", "automatic_reads"}
+    if operation == "gmail_connect" and isinstance(packet, dict) and "access" in packet:
+        expected.add("access")
     if not isinstance(packet, dict) or set(packet) != expected or type(packet["binding_revision"]) is not int or packet["binding_revision"] < 0:
         raise ValueError("gmail_invalid_request")
     if operation == "gmail_connect":
         if packet["provider"] not in {"pipedream", "existing"}:
+            raise ValueError("gmail_invalid_request")
+        if packet.get("access", "manual") not in {"plugin", "manual"}:
             raise ValueError("gmail_invalid_request")
     else:
         if any(not isinstance(packet[k], str) or not re.fullmatch(r"[a-f0-9]{64}", packet[k]) for k in ("connection", "inventory")):
@@ -132,7 +136,11 @@ def _binding(workspace, revision):
 
 
 def connect(registry, server_id, packet, *, command_runner, workspace=None, stop_event=None):
-    """One explicit UI operation. Authentication never authorises mail tools."""
+    """Connect with the access policy explicitly chosen by the UI operation.
+
+    The normal plugin button includes access to the discovered Gmail functions.
+    Legacy/advanced manual connections retain their separate review step.
+    """
     workspace = workspace or PersonalWorkspaceStore()
     binding = _binding(workspace, packet["binding_revision"])
     entry = registry.get_server(server_id)
@@ -144,7 +152,14 @@ def connect(registry, server_id, packet, *, command_runner, workspace=None, stop
             entry = registry.get_server(server_id)
         if stop_event is not None and stop_event.is_set():
             raise ValueError("gmail_oauth_cancelled")
-        command_runner("oauth_authorize", server_id, json.dumps({"scope": PIPEDREAM_SCOPE}))
+        # OAuth already committed its credentials and tools before a later
+        # inventory failure. Retry that inventory without another consent or
+        # client registration. Cached tools never substitute for a fresh test.
+        resume = (entry.get("credential_source") == "oauth" and not entry.get("enabled")
+                  and entry.get("connection_state") == "transport_error"
+                  and any(tool_group(name, entry) for name in (entry.get("tools") or {})))
+        if not resume:
+            command_runner("oauth_authorize", server_id, json.dumps({"scope": PIPEDREAM_SCOPE}))
         current = registry.get_server(server_id)
         if not current or current.get("url") != PIPEDREAM_ENDPOINT or current.get("credential_source") != "oauth":
             raise ValueError("gmail_connection_changed")
@@ -159,13 +174,24 @@ def connect(registry, server_id, packet, *, command_runner, workspace=None, stop
     if binding["server"] != server_id:
         workspace.bind_service("gmail", server_id, expected_revision=binding["revision"])
     status = snapshot(registry, workspace, server_id=server_id)
+    plugin_access = packet.get("access") == "plugin"
+    if plugin_access and status["tools"]:
+        if stop_event is not None and stop_event.is_set():
+            raise ValueError("gmail_oauth_cancelled")
+        review = {k: status[k] for k in ("binding_revision", "connection", "inventory")}
+        review.update(selected=[t["name"] for t in status["tools"]], automatic_reads=True)
+        grant(registry, server_id, review, workspace=workspace, activate_runtime=True)
+        status = snapshot(registry, workspace, server_id=server_id)
+    message = ("Les fonctions Gmail sont activées dans Jarvis. Une première lecture permet de vérifier l’accès au compte."
+        if plugin_access and status["tools"] else
+        "Connexion MCP testée. Vérifie les capacités Gmail puis autorise les outils choisis." if status["tools"] else
+        "Connexion MCP testée, aucun outil Gmail reconnu. Sélectionne Gmail chez le fournisseur puis actualise.")
     return {"success": True, "operation": "gmail_connect", "server_id": server_id,
-        "message": "Connexion MCP testée. Vérifie les capacités Gmail puis autorise les outils choisis." if status["tools"] else
-                   "Connexion MCP testée, aucun outil Gmail reconnu. Sélectionne Gmail chez le fournisseur puis actualise.",
+        "message": message, "access_mode": "plugin" if plugin_access else "manual",
         "gmail": status, "mail_action_dispatched": False}
 
 
-def grant(registry, server_id, packet, *, workspace=None):
+def grant(registry, server_id, packet, *, workspace=None, activate_runtime=False):
     workspace = workspace or PersonalWorkspaceStore()
     binding = _binding(workspace, packet["binding_revision"])
     if binding["server"] != server_id:
@@ -179,13 +205,18 @@ def grant(registry, server_id, packet, *, workspace=None):
         raise ValueError("gmail_no_tools")
     reviewed = {t["name"]: t["fingerprint"] for t in current["tools"]}
     result = registry.apply_tool_review(server_id, expected_connection=packet["connection"],
-        reviewed=reviewed, selected=packet["selected"], automatic_reads=packet["automatic_reads"])
+        reviewed=reviewed, selected=packet["selected"], automatic_reads=packet["automatic_reads"],
+        activate_runtime=activate_runtime)
     return {"success": True, "operation": "gmail_grant", "server_id": server_id,
         "message": "Capacités Gmail enregistrées. Les envois et modifications conservent leurs confirmations.",
         "access": result, "mail_action_dispatched": False}
 
 
 def error_reason(exc):
+    from .mcp_oauth import connection_diagnostic, OAUTH_REASONS
+    known = connection_diagnostic(exc).get("reason")
+    if known in OAUTH_REASONS:
+        return known
     reason = str(exc)
     if reason in _ERRORS:
         return reason

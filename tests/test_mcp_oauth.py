@@ -259,6 +259,8 @@ class OAuthTests(unittest.TestCase):
                                         ("state=abcdefghijklmnopqrstuv&code=x", "evil.example")):
                         reply = await client.get(flow.redirect_uri + "?" + query, headers={"Host": host} if host else {})
                         self.assertEqual(reply.status_code, 400)
+                        self.assertIn("rejected", reply.text)
+                        self.assertNotIn("callback received", reply.text)
                         self.assertFalse(flow.result.done())
                     reply = await client.get(flow.redirect_uri + "?state=abcdefghijklmnopqrstuv&code=FIXTURE_CODE")
                     self.assertEqual(reply.status_code, 200)

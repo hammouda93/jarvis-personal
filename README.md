@@ -5,6 +5,19 @@ habituel, outils Windows, mémoire SQLite et services MCP explicitement connect�
 Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
 distinct de la preuve que l'objectif entier est atteint.
 
+## V20 — connecter Gmail et l’utiliser directement
+
+La branche `feature/plugin-connect-ready-v20` reprend le parcours attendu d’un
+connecteur : **Connecter Gmail → autoriser dans le navigateur → utiliser Jarvis**.
+Les fonctions Gmail découvertes sont rendues disponibles pendant cette même
+connexion, sans cases à cocher ni étape d’activation supplémentaire.
+
+« Ce que Jarvis peut faire » est une liste informative. Les choix détaillés et
+la connexion manuelle restent dans les réglages avancés. Le catalogue Gmail
+ouvre le même parcours. La connexion n’envoie et ne lit aucun mail.
+
+Voir le [guide V20](docs/V20_PLUGIN_CONNECTION.md).
+
 ## V19 — des connexions plus simples
 
 La branche `feature/friendly-connectors-v19`, issue de V18, présente Gmail dans

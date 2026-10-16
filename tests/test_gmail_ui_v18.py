@@ -40,7 +40,7 @@ class GmailUITests(Fixture):
         self.addCleanup(parent.close)
         child, commands = parent.gmail_panel, []
         parent.requested.connect(lambda *args: commands.append(args))
-        child.start_connection()
+        child.start_connection(access="manual")
         self.assertEqual(commands[-1][0], "gmail_connect")
         self.assertTrue(child._busy)
         result = perform_mcp_command(self.registry, MCPCommand(*commands.pop()), transport=self.transport, vault=self.vault)
@@ -93,6 +93,12 @@ class GmailUITests(Fixture):
         self.assertIs(parent.tabs.currentWidget(), parent.gmail_panel)
         self.assertEqual(commands, [])
         self.assertFalse(self.registry.path.exists())
+        parent.tabs.setCurrentWidget(parent.catalog_page)
+        parent.catalog_picker.setCurrentIndex(parent.catalog_picker.findData("gmail"))
+        parent.catalog_prepare_button.click()
+        self.assertIs(parent.tabs.currentWidget(), parent.gmail_panel)
+        self.assertEqual(commands, [])
+        self.assertIn("Pipedream", parent.catalog_endpoint.text())
 
     def test_connection_cancel_reaches_same_authorization_slot_and_error_releases_controls(self):
         parent = MCPConnectionsPanel()
@@ -113,6 +119,7 @@ class GmailUITests(Fixture):
         panel = self.panel()
         panel.resize(300, 500)
         panel.show()
+        panel.advanced_toggle.click()
         self.app.processEvents()
         self.assertEqual(panel.scroll.horizontalScrollBar().maximum(), 0)
         self.assertLessEqual(panel.scroll.widget().width(), panel.scroll.viewport().width())
@@ -120,8 +127,6 @@ class GmailUITests(Fixture):
         self.app.processEvents()
         self.assertTrue(panel.grant_button.isVisible())
         self.assertLessEqual(panel.grant_button.mapTo(panel.scroll.viewport(), panel.grant_button.rect().bottomRight()).y(), panel.scroll.viewport().height())
-        panel.advanced_toggle.click()
-        self.app.processEvents()
         self.assertGreater(panel.scroll.verticalScrollBar().maximum(), 0)
         panel.scroll.ensureWidgetVisible(panel.advanced_button)
         self.app.processEvents()
@@ -161,3 +166,71 @@ class GmailUITests(Fixture):
             worker._run_mcp_control(command)
         self.assertEqual(results[0]["reason"], "gmail_binding_changed")
         self.assertTrue(worker._mcp_control.submit("connect", "another"))
+
+    def test_progress_keeps_authorization_pending_and_failure_shows_stage(self):
+        parent = MCPConnectionsPanel()
+        self.addCleanup(parent.close)
+        commands = []
+        parent.requested.connect(lambda *args: commands.append(args))
+        child = parent.gmail_panel
+        child.start_connection()
+        pending = parent._authorization_pending
+        parent.show_progress({"operation": "gmail_connect", "server_id": pending, "stage": "token_exchange"})
+        self.assertTrue(child._busy)
+        self.assertEqual(parent._authorization_pending, pending)
+        self.assertTrue(child.cancel_button.isEnabled())
+        self.assertIn("Échange", child.step.text())
+        self.assertEqual(len(commands), 1)
+        parent.show_result({"operation": "gmail_connect", "server_id": pending, "success": False,
+            "reason": "oauth_token_exchange_failed", "diagnostic": {"stage": "token_exchange",
+                "http_status": 400, "oauth_error": "invalid_grant"}})
+        self.assertFalse(child._busy)
+        self.assertEqual(parent._authorization_pending, "")
+        self.assertIn("HTTP 400", child.feedback.text())
+        self.assertIn("invalid_grant", child.feedback.text())
+
+    def test_worker_reports_safe_oauth_details_through_nested_task_group_errors(self):
+        from jarvis_agent.mcp_oauth import OAuthConnectionFailure
+        with patch.object(AssistantWorker, "__init__", lambda self: QObject.__init__(self)):
+            worker = AssistantWorker()
+        worker._mcp_registry, worker._mcp_control = self.registry, MCPControlInbox()
+        command = MCPCommand("gmail_connect", "gmail", json.dumps({"provider": "pipedream", "binding_revision": 0}))
+        worker._mcp_control.submit(command.operation, command.server_id, command.value)
+        results, logs, stages = [], [], []
+        worker.mcp_control_result.connect(results.append)
+        worker.log_line.connect(logs.append)
+        worker.mcp_control_progress.connect(stages.append)
+        def fail(*args, **kwargs):
+            kwargs["progress"]({"stage": "token_exchange"})
+            raise ExceptionGroup("PRIVATE_OAUTH_URL", [OAuthConnectionFailure("oauth_token_exchange_failed",
+                {"stage": "token_exchange", "http_status": 400, "oauth_error": "invalid_grant"})])
+        with patch("jarvis_agent.assistant_v3.perform_mcp_command", side_effect=fail):
+            worker._run_mcp_control(command)
+        self.assertEqual(results[0]["reason"], "oauth_token_exchange_failed")
+        self.assertEqual(results[0]["diagnostic"]["http_status"], 400)
+        self.assertIn("http_status=400", " ".join(logs))
+        self.assertNotIn("PRIVATE", str(results) + str(logs) + str(stages))
+        self.assertTrue(worker._mcp_control.submit("connect", "another"))
+
+    def test_worker_and_panel_expose_inventory_method_and_code_without_private_body(self):
+        from jarvis_agent.mcp_sdk_transport import MCPUnavailable
+        with patch.object(AssistantWorker, "__init__", lambda self: QObject.__init__(self)):
+            worker = AssistantWorker()
+        worker._mcp_registry, worker._mcp_control = self.registry, MCPControlInbox()
+        command = MCPCommand("gmail_connect", "gmail", json.dumps({"provider": "pipedream", "binding_revision": 0}))
+        worker._mcp_control.submit(command.operation, command.server_id, command.value)
+        results, logs = [], []
+        worker.mcp_control_result.connect(results.append)
+        worker.log_line.connect(logs.append)
+        panel = self.panel()
+        worker.mcp_control_result.connect(panel.show_result)
+        def fail(*args, **kwargs):
+            kwargs["progress"]({"stage": "service_inventory"})
+            raise ExceptionGroup("PRIVATE_BODY", [MCPUnavailable("PRIVATE_BODY",
+                rpc_method="resources/templates/list", rpc_code=-32602)])
+        with patch("jarvis_agent.assistant_v3.perform_mcp_command", side_effect=fail):
+            worker._run_mcp_control(command)
+        self.assertIn("resources/templates/list", panel.feedback.text())
+        self.assertIn("-32602", panel.feedback.text())
+        self.assertIn("rpc_method=resources/templates/list", " ".join(logs))
+        self.assertNotIn("PRIVATE", str(results) + str(logs) + panel.feedback.text())

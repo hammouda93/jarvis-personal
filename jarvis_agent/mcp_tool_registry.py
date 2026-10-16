@@ -13,7 +13,7 @@ from typing import Any
 from .mcp_server_registry import MCPRegistry
 from .mcp_sdk_transport import MCPUnavailable, OfficialMCPTransport
 from .mcp_activity import MCPBudgetExceeded
-from .mcp_result import transport_outcome
+from .mcp_result import transport_outcome, diagnostic_metadata
 from .native_tools import AgentActionResult
 
 
@@ -265,6 +265,8 @@ class MCPToolRegistry:
                 native_name, dict(arguments or {})
             )
         except MCPUnavailable as exc:
+            from .mcp_oauth import connection_diagnostic
+            diagnostic = diagnostic_metadata(connection_diagnostic(exc))
             try:
                 activity.finish(attempt, "unknown" if exc.outcome_unknown else "preflight_failed")
             except Exception:
@@ -272,7 +274,7 @@ class MCPToolRegistry:
             if exc.outcome_unknown:
                 return AgentActionResult(name=name, success=False,
                     message="Resultat MCP incertain : verifier l'effet exterieur avant toute tentative.",
-                    detail=json.dumps({"verified": False, "dispatched": True,
+                    detail=json.dumps({"verified": False, "dispatched": True, "diagnostic": diagnostic,
                                        "outcome_unknown": True,
                                        "source": {"server_id": server_id,
                                                   "tool_name": native_name,
@@ -280,8 +282,11 @@ class MCPToolRegistry:
                                                   "trust": "external_unverified"}}))
             return AgentActionResult(name=name, success=False,
                 message="Configuration ou credential MCP indisponible avant execution.",
-                detail='{"verified":false,"dispatched":false,"outcome_unknown":false,"guard":"transport_preflight_failed"}')
-        except Exception:
+                detail=json.dumps({"verified": False, "dispatched": False, "outcome_unknown": False,
+                    "guard": "transport_preflight_failed", "diagnostic": diagnostic}))
+        except Exception as exc:
+            from .mcp_oauth import connection_diagnostic
+            diagnostic = diagnostic_metadata(connection_diagnostic(exc))
             try:
                 activity.finish(attempt, "unknown")
             except Exception:
@@ -290,7 +295,7 @@ class MCPToolRegistry:
                 name=name, success=False,
                 message="Résultat de l'appel MCP incertain : vérifier l'effet "
                         "extérieur avant toute nouvelle tentative.",
-                detail=json.dumps({"verified": False, "dispatched": True,
+                detail=json.dumps({"verified": False, "dispatched": True, "diagnostic": diagnostic,
                                        "outcome_unknown": True,
                                        "source": {"server_id": server_id,
                                                   "tool_name": native_name,
@@ -305,6 +310,7 @@ class MCPToolRegistry:
         )
         source = {"server_id": server_id, "tool_name": native_name,
                   "attempt_id": attempt, "trust": "external_unverified"}
+        diagnostic = diagnostic_metadata(result.get("diagnostic")) if isinstance(result, dict) else {}
         try:
             activity.finish(
                 attempt, "unknown" if unknown else
@@ -313,7 +319,7 @@ class MCPToolRegistry:
         except Exception:
             return AgentActionResult(name=name, success=False,
                 message="Appel termine mais journalisation MCP indisponible. Verification manuelle requise.",
-                detail=json.dumps({"verified": False, "dispatched": True,
+                detail=json.dumps({"verified": False, "dispatched": True, "diagnostic": diagnostic,
                                        "outcome_unknown": True,
                                        "source": {"server_id": server_id,
                                                   "tool_name": native_name,
@@ -322,7 +328,7 @@ class MCPToolRegistry:
         if unknown:
             return AgentActionResult(name=name, success=False,
                 message="Resultat MCP incomplet ou en erreur : verifier les effets avant toute reprise.",
-                detail=json.dumps({"verified": False, "dispatched": True,
+                detail=json.dumps({"verified": False, "dispatched": True, "diagnostic": diagnostic,
                                    "outcome_unknown": True,
                                    "source": source}, ensure_ascii=False))
         if not successful:
@@ -333,7 +339,7 @@ class MCPToolRegistry:
                 detail=json.dumps({
                     "verified": False, "dispatched": True,
                     "outcome_unknown": False, "recoverable": True,
-                    "safe_read_failure": True, "source": source,
+                    "safe_read_failure": True, "source": source, "diagnostic": diagnostic,
                     "discovery_candidates": self._read_discovery_candidates(
                         server_id, name
                     ),

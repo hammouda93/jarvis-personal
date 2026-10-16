@@ -1547,6 +1547,7 @@ class JarvisWindow(QWidget):
         self._worker.mission_control_result.connect(self.operator_console.show_mission_result)
         self.operator_console.mission_requested.connect(self._on_mission_request)
         self._worker.mcp_control_result.connect(self.operator_console.show_mcp_result)
+        self._worker.mcp_control_progress.connect(self.operator_console.mcp_panel.show_progress)
         self.operator_console.mcp_requested.connect(self._on_mcp_request)
         self.operator_console.mcp_panel.request_ready.connect(self._on_gmail_request)
         self._worker.skill_control_result.connect(self._on_skill_result)
