@@ -70,13 +70,13 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "development_priority": {
-            "phase": "V18",
-            "title": "Connexion Gmail guidée et capacités réelles dans l’orchestre",
+            "phase": "V19",
+            "title": "Connexions simples et choix des fonctions en français",
             "implementation": "integrated",
             "automated": "local_regression_passed",
             "windows_real": "not_validated",
-            "evidence": "docs/V18_GMAIL_CONNECTION.md",
-            "next": "Connecter Gmail sur Windows, vérifier le compte et ses outils, puis préparer Calendar",
+            "evidence": "docs/V19_FRIENDLY_CONNECTIONS.md",
+            "next": "Valider Gmail sur le poste réel, puis reprendre ce parcours pour Calendar et les autres services",
         },
         "human_windows_evidence": {
             "source": "user_windows_logs_reviewed_2026-10-15",
@@ -108,6 +108,8 @@ def snapshot() -> dict:
                                     "scheduled_work_on_awake_machine", "owner_voice_mcp_and_actual_phone_session"],
             "v18_retest_required": ["pipedream_google_oauth_on_owner_pc", "actual_gmail_inventory_and_account_identity",
                                     "gmail_reads_with_configured_brains", "confirmed_gmail_write_and_service_receipt"],
+            "v19_retest_required": ["friendly_connection_flow_on_windows", "existing_partial_permissions_preserved",
+                                    "advanced_settings_accessible_in_narrow_panel"],
         },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
@@ -123,6 +125,7 @@ def snapshot() -> dict:
             "V17 ajoute des conversations spécialisées séparées, deux analyses parallèles, une file de veille locale et un univers interactif. "
             "Les agents lisent et préparent ; les actions externes restent à Jarvis. La téléphonie exige un service MCP vocal réel. "
             "V18 ajoute la connexion Gmail guidée via Pipedream ou un serveur existant, la sélection des capacités et une vérification du compte. "
+            "V19 simplifie ce parcours avec des groupes de fonctions en français et des réglages avancés repliés. "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."

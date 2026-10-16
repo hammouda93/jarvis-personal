@@ -1034,7 +1034,7 @@ class JarvisWindow(QWidget):
         self.mcp_scroll.setFrameShape(QFrame.NoFrame)
         self.mcp_scroll.setStyleSheet("QScrollArea {background:#081c2c;border:0;}")
         self.mcp_scroll.setWidget(self.operator_console.mcp_panel)
-        self.side_tabs.addTab(self.mcp_scroll, "MCP")
+        self.side_tabs.addTab(self.mcp_scroll, "CONNEXIONS")
         from .brain_manager_qt import BrainManagerPanel
         self.brain_manager = BrainManagerPanel(self)
         self.brain_scroll = QScrollArea(self)
@@ -1667,7 +1667,7 @@ class JarvisWindow(QWidget):
                 "reason": "Commande invalide ou consentement OAuth deja en cours."})
         else:
             self.operator_console.mcp_panel.feedback.setText(
-                "Commande en attente dans le worker ; aucune action de modèle lancée."
+                "Demande reçue. Mise à jour en cours…"
             )
 
     def _on_gmail_request(self, text):

@@ -5,6 +5,20 @@ habituel, outils Windows, mémoire SQLite et services MCP explicitement connect�
 Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
 distinct de la preuve que l'objectif entier est atteint.
 
+## V19 — des connexions plus simples
+
+La branche `feature/friendly-connectors-v19`, issue de V18, présente Gmail dans
+**CONNEXIONS → Gmail** : connecter son compte, choisir des fonctions en français
+et vérifier le compte avec Jarvis. Les noms techniques, le serveur existant et
+les options détaillées sont accessibles dans **Réglages avancés**.
+
+Les groupes de fonctions utilisent un composant réutilisable pour d’autres
+services. Le moteur MCP reste commun ; le parcours simple est actuellement
+branché sur Gmail. Les autres connecteurs nécessitent leur propre configuration
+et leur validation, selon leurs droits et leur authentification.
+
+Voir le [guide V19 et les limites de compatibilité](docs/V19_FRIENDLY_CONNECTIONS.md).
+
 ## V18 — connecter Gmail depuis l’interface
 
 La branche `feature/gmail-connector-onboarding-v18`, issue de V17, ajoute un
