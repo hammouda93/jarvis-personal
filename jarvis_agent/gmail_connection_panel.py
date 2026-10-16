@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QSizePolicy, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from .gmail_connection import GROUPS, PIPEDREAM_ENDPOINT, managed_server_id, snapshot
+from .gmail_connection import GROUPS, PIPEDREAM_ENDPOINT, managed_server_id, snapshot, tool_group
 from .connector_functions_panel import ConnectorFunctionsPanel
 from .mcp_server_registry import MCPRegistry
 from .personal_workspace import PersonalWorkspaceStore
@@ -44,6 +44,7 @@ class GmailConnectionPanel(QFrame):
     requested = Signal(str, str, str)
     request_ready = Signal(str)
     advanced_requested = Signal(str)
+    review_requested = Signal(str, object)
 
     def __init__(self, parent=None, *, registry=None, workspace=None):
         super().__init__(parent)
@@ -56,6 +57,8 @@ class GmailConnectionPanel(QFrame):
         self._state = None
         self._runtime_enabled = False
         self._connection_stage = "preparing"
+        self._recovery_target = None
+        self._recovery_reviewable = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         self.scroll = QScrollArea()
@@ -78,6 +81,14 @@ class GmailConnectionPanel(QFrame):
         self.connect_button = self._button(layout, "Connecter Gmail", self.start_connection)
         self.cancel_button = self._button(layout, "Annuler la connexion", self.cancel_connection)
         self.cancel_button.hide()
+        self.recovery_section = QFrame()
+        self.recovery_section.setObjectName("gmailRecoverySection")
+        recovery = QVBoxLayout(self.recovery_section)
+        recovery.setContentsMargins(0, 6, 0, 6)
+        self.recovery_note = self._note(recovery, "")
+        self.recovery_button = self._button(recovery, "Examiner l’appel", self.open_recovery)
+        layout.addWidget(self.recovery_section)
+        self.recovery_section.hide()
         self.functions_section = QFrame()
         functions_layout = QVBoxLayout(self.functions_section)
         functions_layout.setContentsMargins(0, 0, 0, 0)
@@ -258,6 +269,7 @@ class GmailConnectionPanel(QFrame):
                 (" Sélectionne Gmail dans le navigateur." if not connected else ""))
         self.test_button.setVisible(ready)
         self.test_button.setEnabled(ready and not self._busy)
+        self.recovery_button.setEnabled(bool(self._recovery_target) and self._recovery_reviewable and not self._busy)
         self.step.setText(STAGES.get(self._connection_stage, STAGES["preparing"]) + "…" if self._busy else
             "Connecte Gmail pour utiliser ses fonctions avec Jarvis." if not connected or not permitted else
             "Modifications avancées à enregistrer." if self._dirty else
@@ -306,6 +318,56 @@ class GmailConnectionPanel(QFrame):
     def test_mailbox(self):
         self.request_ready.emit("Vérifie quel compte Gmail est réellement connecté avec les outils disponibles, puis indique le nombre de messages non lus si cette lecture est possible. Ne modifie rien dans ma boîte.")
 
+    def _refresh_recovery(self, rows, state):
+        """Use the existing local journal snapshot; never change a receipt."""
+        self._recovery_target = None
+        self._recovery_reviewable = False
+        self.recovery_section.hide()
+        if not state or state["server"] != state["bound_server"]:
+            return
+        server = next((row for row in rows if row["id"] == state["server"]), None)
+        if server is None:
+            return
+        activity = server.get("activity") or {}
+        if activity.get("unavailable"):
+            self._recovery_target = (server["id"], None)
+            self._recovery_reviewable = True
+            self.recovery_note.setText("Journal MCP indisponible. Jarvis ne peut pas vérifier les appels en attente ; les appels sont bloqués si le journal reste inaccessible.")
+            self.recovery_button.setText("Ouvrir le centre MCP")
+            self.recovery_section.show()
+            return
+        entry = {"kind": server.get("kind"), "url": server.get("endpoint")}
+        pending = [row for row in activity.get("unresolved", [])
+            if type(row.get("attempt_id")) is int and row["attempt_id"] > 0
+            and row.get("outcome") in {"unknown", "reserved"} and tool_group(row.get("tool"), entry)]
+        if not pending:
+            return
+        pending.sort(key=lambda row: (row.get("reviewable") is not True, row["attempt_id"]))
+        receipt = pending[0]
+        self._recovery_target = (server["id"], receipt["attempt_id"])
+        self._recovery_reviewable = receipt.get("reviewable") is True
+        heading = "Appel Gmail #" + str(receipt["attempt_id"]) + " · " + GROUPS[tool_group(receipt["tool"], entry)] + ".\n"
+        self.recovery_note.setText(heading + (
+            "Résultat incertain. Le même outil reste bloqué jusqu’à ta vérification. Ouvrir le journal ne relance rien. Les autres fonctions conservent leurs accès."
+            if self._recovery_reviewable else
+            "Réponse en attente. Si l’appel reste sans résultat, sa revue sera disponible après le délai de sécurité."))
+        self.recovery_button.setText("Examiner l’appel #" + str(receipt["attempt_id"]) if self._recovery_reviewable else "Appel en cours…")
+        self.recovery_section.show()
+
+    def open_recovery(self):
+        if self._busy:
+            return
+        target = self._recovery_target
+        self.refresh()
+        if not target or target != self._recovery_target or not self._recovery_reviewable:
+            self.feedback.setText("Le journal a changé. Vérifie l’appel affiché avant de continuer.")
+            return
+        server, attempt = target
+        if attempt is None:
+            self.advanced_requested.emit(server)
+        else:
+            self.review_requested.emit(server, attempt)
+
     def set_busy(self, busy):
         if busy and not self._busy:
             self._connection_stage = "preparing"
@@ -330,6 +392,9 @@ class GmailConnectionPanel(QFrame):
             self.set_busy(False)
         elif operation == "gmail_grant" and result.get("success"):
             self.reload()
+        elif operation == "review_outcome" and result.get("server_id") == self.server_id():
+            self.feedback.setText("Revue enregistrée. Le résultat initial est conservé ; aucun appel n’a été relancé. Redonne une tâche à Jarvis pour continuer."
+                if result.get("success") else "La revue n’a pas abouti. Le blocage est conservé ; vérifie le journal MCP.")
         if operation in {"gmail_connect", "gmail_grant", "runtime_set", "reconnect"}:
             if result.get("success"):
                 message = (
@@ -382,6 +447,7 @@ class GmailConnectionPanel(QFrame):
             sid = self.server_id()
             state = snapshot(self.registry, self.workspace, server_id=sid) if sid else None
             self._state = state
+            self._refresh_recovery(rows, state)
             if state is None:
                 self.status.setText("Choisis un serveur MCP existant.")
                 self._update_actions()
@@ -413,6 +479,9 @@ class GmailConnectionPanel(QFrame):
             self.reads_button.setEnabled(bool(state["tools"]))
             self.all_button.setEnabled(bool(state["tools"]))
         except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
+            self._recovery_target = None
+            self._recovery_reviewable = False
+            self.recovery_button.setEnabled(False)
             self.status.setText("Configuration Gmail temporairement indisponible.")
             self.grant_button.setEnabled(False)
         finally:

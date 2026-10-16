@@ -118,6 +118,24 @@ le serveur **gmail**, puis **Journal**. Sélectionner la tentative et utiliser
 conserve le résultat initial et ne relance aucun appel ; une nouvelle demande
 de lecture est nécessaire ensuite.
 
+Le panneau **Gmail** affiche maintenant aussi un encart lorsqu’un appel Gmail
+reste incertain dans le journal local. **Examiner l’appel #…** ouvre directement
+le bon serveur et la bonne tentative dans **Services → Journal**, sans ouvrir
+les réglages avancés. Cet affichage ne signifie pas que toute la boîte est
+bloquée : seul le même outil est protégé contre un nouvel appel incertain.
+Les autres applications d’un serveur partagé ne sont pas présentées comme des
+blocages Gmail.
+
+Ouvrir cet encart ne vaut pas revue. Le bouton **Examiné** du journal conserve
+sa confirmation explicite. Après celle-ci, le résultat original reste dans
+l’historique et Jarvis ne relance rien ; il faut lui redonner une tâche pour
+continuer. Si plusieurs appels attendent une revue, l’encart passe au suivant.
+Une réservation encore récente attend le délai de sécurité existant avant de
+proposer cette revue. Si le journal change entre l’affichage et le clic, Jarvis
+demande de vérifier l’encart actualisé au lieu de choisir un autre appel.
+L’indisponibilité du journal est signalée, sans inventer de tentative ni enlever
+une protection. Ces contrôles n’ajoutent aucun appel réseau ni droit Gmail.
+
 Le journal utilisateur du 16 octobre confirme les étapes `credentials_storage`
 et `authorized`, suivies d’un échec `MCPError` à `service_inventory`. Il ne donne
 pas encore la méthode ni le code : le refus d’une métadonnée facultative est un

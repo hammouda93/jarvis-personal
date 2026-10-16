@@ -380,6 +380,7 @@ class MCPConnectionsPanel(QFrame):
         self.gmail_panel.requested.connect(self._gmail_send)
         self.gmail_panel.request_ready.connect(self.request_ready.emit)
         self.gmail_panel.advanced_requested.connect(self._gmail_advanced)
+        self.gmail_panel.review_requested.connect(self._gmail_review)
         self.tabs.addTab(self.gmail_panel, "Gmail")
         self.tabs.setUsesScrollButtons(True)
         self._select_server(0)
@@ -551,6 +552,12 @@ class MCPConnectionsPanel(QFrame):
         if index >= 0:
             self.server_picker.setCurrentIndex(index)
 
+    def _gmail_review(self, server, attempt):
+        if not self.focus_review(server, attempt):
+            message = "Cet appel n’est plus disponible à la revue dans le journal affiché. Attends son actualisation, puis vérifie de nouveau."
+            self.gmail_panel.feedback.setText(message)
+            self.feedback.setText(message)
+
     def _for_server(self, operation: str) -> None:
         self._send(operation, str(self.server_picker.currentData() or ""), "")
 
@@ -591,11 +598,13 @@ class MCPConnectionsPanel(QFrame):
         index = self.server_picker.findData(server)
         if index < 0:
             return False
-        self.tabs.setCurrentIndex(1)
+        self.tabs.setCurrentWidget(self.services_page)
         self.server_picker.setCurrentIndex(index)
+        self._select_server(index)
         self.service_tabs.setCurrentIndex(2)
         row = self.outcome_picker.findData(attempt)
         if row < 0:
+            self.outcome_picker.setCurrentIndex(0)
             return False
         self.outcome_picker.setCurrentIndex(row)
         return True
