@@ -166,3 +166,48 @@ class GmailUITests(Fixture):
             worker._run_mcp_control(command)
         self.assertEqual(results[0]["reason"], "gmail_binding_changed")
         self.assertTrue(worker._mcp_control.submit("connect", "another"))
+
+    def test_progress_keeps_authorization_pending_and_failure_shows_stage(self):
+        parent = MCPConnectionsPanel()
+        self.addCleanup(parent.close)
+        commands = []
+        parent.requested.connect(lambda *args: commands.append(args))
+        child = parent.gmail_panel
+        child.start_connection()
+        pending = parent._authorization_pending
+        parent.show_progress({"operation": "gmail_connect", "server_id": pending, "stage": "token_exchange"})
+        self.assertTrue(child._busy)
+        self.assertEqual(parent._authorization_pending, pending)
+        self.assertTrue(child.cancel_button.isEnabled())
+        self.assertIn("Échange", child.step.text())
+        self.assertEqual(len(commands), 1)
+        parent.show_result({"operation": "gmail_connect", "server_id": pending, "success": False,
+            "reason": "oauth_token_exchange_failed", "diagnostic": {"stage": "token_exchange",
+                "http_status": 400, "oauth_error": "invalid_grant"}})
+        self.assertFalse(child._busy)
+        self.assertEqual(parent._authorization_pending, "")
+        self.assertIn("HTTP 400", child.feedback.text())
+        self.assertIn("invalid_grant", child.feedback.text())
+
+    def test_worker_reports_safe_oauth_details_through_nested_task_group_errors(self):
+        from jarvis_agent.mcp_oauth import OAuthConnectionFailure
+        with patch.object(AssistantWorker, "__init__", lambda self: QObject.__init__(self)):
+            worker = AssistantWorker()
+        worker._mcp_registry, worker._mcp_control = self.registry, MCPControlInbox()
+        command = MCPCommand("gmail_connect", "gmail", json.dumps({"provider": "pipedream", "binding_revision": 0}))
+        worker._mcp_control.submit(command.operation, command.server_id, command.value)
+        results, logs, stages = [], [], []
+        worker.mcp_control_result.connect(results.append)
+        worker.log_line.connect(logs.append)
+        worker.mcp_control_progress.connect(stages.append)
+        def fail(*args, **kwargs):
+            kwargs["progress"]({"stage": "token_exchange"})
+            raise ExceptionGroup("PRIVATE_OAUTH_URL", [OAuthConnectionFailure("oauth_token_exchange_failed",
+                {"stage": "token_exchange", "http_status": 400, "oauth_error": "invalid_grant"})])
+        with patch("jarvis_agent.assistant_v3.perform_mcp_command", side_effect=fail):
+            worker._run_mcp_control(command)
+        self.assertEqual(results[0]["reason"], "oauth_token_exchange_failed")
+        self.assertEqual(results[0]["diagnostic"]["http_status"], 400)
+        self.assertIn("http_status=400", " ".join(logs))
+        self.assertNotIn("PRIVATE", str(results) + str(logs) + str(stages))
+        self.assertTrue(worker._mcp_control.submit("connect", "another"))

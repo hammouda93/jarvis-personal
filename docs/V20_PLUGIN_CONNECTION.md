@@ -69,6 +69,30 @@ devenue périmée. La commande s’exécute dans le worker existant ; le mode vo
 reprend ensuite. Aucun clap ni passage préalable en mode texte n’est requis.
 Le journal indique `MCP_CONTROL … state=STARTED` au début du traitement.
 
+L’enregistrement dynamique du client utilise les mêmes scopes explicitement
+choisis que la demande de consentement, même si les métadonnées du fournisseur
+annoncent une liste vide. Le parcours interactif dispose de dix minutes ; les
+appels ordinaires gardent leur limite courte et une annulation reste immédiate.
+Les étapes apparaissent dans le panneau Gmail et dans les lignes `MCP_CONTROL`.
+Un échec affiche son étape et, lorsqu’ils sont disponibles, le statut HTTP et un
+code OAuth reconnu. Les corps de réponse, codes d’autorisation, jetons et URL
+de retour ne sont pas recopiés dans ces diagnostics.
+
+La page de retour local distingue un retour accepté d’un retour refusé.
+Un retour accepté confirme uniquement la réception de l’autorisation ; le
+résultat de connexion se vérifie dans Jarvis après l’échange du code, la session
+MCP et la découverte des fonctions. Un ancien lien de retour ne se réutilise
+pas pour une nouvelle tentative : recommencer depuis le bouton Gmail.
+
+Le test SDK complet utilise un vrai serveur HTTP local, un navigateur simulé
+et des réponses distantes de test. Il vérifie en une fois le callback sans
+paramètre `iss`, la cohérence des scopes, l’échange du code, la session MCP,
+l’inventaire et l’enregistrement au coffre. Les refus de jeton, l’annulation,
+le budget interactif et le maintien de l’interface occupée sont aussi testés.
+Cela ne certifie pas l’accès à une boîte réelle. Le journal de l’essai utilisateur
+précédent n’indiquait pas assez de détails pour attribuer avec certitude son
+échec au défaut de scopes ; le nouvel essai doit le confirmer ou donner sa cause.
+
 Pour une première utilisation réelle, vérifier le compte puis demander une
 lecture sans modification. Un envoi de test doit être demandé explicitement et
 contrôlé dans Gmail. Aucun compte personnel n’a été connecté pendant le

@@ -20,6 +20,56 @@ class OAuthConsentRequired(RuntimeError):
     pass
 
 
+OAUTH_STAGES = frozenset({"preparing", "metadata", "registration", "waiting_consent", "callback_received",
+    "token_exchange", "session_initializing", "tools_discovery", "credentials_storage", "authorized", "service_inventory"})
+OAUTH_REASONS = frozenset({"oauth_cancelled", "oauth_timeout", "oauth_token_exchange_failed", "oauth_connection_failed"})
+OAUTH_ERRORS = frozenset({"invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+    "unsupported_grant_type", "invalid_scope", "access_denied", "server_error", "temporarily_unavailable"})
+_ERROR_TYPES = frozenset({"OAuthFlowError", "OAuthTokenError", "OAuthRegistrationError", "ValidationError",
+    "TimeoutError", "ReadTimeout", "ConnectTimeout", "ConnectError", "HTTPStatusError", "MCPError",
+    "CredentialUnavailable", "OAuthConsentRequired", "MCPUnavailable", "OSError", "RuntimeError", "ValueError"})
+
+
+def connection_diagnostic(exc, *, stage="preparing"):
+    """Only local enums/status numbers. Never retain exception text or URLs."""
+    pending, seen, details = [exc], set(), {}
+    while pending and len(seen) < 32:
+        item = pending.pop(0)
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        if isinstance(item, OAuthConnectionFailure):
+            return dict(item.diagnostic)
+        if isinstance(item, OAuthConsentRequired) and str(item) in {"oauth_cancelled", "oauth_timeout"}:
+            details["reason"] = str(item)
+        name = type(item).__name__
+        if name in _ERROR_TYPES and "error_type" not in details:
+            details["error_type"] = name
+        status = getattr(getattr(item, "response", None), "status_code", None)
+        if type(status) is int and 100 <= status <= 599:
+            details["http_status"] = status
+        pending.extend(getattr(item, "exceptions", ()))
+        if item.__cause__ is not None:
+            pending.append(item.__cause__)
+    details["stage"] = stage if stage in OAUTH_STAGES else "preparing"
+    return details
+
+
+class OAuthConnectionFailure(RuntimeError):
+    def __init__(self, reason, diagnostic):
+        self.reason = reason if reason in OAUTH_REASONS else "oauth_connection_failed"
+        self.diagnostic = {"reason": self.reason,
+            "stage": diagnostic.get("stage") if diagnostic.get("stage") in OAUTH_STAGES else "preparing"}
+        if diagnostic.get("error_type") in _ERROR_TYPES:
+            self.diagnostic["error_type"] = diagnostic["error_type"]
+        status = diagnostic.get("http_status")
+        if type(status) is int and 100 <= status <= 599:
+            self.diagnostic["http_status"] = status
+        if diagnostic.get("oauth_error") in OAUTH_ERRORS:
+            self.diagnostic["oauth_error"] = diagnostic["oauth_error"]
+        super().__init__(self.reason)
+
+
 def oauth_options(value: str = "") -> dict:
     packet = json.loads(value) if value else {}
     keys = {"client_id", "client_secret", "scope", "callback_port", "auth_method"}
@@ -144,7 +194,7 @@ class VaultTokenStorage:
 class LoopbackOAuth:
     """Bounded callback listener. Authorization codes never enter logs or Qt."""
 
-    def __init__(self, server_url: str, *, opener=None, options=None):
+    def __init__(self, server_url: str, *, opener=None, options=None, progress=None):
         self.server_url = server_url
         self.opener = opener or webbrowser.open
         self.options = oauth_options(json.dumps(options or {}))
@@ -152,6 +202,14 @@ class LoopbackOAuth:
         self.expected_state = ""
         self.server = None
         self.result = None
+        self.progress = progress
+        self.stage = "preparing"
+
+    def set_stage(self, stage):
+        if stage in OAUTH_STAGES and stage != self.stage:
+            self.stage = stage
+            if self.progress is not None:
+                self.progress({"stage": stage})
 
     async def __aenter__(self):
         self.result = asyncio.get_running_loop().create_future()
@@ -202,11 +260,14 @@ class LoopbackOAuth:
             if valid:
                 from mcp.shared.auth import AuthorizationCodeResult
                 self.result.set_result(AuthorizationCodeResult(code=code[0], state=state[0], iss=issuer[0] if issuer else None))
+                self.set_stage("callback_received")
                 status = "200 OK"
         except (ValueError, UnicodeError, TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
             pass
         finally:
-            body = b"Jarvis: callback received. You can close this window."
+            body = (b"Jarvis: authorization response received. Return to Jarvis to check the connection result."
+                    if status == "200 OK" else
+                    b"Jarvis: authorization response rejected. Start a new connection from Jarvis.")
             writer.write((f"HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n"
                           f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n").encode("ascii") + body)
             try:
@@ -263,7 +324,31 @@ def build_oauth_provider(entry: dict, *, flow=None, vault=None):
                 self.context.client_metadata.scope = options["scope"].strip()
             if options.get("client_id"):
                 await storage.set_client_info(self.context.client_info)
+            if hasattr(flow, "set_stage"):
+                flow.set_stage("waiting_consent")
             return await super()._perform_authorization()
+
+        async def _exchange_token_authorization_code(self, auth_code, code_verifier):
+            if hasattr(flow, "set_stage"):
+                flow.set_stage("token_exchange")
+            return await super()._exchange_token_authorization_code(auth_code, code_verifier)
+
+        async def _handle_token_response(self, response):
+            try:
+                await super()._handle_token_response(response)
+            except Exception as exc:
+                diagnostic = connection_diagnostic(exc, stage="token_exchange")
+                diagnostic["http_status"] = response.status_code
+                try:
+                    data = response.json()
+                    code = data.get("error") if isinstance(data, dict) else None
+                    if isinstance(code, str) and code in OAUTH_ERRORS:
+                        diagnostic["oauth_error"] = code
+                except (ValueError, TypeError, httpx2.ResponseNotRead):
+                    pass
+                raise OAuthConnectionFailure("oauth_token_exchange_failed", diagnostic) from None
+            if hasattr(flow, "set_stage"):
+                flow.set_stage("session_initializing")
 
         async def _initialize(self):
             await super()._initialize()
@@ -302,6 +387,18 @@ def build_oauth_provider(entry: dict, *, flow=None, vault=None):
                         meta = self.context.oauth_metadata
                         if meta is not None and not meta.registration_endpoint:
                             raise OAuthConsentRequired("oauth_preregistered_client_required")
+                        if meta is not None and outgoing.url == httpx2.URL(str(meta.registration_endpoint)):
+                            # Apply the operator's requested scopes to DCR as well
+                            # as consent. PRM may advertise an empty scope list.
+                            if options.get("scope"):
+                                from mcp.client.auth.utils import create_client_registration_request
+                                self.context.client_metadata.scope = options["scope"].strip()
+                                outgoing = create_client_registration_request(meta, self.context.client_metadata,
+                                    self.context.get_authorization_base_url(storage.url))
+                            if hasattr(flow, "set_stage"):
+                                flow.set_stage("registration")
+                    elif flow is not None and outgoing.method == "GET" and hasattr(flow, "set_stage"):
+                        flow.set_stage("metadata")
                     incoming = yield outgoing
                     outgoing = await inner.asend(incoming)
             except StopAsyncIteration:

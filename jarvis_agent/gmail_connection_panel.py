@@ -29,7 +29,15 @@ ERRORS = {"gmail_binding_changed": "L’association Gmail a changé. Recharge av
     "transport_error": "La connexion n’a pas abouti. Vérifie le réseau et le compte, puis réessaie.",
     "oauth_cancelled": "Connexion annulée. Aucun accès aux mails n’a été accordé par cette opération.",
     "gmail_oauth_cancelled": "Connexion annulée. Aucun accès aux mails n’a été accordé par cette opération.",
-    "oauth_timeout": "Le délai de connexion a expiré. Tu peux recommencer depuis ce bouton."}
+    "oauth_timeout": "Le délai de connexion a expiré. Recommence depuis Jarvis ; une ancienne page de retour ne peut pas terminer cette tentative.",
+    "oauth_token_exchange_failed": "Le fournisseur n’a pas remis d’accès utilisable après le consentement. Le détail de l’échange apparaît ci-dessous.",
+    "oauth_connection_failed": "La connexion n’a pas pu être terminée après son démarrage. Le détail de l’étape apparaît ci-dessous."}
+STAGES = {"preparing": "Préparation de la connexion", "metadata": "Vérification du fournisseur",
+    "registration": "Enregistrement de Jarvis", "waiting_consent": "Termine le consentement dans le navigateur",
+    "callback_received": "Retour du navigateur reçu", "token_exchange": "Échange de l’autorisation avec le fournisseur",
+    "session_initializing": "Ouverture de la session MCP", "tools_discovery": "Découverte des fonctions",
+    "credentials_storage": "Enregistrement sécurisé de la connexion", "authorized": "Autorisation enregistrée",
+    "service_inventory": "Vérification des fonctions disponibles"}
 
 
 class GmailConnectionPanel(QFrame):
@@ -47,6 +55,7 @@ class GmailConnectionPanel(QFrame):
         self._signature = ""
         self._state = None
         self._runtime_enabled = False
+        self._connection_stage = "preparing"
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         self.scroll = QScrollArea()
@@ -249,7 +258,7 @@ class GmailConnectionPanel(QFrame):
                 (" Sélectionne Gmail dans le navigateur." if not connected else ""))
         self.test_button.setVisible(ready)
         self.test_button.setEnabled(ready and not self._busy)
-        self.step.setText("Préparation et connexion au compte…" if self._busy else
+        self.step.setText(STAGES.get(self._connection_stage, STAGES["preparing"]) + "…" if self._busy else
             "Connecte Gmail pour utiliser ses fonctions avec Jarvis." if not connected or not permitted else
             "Modifications avancées à enregistrer." if self._dirty else
             "Les connexions sont en pause. Tu peux les réactiver." if activate else
@@ -298,6 +307,8 @@ class GmailConnectionPanel(QFrame):
         self.request_ready.emit("Vérifie quel compte Gmail est réellement connecté avec les outils disponibles, puis indique le nombre de messages non lus si cette lecture est possible. Ne modifie rien dans ma boîte.")
 
     def set_busy(self, busy):
+        if busy and not self._busy:
+            self._connection_stage = "preparing"
         self._busy = bool(busy)
         self.cancel_button.setEnabled(self._busy)
         for widget in (self.provider, self.server_picker, self.connect_button, self.refresh_button, self.tools,
@@ -328,9 +339,25 @@ class GmailConnectionPanel(QFrame):
                     result.get("message") or "Configuration enregistrée.")
                 self.feedback.setText(str(message))
             else:
-                self.feedback.setText(ERRORS.get(result.get("reason"),
-                    "La demande n’a pas abouti. Vérifie les réglages et recharge les capacités."))
+                message = ERRORS.get(result.get("reason"),
+                    "La demande n’a pas abouti. Vérifie les réglages et recharge les capacités.")
+                details = result.get("diagnostic") or {}
+                if details.get("stage") in STAGES:
+                    message += "\nÉtape : " + STAGES[details["stage"]] + "."
+                status = details.get("http_status")
+                if type(status) is int and 100 <= status <= 599:
+                    message += " HTTP " + str(status) + "."
+                from .mcp_oauth import OAUTH_ERRORS
+                if details.get("oauth_error") in OAUTH_ERRORS:
+                    message += " Code : " + details["oauth_error"] + "."
+                self.feedback.setText(message)
         self.refresh()
+
+    def show_progress(self, progress):
+        stage = progress.get("stage")
+        if self._busy and stage in STAGES:
+            self._connection_stage = stage
+            self.step.setText(STAGES[stage] + "…")
 
     def refresh(self):
         if self._busy:

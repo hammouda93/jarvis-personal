@@ -173,6 +173,7 @@ def perform_mcp_command(
     transport: Any | None = None,
     vault: Any | None = None,
     stop_event=None,
+    progress=None,
 ) -> dict[str, Any]:
     """No model calls; mutations only on explicit UI commands."""
     op = command.operation
@@ -184,7 +185,7 @@ def perform_mcp_command(
             return grant(registry, sid, packet)
         def runner(operation, server, value):
             return perform_mcp_command(registry, MCPCommand(operation, server, value),
-                transport=transport, vault=vault, stop_event=stop_event)
+                transport=transport, vault=vault, stop_event=stop_event, progress=progress)
         return connect(registry, sid, packet, command_runner=runner, stop_event=stop_event)
     if op in {"store_bearer", "store_api_key", "forget_credentials", "remove_server", "oauth_authorize"}:
         from .mcp_credentials import CredentialVault
@@ -264,7 +265,8 @@ def perform_mcp_command(
         try:
             discovered = provider.authorize({**entry, "id": sid,
                 "_credential_root": str(registry.path.parent / "mcp_credentials")},
-                vault=vault, stop_event=stop_event, options=options)
+                vault=vault, stop_event=stop_event, options=options,
+                **({"progress": progress} if progress is not None else {}))
         except Exception:
             activity.finish(attempt, "cancelled" if stop_event is not None and stop_event.is_set() else "failed")
             raise
@@ -295,6 +297,8 @@ def perform_mcp_command(
     elif op in {"allow_tool", "deny_tool"}:
         registry.allow_tool(sid, command.value, op == "allow_tool")
     elif op in {"discover", "connect", "reconnect"}:
+        if progress is not None:
+            progress({"stage": "service_inventory"})
         entry = registry.get_server(sid)
         if entry is None:
             raise KeyError("mcp_server_not_found")

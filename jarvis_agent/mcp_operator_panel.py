@@ -803,6 +803,10 @@ class MCPConnectionsPanel(QFrame):
             if idx >= 0:
                 self.tool_picker.setCurrentIndex(idx)
 
+    def show_progress(self, progress: dict) -> None:
+        if progress.get("operation") == "gmail_connect":
+            self.gmail_panel.show_progress(progress)
+
     def show_result(self, result: dict) -> None:
         if (result.get("operation") == "gmail_connect" and result.get("success") and
                 isinstance(result.get("gmail"), dict)):

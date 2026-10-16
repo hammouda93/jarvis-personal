@@ -127,6 +127,8 @@ class OfficialMCPTransport:
             async with ClientSession(read, write) as session:
                 initialized = await session.initialize()
                 if operation in {"discover", "inventory"}:
+                    if oauth_flow is not None:
+                        oauth_flow.set_stage("tools_discovery")
                     inventory = await session_inventory(session, initialized, tools_only=operation == "discover")
                     return inventory["tools"] if operation == "discover" else inventory
                 if operation == "call":
@@ -231,12 +233,22 @@ class OfficialMCPTransport:
     def call_tool(self, entry: dict, tool: str, arguments: dict) -> dict:
         return self.invoke(entry, "call", tool=tool, arguments=arguments)
 
-    def authorize(self, entry: dict, *, stop_event=None, vault=None, opener=None, options=None) -> list[dict]:
-        from .mcp_oauth import LoopbackOAuth, until_cancelled
+    def authorize(self, entry: dict, *, stop_event=None, vault=None, opener=None, options=None, progress=None) -> list[dict]:
+        from .mcp_oauth import LoopbackOAuth, until_cancelled, connection_diagnostic, OAuthConnectionFailure
+        flows = []
         async def connect():
-            async with LoopbackOAuth(entry["url"], opener=opener, options=options) as flow:
+            async with LoopbackOAuth(entry["url"], opener=opener, options=options, progress=progress) as flow:
+                flows.append(flow)
                 result = await self._with_session({**entry, "credential_source": "oauth"},
                     "discover", oauth_flow=flow, vault=vault)
+                flow.set_stage("credentials_storage")
                 flow.storage.commit()
+                flow.set_stage("authorized")
                 return result
-        return asyncio.run(until_cancelled(connect(), stop_event))
+        try:
+            # First-time provider + Google consent can take several minutes.
+            # Ordinary tool calls keep their independent 18-second default.
+            return asyncio.run(until_cancelled(connect(), stop_event, timeout=600))
+        except Exception as exc:
+            details = connection_diagnostic(exc, stage=flows[-1].stage if flows else "preparing")
+            raise OAuthConnectionFailure(details.get("reason", "oauth_connection_failed"), details) from None

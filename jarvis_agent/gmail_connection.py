@@ -206,6 +206,10 @@ def grant(registry, server_id, packet, *, workspace=None, activate_runtime=False
 
 
 def error_reason(exc):
+    from .mcp_oauth import connection_diagnostic, OAUTH_REASONS
+    known = connection_diagnostic(exc).get("reason")
+    if known in OAUTH_REASONS:
+        return known
     reason = str(exc)
     if reason in _ERRORS:
         return reason
