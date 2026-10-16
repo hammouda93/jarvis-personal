@@ -235,8 +235,16 @@ class GmailConnectionPanel(QFrame):
         elif operation == "gmail_grant" and result.get("success"):
             self.reload()
         if operation in {"gmail_connect", "gmail_grant", "runtime_set", "reconnect"}:
-            self.feedback.setText(str(result.get("message")) if result.get("success") and result.get("message") else
-                ERRORS.get(result.get("reason"), "La demande n’a pas abouti. Vérifie les réglages et recharge les capacités."))
+            if result.get("success"):
+                message = (
+                    "MCP activé dans Jarvis." if operation == "runtime_set" and self.registry.runtime_enabled() else
+                    "MCP désactivé dans Jarvis." if operation == "runtime_set" else
+                    "Inventaire actualisé. Vérifie les capacités avant de les enregistrer." if operation == "reconnect" else
+                    result.get("message") or "Configuration enregistrée.")
+                self.feedback.setText(str(message))
+            else:
+                self.feedback.setText(ERRORS.get(result.get("reason"),
+                    "La demande n’a pas abouti. Vérifie les réglages et recharge les capacités."))
         self.refresh()
 
     def refresh(self):

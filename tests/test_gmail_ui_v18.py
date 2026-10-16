@@ -61,6 +61,13 @@ class GmailUITests(Fixture):
         parent.show_result(result)
         self.assertTrue(child.test_button.isEnabled())
         self.assertTrue(child.runtime_button.isHidden())
+        self.assertIn("MCP activé", child.feedback.text())
+        child.refresh_button.click()
+        self.assertEqual(commands[-1], ("reconnect", "gmail", ""))
+        result = perform_mcp_command(self.registry, MCPCommand(*commands.pop()), transport=self.transport)
+        parent.show_result(result)
+        self.assertIn("Inventaire actualisé", child.feedback.text())
+        self.assertEqual(len(self.transport.calls), 0)
 
     def test_new_capabilities_preserve_dirty_selection_and_require_reload(self):
         self.connect()
