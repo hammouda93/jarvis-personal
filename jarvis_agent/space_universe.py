@@ -130,6 +130,7 @@ class UniverseRenderer:
                 painter.setPen(QPen(QColor(101, 143, 179, 30), .8))
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(center, w * (ratio + .05), h * ratio)
+        painter.setBrush(Qt.NoBrush)
         for key, point in points.items():
             if key == "interaction":
                 continue
