@@ -55,6 +55,9 @@ def base_role_tools(agent_id: str, available: frozenset[str], explicit: list[str
         base = native & (_BROWSER | _COMPUTER)
     else:
         base = native & frozenset(manifest.allowed_tools)
+    # Shared LOCAL organisation, still narrowed by the saved role profile.
+    # No remote tool or permission is added by this common workspace surface.
+    base |= native & {"workspace_read", "workspace_save_activity", "workspace_prepare_action"}
     if explicit is None:
         return base
     if (not isinstance(explicit, list) or len(explicit) > 100

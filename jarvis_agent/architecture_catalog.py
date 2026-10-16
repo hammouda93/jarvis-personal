@@ -28,7 +28,8 @@ _LABELS = {
 # Code-level tools already implemented, grouped for display. The manifest's
 # allowlist is shown separately: these groups never amend kernel authority.
 _NATIVE = {
-    "interaction": ("get_current_time", "mission_checkpoint", "request_tool_capabilities", "read_observation_evidence"),
+    "interaction": ("get_current_time", "mission_checkpoint", "request_tool_capabilities", "read_observation_evidence",
+                    "workspace_read", "workspace_save_activity", "workspace_update_profile", "workspace_prepare_action"),
     "windows": ("list_windows", "list_applications", "open_application", "inspect_active_window",
                 "click_ui_element", "write_ui_element", "press_key", "close_window"),
     "browser": ("open_url", "browser_list_tabs", "browser_get_active_tab", "browser_observe_dom",

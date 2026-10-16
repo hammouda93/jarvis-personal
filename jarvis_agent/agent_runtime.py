@@ -29,11 +29,13 @@ PhaseFn = Callable[[str], None]
 
 
 def _tool_log_arguments(name, arguments):
+    if name.startswith("workspace_"):
+        return "<Personal workspace arguments omitted>"
     return "<MCP arguments omitted>" if name.startswith("mcp__") else arguments
 
 
 def _tool_log_detail(name, result):
-    if name.startswith("mcp__") or name == "read_observation_evidence":
+    if name.startswith(("mcp__", "workspace_")) or name == "read_observation_evidence":
         # Private service content stays in the conversation, never in log
         # files or the UI's diagnostic panel. Keep locally generated status.
         from .mcp_result import receipt_metadata
@@ -513,6 +515,18 @@ class AgentRuntime(Protocol):
 
 class AgentRuntimeUnavailable(RuntimeError):
     pass
+
+
+def _workspace_context(tools):
+    reader = getattr(tools, "personal_context", None)
+    value = reader() if callable(reader) else ""
+    return value if isinstance(value, str) else ""
+
+
+def _workspace_begin_turn(tools, user_text):
+    begin = getattr(tools, "workspace_begin_turn", None)
+    if callable(begin):
+        begin(user_text)
 
 
 _THINK_BLOCK_RE = re.compile(
@@ -2063,7 +2077,8 @@ class OllamaToolAgent:
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
         if self._messages:
-            system = _effective_system_instructions()
+            _workspace_begin_turn(self.tools, user_text)
+            system = _effective_system_instructions() + _workspace_context(self.tools)
             if self._ephemeral_context:
                 system += "\n\n" + self._ephemeral_context
             self._messages[0] = {"role": "system", "content": system}
@@ -2392,6 +2407,7 @@ class OpenAIResponsesAgent:
         log: LogFn | None = None,
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
+        _workspace_begin_turn(getattr(self, "tools", None), user_text)
         previous = self._previous_response_id
         actions: list[AgentActionResult] = []
 
@@ -2525,6 +2541,7 @@ class OpenAIResponsesAgent:
                 "model": self.model,
                 "instructions": (
                     _SYSTEM_INSTRUCTIONS
+                    + _workspace_context(self.tools)
                     + (
                         "\n\n" + self._ephemeral_context
                         if self._ephemeral_context
@@ -2963,7 +2980,7 @@ class GroqResponsesAgent:
             self._messages = [
                 {"role": "system", "content": _effective_system_instructions()}
             ]
-        base = _effective_system_instructions()
+        base = _effective_system_instructions() + _workspace_context(self.tools)
         if not self._session_grounding:
             content = base
             if self._ephemeral_context:
@@ -3220,6 +3237,8 @@ class GroqResponsesAgent:
             # browser/desktop action even if the page exposes a database API.
             # This is based on active runtime scope, never on site/app names.
             allowed = set(msf_tool_names or ())
+            from .workspace_tools import WORKSPACE_TOOLS
+            allowed.update(WORKSPACE_TOOLS)
             if bool(getattr(self.tools, "browser_mode", False)):
                 browser_surface_names = {
                     str((item.get("function") or {}).get("name") or "")
@@ -3936,6 +3955,7 @@ class GroqResponsesAgent:
         phase: PhaseFn | None = None,
     ) -> AgentTurnResult:
         context = getattr(self, "request_context", None)
+        _workspace_begin_turn(self.tools, user_text)
         if context is not None:
             context.begin_turn(user_text)
         self._request_turn_start_index = len(self._messages)
@@ -6409,6 +6429,8 @@ def build_agent_runtime(*, unified_missions: bool = False) -> AgentRuntime:
         or enabled("JARVIS_ACTIVE_SUPERVISOR_ENABLED"))
     tools = MCPToolRegistry(tools, registry=mcp_registry,
         runtime_gate=mcp_registry.runtime_enabled, observation_context=request_context)
+    from .workspace_tools import WorkspaceToolRegistry
+    tools = WorkspaceToolRegistry(tools, mcp_tools=tools)
     tools = ContextToolRegistry(tools, request_context)
 
     # Independent, opt-in Hermes-inspired per-action checkpointing.

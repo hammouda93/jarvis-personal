@@ -126,10 +126,10 @@ class ArchitecturePanel(QFrame):
         navigation = QGridLayout()
         navigation.setContentsMargins(0, 0, 0, 0)
         navigation.setSpacing(4)
-        for index, (label, section) in enumerate((("Missions", "control"), ("Cerveaux", "brains"), ("Connexions", "mcp"))):
+        for index, (label, section) in enumerate((("Missions", "control"), ("Cerveaux", "brains"), ("Connexions", "mcp"), ("Mon quotidien", "workspace"))):
             button = QPushButton(label)
             button.clicked.connect(lambda checked=False, target=section: self.section_requested.emit(target))
-            navigation.addWidget(button, index // 2, index % 2, 1, 2 if index == 2 else 1)
+            navigation.addWidget(button, index // 2, index % 2)
         overview_layout.addLayout(navigation)
         preferences = QPushButton("Préférences Skills / Learning")
         preferences.clicked.connect(lambda: self.section_requested.emit("skills"))

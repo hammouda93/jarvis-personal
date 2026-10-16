@@ -47,7 +47,7 @@ class TracingToolRegistry:
         mission_id = getattr(self._local, "mission_id", None)
         agent_id = getattr(self._local, "agent_id", None)
         request_event_id = None
-        private_observation = str(name).startswith("mcp__") or name == "read_observation_evidence"
+        private_observation = str(name).startswith(("mcp__", "workspace_")) or name == "read_observation_evidence"
         if mission_id:
             request_event_id = self.journal.append_event(
                 mission_id=mission_id,

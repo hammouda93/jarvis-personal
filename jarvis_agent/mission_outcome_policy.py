@@ -11,6 +11,7 @@ from typing import Any
 
 # Read-only capabilities, independent of the visited website or application.
 READ_ONLY_TOOLS = frozenset({
+    "workspace_read",
     "browser_list_tabs", "browser_get_active_tab", "browser_observe_dom",
     "browser_find", "browser_verify", "computer_observe", "computer_find",
     "computer_verify", "computer_list_windows", "computer_get_active_window",

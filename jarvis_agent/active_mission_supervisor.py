@@ -54,6 +54,7 @@ class MissionLimits:
 
 
 OBSERVATION_TOOLS = frozenset({
+    "workspace_read",
     "verify_file_artifact",
     "browser_list_tabs", "browser_get_active_tab", "browser_observe_dom",
     "browser_verify", "computer_observe", "computer_verify",
@@ -63,6 +64,7 @@ OBSERVATION_TOOLS = frozenset({
     "semantic_memory_events_in_range",
 })
 _REVERSIBLE_TOOLS = frozenset({"open_url", "open_application", "browser_navigate",
+                              "workspace_save_activity", "workspace_prepare_action",
                               "browser_activate_tab", "browser_back", "browser_forward"})
 
 
