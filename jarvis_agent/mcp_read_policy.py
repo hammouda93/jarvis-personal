@@ -36,6 +36,11 @@ def is_conservative_read_tool(name: str, input_schema: dict | None = None) -> bo
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,99}", name):
         return False
     words = [v.lower() for v in re.split(r"[._-]+", name) if v]
+    # Reviewed Gmail wrappers (e.g. Pipedream's GMAIL-SEARCH-EMAILS).
+    # Only the service prefix is removed; mutation/secret words and schema
+    # controls below still veto the operator's automatic-read grant.
+    if words and words[0] == "gmail":
+        words = words[1:]
     if len(words) < 2 or any(word in _DENIED_WORDS for word in words):
         return False
     if words[0] not in _READ_STARTS and words[-1] not in _READ_STARTS:

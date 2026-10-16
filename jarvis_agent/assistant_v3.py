@@ -309,13 +309,14 @@ class AssistantWorker(QObject):
         except Exception as exc:
             # Never leak API tokens, bearer headers or arbitrary MCP output.
             from .mcp_control import connection_failure_state
+            from .gmail_connection import error_reason, GMAIL_OPERATIONS
             result = {"success": False, "operation": command.operation,
                       "server_id": command.server_id,
-                      "reason": connection_failure_state(exc)
+                      "reason": error_reason(exc) if command.operation in GMAIL_OPERATIONS else connection_failure_state(exc)
                       if command.operation in {"discover", "connect", "reconnect", "oauth_authorize"}
                       else type(exc).__name__}
         finally:
-            if command.operation == "oauth_authorize":
+            if command.operation in {"oauth_authorize", "gmail_connect"}:
                 self._mcp_control.finish_authorization()
         self.mcp_control_result.emit(result)
         self.log_line.emit(

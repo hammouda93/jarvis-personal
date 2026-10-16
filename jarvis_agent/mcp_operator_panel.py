@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 class MCPConnectionsPanel(QFrame):
     requested = Signal(str, str, str)
+    request_ready = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -338,7 +339,7 @@ class MCPConnectionsPanel(QFrame):
         layout.addWidget(self.inventory)
         self.feedback = QLabel(
             "Chaque serveur est isolé. Chaque outil doit être autorisé à part. "
-            "Même autorisé, tout appel demande confirmation."
+            "Les lectures préautorisées peuvent être automatiques ; les autres appels demandent confirmation."
         )
         self.feedback.setWordWrap(True)
         self.feedback.setObjectName("operatorMetric")
@@ -374,6 +375,13 @@ class MCPConnectionsPanel(QFrame):
             # MCP dock wider than the user's compact Windows workspace.
             picker.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             picker.setMinimumContentsLength(12)
+        from .gmail_connection_panel import GmailConnectionPanel
+        self.gmail_panel = GmailConnectionPanel(self)
+        self.gmail_panel.requested.connect(self._gmail_send)
+        self.gmail_panel.request_ready.connect(self.request_ready.emit)
+        self.gmail_panel.advanced_requested.connect(self._gmail_advanced)
+        self.tabs.addTab(self.gmail_panel, "Gmail")
+        self.tabs.setUsesScrollButtons(True)
         self._select_server(0)
         self.setStyleSheet("""
             QFrame#mcpConnectionsPanel {background:#081c2c;}
@@ -474,6 +482,10 @@ class MCPConnectionsPanel(QFrame):
 
     def _prepare_workspace_connection(self):
         entry = get_connection(str(self.workspace_picker.currentData() or ""))
+        if entry is not None and entry.identifier == "gmail":
+            self.tabs.setCurrentWidget(self.gmail_panel)
+            self.gmail_panel.refresh()
+            return
         card = find_card(entry.catalog_id) if entry is not None and entry.catalog_id else None
         if entry is None or entry.integration != "remote_mcp" or card is None or not card.endpoint:
             self.feedback.setText(
@@ -513,6 +525,21 @@ class MCPConnectionsPanel(QFrame):
             return
         self.feedback.setText("Demande transmise au worker Jarvis.")
         self.requested.emit(operation, server.strip(), value.strip())
+
+    def _gmail_send(self, operation, server, value):
+        if operation == "gmail_connect":
+            self._authorization_pending = server
+            self._select_server(self.server_picker.currentIndex())
+        if operation == "runtime_set":
+            self.runtime_switch.setChecked(value == "true")
+            return
+        self._send(operation, server, value)
+
+    def _gmail_advanced(self, server):
+        self.tabs.setCurrentWidget(self.services_page)
+        index = self.server_picker.findData(server)
+        if index >= 0:
+            self.server_picker.setCurrentIndex(index)
 
     def _for_server(self, operation: str) -> None:
         self._send(operation, str(self.server_picker.currentData() or ""), "")
@@ -677,6 +704,7 @@ class MCPConnectionsPanel(QFrame):
                 self.outcome_picker.setCurrentIndex(restored)
         self.outcome_picker.blockSignals(False)
         busy = bool(self._authorization_pending)
+        self.gmail_panel.set_busy(busy)
         self.outcome_picker.setEnabled(not busy)
         self.review_outcome_button.setEnabled(not busy and bool(self.outcome_picker.currentData()))
         self.cancel_oauth_button.setEnabled(busy)
@@ -723,6 +751,7 @@ class MCPConnectionsPanel(QFrame):
             f" · serveurs {len(servers)} · outils autorisés {count}"
         )
         self._servers = servers
+        self.gmail_panel.refresh()
         workspace = workspace_summary(servers)
         if self.workspace_summary.toPlainText() != workspace:
             self.workspace_summary.setPlainText(workspace)
@@ -773,9 +802,10 @@ class MCPConnectionsPanel(QFrame):
             self.runtime_switch.blockSignals(True)
             self.runtime_switch.setChecked(self._runtime_enabled)
             self.runtime_switch.blockSignals(False)
-        if result.get("operation") == "oauth_authorize":
+        if result.get("operation") in {"oauth_authorize", "gmail_connect"}:
             self._authorization_pending = ""
             self._select_server(self.server_picker.currentIndex())
+        self.gmail_panel.show_result(result)
         if result.get("operation") == "set_quotas" and result.get("success"):
             self._quota_dirty = False
             # The saved quota can differ from the optimistic spinbox value.
