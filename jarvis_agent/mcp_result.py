@@ -5,6 +5,25 @@ import re
 import json
 
 
+def diagnostic_metadata(data) -> dict:
+    """Only known exception types and bounded protocol/status numbers."""
+    from .mcp_oauth import _ERROR_TYPES
+    from .mcp_sdk_transport import MCP_RPC_METHODS
+    if not isinstance(data, dict):
+        return {}
+    safe = {}
+    error_type = data.get("error_type")
+    if isinstance(error_type, str) and error_type in _ERROR_TYPES:
+        safe["error_type"] = error_type
+    status = data.get("http_status")
+    if type(status) is int and 100 <= status <= 599:
+        safe["http_status"] = status
+    method, code = data.get("rpc_method"), data.get("rpc_code")
+    if isinstance(method, str) and method in MCP_RPC_METHODS and type(code) is int and -(2**31) <= code < 2**31:
+        safe.update(rpc_method=method, rpc_code=code)
+    return safe
+
+
 def receipt_metadata(raw, *, name="") -> dict:
     """Small local status for diagnostics; external content stays in context."""
     try:
@@ -14,6 +33,9 @@ def receipt_metadata(raw, *, name="") -> dict:
     if not isinstance(data, dict):
         return {"content_omitted": True}
     result = {"content_omitted": True}
+    diagnostic = diagnostic_metadata(data.get("diagnostic"))
+    if diagnostic:
+        result["diagnostic"] = diagnostic
     for key in ("verified", "dispatched", "outcome_unknown", "arguments_empty",
                 "blocked_by_previous_attempt", "reviewable", "output_truncated",
                 "archive_truncated", "historical_observation", "permissions_changed"):

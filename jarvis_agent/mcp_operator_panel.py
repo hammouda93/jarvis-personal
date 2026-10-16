@@ -279,7 +279,7 @@ class MCPConnectionsPanel(QFrame):
         self.outcome_picker = QComboBox()
         self.outcome_picker.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.outcome_picker.setMinimumContentsLength(12)
-        self.review_outcome_button = QPushButton()
+        self.review_outcome_button = QPushButton("Examiné")
         self.review_outcome_button.setIcon(self.style().standardIcon(QStyle.SP_DialogApplyButton))
         self.review_outcome_button.setToolTip("Enregistrer ma verification de l'effet exterieur")
         self.review_outcome_button.setAccessibleName("Revoir un appel MCP incertain")

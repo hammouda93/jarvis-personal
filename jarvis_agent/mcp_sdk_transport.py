@@ -14,6 +14,7 @@ from typing import Any
 
 INVENTORY_RPC_METHODS = frozenset({"initialize", "tools/list", "resources/list",
                                   "resources/templates/list", "prompts/list"})
+MCP_RPC_METHODS = INVENTORY_RPC_METHODS | {"tools/call"}
 
 
 def tool_reply_envelope(reply) -> dict:
@@ -123,7 +124,7 @@ class MCPUnavailable(RuntimeError):
                  rpc_method: str = "", rpc_code=None):
         super().__init__(message)
         self.outcome_unknown = outcome_unknown
-        self.rpc_method = rpc_method if rpc_method in INVENTORY_RPC_METHODS else ""
+        self.rpc_method = rpc_method if rpc_method in MCP_RPC_METHODS else ""
         self.rpc_code = rpc_code if type(rpc_code) is int and -(2**31) <= rpc_code < 2**31 else None
 
 
@@ -157,7 +158,15 @@ class OfficialMCPTransport:
                     inventory = await session_inventory(session, initialized, tools_only=operation == "discover")
                     return inventory["tools"] if operation == "discover" else inventory
                 if operation == "call":
-                    reply = await session.call_tool(tool, arguments=arguments or {})
+                    try:
+                        reply = await session.call_tool(tool, arguments=arguments or {})
+                    except MCPError as exc:
+                        # A completed JSON-RPC error is distinct from a lost
+                        # response. Only the gateway's pinned read grant can
+                        # treat it as a known failure; writes remain uncertain.
+                        return {"success": False,
+                            "message": "Le serveur MCP a refusé cet appel (code " + str(exc.code) + ").",
+                            "diagnostic": {"error_type": "MCPError", "rpc_method": "tools/call", "rpc_code": exc.code}}
                     return tool_reply_envelope(reply)
                 raise ValueError("invalid_mcp_operation")
 

@@ -18,7 +18,7 @@ STATES = {"not_configured": "À connecter", "disabled": "À reconnecter",
 ERRORS = {"gmail_binding_changed": "L’association Gmail a changé. Recharge avant de continuer.",
     "mcp_failure_cooldown": "Une tentative vient d’échouer. Attends quinze secondes avant de reconnecter.",
     "mcp_hourly_quota_exhausted": "Le quota MCP de cette heure est atteint. Consulte les quotas dans les réglages avancés.",
-    "mcp_unknown_requires_review": "Un envoi reste incertain. Vérifie son résultat dans le service et examine le journal MCP avant une nouvelle demande.",
+    "mcp_unknown_requires_review": "Un appel reste incertain. Vérifie son résultat dans le service et examine le journal MCP avant une nouvelle demande.",
     "gmail_server_conflict": "Cet emplacement est déjà utilisé. Recharge ou choisis ton serveur existant.",
     "gmail_server_not_found": "Ce serveur n’existe plus. Recharge la liste.",
     "gmail_connection_changed": "La connexion a changé. Recharge les capacités avant d’autoriser.",
@@ -99,7 +99,7 @@ class GmailConnectionPanel(QFrame):
         self.reload_button = self._button(layout, "Recharger les fonctions", self.reload)
         self.runtime_note = self._note(layout, "Cette activation permet à Jarvis d’utiliser aussi les autres services déjà autorisés.")
         self.runtime_button = self._button(layout, "Activer mes connexions dans Jarvis", lambda: self.requested.emit("runtime_set", "", "true"))
-        self.test_button = self._button(layout, "Vérifier le compte (facultatif)", self.test_mailbox)
+        self.test_button = self._button(layout, "Vérifier l’accès à ma boîte", self.test_mailbox)
         self._note(layout, "Tu peux vérifier le compte utilisé dans la conversation avec Jarvis.")
         self.advanced_toggle = QPushButton("Réglages avancés ▸")
         self.advanced_toggle.setCheckable(True)
@@ -252,7 +252,7 @@ class GmailConnectionPanel(QFrame):
         self.runtime_note.setVisible(activate)
         ready = bool(permitted and state["runtime_enabled"] and not self._dirty)
         if full_access and ready:
-            self.status.setText("Gmail connecté")
+            self.status.setText("Fonctions Gmail activées")
         if self.provider.currentData() == "pipedream":
             self.provider_note.setText("Connexion gérée par Pipedream ; tes données transitent par ce fournisseur." +
                 (" Sélectionne Gmail dans le navigateur." if not connected else ""))
@@ -262,7 +262,7 @@ class GmailConnectionPanel(QFrame):
             "Connecte Gmail pour utiliser ses fonctions avec Jarvis." if not connected or not permitted else
             "Modifications avancées à enregistrer." if self._dirty else
             "Les connexions sont en pause. Tu peux les réactiver." if activate else
-            "Gmail est prêt. Demande directement ce dont tu as besoin à Jarvis.")
+            "Demande une lecture ou vérifie le compte. Une connexion Google peut encore être nécessaire lors du premier accès.")
 
     @staticmethod
     def _state_signature(state):

@@ -22,6 +22,12 @@ réellement découvertes. Le catalogue Gmail ouvre le même parcours. La
 vérification du compte est facultative et disponible dans la conversation.
 La découverte ne prouve pas l’identité de la boîte ni la réussite d’un envoi.
 
+Le panneau annonce donc **Fonctions Gmail activées**, puis propose de vérifier
+l’accès à la boîte. Le résultat d’une simple liste d’outils ne suffit pas à
+annoncer que le compte Google est utilisable. Si la première lecture renvoie
+un lien Pipedream Connect, l’ouvrir et terminer l’autorisation Google, puis
+redemander la lecture dans Jarvis.
+
 La connexion n’appelle aucun outil de lecture ou d’envoi de mail. Après celle-ci,
 les lectures préautorisées sont utilisables par Jarvis ; les envois et
 modifications conservent le circuit de confirmation des actions. L’accès aux
@@ -91,6 +97,26 @@ Il ne refait pas le consentement dans ce cas précis. Une déconnexion explicite
 une autorisation révoquée ou un changement de fournisseur garde le parcours
 normal. Un échec RPC indique maintenant aussi la méthode et son code numérique,
 sans recopier le message ni les données du serveur.
+
+Les demandes « Vérifie mon compte » et « messages non lus » restent des demandes
+de lecture : « non lus » ne doit pas devenir un retour correctif « non ».
+Lorsqu’une lecture est déjà préautorisée, le correctif de refus du modèle consulte
+le catalogue filtré par les droits, même si le budget a masqué son schéma. Il
+peut proposer une sélection de capacité sans ajouter de permission ni forcer
+un appel. L’essai est borné à une correction.
+
+Un refus JSON-RPC explicite reçu pour une lecture préautorisée est traité comme
+un échec connu, comme une réponse MCP `isError`. Le même refus pour une écriture
+reste incertain. Une réponse perdue, un timeout ou une ancienne tentative
+incertaine conserve le verrou du journal ; aucune tentative ancienne n’est
+effacée ou requalifiée. Les nouveaux diagnostics d’appel indiquent uniquement
+le type d’exception connu, le statut HTTP ou la méthode et le code RPC.
+
+Pour examiner une tentative existante, ouvrir **Connexions → Services**, choisir
+le serveur **gmail**, puis **Journal**. Sélectionner la tentative et utiliser
+**Examiné** après vérification. Cela enregistre une revue de l’opérateur,
+conserve le résultat initial et ne relance aucun appel ; une nouvelle demande
+de lecture est nécessaire ensuite.
 
 Le journal utilisateur du 16 octobre confirme les étapes `credentials_storage`
 et `authorized`, suivies d’un échec `MCPError` à `service_inventory`. Il ne donne

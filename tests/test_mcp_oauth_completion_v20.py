@@ -20,6 +20,9 @@ from jarvis_agent.mcp_control import MCPCommand, perform_mcp_command
 from jarvis_agent.mcp_sdk_transport import OfficialMCPTransport
 from jarvis_agent.mcp_oauth import OAuthConnectionFailure, connection_diagnostic
 from jarvis_agent.mcp_server_registry import MCPRegistry
+from jarvis_agent.mcp_tool_registry import MCPToolRegistry
+from jarvis_agent.agent_runtime import _tool_log_detail
+from tests.test_mcp_control_center import NativeDelegate
 from tests.test_mcp_oauth import MemoryStore
 
 
@@ -96,6 +99,8 @@ class OAuthCompletionTests(unittest.TestCase):
             field = {"resources/list": "resources", "resources/templates/list": "resourceTemplates",
                      "prompts/list": "prompts"}[data["method"]]
             result = {field: []}
+        elif data["method"] == "tools/call":
+            result = {"content": [{"type": "text", "text": "Fixture account response"}]}
         else:
             return httpx2.Response(202)
         return httpx2.Response(200, json={"jsonrpc": "2.0", "id": data["id"], "result": result},
@@ -229,6 +234,45 @@ class OAuthCompletionTests(unittest.TestCase):
         self.assertEqual(details["rpc_code"], -32601)
         self.assertNotIn("PRIVATE", json.dumps(details))
         self.assertNotIn("FIXTURE_SECRET", json.dumps(details))
+
+    def test_rpc_rejection_is_known_for_granted_reads_and_uncertain_for_writes(self):
+        actual_client = httpx2.AsyncClient
+        root = Path(self.temp.name)
+        registry = MCPRegistry(root / "mcp.json")
+        with patch("httpx2.AsyncClient", side_effect=lambda **kw:
+            actual_client(transport=httpx2.MockTransport(self.handler), **kw)), patch(
+            "webbrowser.open", side_effect=self.browser), patch(
+            "jarvis_agent.mcp_oauth.CredentialVault", return_value=self.vault), patch.dict(os.environ, {
+                "JARVIS_PERSONAL_WORKSPACE_PATH": str(root / "workspace.sqlite3")}):
+            perform_mcp_command(registry, MCPCommand("gmail_connect", "gmail", json.dumps({
+                "provider": "pipedream", "binding_revision": 0, "access": "plugin"})),
+                transport=OfficialMCPTransport(), vault=self.vault)
+            gateway = MCPToolRegistry(NativeDelegate(), registry=registry,
+                transport=OfficialMCPTransport(), runtime_gate=registry.runtime_enabled)
+            self.rpc_failures["tools/call"] = -32602
+            result = gateway.execute("mcp__gmail__GMAIL_GET_CURRENT_USER", {})
+            details = json.loads(result.detail)
+            self.assertFalse(result.success)
+            self.assertFalse(details["outcome_unknown"])
+            self.assertTrue(details["safe_read_failure"])
+            self.assertEqual(details["diagnostic"]["rpc_method"], "tools/call")
+            self.assertEqual(details["diagnostic"]["rpc_code"], -32602)
+            self.assertEqual(registry.activity().summary("gmail")["last_outcome"], "failed")
+            self.assertEqual(registry.activity().summary("gmail")["unresolved"], [])
+            registry.discover("gmail", [{"name": "GMAIL-SEND-EMAIL", "input_schema": {"type": "object"}}])
+            registry.allow_tool("gmail", "GMAIL-SEND-EMAIL", True)
+            activity = registry.activity()
+            later = time.time() + 20
+            activity.clock = lambda: later
+            with patch.object(registry, "activity", return_value=activity):
+                write = gateway.execute("mcp__gmail__GMAIL_SEND_EMAIL", {}, approved=True)
+                blocked = gateway.execute("mcp__gmail__GMAIL_SEND_EMAIL", {}, approved=True)
+            self.assertTrue(json.loads(write.detail)["outcome_unknown"])
+            self.assertEqual(json.loads(blocked.detail)["guard"], "mcp_unknown_requires_review")
+            self.assertEqual(self.mcp_methods.count("tools/call"), 2)
+        log = _tool_log_detail(result.name, result)
+        self.assertIn('"rpc_code": -32602', log)
+        self.assertNotIn("PRIVATE", result.detail + log)
 
     def test_cancellation_is_named_and_does_not_open_browser_or_write_credentials(self):
         stop = threading.Event()

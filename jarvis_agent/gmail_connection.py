@@ -182,7 +182,7 @@ def connect(registry, server_id, packet, *, command_runner, workspace=None, stop
         review.update(selected=[t["name"] for t in status["tools"]], automatic_reads=True)
         grant(registry, server_id, review, workspace=workspace, activate_runtime=True)
         status = snapshot(registry, workspace, server_id=server_id)
-    message = ("Gmail est connecté à Jarvis. Tu peux maintenant lui demander de rechercher, résumer ou utiliser les fonctions disponibles."
+    message = ("Les fonctions Gmail sont activées dans Jarvis. Une première lecture permet de vérifier l’accès au compte."
         if plugin_access and status["tools"] else
         "Connexion MCP testée. Vérifie les capacités Gmail puis autorise les outils choisis." if status["tools"] else
         "Connexion MCP testée, aucun outil Gmail reconnu. Sélectionne Gmail chez le fournisseur puis actualise.")

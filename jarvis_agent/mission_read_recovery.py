@@ -14,7 +14,8 @@ _PERMISSION_CLAIM = re.compile(
 )
 _READ_GOAL = re.compile(
     r"\b(?:consulte|consult|inspecte|inspect|analyse|analy[sz]e|"
-    r"recherche|search|trouve|find|liste|list|r[eé]cup[eè]re|fetch|read|lis)\b",
+    r"recherche|search|trouve|find|liste|list|r[eé]cup[eè]re|fetch|read|lis|"
+    r"v[eé]rifie|verify|check|compte|count|d[eé]nombre)\b",
     re.IGNORECASE,
 )
 _COMMAND = re.compile(
@@ -27,7 +28,7 @@ _COMMAND = re.compile(
 
 def needs_authorized_read_retry(user_goal: str, model_reply: str, definitions: list,
                                 requires_confirmation) -> bool:
-    """Only for a no-tools refusal with actual exposed and ungated MCP reads."""
+    """Only a no-tools refusal with executor-approved MCP read schemas."""
     if not _READ_GOAL.search(str(user_goal or "")):
         return False
     if not _PERMISSION_CLAIM.search(str(model_reply or "")[:1800]):
