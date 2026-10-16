@@ -40,7 +40,7 @@ class GmailUITests(Fixture):
         self.addCleanup(parent.close)
         child, commands = parent.gmail_panel, []
         parent.requested.connect(lambda *args: commands.append(args))
-        child.start_connection()
+        child.start_connection(access="manual")
         self.assertEqual(commands[-1][0], "gmail_connect")
         self.assertTrue(child._busy)
         result = perform_mcp_command(self.registry, MCPCommand(*commands.pop()), transport=self.transport, vault=self.vault)
@@ -93,6 +93,12 @@ class GmailUITests(Fixture):
         self.assertIs(parent.tabs.currentWidget(), parent.gmail_panel)
         self.assertEqual(commands, [])
         self.assertFalse(self.registry.path.exists())
+        parent.tabs.setCurrentWidget(parent.catalog_page)
+        parent.catalog_picker.setCurrentIndex(parent.catalog_picker.findData("gmail"))
+        parent.catalog_prepare_button.click()
+        self.assertIs(parent.tabs.currentWidget(), parent.gmail_panel)
+        self.assertEqual(commands, [])
+        self.assertIn("Pipedream", parent.catalog_endpoint.text())
 
     def test_connection_cancel_reaches_same_authorization_slot_and_error_releases_controls(self):
         parent = MCPConnectionsPanel()
@@ -113,6 +119,7 @@ class GmailUITests(Fixture):
         panel = self.panel()
         panel.resize(300, 500)
         panel.show()
+        panel.advanced_toggle.click()
         self.app.processEvents()
         self.assertEqual(panel.scroll.horizontalScrollBar().maximum(), 0)
         self.assertLessEqual(panel.scroll.widget().width(), panel.scroll.viewport().width())
@@ -120,8 +127,6 @@ class GmailUITests(Fixture):
         self.app.processEvents()
         self.assertTrue(panel.grant_button.isVisible())
         self.assertLessEqual(panel.grant_button.mapTo(panel.scroll.viewport(), panel.grant_button.rect().bottomRight()).y(), panel.scroll.viewport().height())
-        panel.advanced_toggle.click()
-        self.app.processEvents()
         self.assertGreater(panel.scroll.verticalScrollBar().maximum(), 0)
         panel.scroll.ensureWidgetVisible(panel.advanced_button)
         self.app.processEvents()

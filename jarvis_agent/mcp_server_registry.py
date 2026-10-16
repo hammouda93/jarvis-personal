@@ -326,11 +326,11 @@ class MCPRegistry:
             entry["auto_read_fingerprints"] = {}
             self._write(data)
 
-    def apply_tool_review(self, server_id, *, expected_connection, reviewed, selected, automatic_reads):
+    def apply_tool_review(self, server_id, *, expected_connection, reviewed, selected, automatic_reads, activate_runtime=False):
         """Atomic operator review of an observed subset, never a tool call."""
         from .mcp_read_policy import is_conservative_read_tool
         if (not isinstance(reviewed, dict) or not isinstance(selected, list) or
-                any(n not in reviewed for n in selected) or type(automatic_reads) is not bool):
+                any(n not in reviewed for n in selected) or type(automatic_reads) is not bool or type(activate_runtime) is not bool):
             raise ValueError("gmail_invalid_selection")
         with self._lock:
             data = self._load()
@@ -351,6 +351,8 @@ class MCPRegistry:
                     pinned[name] = tools[name]["fingerprint"]
             entry["auto_read_fingerprints"] = pinned
             entry["auto_read_enabled"] = bool(pinned)
+            if activate_runtime:
+                data["runtime_enabled"] = True
             self._write(data)
             return {"selected": len(selected), "automatic_reads": sum(n in pinned for n in reviewed),
                     "writes_require_confirmation": True}

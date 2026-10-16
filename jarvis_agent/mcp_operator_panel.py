@@ -503,6 +503,12 @@ class MCPConnectionsPanel(QFrame):
         card = find_card(str(self.catalog_picker.currentData() or ""))
         if card is None:
             return
+        self.catalog_prepare_button.setText("Ouvrir la connexion Gmail" if card.identifier == "gmail" else "Préparer la configuration")
+        if card.identifier == "gmail":
+            from .gmail_connection import PIPEDREAM_DOC
+            self.catalog_note.setText("Gmail : connecte ton compte dans le navigateur. Jarvis disposera des fonctions Gmail découvertes, sans sélection outil par outil.")
+            self.catalog_endpoint.setText("Connexion Google gérée par Pipedream.\n" + PIPEDREAM_DOC)
+            return
         self.catalog_note.setText(
             card.label + " : " + card.requirement + " " + card.warning
         )
@@ -512,6 +518,10 @@ class MCPConnectionsPanel(QFrame):
     def _prepare_catalog_service(self):
         card = find_card(str(self.catalog_picker.currentData() or ""))
         if card is None:
+            return
+        if card.identifier == "gmail":
+            self.tabs.setCurrentWidget(self.gmail_panel)
+            self.gmail_panel.refresh()
             return
         self.server_name.setText(card.identifier)
         self.server_url.setText(card.endpoint)
@@ -794,6 +804,12 @@ class MCPConnectionsPanel(QFrame):
                 self.tool_picker.setCurrentIndex(idx)
 
     def show_result(self, result: dict) -> None:
+        if (result.get("operation") == "gmail_connect" and result.get("success") and
+                isinstance(result.get("gmail"), dict)):
+            self._runtime_enabled = result["gmail"].get("runtime_enabled") is True
+            self.runtime_switch.blockSignals(True)
+            self.runtime_switch.setChecked(self._runtime_enabled)
+            self.runtime_switch.blockSignals(False)
         if result.get("operation") == "runtime_set":
             self._runtime_pending = False
             self.runtime_switch.setEnabled(True)

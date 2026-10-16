@@ -77,6 +77,7 @@ class FriendlyGmailTests(Fixture):
     def test_group_choices_activate_through_original_commands_without_mail_dispatch(self):
         self.connect()
         panel, commands, requests = self.panel(), [], []
+        panel.advanced_toggle.click()
         panel.requested.connect(lambda *args: commands.append(args))
         panel.request_ready.connect(requests.append)
         panel.functions.choices["read"].click()

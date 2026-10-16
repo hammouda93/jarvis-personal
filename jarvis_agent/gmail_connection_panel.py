@@ -65,6 +65,7 @@ class GmailConnectionPanel(QFrame):
         self.feedback = self._note(layout, "Aucun mail n’est lu ou envoyé pendant cette configuration.")
         self.step = self._note(layout, "1. Connecte ton compte Gmail.")
         self.provider_note = self._note(layout, "")
+        self.access_note = self._note(layout, "Connecter Gmail autorise Jarvis à utiliser ses fonctions disponibles. Les connexions déjà autorisées dans Jarvis seront aussi activées.")
         self.connect_button = self._button(layout, "Connecter Gmail", self.start_connection)
         self.cancel_button = self._button(layout, "Annuler la connexion", self.cancel_connection)
         self.cancel_button.hide()
@@ -72,11 +73,11 @@ class GmailConnectionPanel(QFrame):
         functions_layout = QVBoxLayout(self.functions_section)
         functions_layout.setContentsMargins(0, 0, 0, 0)
         self._note(functions_layout, "Ce que Jarvis peut faire pour toi")
+        self.available_functions = self._note(functions_layout, "")
         self.functions = ConnectorFunctionsPanel({"read": "Lire et rechercher", "draft": "Gérer les brouillons",
             "send": "Envoyer et répondre", "organize": "Classer les messages",
             "delete": "Supprimer des messages", "other": "Autres fonctions"})
         self.functions.selection_changed.connect(self._group_selection_changed)
-        functions_layout.addWidget(self.functions)
         choices = QHBoxLayout()
         self.reads_button = QPushButton("Lecture seule")
         self.all_button = QPushButton("Tout sélectionner")
@@ -84,15 +85,13 @@ class GmailConnectionPanel(QFrame):
         self.all_button.clicked.connect(lambda: self.select_tools(reads_only=False))
         choices.addWidget(self.reads_button)
         choices.addWidget(self.all_button)
-        functions_layout.addLayout(choices)
         self._note(functions_layout, "Les envois et modifications demandent confirmation. Les contenus consultés peuvent être traités par ton fournisseur IA.")
         layout.addWidget(self.functions_section)
-        self.grant_button = self._button(layout, "Enregistrer mes choix", self.grant)
         self.reload_button = self._button(layout, "Recharger les fonctions", self.reload)
         self.runtime_note = self._note(layout, "Cette activation permet à Jarvis d’utiliser aussi les autres services déjà autorisés.")
         self.runtime_button = self._button(layout, "Activer mes connexions dans Jarvis", lambda: self.requested.emit("runtime_set", "", "true"))
-        self.test_button = self._button(layout, "Vérifier mon compte Gmail", self.test_mailbox)
-        self._note(layout, "Le compte et ses accès réels seront vérifiés dans la conversation avec Jarvis.")
+        self.test_button = self._button(layout, "Vérifier le compte (facultatif)", self.test_mailbox)
+        self._note(layout, "Tu peux vérifier le compte utilisé dans la conversation avec Jarvis.")
         self.advanced_toggle = QPushButton("Réglages avancés ▸")
         self.advanced_toggle.setCheckable(True)
         layout.addWidget(self.advanced_toggle)
@@ -108,9 +107,11 @@ class GmailConnectionPanel(QFrame):
         advanced.addWidget(self.provider)
         self.server_picker = QComboBox()
         advanced.addWidget(self.server_picker)
-        self.account_button = self._button(advanced, "Changer ou reconnecter le compte", self.start_connection)
+        self.account_button = self._button(advanced, "Connexion avec droits personnalisés", lambda: self.start_connection(access="manual"))
         self.refresh_button = self._button(advanced, "Actualiser les fonctions", self.reconnect)
         self.capabilities = self._note(advanced, "Les fonctions apparaîtront après connexion.")
+        advanced.addWidget(self.functions)
+        advanced.addLayout(choices)
         self.tools = QTreeWidget()
         self.tools.setHeaderLabels(["Nom technique", "Fonction"])
         self.tools.setRootIsDecorated(False)
@@ -122,6 +123,7 @@ class GmailConnectionPanel(QFrame):
         self.auto_reads.setChecked(True)
         self.auto_reads.toggled.connect(self._selection_changed)
         advanced.addWidget(self.auto_reads)
+        self.grant_button = self._button(advanced, "Enregistrer mes choix avancés", self.grant)
         self._note(advanced, "Les lectures restent limitées aux outils reconnus par la politique de Jarvis. Les autres appels conservent leur confirmation.")
         self.advanced_button = self._button(advanced, "Ouvrir le centre MCP", lambda: self.advanced_requested.emit(self.server_id()))
         layout.addStretch(1)
@@ -225,8 +227,10 @@ class GmailConnectionPanel(QFrame):
             state["connection_state"] != "authorization_required" and
             state["state"] not in {"not_configured", "disabled", "discovery_required", "no_gmail_tools"})
         permitted = bool(connected and any(t["allowed"] for t in state["tools"]))
+        full_access = bool(connected and all(t["allowed"] for t in state["tools"]))
         can_grant = bool(connected and state["tools"] and not stale and not self._busy)
-        self.connect_button.setVisible(not connected)
+        self.connect_button.setVisible(not connected or not full_access)
+        self.access_note.setVisible(not connected or not full_access)
         self.connect_button.setEnabled(not self._busy and bool(state))
         self.cancel_button.setVisible(self._busy)
         self.cancel_button.setEnabled(self._busy)
@@ -238,19 +242,24 @@ class GmailConnectionPanel(QFrame):
         self.runtime_button.setVisible(activate)
         self.runtime_note.setVisible(activate)
         ready = bool(permitted and state["runtime_enabled"] and not self._dirty)
+        if full_access and ready:
+            self.status.setText("Gmail connecté")
+        if self.provider.currentData() == "pipedream":
+            self.provider_note.setText("Connexion gérée par Pipedream ; tes données transitent par ce fournisseur." +
+                (" Sélectionne Gmail dans le navigateur." if not connected else ""))
         self.test_button.setVisible(ready)
         self.test_button.setEnabled(ready and not self._busy)
         self.step.setText("Connexion en cours dans le navigateur…" if self._busy else
-            "1. Connecte ton compte Gmail." if not connected else
-            "2. Choisis les fonctions puis enregistre tes choix." if self._dirty or not permitted else
-            "3. Active tes connexions dans Jarvis." if activate else
-            "3. Vérifie ton compte, puis demande ce dont tu as besoin à Jarvis.")
+            "Connecte Gmail pour utiliser ses fonctions avec Jarvis." if not connected or not permitted else
+            "Modifications avancées à enregistrer." if self._dirty else
+            "Les connexions sont en pause. Tu peux les réactiver." if activate else
+            "Gmail est prêt. Demande directement ce dont tu as besoin à Jarvis.")
 
     @staticmethod
     def _state_signature(state):
         return json.dumps({k: state[k] for k in ("server", "binding_revision", "connection", "inventory")}, sort_keys=True)
 
-    def start_connection(self):
+    def start_connection(self, checked=False, *, access="plugin"):
         try:
             sid = self.server_id()
             if not sid:
@@ -260,7 +269,7 @@ class GmailConnectionPanel(QFrame):
             self._pending_server = sid
             self.set_busy(True)
             self.feedback.setText("Connexion en cours dans le navigateur. Termine la sélection Gmail et le consentement, puis reviens dans Jarvis.")
-            self.requested.emit("gmail_connect", sid, json.dumps({"provider": self.provider.currentData(), "binding_revision": revision}))
+            self.requested.emit("gmail_connect", sid, json.dumps({"provider": self.provider.currentData(), "binding_revision": revision, "access": access}))
         except (ValueError, KeyError, OSError, sqlite3.Error):
             self.feedback.setText("Configuration indisponible. Recharge avant de réessayer.")
 
@@ -351,6 +360,8 @@ class GmailConnectionPanel(QFrame):
             self.capabilities.setText("\n".join(label + " : " + str(state["groups"][group]["allowed"]) + " autorisé(s) / " +
                 str(state["groups"][group]["discovered"]) + " découvert(s)" for group, label in GROUPS.items()) +
                 ("\nInventaire partiel : des capacités peuvent manquer." if state["inventory_partial"] else ""))
+            self.available_functions.setText("\n".join("• " + self.functions.groups[group]
+                for group in GROUPS if state["groups"][group]["discovered"]))
             signature = self._state_signature(state)
             stale = bool(self._dirty and signature != self._signature)
             if not self._dirty and signature != self._signature:

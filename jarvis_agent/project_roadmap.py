@@ -70,12 +70,12 @@ def snapshot() -> dict:
         "stages": stages,
         "release_ready": False,
         "development_priority": {
-            "phase": "V19",
-            "title": "Connexions simples et choix des fonctions en français",
+            "phase": "V20",
+            "title": "Connecter le compte et utiliser les fonctions disponibles",
             "implementation": "integrated",
             "automated": "local_regression_passed",
             "windows_real": "not_validated",
-            "evidence": "docs/V19_FRIENDLY_CONNECTIONS.md",
+            "evidence": "docs/V20_PLUGIN_CONNECTION.md",
             "next": "Valider Gmail sur le poste réel, puis reprendre ce parcours pour Calendar et les autres services",
         },
         "human_windows_evidence": {
@@ -110,6 +110,8 @@ def snapshot() -> dict:
                                     "gmail_reads_with_configured_brains", "confirmed_gmail_write_and_service_receipt"],
             "v19_retest_required": ["friendly_connection_flow_on_windows", "existing_partial_permissions_preserved",
                                     "advanced_settings_accessible_in_narrow_panel"],
+            "v20_retest_required": ["gmail_login_to_ready_without_tool_checkboxes", "actual_gmail_account_and_mail_read",
+                                    "explicit_send_and_external_receipt"],
         },
         "notice": (
             "Étapes 1–8 intégrées et testées automatiquement. "
@@ -126,6 +128,7 @@ def snapshot() -> dict:
             "Les agents lisent et préparent ; les actions externes restent à Jarvis. La téléphonie exige un service MCP vocal réel. "
             "V18 ajoute la connexion Gmail guidée via Pipedream ou un serveur existant, la sélection des capacités et une vérification du compte. "
             "V19 simplifie ce parcours avec des groupes de fonctions en français et des réglages avancés repliés. "
+            "V20 rend les fonctions Gmail disponibles dès la connexion ; leur liste est informative et les réglages fins restent avancés. "
             "Skills et apprentissage OFF par defaut. Centre MCP et controle d'acces ajoutes. OAuth personnel non connecte; "
             "Skills avances et taches durables en developpement. Parcours Windows reels "
             "signales par l'utilisateur; campagne finale complete encore attendue."
