@@ -5,7 +5,20 @@ habituel, outils Windows, mémoire SQLite et services MCP explicitement connect�
 Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
 distinct de la preuve que l'objectif entier est atteint.
 
-## Candidat V14 — profils d’agents et contexte par mission
+## Correctif V15 — mémoire utilisable et actions quotidiennes
+
+La branche `fix/daily-use-context-tools-v15` corrige les régressions observées
+sur V14 `0c10cde` : le fait explicitement mémorisé rejoint la conversation et
+reste disponible lors du passage automatique à une mission composée. Un outil
+sélectionné reste présent dans la requête du modèle malgré la réduction du
+contexte ; un budget insuffisant suspend la requête avant l’API.
+
+L’interface affiche une suspension lorsqu’un tour reste incomplet. Le profil
+Full, les données locales et la cascade de cerveaux existante sont conservés.
+Voir la [recette ciblée V15](docs/V15_DAILY_USE_REGRESSIONS.md). La validation
+automatique ne remplace pas les essais réels sur le poste Windows.
+
+## Socle V14 — profils d’agents et contexte par mission
 
 La branche `feature/agent-profiles-context-v14` prolonge la V13 `7569493`.
 **ARCHITECTURE > Profils** permet de modifier les responsabilités, compétences,
@@ -19,7 +32,8 @@ les protections des outils sont conservées. Le journal affiche des estimations,
 distinctes des compteurs de tokens renvoyés par les fournisseurs.
 
 Voir les [contrats, limites et essais V14](docs/V14_AGENT_PROFILES_CONTEXT.md).
-Les workers autonomes avec leur propre contexte restent la prochaine étape.
+La suite doit d’abord valider les usages quotidiens et métier complets avant
+d’étendre les workers autonomes.
 
 ## Socle V13 — architecture visible et corrections réelles
 

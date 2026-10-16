@@ -358,10 +358,13 @@ class AssistantWorker(QObject):
             self._deliver_reply(str(result["text"]))
             self._restore_mission_phase()
 
-    def _restore_mission_phase(self) -> None:
+    def _restore_mission_phase(self, turn=None) -> None:
         mid = getattr(self._agent, "active_mission_id", None)
         if not mid:
-            self._state(AssistantState.SUCCESS, "Prêt")
+            if getattr(turn, "pause_reason", ""):
+                self._state(AssistantState.PAUSED, "Demande suspendue — résultat incomplet")
+            else:
+                self._state(AssistantState.ARMED, "Prêt")
             return
         try:
             data = self._agent.mission_snapshot(mid)
@@ -990,7 +993,7 @@ class AssistantWorker(QObject):
             )
             self.detail_changed.emit(details)
             self.log_line.emit(
-                f"[AGENT] completed_actions={len(turn.actions)}"
+                f"[AGENT] tool_results={len(turn.actions)}"
             )
         else:
             self.detail_changed.emit("Conversation")
@@ -1005,7 +1008,7 @@ class AssistantWorker(QObject):
             self.log_line.emit("[SESSION] agent requested standby")
             return False
 
-        self._restore_mission_phase()
+        self._restore_mission_phase(turn)
         self._level(0.0)
         return True
 

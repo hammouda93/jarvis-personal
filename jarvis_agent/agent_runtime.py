@@ -2985,6 +2985,7 @@ class GroqResponsesAgent:
             "current_url",
             "active_application_result",
             "memory_grounded_answer",
+            "recent_memory_source",
         ):
             value = self._session_grounding.get(key)
             if value:
@@ -3030,6 +3031,14 @@ class GroqResponsesAgent:
             self._ephemeral_context = ""
             self._refresh_session_grounding_prompt()
 
+    def _append_user_message(self, user_text):
+        """The next real user turn starts a requested scope, including fast paths."""
+        message = {"role": "user", "content": str(user_text or "").strip()}
+        self._messages.append(message)
+        if self._request_scope_pending:
+            self._request_scope_anchor = message
+            self._request_scope_pending = False
+
     def record_external_turn(
         self,
         user_text: str,
@@ -3045,7 +3054,23 @@ class GroqResponsesAgent:
             action_detail,
             success=success,
         )
-        self._messages.append({"role": "user", "content": str(user_text or "").strip()})
+        if success and action_name == "remember_information":
+            from hashlib import sha256
+            from .memory_goal_proof import parse_memory_write_receipt
+            receipt = parse_memory_write_receipt(action_detail)
+            raw = str(user_text or "").strip()
+            if (receipt is not None and _is_explicit_memory_write_request(raw)
+                    and sha256(raw.encode("utf-8")).hexdigest() == receipt.raw_sha256):
+                # The most recent user-authored fact remains useful when an
+                # automatic compound mission starts a new request scope.
+                # Bounded DATA only: no replay, implied permission or second
+                # SQLite write. Reset clears this session projection.
+                self._session_grounding["recent_memory_source"] = json.dumps({
+                    "memory_id": receipt.memory_id, "raw": raw[:2400],
+                    "source_truncated": len(raw) > 2400,
+                    "source": "user_explicit_memory", "instructions": False,
+                }, ensure_ascii=False)
+        self._append_user_message(user_text)
         context = str(assistant_text or "").strip()
         if action_name:
             context += f"\n[LOCAL_ACTION] {action_name} success={1 if success else 0}"
@@ -4051,11 +4076,7 @@ class GroqResponsesAgent:
                         )
                     except Exception:
                         log("[KNOWLEDGE] injected")
-            user_message = {"role": "user", "content": user_text}
-            self._messages.append(user_message)
-            if getattr(self, "_request_scope_pending", False):
-                self._request_scope_anchor = user_message
-                self._request_scope_pending = False
+            self._append_user_message(user_text)
             explicit_msf = self._is_ms_football_request(user_text)
             contextual_msf = (
                 self._active_domain == "ms_football"
@@ -4960,6 +4981,8 @@ class GroqResponsesAgent:
                     actions=tuple(actions),
                     end_session=end_session,
                     should_exit=should_exit,
+                    pause_reason=("missing_mission_evidence" if evidence_reason else
+                                  "missing_requested_capability" if missing_capabilities else ""),
                 )
 
             for call_index, call in enumerate(calls):

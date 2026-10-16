@@ -38,6 +38,20 @@ class MissionPresentationTests(unittest.TestCase):
         self.worker._restore_mission_phase()
         self.assertEqual(self.states[-1][0], AssistantState.PAUSED)
 
+    def test_paused_ordinary_turn_without_active_mission_is_not_success(self):
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        self.worker._agent = SimpleNamespace(active_mission_id=None)
+        for reason in ("capability_selection_no_progress", "turn_budget_exhausted", "missing_mission_evidence"):
+            with self.subTest(reason=reason):
+                self.worker._restore_mission_phase(AgentTurnResult("Demande incomplète.", pause_reason=reason))
+                self.assertEqual(self.states[-1][0], AssistantState.PAUSED)
+
+    def test_completed_conversation_remains_ready(self):
+        from jarvis_agent.agent_runtime import AgentTurnResult
+        self.worker._agent = SimpleNamespace(active_mission_id=None)
+        self.worker._restore_mission_phase(AgentTurnResult("Bonjour !"))
+        self.assertEqual(self.states[-1], (AssistantState.ARMED, "Prêt"))
+
     def test_unknown_outcome_uses_recovery_not_success(self):
         self.worker._agent = SimpleNamespace(active_mission_id="fixture", mission_snapshot=lambda _: {
             "status": "blocked", "manual_review_required": True})
