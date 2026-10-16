@@ -132,3 +132,10 @@ class CredentialVault:
                 self._store().delete(key)
         except Exception as exc:
             raise CredentialUnavailable("secure_credential_delete_failed") from exc
+
+    def delete(self, server: str, purpose: str) -> None:
+        """Forget one encrypted purpose, e.g. disconnect without losing setup."""
+        try:
+            self._store().delete(self._key(server, purpose))
+        except Exception as exc:
+            raise CredentialUnavailable("secure_credential_delete_failed") from exc

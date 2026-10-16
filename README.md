@@ -5,6 +5,24 @@ habituel, outils Windows, mémoire SQLite et services MCP explicitement connect�
 Le même runtime choisit les outils et suit les missions. Un succès d'outil reste
 distinct de la preuve que l'objectif entier est atteint.
 
+## V21 — Google direct : Gmail, Calendar, Drive, Sheets et Docs
+
+La branche `feature/google-workspace-native-v21` ajoute une connexion groupée
+**CONNEXIONS → Google**, sans Pipedream ni nouveau processus à installer.
+Une configuration Google OAuth **Application de bureau** est à importer une
+seule fois ; ensuite **Connecter Google → choisir son compte → autoriser**.
+Google impose cette identification de l’application : la connexion ChatGPT
+ne peut pas être transférée à Jarvis.
+
+Les outils des cinq services sont intégrés aux permissions, confirmations,
+quotas et reçus existants. Le bouton **Vérifier Gmail · lecture seule** vérifie
+directement le compte et les non-lus, sans modèle IA ni ancienne mission.
+L’ancienne connexion Gmail/Pipedream reste disponible, sans suppression de
+configuration ni de données. Aucun compte personnel n’a été connecté par
+les tests automatiques.
+
+Voir le [guide V21 : installation, connexion et essais](docs/V21_GOOGLE_WORKSPACE_NATIVE.md).
+
 ## V20 — connecter Gmail et l’utiliser directement
 
 La branche `feature/plugin-connect-ready-v20` reprend le parcours attendu d’un

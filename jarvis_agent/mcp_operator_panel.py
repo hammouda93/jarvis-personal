@@ -53,6 +53,10 @@ class MCPConnectionsPanel(QFrame):
         # Read-only personal connection planner. It never connects, enables,
         # discovers, or authorizes a remote tool without an operator action.
         workspace_layout = QVBoxLayout(self.workspace_page)
+        self.google_button = QPushButton("Connecter Google · Gmail, agenda et documents")
+        self.google_button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.google_button.clicked.connect(self.open_google)
+        workspace_layout.addWidget(self.google_button)
         self.workspace_picker = QComboBox()
         self.workspace_picker.addItem("Choisir un service à préparer…", "")
         for entry in CONNECTIONS:
@@ -382,6 +386,10 @@ class MCPConnectionsPanel(QFrame):
         self.gmail_panel.advanced_requested.connect(self._gmail_advanced)
         self.gmail_panel.review_requested.connect(self._gmail_review)
         self.tabs.addTab(self.gmail_panel, "Gmail")
+        from .google_workspace_panel import GoogleWorkspacePanel
+        self.google_panel = GoogleWorkspacePanel(self)
+        self.google_panel.requested.connect(self._gmail_send)
+        self.tabs.addTab(self.google_panel, "Google")
         self.tabs.setUsesScrollButtons(True)
         self._select_server(0)
         self.setStyleSheet("""
@@ -477,12 +485,16 @@ class MCPConnectionsPanel(QFrame):
         )
         card = find_card(entry.catalog_id) if entry.catalog_id else None
         self.workspace_prepare_button.setEnabled(
-            entry.integration == "remote_mcp" and card is not None
+            entry.identifier in {"google_calendar", "google_drive", "google_sheets", "google_docs"}
+            or entry.integration == "remote_mcp" and card is not None
             and bool(card.endpoint)
         )
 
     def _prepare_workspace_connection(self):
         entry = get_connection(str(self.workspace_picker.currentData() or ""))
+        if entry is not None and entry.identifier in {"google_calendar", "google_drive", "google_sheets", "google_docs"}:
+            self.open_google()
+            return
         if entry is not None and entry.identifier == "gmail":
             self.tabs.setCurrentWidget(self.gmail_panel)
             self.gmail_panel.refresh()
@@ -538,13 +550,21 @@ class MCPConnectionsPanel(QFrame):
         self.requested.emit(operation, server.strip(), value.strip())
 
     def _gmail_send(self, operation, server, value):
-        if operation == "gmail_connect":
+        if operation in {"gmail_connect", "google_connect"}:
             self._authorization_pending = server
             self._select_server(self.server_picker.currentIndex())
         if operation == "runtime_set":
-            self.runtime_switch.setChecked(value == "true")
+            checked = value == "true"
+            if self.runtime_switch.isChecked() == checked:
+                self._set_runtime(checked)
+            else:
+                self.runtime_switch.setChecked(checked)
             return
         self._send(operation, server, value)
+
+    def open_google(self):
+        self.google_panel.refresh()
+        self.tabs.setCurrentWidget(self.google_panel)
 
     def _gmail_advanced(self, server):
         self.tabs.setCurrentWidget(self.services_page)
@@ -689,12 +709,13 @@ class MCPConnectionsPanel(QFrame):
                     + " ; appels " + str(activity.get("calls_used", 0)) + ("\n" + "\n".join(history) if history else ""))
             last = str(entry.get("last_discovery_success_utc") or "")
             state = {"disconnected": "Deconnecte", "tested_session_closed": "Connexion testee ; session fermee",
+                     "google_authorized": "Google autorisé ; API des services à tester",
                      "authorization_required": "Autorisation necessaire", "transport_error": "Erreur de connexion"}.get(entry.get("connection_state"), "Etat inconnu")
             self.connection_status.setText(
                 ("Configuration activée" if entry.get("enabled") else "Configuration désactivée")
                 + " · " + state
                 + (
-                    " · dernière découverte réussie : " + last[:25]
+                    (" · catalogue natif enregistré : " if entry.get("kind") == "google" else " · dernière découverte réussie : ") + last[:25]
                     if last else " · aucune découverte réussie enregistrée"
                 )
                 + " · credentials : " + str(entry.get("credential_source", "environment"))
@@ -724,6 +745,7 @@ class MCPConnectionsPanel(QFrame):
         self.outcome_picker.blockSignals(False)
         busy = bool(self._authorization_pending)
         self.gmail_panel.set_busy(busy)
+        self.google_panel.set_busy(busy)
         self.outcome_picker.setEnabled(not busy)
         self.review_outcome_button.setEnabled(not busy and bool(self.outcome_picker.currentData()))
         self.cancel_oauth_button.setEnabled(busy)
@@ -771,6 +793,7 @@ class MCPConnectionsPanel(QFrame):
         )
         self._servers = servers
         self.gmail_panel.refresh()
+        self.google_panel.refresh()
         workspace = workspace_summary(servers)
         if self.workspace_summary.toPlainText() != workspace:
             self.workspace_summary.setPlainText(workspace)
@@ -813,10 +836,16 @@ class MCPConnectionsPanel(QFrame):
                 self.tool_picker.setCurrentIndex(idx)
 
     def show_progress(self, progress: dict) -> None:
+        self.google_panel.show_progress(progress)
         if progress.get("operation") == "gmail_connect":
             self.gmail_panel.show_progress(progress)
 
     def show_result(self, result: dict) -> None:
+        if result.get("operation") == "google_connect" and result.get("success"):
+            self._runtime_enabled = True
+            self.runtime_switch.blockSignals(True)
+            self.runtime_switch.setChecked(True)
+            self.runtime_switch.blockSignals(False)
         if (result.get("operation") == "gmail_connect" and result.get("success") and
                 isinstance(result.get("gmail"), dict)):
             self._runtime_enabled = result["gmail"].get("runtime_enabled") is True
@@ -831,10 +860,11 @@ class MCPConnectionsPanel(QFrame):
             self.runtime_switch.blockSignals(True)
             self.runtime_switch.setChecked(self._runtime_enabled)
             self.runtime_switch.blockSignals(False)
-        if result.get("operation") in {"oauth_authorize", "gmail_connect"}:
+        if result.get("operation") in {"oauth_authorize", "gmail_connect", "google_connect"}:
             self._authorization_pending = ""
             self._select_server(self.server_picker.currentIndex())
         self.gmail_panel.show_result(result)
+        self.google_panel.show_result(result)
         if result.get("operation") == "set_quotas" and result.get("success"):
             self._quota_dirty = False
             # The saved quota can differ from the optimistic spinbox value.

@@ -69,10 +69,12 @@ class MCPRegistry:
             raise ValueError("invalid_mcp_runtime_flag")
         for server, entry in raw["servers"].items():
             if (not _ID.fullmatch(str(server)) or not isinstance(entry, dict)
-                    or entry.get("kind") not in {"http", "stdio"}
+                    or entry.get("kind") not in {"http", "stdio", "google"}
                     or not isinstance(entry.get("tools", {}), dict)
                     or not all(isinstance(tool, dict) for tool in entry.get("tools", {}).values())):
                 raise ValueError("invalid_mcp_server_record")
+            if entry.get("kind") == "google" and entry.get("url") != "https://www.googleapis.com":
+                raise ValueError("invalid_google_api_origin")
         return raw
 
     def _write(self, data: dict) -> None:
@@ -101,7 +103,7 @@ class MCPRegistry:
                 "id": name,
                 "kind": entry.get("kind"),
                 "endpoint": entry.get("url", "")
-                if entry.get("kind") == "http"
+                if entry.get("kind") in {"http", "google"}
                 else str(entry.get("command") or ""),
                 "enabled": entry.get("enabled") is True,
                 "last_discovery_success_utc": str(
@@ -114,7 +116,9 @@ class MCPRegistry:
                 "prompts": copy.deepcopy(entry.get("prompts") or [])[:150],
                 "resource_templates": copy.deepcopy(entry.get("resource_templates") or [])[:150],
                 "inventory_truncated": list(entry.get("inventory_truncated") or []),
-                "credential_source": entry.get("credential_source", "environment") if entry.get("kind") == "http" else "scoped_environment",
+                "credential_source": entry.get("credential_source", "environment") if entry.get("kind") in {"http", "google"} else "scoped_environment",
+                **({"google_account": copy.deepcopy(entry.get("google_account") or {}),
+                    "google_services": list(entry.get("google_services") or [])} if entry.get("kind") == "google" else {}),
                 "discovered": len(entry.get("tools") or {}),
                 "auto_read_enabled": entry.get("auto_read_enabled") is True,
                 "allowed": sum(
@@ -259,6 +263,84 @@ class MCPRegistry:
                 "kind": "stdio", "command": "hermes",
                 "args": ["mcp", "serve"], "enabled": False, "tools": {},
             }
+            self._write(data)
+
+    def google_client_metadata(self):
+        """Public setup hints only; Qt never decrypts credentials."""
+        with self._lock:
+            value = self._load().get("google_client") or {}
+            return {key: copy.deepcopy(value[key]) for key in ("project_id", "fingerprint", "configured") if key in value}
+
+    def note_google_client(self, *, project_id, fingerprint):
+        if not isinstance(project_id, str) or len(project_id) > 200 or not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
+            raise ValueError("invalid_google_client_metadata")
+        with self._lock:
+            data = self._load()
+            data["google_client"] = {"project_id": project_id, "fingerprint": fingerprint, "configured": True}
+            self._write(data)
+
+    def install_google_account(self, server_id, *, account, tools, services, activate=True):
+        """Explicit Connect Google policy: atomic catalog, reads and activation.
+
+        Called only after native Google OAuth has verified the account and
+        committed its OS-protected token bundle. No mailbox/document is read.
+        """
+        from .google_workspace_catalog import GOOGLE_TARGET, SERVICES
+        from .mcp_read_policy import is_conservative_read_tool
+        name = self._check_id(server_id)
+        subject_hash = account.get("subject_hash", "") if isinstance(account, dict) else ""
+        if (not isinstance(subject_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", subject_hash)
+                or name != "google_" + subject_hash[:16]
+                or not isinstance(account.get("email"), str) or len(account["email"]) > 320
+                or not set(services) <= set(SERVICES) or not services or len(tools) > 150):
+            raise ValueError("invalid_google_account")
+        records, pinned = {}, {}
+        for tool in tools:
+            tool_name = tool["name"]
+            schema, description = tool["input_schema"], tool["description"][:400]
+            definition = {"name": tool_name, "description": description, "input_schema": schema}
+            fingerprint = hashlib.sha256(json.dumps(definition, sort_keys=True, ensure_ascii=False,
+                separators=(",", ":")).encode()).hexdigest()
+            records[tool_name] = {"description": description, "input_schema": copy.deepcopy(schema),
+                "fingerprint": fingerprint, "allowed": True, "blocked": False}
+            if is_conservative_read_tool(tool_name, schema):
+                pinned[tool_name] = fingerprint
+        with self._lock:
+            data = self._load()
+            old = data["servers"].get(name)
+            if old and old.get("kind") != "google":
+                raise ValueError("google_server_conflict")
+            if not old and len(data["servers"]) >= 30:
+                raise ValueError("mcp_server_limit")
+            data["servers"][name] = {"kind": "google", "url": GOOGLE_TARGET,
+                "enabled": bool(activate), "tools": records, "credential_source": "oauth",
+                "credential_revision": int((old or {}).get("credential_revision", 0)) + 1,
+                "google_account": {"email": account["email"], "subject_hash": subject_hash},
+                "google_services": list(services), "auto_read_enabled": bool(pinned),
+                "auto_read_fingerprints": pinned, "capabilities": {"tools": True},
+                "last_discovery_success_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "connection_state": "google_authorized",
+                **({"quotas": old["quotas"]} if old and "quotas" in old else {})}
+            if activate:
+                data["google_active_server"] = name
+                data["runtime_enabled"] = True
+            self._write(data)
+
+    def active_google_server(self):
+        with self._lock:
+            return str(self._load().get("google_active_server") or "")
+
+    def activate_google_account(self, server_id, *, pause_servers=()):
+        with self._lock:
+            data = self._load()
+            entry = data["servers"].get(self._check_id(server_id))
+            if not entry or entry.get("kind") != "google":
+                raise ValueError("google_server_conflict")
+            entry["enabled"] = True
+            data["google_active_server"], data["runtime_enabled"] = server_id, True
+            for previous in pause_servers:
+                if previous != server_id and previous in data["servers"]:
+                    data["servers"][previous]["enabled"] = False
             self._write(data)
 
     def add_stdio(self, server_id: str, command: str, args: list[str], *,

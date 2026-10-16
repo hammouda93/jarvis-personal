@@ -156,3 +156,14 @@ class MCPActivityStore:
         if rows:
             result.update(last_attempt_utc=result["recent"][0]["utc"], last_outcome=rows[0]["outcome"])
         return result
+
+    def reviewed_attempt(self, server: str, attempt: int) -> dict | None:
+        """Exact local acknowledgement, not the truncated operator inventory."""
+        self._server(server)
+        if type(attempt) is not int or attempt < 1:
+            raise ValueError("invalid_mcp_attempt_id")
+        with self._connect() as conn:
+            row = conn.execute("""SELECT a.tool,a.operation,a.outcome FROM attempts a
+                JOIN outcome_reviews r ON r.attempt_id=a.id WHERE a.server=? AND a.id=?""",
+                (server, attempt)).fetchone()
+        return dict(row) if row else None

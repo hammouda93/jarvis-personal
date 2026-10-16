@@ -311,6 +311,27 @@ class PersonalWorkspaceStore:
             self._history(con, "binding", service, revision + 1, {"server": server}, datetime.now(timezone.utc).isoformat())
         return {"service": service, "server": server, "revision": revision + 1}
 
+    def bind_services(self, services, server, *, expected_revisions):
+        """Atomic operator-requested association of a native provider's services."""
+        return self.bind_service_map({service: server for service in services}, expected_revisions=expected_revisions)
+
+    def bind_service_map(self, mapping, *, expected_revisions):
+        if (not mapping or any(get_connection(s) is None or get_connection(s).integration == "native" for s in mapping)
+                or any(not isinstance(server, str) or server and not _SERVER.fullmatch(server) for server in mapping.values())):
+            raise ValueError("invalid_workspace_service_binding")
+        with self._connection(write=True) as con:
+            revisions = {}
+            for service in mapping:
+                row = con.execute("SELECT revision FROM workspace_bindings WHERE service=?", (service,)).fetchone()
+                revision = row[0] if row else 0
+                self._revision(revision, expected_revisions.get(service))
+                revisions[service] = revision + 1
+            for service, revision in revisions.items():
+                con.execute("INSERT INTO workspace_bindings VALUES (?,?,?) ON CONFLICT(service) DO UPDATE SET "
+                    "server=excluded.server,revision=excluded.revision", (service, mapping[service], revision))
+                self._history(con, "binding", service, revision, {"server": mapping[service]}, datetime.now(timezone.utc).isoformat())
+        return revisions
+
     def brief(self, *, now=None, limit=12):
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("invalid_workspace_limit")

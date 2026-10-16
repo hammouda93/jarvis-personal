@@ -27,6 +27,9 @@ _READS = frozenset({"workspace_read", "get_current_time", "recall_information",
     "browser_list_tabs", "browser_get_active_tab", "browser_observe_dom", "browser_find",
     "browser_verify", "browser_list_downloads", "browser_get_download"})
 _LOCAL_PREPARATIONS = frozenset({"workspace_prepare_action", "workspace_save_activity"})
+_GOOGLE_ROLE_READS = {"communications": {"gmail", "google_calendar"},
+    "documents": {"google_drive", "google_docs"}, "data": {"google_drive", "google_sheets"},
+    "automations": {"google_calendar"}}
 
 
 class WorkerToolGate:
@@ -65,9 +68,22 @@ class WorkerToolGate:
             from .gmail_connection import tool_group
             entry = self.mcp_tools.registry.get_server(gmail_server) or {}
             return tool_group(item["tool"], entry) == "read"
+        def bound_google_read(item):
+            # Service identity is compiled locally, never inferred from a
+            # remote title. Bindings and profile restrictions remain live.
+            services = _GOOGLE_ROLE_READS.get(self.policy["role"], set())
+            if not services:
+                return False
+            from .google_workspace_catalog import BY_NAME
+            from .personal_workspace import PersonalWorkspaceStore
+            entry = self.mcp_tools.registry.get_server(item["server"]) or {}
+            op = BY_NAME.get(item["tool"])
+            if entry.get("kind") != "google" or not op or not op.read_only or op.service not in services:
+                return False
+            return (PersonalWorkspaceStore().bindings().get(op.service) or {}).get("server") == item["server"]
         remote = {alias for alias, item in self.mcp_tools._available().items()
             if self.mcp_tools._automatic_read(alias)
-            and (alias in assigned if assigned is not None else self.policy["role"] in {"interaction", "mcp"} or item["server"] in connectors or bound_gmail_read(item))}
+            and (alias in assigned if assigned is not None else self.policy["role"] in {"interaction", "mcp"} or item["server"] in connectors or bound_gmail_read(item) or bound_google_read(item))}
         choices = ((base & native) | remote)
         if assigned is not None:
             choices &= set(assigned) | {"workspace_read", "get_current_time"}

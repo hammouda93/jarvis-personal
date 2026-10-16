@@ -28,7 +28,8 @@ class MCPControlInbox:
         "allow_tool", "deny_tool", "add_stdio", "revoke_tools", "remove_server",
         "store_bearer", "store_api_key", "forget_credentials", "oauth_authorize", "cancel_oauth", "set_quotas",
         "runtime_set", "connect", "reconnect", "disconnect", "review_outcome",
-        "grant_auto_read", "revoke_auto_read", "gmail_connect", "gmail_grant"
+        "grant_auto_read", "revoke_auto_read", "gmail_connect", "gmail_grant",
+        "google_import_client", "google_connect", "google_disconnect", "google_test"
     })
 
     def __init__(self):
@@ -42,7 +43,7 @@ class MCPControlInbox:
         op = str(operation or "").strip()
         sid = str(server_id or "").strip().lower()
         val = str(value or "").strip()
-        if op not in self.OPS or len(val) > (16000 if op in {"add_stdio", "store_bearer", "store_api_key", "oauth_authorize", "gmail_grant"} else 600):
+        if op not in self.OPS or len(val) > (16000 if op in {"add_stdio", "store_bearer", "store_api_key", "oauth_authorize", "gmail_grant", "google_import_client", "google_connect"} else 600):
             return False
         if op == "runtime_set":
             if sid or val not in {"true", "false"}:
@@ -92,6 +93,15 @@ class MCPControlInbox:
                 options(op, val)
             except (ValueError, TypeError):
                 return False
+        elif op in {"google_import_client", "google_connect"}:
+            try:
+                from .google_workspace_connection import options
+                from .google_workspace_catalog import CLIENT_SLOT
+                if sid != CLIENT_SLOT:
+                    return False
+                options(op, val)
+            except (ValueError, TypeError):
+                return False
         elif op == "oauth_authorize":
             try:
                 from .mcp_oauth import oauth_options
@@ -112,7 +122,7 @@ class MCPControlInbox:
                 self._queue.put_nowait(MCPCommand(op, sid, val))
             except queue.Full:
                 return False
-            if op in {"oauth_authorize", "gmail_connect"}:
+            if op in {"oauth_authorize", "gmail_connect", "google_connect"}:
                 self.stop_requested.clear()
                 self._authorization_server = sid
         self.changed.set()
@@ -178,6 +188,10 @@ def perform_mcp_command(
     """No model calls; mutations only on explicit UI commands."""
     op = command.operation
     sid = command.server_id
+    if op in {"google_import_client", "google_connect", "google_disconnect", "google_test"}:
+        from .google_workspace_connection import perform_google_command
+        return perform_google_command(registry, op, sid, command.value,
+            transport=transport, vault=vault, stop_event=stop_event, progress=progress)
     if op in {"gmail_connect", "gmail_grant"}:
         from .gmail_connection import options, connect, grant
         packet = options(op, command.value)
