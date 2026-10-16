@@ -19,6 +19,19 @@ WINDOWS_ONLY = frozenset({
 })
 
 
+class ProgressTestResult(unittest.TextTestResult):
+    """Diagnose a stalled test, rather than the age of the entire suite."""
+
+    def startTest(self, test):
+        faulthandler.cancel_dump_traceback_later()
+        faulthandler.dump_traceback_later(180, repeat=False)
+        super().startTest(test)
+
+    def stopTest(self, test):
+        faulthandler.cancel_dump_traceback_later()
+        super().stopTest(test)
+
+
 def regression_environment(data_dir: Path) -> dict[str, str]:
     """Override live opt-ins before discovery, including values from .env."""
     flags = (
@@ -73,7 +86,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="regression-", dir=root / ".cache") as isolated:
         os.environ.update(regression_environment(Path(isolated)))
         suite = unittest.defaultTestLoader.discover("tests", pattern=args.pattern)
-        result = unittest.TextTestRunner(verbosity=2 if args.verbose else 1).run(platform_suite(suite))
+        result = unittest.TextTestRunner(verbosity=2 if args.verbose else 1,
+            resultclass=ProgressTestResult).run(platform_suite(suite))
         for test, reason in result.skipped:
             print(f"Explicit skip: {test.id()}: {reason}")
         gc.collect()
