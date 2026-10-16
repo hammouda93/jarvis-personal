@@ -29,15 +29,15 @@ class MCPConnectionsPanel(QFrame):
         layout.setContentsMargins(9, 8, 9, 8)
         layout.setSpacing(5)
         root = layout
-        title = QLabel("MCP CONTROL CENTER")
+        title = QLabel("MES CONNEXIONS")
         title.setObjectName("operatorSection")
         layout.addWidget(title)
-        self.summary = QLabel("MCP facultatif · outils interdits par défaut.")
+        self.summary = QLabel("Connecte tes services, puis choisis ce que Jarvis peut faire.")
         self.summary.setObjectName("operatorMetric")
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
-        self.runtime_switch = QCheckBox("MCP actif")
-        self.runtime_switch.setToolTip("Exposer au runtime uniquement les outils MCP explicitement autorises")
+        self.runtime_switch = QCheckBox("Utiliser mes connexions")
+        self.runtime_switch.setToolTip("Permettre à Jarvis d’utiliser les fonctions que tu as autorisées pour tes services.")
         self.runtime_switch.toggled.connect(self._set_runtime)
         root.addWidget(self.runtime_switch)
         self.tabs = QTabWidget()
@@ -338,8 +338,8 @@ class MCPConnectionsPanel(QFrame):
         self.inventory.setMaximumHeight(240)
         layout.addWidget(self.inventory)
         self.feedback = QLabel(
-            "Chaque serveur est isolé. Chaque outil doit être autorisé à part. "
-            "Les lectures préautorisées peuvent être automatiques ; les autres appels demandent confirmation."
+            "Choisis un service et connecte ton compte. "
+            "Les envois et modifications conservent leurs confirmations."
         )
         self.feedback.setWordWrap(True)
         self.feedback.setObjectName("operatorMetric")
@@ -747,8 +747,8 @@ class MCPConnectionsPanel(QFrame):
         servers = tuple(data.get("servers") or [])
         count = sum(row.get("allowed", 0) for row in servers)
         self.summary.setText(
-            f"Runtime MCP : {'ON' if enabled else 'OFF'}"
-            f" · serveurs {len(servers)} · outils autorisés {count}"
+            f"Connexions {'activées' if enabled else 'désactivées'}"
+            f" · services {len(servers)} · fonctions autorisées {count}"
         )
         self._servers = servers
         self.gmail_panel.refresh()

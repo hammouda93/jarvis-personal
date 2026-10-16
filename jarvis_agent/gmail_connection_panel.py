@@ -7,13 +7,14 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel
     QScrollArea, QSizePolicy, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from .gmail_connection import GROUPS, PIPEDREAM_ENDPOINT, managed_server_id, snapshot
+from .connector_functions_panel import ConnectorFunctionsPanel
 from .mcp_server_registry import MCPRegistry
 from .personal_workspace import PersonalWorkspaceStore
 
 
-STATES = {"not_configured": "À connecter", "disabled": "Serveur désactivé",
-    "discovery_required": "Connexion à tester", "no_gmail_tools": "Aucun outil Gmail reconnu",
-    "tools_to_allow": "Outils découverts · accès à choisir", "tools_available": "Outils Gmail autorisés"}
+STATES = {"not_configured": "À connecter", "disabled": "À reconnecter",
+    "discovery_required": "Connexion à vérifier", "no_gmail_tools": "Gmail à sélectionner chez le fournisseur",
+    "tools_to_allow": "Connecté · fonctions à choisir", "tools_available": "Fonctions Gmail enregistrées"}
 ERRORS = {"gmail_binding_changed": "L’association Gmail a changé. Recharge avant de continuer.",
     "mcp_failure_cooldown": "Une tentative vient d’échouer. Attends quinze secondes avant de reconnecter.",
     "mcp_hourly_quota_exhausted": "Le quota MCP de cette heure est atteint. Consulte les quotas dans les réglages avancés.",
@@ -44,6 +45,7 @@ class GmailConnectionPanel(QFrame):
         self._busy = self._filling = self._dirty = False
         self._review = None
         self._signature = ""
+        self._state = None
         self._runtime_enabled = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -58,48 +60,70 @@ class GmailConnectionPanel(QFrame):
         layout.setContentsMargins(6, 6, 6, 6)
         self.scroll.setWidget(body)
         outer.addWidget(self.scroll)
-        self._note(layout, "GMAIL · CONNEXION ET CAPACITÉS")
+        self._note(layout, "GMAIL")
         self.status = self._note(layout, "À connecter")
         self.feedback = self._note(layout, "Aucun mail n’est lu ou envoyé pendant cette configuration.")
-        self._note(layout, "1. Connecte ton compte. 2. Choisis les outils disponibles. 3. Vérifie ta boîte avec Jarvis.")
-        self.provider = QComboBox()
-        self.provider.addItem("Connexion Google gérée par Pipedream", "pipedream")
-        self.provider.addItem("Utiliser un serveur MCP déjà configuré", "existing")
-        layout.addWidget(self.provider)
-        self.server_picker = QComboBox()
-        layout.addWidget(self.server_picker)
+        self.step = self._note(layout, "1. Connecte ton compte Gmail.")
         self.provider_note = self._note(layout, "")
-        self.connect_button = self._button(layout, "Connecter Gmail avec Google", self.start_connection)
+        self.connect_button = self._button(layout, "Connecter Gmail", self.start_connection)
         self.cancel_button = self._button(layout, "Annuler la connexion", self.cancel_connection)
-        self.cancel_button.setEnabled(False)
-        self.refresh_button = self._button(layout, "Actualiser les capacités depuis le serveur", self.reconnect)
-        self.capabilities = self._note(layout, "Les capacités apparaîtront après connexion.")
-        self.tools = QTreeWidget()
-        self.tools.setHeaderLabels(["Outil Gmail", "Fonction"])
-        self.tools.setRootIsDecorated(False)
-        self.tools.setMinimumHeight(190)
-        self.tools.setColumnWidth(0, 160)
-        self.tools.itemChanged.connect(self._selection_changed)
-        layout.addWidget(self.tools)
+        self.cancel_button.hide()
+        self.functions_section = QFrame()
+        functions_layout = QVBoxLayout(self.functions_section)
+        functions_layout.setContentsMargins(0, 0, 0, 0)
+        self._note(functions_layout, "Ce que Jarvis peut faire pour toi")
+        self.functions = ConnectorFunctionsPanel({"read": "Lire et rechercher", "draft": "Gérer les brouillons",
+            "send": "Envoyer et répondre", "organize": "Classer les messages",
+            "delete": "Supprimer des messages", "other": "Autres fonctions"})
+        self.functions.selection_changed.connect(self._group_selection_changed)
+        functions_layout.addWidget(self.functions)
         choices = QHBoxLayout()
-        self.reads_button = QPushButton("Cocher les lectures")
-        self.all_button = QPushButton("Tout cocher")
+        self.reads_button = QPushButton("Lecture seule")
+        self.all_button = QPushButton("Tout sélectionner")
         self.reads_button.clicked.connect(lambda: self.select_tools(reads_only=True))
         self.all_button.clicked.connect(lambda: self.select_tools(reads_only=False))
         choices.addWidget(self.reads_button)
         choices.addWidget(self.all_button)
-        layout.addLayout(choices)
-        self.auto_reads = QCheckBox("Lectures automatiques")
+        functions_layout.addLayout(choices)
+        self._note(functions_layout, "Les envois et modifications demandent confirmation. Les contenus consultés peuvent être traités par ton fournisseur IA.")
+        layout.addWidget(self.functions_section)
+        self.grant_button = self._button(layout, "Enregistrer mes choix", self.grant)
+        self.reload_button = self._button(layout, "Recharger les fonctions", self.reload)
+        self.runtime_note = self._note(layout, "Cette activation permet à Jarvis d’utiliser aussi les autres services déjà autorisés.")
+        self.runtime_button = self._button(layout, "Activer mes connexions dans Jarvis", lambda: self.requested.emit("runtime_set", "", "true"))
+        self.test_button = self._button(layout, "Vérifier mon compte Gmail", self.test_mailbox)
+        self._note(layout, "Le compte et ses accès réels seront vérifiés dans la conversation avec Jarvis.")
+        self.advanced_toggle = QPushButton("Réglages avancés ▸")
+        self.advanced_toggle.setCheckable(True)
+        layout.addWidget(self.advanced_toggle)
+        self.advanced_body = QFrame()
+        advanced = QVBoxLayout(self.advanced_body)
+        advanced.setContentsMargins(0, 0, 0, 0)
+        self.advanced_toggle.toggled.connect(self._toggle_advanced)
+        layout.addWidget(self.advanced_body)
+        self.advanced_body.hide()
+        self.provider = QComboBox()
+        self.provider.addItem("Connexion Google gérée par Pipedream", "pipedream")
+        self.provider.addItem("Utiliser un serveur MCP déjà configuré", "existing")
+        advanced.addWidget(self.provider)
+        self.server_picker = QComboBox()
+        advanced.addWidget(self.server_picker)
+        self.account_button = self._button(advanced, "Changer ou reconnecter le compte", self.start_connection)
+        self.refresh_button = self._button(advanced, "Actualiser les fonctions", self.reconnect)
+        self.capabilities = self._note(advanced, "Les fonctions apparaîtront après connexion.")
+        self.tools = QTreeWidget()
+        self.tools.setHeaderLabels(["Nom technique", "Fonction"])
+        self.tools.setRootIsDecorated(False)
+        self.tools.setMinimumHeight(190)
+        self.tools.setColumnWidth(0, 160)
+        self.tools.itemChanged.connect(self._selection_changed)
+        advanced.addWidget(self.tools)
+        self.auto_reads = QCheckBox("Lectures sans confirmation")
         self.auto_reads.setChecked(True)
         self.auto_reads.toggled.connect(self._selection_changed)
-        layout.addWidget(self.auto_reads)
-        self._note(layout, "Les outils cochés seront proposés à Jarvis. Les envois, modifications et suppressions conservent leurs confirmations. Les contenus consultés pourront être traités par le cerveau IA configuré.")
-        self.grant_button = self._button(layout, "Enregistrer les capacités cochées", self.grant)
-        self.reload_button = self._button(layout, "Recharger la sélection", self.reload)
-        self.runtime_button = self._button(layout, "Activer MCP dans Jarvis", lambda: self.requested.emit("runtime_set", "", "true"))
-        self.test_button = self._button(layout, "Vérifier ma boîte avec Jarvis", self.test_mailbox)
-        self._note(layout, "Le compte Gmail réellement utilisé reste à vérifier avec un outil du service. Une connexion OAuth ou un inventaire ne prouve pas l’identité de la boîte ni l’envoi d’un message.")
-        self.advanced_button = self._button(layout, "Ouvrir les réglages MCP avancés", lambda: self.advanced_requested.emit(self.server_id()))
+        advanced.addWidget(self.auto_reads)
+        self._note(advanced, "Les lectures restent limitées aux outils reconnus par la politique de Jarvis. Les autres appels conservent leur confirmation.")
+        self.advanced_button = self._button(advanced, "Ouvrir le centre MCP", lambda: self.advanced_requested.emit(self.server_id()))
         layout.addStretch(1)
         self.provider.currentIndexChanged.connect(self._provider_changed)
         self.server_picker.currentIndexChanged.connect(self._server_changed)
@@ -147,9 +171,9 @@ class GmailConnectionPanel(QFrame):
     def _provider_changed(self):
         managed = self.provider.currentData() == "pipedream"
         self.server_picker.setVisible(not managed)
-        self.provider_note.setText("Pipedream gère la connexion et les appels au service. Dans le navigateur, sélectionne Gmail et vérifie les droits Google demandés. Ton contenu transite par ce fournisseur ; ses conditions et quotas s’appliquent." if managed else
-            "Le serveur choisi conserve son mode d’authentification. Ce bouton teste sa connexion et l’associe à Gmail. Les outils d’autres services ne sont pas sélectionnés ici.")
-        self.connect_button.setText("Connecter Gmail avec Google" if managed else "Tester et associer ce serveur")
+        self.provider_note.setText("Connexion gérée par Pipedream. Sélectionne Gmail dans le navigateur ; tes données transitent par ce fournisseur." if managed else
+            "Connexion avec le service déjà configuré. Ses accès et son authentification sont conservés.")
+        self.connect_button.setText("Connecter Gmail avec Google" if managed else "Connecter ce service à Gmail")
         self._dirty, self._review, self._signature = False, None, ""
         self.refresh()
 
@@ -166,13 +190,65 @@ class GmailConnectionPanel(QFrame):
     def _selection_changed(self, *_):
         if not self._filling:
             self._dirty = True
+            self.functions.set_selection(self._selected_names())
+            self._update_actions()
+
+    def _selected_names(self):
+        return [self.tools.topLevelItem(i).data(0, Qt.UserRole) for i in range(self.tools.topLevelItemCount())
+                if self.tools.topLevelItem(i).checkState(0) == Qt.Checked]
+
+    def _group_selection_changed(self, names):
+        self._filling = True
+        try:
+            selected = set(names)
+            for i in range(self.tools.topLevelItemCount()):
+                item = self.tools.topLevelItem(i)
+                item.setCheckState(0, Qt.Checked if item.data(0, Qt.UserRole) in selected else Qt.Unchecked)
+        finally:
+            self._filling = False
+        self._selection_changed()
+
+    def _toggle_advanced(self, expanded):
+        self.advanced_body.setVisible(expanded)
+        self.advanced_toggle.setText("Réglages avancés ▾" if expanded else "Réglages avancés ▸")
 
     def select_tools(self, *, reads_only):
         if self._review:
             kinds = {t["name"]: t["group"] for t in self._review["tools"]}
-            for index in range(self.tools.topLevelItemCount()):
-                item = self.tools.topLevelItem(index)
-                item.setCheckState(0, Qt.Checked if not reads_only or kinds[item.data(0, Qt.UserRole)] == "read" else Qt.Unchecked)
+            self._group_selection_changed([name for name, group in kinds.items() if not reads_only or group == "read"])
+
+    def _update_actions(self, *, stale=None):
+        state = self._state
+        if stale is None:
+            stale = bool(self._dirty and state and self._state_signature(state) != self._signature)
+        connected = bool(state and state["bound_server"] == state["server"] and
+            state["connection_state"] != "authorization_required" and
+            state["state"] not in {"not_configured", "disabled", "discovery_required", "no_gmail_tools"})
+        permitted = bool(connected and any(t["allowed"] for t in state["tools"]))
+        can_grant = bool(connected and state["tools"] and not stale and not self._busy)
+        self.connect_button.setVisible(not connected)
+        self.connect_button.setEnabled(not self._busy and bool(state))
+        self.cancel_button.setVisible(self._busy)
+        self.cancel_button.setEnabled(self._busy)
+        self.functions_section.setVisible(connected)
+        self.grant_button.setVisible(connected and (self._dirty or not permitted))
+        self.grant_button.setEnabled(can_grant)
+        self.reload_button.setVisible(bool(stale))
+        activate = bool(permitted and not state["runtime_enabled"] and not self._dirty)
+        self.runtime_button.setVisible(activate)
+        self.runtime_note.setVisible(activate)
+        ready = bool(permitted and state["runtime_enabled"] and not self._dirty)
+        self.test_button.setVisible(ready)
+        self.test_button.setEnabled(ready and not self._busy)
+        self.step.setText("Connexion en cours dans le navigateur…" if self._busy else
+            "1. Connecte ton compte Gmail." if not connected else
+            "2. Choisis les fonctions puis enregistre tes choix." if self._dirty or not permitted else
+            "3. Active tes connexions dans Jarvis." if activate else
+            "3. Vérifie ton compte, puis demande ce dont tu as besoin à Jarvis.")
+
+    @staticmethod
+    def _state_signature(state):
+        return json.dumps({k: state[k] for k in ("server", "binding_revision", "connection", "inventory")}, sort_keys=True)
 
     def start_connection(self):
         try:
@@ -200,8 +276,7 @@ class GmailConnectionPanel(QFrame):
     def grant(self):
         if self._review is None or not self._review["tools"]:
             return
-        selected = [self.tools.topLevelItem(i).data(0, Qt.UserRole) for i in range(self.tools.topLevelItemCount())
-                    if self.tools.topLevelItem(i).checkState(0) == Qt.Checked]
+        selected = self._selected_names()
         packet = {k: self._review[k] for k in ("binding_revision", "connection", "inventory")}
         packet.update(selected=selected, automatic_reads=self.auto_reads.isChecked())
         self.requested.emit("gmail_grant", self._review["server"], json.dumps(packet))
@@ -218,8 +293,9 @@ class GmailConnectionPanel(QFrame):
         self.cancel_button.setEnabled(self._busy)
         for widget in (self.provider, self.server_picker, self.connect_button, self.refresh_button, self.tools,
             self.reads_button, self.all_button, self.auto_reads, self.grant_button, self.reload_button, self.runtime_button,
-            self.test_button, self.advanced_button):
+            self.test_button, self.advanced_button, self.functions, self.account_button, self.advanced_toggle):
             widget.setEnabled(not self._busy)
+        self._update_actions()
         if not busy:
             self.refresh()
 
@@ -265,17 +341,17 @@ class GmailConnectionPanel(QFrame):
                 self.server_picker.blockSignals(False)
             sid = self.server_id()
             state = snapshot(self.registry, self.workspace, server_id=sid) if sid else None
+            self._state = state
             if state is None:
                 self.status.setText("Choisis un serveur MCP existant.")
-                self.connect_button.setEnabled(False)
+                self._update_actions()
                 return
-            self.connect_button.setEnabled(True)
-            self.status.setText(STATES[state["state"]] + (" · MCP actif" if state["runtime_enabled"] else " · MCP désactivé") +
+            self.status.setText(STATES[state["state"]] +
                 (" · autorisation à renouveler" if state["connection_state"] == "authorization_required" else ""))
             self.capabilities.setText("\n".join(label + " : " + str(state["groups"][group]["allowed"]) + " autorisé(s) / " +
                 str(state["groups"][group]["discovered"]) + " découvert(s)" for group, label in GROUPS.items()) +
                 ("\nInventaire partiel : des capacités peuvent manquer." if state["inventory_partial"] else ""))
-            signature = json.dumps({k: state[k] for k in ("server", "binding_revision", "connection", "inventory")}, sort_keys=True)
+            signature = self._state_signature(state)
             stale = bool(self._dirty and signature != self._signature)
             if not self._dirty and signature != self._signature:
                 self.tools.clear()
@@ -287,14 +363,11 @@ class GmailConnectionPanel(QFrame):
                     item.setToolTip(0, tool["name"] + "\n" + tool["description"])
                     self.tools.addTopLevelItem(item)
                 self._review, self._signature = state, signature
+                self.functions.load(state["tools"], self._selected_names())
             if stale:
                 self.feedback.setText("Les capacités ou accès ont changé. Ta sélection est conservée ; recharge avant d’enregistrer.")
-            can_grant = bool(state["tools"] and state["bound_server"] == sid and
-                state["state"] not in {"disabled", "discovery_required"} and not stale)
-            self.grant_button.setEnabled(can_grant)
+            self._update_actions(stale=stale)
             self.refresh_button.setEnabled(self.registry.get_server(sid) is not None)
-            self.runtime_button.setVisible(not state["runtime_enabled"])
-            self.test_button.setEnabled(state["runtime_enabled"] and state["state"] == "tools_available")
             self.reads_button.setEnabled(bool(state["tools"]))
             self.all_button.setEnabled(bool(state["tools"]))
         except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
