@@ -1,5 +1,7 @@
 """Real loopback callback, fake Google HTTP and protected fixture vault."""
+import asyncio
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 import socket
@@ -17,6 +19,26 @@ from tests.google_workspace_fixtures import CLIENT, PROFILE, GoogleFixture
 
 
 class GoogleOAuthTests(GoogleFixture):
+    @contextmanager
+    def closed_loopback(self):
+        """Check the real listener, independently of OS closed-port errors.
+
+        Windows may time out a connection to a closed port where Linux
+        refuses it immediately. Neither outcome is the listener contract.
+        The callback requests themselves still use actual loopback TCP.
+        """
+        listeners = []
+        start_server = asyncio.start_server
+        async def capture(*args, **kwargs):
+            listener = await start_server(*args, **kwargs)
+            listeners.append(listener)
+            return listener
+        with patch("jarvis_agent.google_workspace_oauth.asyncio.start_server", side_effect=capture):
+            yield
+        self.assertEqual(len(listeners), 1)
+        self.assertFalse(listeners[0].is_serving())
+        self.assertFalse(listeners[0].sockets)
+
     def test_desktop_client_validation_does_not_accept_web_service_account_or_external_endpoints(self):
         self.assertEqual(parse_client(json.dumps({"installed": CLIENT})), CLIENT)
         for value in ([], None, {"installed": []}, {"web": CLIENT}, {"type": "service_account"},
@@ -75,11 +97,12 @@ class GoogleOAuthTests(GoogleFixture):
             return httpx2.Response(200, json=PROFILE)
         flow = GoogleDesktopOAuth(opener=opener, transport=httpx2.MockTransport(handler), clock=lambda: 100)
         if deny:
-            with self.assertRaisesRegex(OAuthConsentRequired, "google_consent_denied"):
+            with self.closed_loopback(), self.assertRaisesRegex(OAuthConsentRequired, "google_consent_denied"):
                 flow.authorize(CLIENT, timeout=5)
             self.assertEqual(requests, [])
             return
-        result = flow.authorize(CLIENT, progress=lambda p: stages.append(p["stage"]), timeout=5)
+        with self.closed_loopback():
+            result = flow.authorize(CLIENT, progress=lambda p: stages.append(p["stage"]), timeout=5)
         query = parse_qs(urlsplit(urls[0]).query)
         self.assertTrue(urls[0].startswith(AUTH_URL + "?"))
         self.assertEqual(query["access_type"], ["offline"])
@@ -94,8 +117,6 @@ class GoogleOAuthTests(GoogleFixture):
             self.assertIn(400, callback_status)
         self.assertIn("callback_received", stages)
         self.assertFalse(self.registry.path.exists())
-        with httpx2.Client(trust_env=False, timeout=.2) as browser, self.assertRaises(httpx2.ConnectError):
-            browser.get(flow.redirect_uri)
 
     def test_pkce_offline_google_only_and_no_business_data_read(self):
         self.exercise_flow()
@@ -110,7 +131,7 @@ class GoogleOAuthTests(GoogleFixture):
         self.exercise_flow(deny=True)
 
     def test_browser_failure_does_not_wait_for_timeout(self):
-        with self.assertRaisesRegex(GoogleConnectionError, "browser_open_failed"):
+        with self.closed_loopback(), self.assertRaisesRegex(GoogleConnectionError, "browser_open_failed"):
             GoogleDesktopOAuth(opener=lambda _: False).authorize(CLIENT, timeout=1)
 
     def test_cancel_closes_loopback_without_storage_or_token_request(self):
@@ -119,7 +140,7 @@ class GoogleOAuthTests(GoogleFixture):
             stop.set()
             return True
         transport = httpx2.MockTransport(lambda _: self.fail("no Google request after cancel"))
-        with self.assertRaisesRegex(OAuthConsentRequired, "oauth_cancelled"):
+        with self.closed_loopback(), self.assertRaisesRegex(OAuthConsentRequired, "oauth_cancelled"):
             GoogleDesktopOAuth(opener=opener, transport=transport).authorize(CLIENT, stop_event=stop, timeout=2)
 
     def test_returned_scopes_cannot_add_unrequested_authority(self):
