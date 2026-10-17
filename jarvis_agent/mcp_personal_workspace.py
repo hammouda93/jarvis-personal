@@ -27,13 +27,13 @@ CONNECTIONS: tuple[WorkspaceConnection, ...] = (
         "Dépôts Jarvis, coaching, PR, commits, CI", "remote_mcp", 1, "github"),
     WorkspaceConnection("gmail", "Gmail", "Organisation",
         "Lire, préparer, envoyer et classer selon les outils autorisés", "remote_mcp", 1, "gmail",
-        "Parcours guidé dans l’onglet Gmail : connexion Google gérée par Pipedream ou serveur MCP existant."),
+        "Connexion directe groupée dans l’onglet Google. L’ancien parcours Gmail/Pipedream reste disponible."),
     WorkspaceConnection("google_calendar", "Google Calendar", "Organisation",
         "Consulter les agendas et préparer les rendez-vous", "remote_mcp", 1, "google_calendar",
-        "Google Workspace Developer Preview et OAuth peuvent être requis."),
+        "Connexion Google directe avec Gmail, Drive, Sheets et Docs, sans Developer Preview."),
     WorkspaceConnection("google_drive", "Google Drive", "Organisation",
         "Retrouver les fichiers et documents", "remote_mcp", 1, "google_drive",
-        "Google Workspace Developer Preview et OAuth peuvent être requis."),
+        "Connexion Google directe groupée, sans serveur supplémentaire."),
     WorkspaceConnection("google_docs", "Google Docs", "Organisation",
         "Lire et préparer des documents", "remote_mcp", 1, "google_docs"),
     WorkspaceConnection("google_sheets", "Google Sheets", "Organisation",
@@ -110,6 +110,10 @@ def connection_state(entry: WorkspaceConnection, servers: tuple | list) -> str:
         return "Natif Jarvis · sans MCP"
     if entry.integration in {"api_bridge", "optional"}:
         return "Pont/API à préparer" if entry.integration == "api_bridge" else "Facultatif"
+    google = next((item for item in servers if isinstance(item, dict) and item.get("kind") == "google"
+                   and entry.identifier in (item.get("google_services") or []) and item.get("enabled") is True), None)
+    if google:
+        return "Google direct · autorisation enregistrée, API à tester"
     server = next((item for item in servers
                    if isinstance(item, dict) and item.get("id") == entry.catalog_id), None)
     if server is None:

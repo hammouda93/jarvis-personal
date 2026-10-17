@@ -238,13 +238,17 @@ class OfficialMCPTransport:
             if bearer:
                 headers["Authorization"] = "Bearer " + bearer
             async with httpx2.AsyncClient(headers=headers, auth=auth, trust_env=False,
-                    follow_redirects=False, event_hooks={"request": [guard]}) as http_client:
+                    follow_redirects=False, timeout=httpx2.Timeout(45, connect=10),
+                    event_hooks={"request": [guard]}) as http_client:
                 async with streamable_http_client(url, http_client=http_client) as streams:
                     return await proceed(streams[0], streams[1])
         raise MCPUnavailable("unknown_mcp_transport")
 
     def invoke(self, entry: dict, operation: str, *,
                tool: str = "", arguments: dict | None = None) -> Any:
+        if entry.get("kind") == "google":
+            from .google_workspace_api import GoogleWorkspaceAPI
+            return GoogleWorkspaceAPI().invoke(entry, operation, tool=tool, arguments=arguments)
         timeout = max(3, min(45, int(os.getenv("JARVIS_MCP_TIMEOUT_SECONDS", "18"))))
         try:
             return asyncio.run(asyncio.wait_for(

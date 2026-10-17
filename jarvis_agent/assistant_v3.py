@@ -326,22 +326,32 @@ class AssistantWorker(QObject):
             # Never leak API tokens, bearer headers or arbitrary MCP output.
             from .mcp_control import connection_failure_state
             from .gmail_connection import error_reason, GMAIL_OPERATIONS
+            from .google_workspace_connection import error_reason as google_error, OPERATIONS as GOOGLE_OPERATIONS
             result = {"success": False, "operation": command.operation,
                       "server_id": command.server_id,
-                      "reason": error_reason(exc) if command.operation in GMAIL_OPERATIONS or command.operation == "oauth_authorize" else connection_failure_state(exc)
+                      "reason": google_error(exc) if command.operation in GOOGLE_OPERATIONS else error_reason(exc) if command.operation in GMAIL_OPERATIONS or command.operation == "oauth_authorize" else connection_failure_state(exc)
                       if command.operation in {"discover", "connect", "reconnect", "oauth_authorize"}
                       else type(exc).__name__}
             from .mcp_oauth import connection_diagnostic
             result["diagnostic"] = connection_diagnostic(exc, stage=latest["stage"])
         finally:
-            if command.operation in {"oauth_authorize", "gmail_connect"}:
+            if command.operation in {"oauth_authorize", "gmail_connect", "google_connect"}:
                 self._mcp_control.finish_authorization()
+        if command.operation == "review_outcome" and result.get("success"):
+            release = getattr(self._agent, "release_reviewed_mcp_read", None)
+            try:
+                released = callable(release) and release(command.server_id, int(command.value), self._mcp_registry)
+            except Exception:
+                released = False
+            if released:
+                result["message"] = "Revue enregistrée. L’ancienne lecture bloquée n’avait pas été envoyée ; tu peux formuler une nouvelle demande. Aucun appel relancé, aucune mission certifiée."
+                result["read_guard_released"] = True
         self.mcp_control_result.emit(result)
         self.log_line.emit(
             "[MCP_CONTROL] operation=" + command.operation
             + " success=" + str(bool(result.get("success")))
             + (" reason=" + result["reason"] if not result.get("success") and
-                command.operation in {"gmail_connect", "gmail_grant", "oauth_authorize", "connect", "reconnect", "discover"} else "")
+                command.operation in {"gmail_connect", "gmail_grant", "oauth_authorize", "connect", "reconnect", "discover", "google_import_client", "google_connect", "google_disconnect", "google_test"} else "")
             + "".join(" " + key + "=" + str(value) for key, value in result.get("diagnostic", {}).items() if key != "reason")
         )
 

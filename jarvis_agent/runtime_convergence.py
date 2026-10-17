@@ -1260,6 +1260,73 @@ class LiveMissionContinuityRuntime:
             return AgentTurnResult(text=text, actions=tuple(getattr(turn, "actions", ()) or ()),
                 end_session=bool(getattr(turn, "end_session", False)), should_exit=bool(getattr(turn, "should_exit", False)))
 
+    def release_reviewed_mcp_read(self, server, attempt, registry):
+        """Release only a NON-dispatched read guard after exact journal review.
+
+        Not recovery proof: no call, retry, successful step or goal certificate.
+        Actual uncertain dispatches, writes and supervised missions remain
+        under the independent recovery protocol.
+        """
+        from .mcp_result import source_matches_alias
+        with self._lock:
+            mid = self._active_mission_id
+            if not mid:
+                return False
+            reviewed = registry.activity().reviewed_attempt(server, attempt)
+            if (not reviewed or reviewed["operation"] != "call"
+                    or not registry.is_auto_read_allowed(server, reviewed["tool"])):
+                return False
+            state, version = self.context_store.load(mid)
+            if (state.user_id != self.owner_user_id or state.status != MissionStatus.BLOCKED
+                    or state.pending_action.get("reason") != "mcp_unknown_requires_review"
+                    or state.observed_state.get("active_supervisor")):
+                return False
+            graph = self.orchestrator.graph(mid)
+            pending = [node for node in graph.nodes() if node.status in {
+                TaskStatus.RUNNING, TaskStatus.WAITING_EXTERNAL, TaskStatus.FAILED}]
+            matched = False
+            for node in pending:
+                receipts = node.result.get("action_receipts")
+                if not isinstance(receipts, list) or not receipts or len(receipts) != node.result.get("action_count"):
+                    return False
+                for receipt in receipts:
+                    if receipt.get("usable") is not True:
+                        return False
+                    try:
+                        data = json.loads(receipt["detail"])
+                    except (ValueError, KeyError, TypeError):
+                        return False
+                    if not isinstance(data, dict):
+                        return False
+                    if receipt.get("success") is True and data.get("outcome_unknown") is False:
+                        continue
+                    source = {"server_id": server, "tool_name": reviewed["tool"], "trust": "external_unverified"}
+                    if (receipt.get("success") is not False
+                            or data.get("guard") != "mcp_unknown_requires_review"
+                            or data.get("dispatched") is not False
+                            or data.get("blocked_by_previous_attempt") is not True
+                            or type(data.get("previous_attempt_id")) is not int
+                            or data["previous_attempt_id"] != attempt
+                            or not source_matches_alias(receipt.get("name"), source)):
+                        return False
+                    matched = True
+            if not matched:
+                return False
+            for node in pending:
+                node.status = TaskStatus.CANCELLED
+                node.result["mcp_guard_reviewed"] = {"server": server, "attempt": attempt,
+                    "goal_proof": False, "automatic_retry": False}
+            state.status = MissionStatus.WAITING_EXTERNAL
+            state.pending_action = {}
+            state.observed_state["goal_verified"] = False
+            state.observed_state["last_pause_reason"] = "reviewed_read_guard_waiting_user"
+            self.graph_store.save(graph)
+            self.context_store.save(state, expected_version=version)
+            self._audit(mid, "mission.mcp_read_guard_reviewed", {"server": server,
+                "attempt": attempt, "goal_proof": False, "automatic_retry": False})
+            self._set_audit_status(mid, state.status)
+            return True
+
     def _run(self, user_text: str, *, context=None, log=None, phase=None):
         # Lock also prevents two threads executing a single mission step twice.
         with self._lock:

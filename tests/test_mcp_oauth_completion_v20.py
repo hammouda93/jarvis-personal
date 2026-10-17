@@ -137,6 +137,11 @@ class OAuthCompletionTests(unittest.TestCase):
         self.assertEqual(stages[-1], "authorized")
         self.assertNotIn("FIXTURE_CODE", str(progress))
         self.assertNotIn("connected", self.callback_results[0][1].lower())
+        # The client's old default 5 s must not cut short the gateway's
+        # existing 18 s bound. Interactive consent keeps its separate bound.
+        for request in self.requests:
+            if str(request.url) == PIPEDREAM_ENDPOINT:
+                self.assertGreaterEqual(request.extensions["timeout"]["read"], 18)
 
     def test_token_failure_reports_only_status_stage_and_known_code_without_storing_tokens(self):
         self.token_error = "invalid_grant"
